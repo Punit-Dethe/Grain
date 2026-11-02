@@ -1095,7 +1095,7 @@
     },
     "meet": {
       "name": "Recall",
-      "subtitle": "Record a call or meeting. The transcript, with who said what, is made on this device.",
+      "subtitle": "Record calls and meetings. Transcribed privately on this device.",
       "processFailed": "Transcription failed.",
       "studio": {
         "label": "New recording",
@@ -1112,7 +1112,7 @@
         "systemAudio": "System audio",
         "systemAudioDevice": "Output to record",
         "followDefault": "System default",
-        "followDefaultNamed": "System default · {{name}}",
+        "followDefaultNamed": "{{name}}",
         "disconnected": "Disconnected device",
         "unsupported": "Not available on this system yet",
         "keepOne": "Recordings need at least one source",
@@ -1138,13 +1138,15 @@
         "retry": "Try again",
         "emptyTitle": "No recordings yet",
         "empty": "Choose your sources above and start recording. Your recordings appear here.",
+        "speakers_one": "{{count}} speaker",
+        "speakers_other": "{{count}} speakers",
         "today": "Today",
         "yesterday": "Yesterday",
         "state": {
-          "recording": "Recording",
-          "processing": "Transcribing",
+          "recording": "Recording now…",
+          "processing": "Transcribing…",
           "transcribed": "Transcribed",
-          "new": "Not transcribed"
+          "new": "Not transcribed yet. Open it to transcribe."
         }
       },
       "player": {

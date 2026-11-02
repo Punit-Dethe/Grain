@@ -16,6 +16,8 @@ function meeting(id: string, created: Date): MeetingSummary {
     state: "Recorded",
     duration_ms: 0,
     transcript_revision: null,
+    preview: null,
+    speaker_count: 0,
     sources: ["Microphone"],
   };
 }

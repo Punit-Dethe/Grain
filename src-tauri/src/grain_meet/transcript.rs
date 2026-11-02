@@ -16,6 +16,8 @@ use crate::tdt_flow::WindowEvidence;
 
 pub const TRANSCRIPT_VERSION: u32 = 1;
 const TRANSCRIPTS: &str = "transcripts";
+const PREVIEW: &str = "preview.json";
+const PREVIEW_CHARS: usize = 160;
 /// Glimpse `fold_minor_voices`: a slot under 1/20 (5%) of a track's words.
 const MINOR_SPEAKER_DIVISOR: usize = 20;
 
@@ -346,7 +348,68 @@ pub fn publish(session: &Path, revision: &TranscriptRevision) -> Result<(), Stri
     write().map_err(|e| {
         let _ = fs::remove_file(&tmp);
         format!("Could not save the meeting transcript: {e}")
-    })
+    })?;
+    // The list reads this small sidecar instead of the transcript; it is
+    // rebuilt from the transcript if this write fails.
+    let _ = write_preview(session, &preview_of(revision));
+    Ok(())
+}
+
+/// What the recordings list shows of a transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Preview {
+    pub revision: u32,
+    pub speakers: u32,
+    /// The opening words, at most about `PREVIEW_CHARS` characters.
+    pub text: String,
+}
+
+pub fn preview_of(revision: &TranscriptRevision) -> Preview {
+    let mut words: Vec<&Word> = revision.tracks.iter().flat_map(|t| &t.words).collect();
+    words.sort_by_key(|word| word.start_ms);
+    let mut text = String::new();
+    for word in words {
+        if text.chars().count() + word.text.chars().count() + 1 > PREVIEW_CHARS {
+            text.push('…');
+            break;
+        }
+        if !text.is_empty() {
+            text.push(' ');
+        }
+        text.push_str(&word.text);
+    }
+    Preview {
+        revision: revision.revision,
+        speakers: u32::try_from(revision.speakers.len()).unwrap_or(u32::MAX),
+        text,
+    }
+}
+
+fn write_preview(session: &Path, preview: &Preview) -> std::io::Result<()> {
+    let tmp = session.join(format!("{PREVIEW}.tmp"));
+    fs::write(&tmp, serde_json::to_vec(preview)?)?;
+    fs::rename(&tmp, session.join(PREVIEW))
+}
+
+/// The newest revision's preview: the sidecar when it is current, otherwise
+/// rebuilt once from the transcript and saved.
+pub fn preview(session: &Path) -> Result<Option<Preview>, String> {
+    let Some(newest) = latest_revision(session)? else {
+        return Ok(None);
+    };
+    let saved = fs::read(session.join(PREVIEW))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Preview>(&bytes).ok())
+        .filter(|preview| preview.revision == newest);
+    if saved.is_some() {
+        return Ok(saved);
+    }
+    let Some(revision) = latest(session)? else {
+        return Ok(None);
+    };
+    let built = preview_of(&revision);
+    let _ = write_preview(session, &built);
+    Ok(Some(built))
 }
 
 /// The newest published revision, if any.
@@ -593,5 +656,34 @@ mod tests {
         assert_eq!(read, revision(2));
         assert_eq!(read.speakers[0].id, "t0-s2");
         assert_eq!(read.speakers[0].label, "Speaker 1");
+    }
+
+    #[test]
+    fn the_list_preview_follows_the_newest_revision_and_rebuilds_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(preview(dir.path()).unwrap(), None);
+        publish(dir.path(), &revision(1)).unwrap();
+        let first = preview(dir.path()).unwrap().unwrap();
+        assert_eq!((first.revision, first.speakers), (1, 1));
+        assert_eq!(first.text, "hi");
+        // A missing or stale sidecar is rebuilt from the transcript.
+        std::fs::remove_file(dir.path().join(PREVIEW)).unwrap();
+        publish(dir.path(), &revision(2)).unwrap();
+        std::fs::write(dir.path().join(PREVIEW), b"{").unwrap();
+        assert_eq!(preview(dir.path()).unwrap().unwrap().revision, 2);
+        assert!(dir.path().join(PREVIEW).is_file());
+        // Long transcripts are cut at a word with an ellipsis.
+        let mut long = revision(3);
+        long.tracks[0].words = (0..100)
+            .map(|i| Word {
+                text: format!("word{i}"),
+                start_ms: i,
+                end_ms: i + 1,
+                speaker: Attribution::Speaker(2),
+            })
+            .collect();
+        let cut = preview_of(&long).text;
+        assert!(cut.ends_with('…') && cut.chars().count() <= PREVIEW_CHARS + 1);
+        assert!(cut.starts_with("word0 word1 "));
     }
 }

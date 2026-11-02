@@ -465,18 +465,49 @@ function SpeakerModelNotice({ meet }: { meet: MeetController }) {
 /* Recordings                                                                */
 /* ------------------------------------------------------------------------ */
 
-function SourceGlyphs({ sources }: { sources: SourceKind[] }) {
-  const { t } = useTranslation();
-  const kinds = [...new Set(sources)];
+function RecordingLead({
+  meeting,
+  state,
+}: {
+  meeting: MeetingSummary;
+  state: string;
+}) {
+  if (state === "recording") {
+    return (
+      <span className="meet-lead is-live" aria-hidden="true">
+        <span className="meet-live-dot" />
+      </span>
+    );
+  }
+  if (state === "processing") {
+    return (
+      <span className="meet-lead" aria-hidden="true">
+        <span className="meet-spinner" />
+      </span>
+    );
+  }
+  if (meeting.speaker_count > 0) {
+    const shown = Math.min(meeting.speaker_count, 3);
+    const extra = meeting.speaker_count - shown;
+    return (
+      <span className="meet-lead-stack" aria-hidden="true">
+        {Array.from({ length: shown }, (_, index) => (
+          <span
+            key={index}
+            className={`meet-avatar is-stack tone-${SPEAKER_TONES[index % SPEAKER_TONES.length]}`}
+          >
+            {index + 1}
+          </span>
+        ))}
+        {extra > 0 && (
+          <span className="meet-avatar is-stack is-more">+{extra}</span>
+        )}
+      </span>
+    );
+  }
   return (
-    <span
-      className="meet-source-glyphs"
-      role="img"
-      aria-label={kinds.map((kind) => sourceName(kind, t)).join(", ")}
-    >
-      {kinds.map((kind) => (
-        <Glyph key={kind} name={SOURCE_ICON[kind]} />
-      ))}
+    <span className="meet-lead" aria-hidden="true">
+      <Glyph name={SOURCE_ICON[meeting.sources[0] ?? "Microphone"]} />
     </span>
   );
 }
@@ -546,26 +577,41 @@ function Recordings({ meet }: { meet: MeetController }) {
                   : meeting.transcript_revision != null
                     ? "transcribed"
                     : "new";
+            const sourcesText = [...new Set(meeting.sources)]
+              .map((kind) => sourceName(kind, t))
+              .join(" + ");
             return (
               <li key={meeting.id}>
                 <button
                   type="button"
                   className="meet-row"
+                  data-state={state}
                   onClick={() => openMeeting(meeting.id)}
                 >
-                  <time className="meet-row-time">
-                    {timeFormat.format(meeting.created_unix_ms)}
-                  </time>
-                  <span className="meet-row-title">{meeting.title}</span>
-                  <SourceGlyphs sources={meeting.sources} />
-                  <span className="meet-row-duration">
-                    {formatClock(meeting.duration_ms)}
-                  </span>
-                  <span className="meet-row-state" data-state={state}>
-                    {state === "processing" && (
-                      <span className="meet-spinner" aria-hidden="true" />
-                    )}
-                    {t(`ui2.meet.list.state.${state}`)}
+                  <RecordingLead meeting={meeting} state={state} />
+                  <span className="meet-row-main">
+                    <span className="meet-row-top">
+                      <span className="meet-row-title">{meeting.title}</span>
+                      <span className="meet-row-duration">
+                        {formatClock(meeting.duration_ms)}
+                      </span>
+                    </span>
+                    <span className="meet-row-preview">
+                      {state === "transcribed" && meeting.preview
+                        ? meeting.preview
+                        : t(`ui2.meet.list.state.${state}`)}
+                    </span>
+                    <span className="meet-row-meta">
+                      <time>{timeFormat.format(meeting.created_unix_ms)}</time>
+                      {meeting.speaker_count > 0 && (
+                        <span>
+                          {t("ui2.meet.list.speakers", {
+                            count: meeting.speaker_count,
+                          })}
+                        </span>
+                      )}
+                      <span>{sourcesText}</span>
+                    </span>
                   </span>
                   <span className="meet-row-go" aria-hidden="true">
                     <Glyph name="chev-right" />
@@ -725,9 +771,14 @@ type Playback = ReturnType<typeof usePlayback>;
 function Player({
   playback,
   fallbackDuration,
+  title,
+  now,
 }: {
   playback: Playback;
   fallbackDuration: number;
+  title: string;
+  /** The speaker at the playback position, if the transcript has one. */
+  now: SpeakerLook | null;
 }) {
   const { t } = useTranslation();
   const duration = playback.duration || fallbackDuration;
@@ -740,73 +791,101 @@ function Player({
       aria-label={t("ui2.meet.player.label")}
     >
       <audio {...playback.audioProps} />
-      {playback.state === "error" && (
-        <p className="meet-dock-error" role="alert">
-          {playback.error ?? t("ui2.meet.player.failed")}
-        </p>
-      )}
-      <div className="meet-dock-controls">
-        <button
-          className="meet-dock-skip"
-          type="button"
-          aria-label={t("ui2.meet.player.back")}
-          title={t("ui2.meet.player.back")}
-          onClick={() => playback.skip(-SKIP_MS)}
-        >
-          <Glyph name="back10" />
-        </button>
-        <button
-          className="meet-play"
-          type="button"
-          disabled={loading}
-          aria-label={
-            playback.playing
-              ? t("ui2.meet.player.pause")
-              : t("ui2.meet.player.play")
-          }
-          onClick={() => void playback.toggle()}
-        >
-          {loading ? (
-            <span className="meet-spinner" aria-hidden="true" />
+      <div className="meet-dock-inner">
+        <div className="meet-dock-now">
+          {now ? (
+            <span
+              className={`meet-avatar${now.tone ? ` tone-${now.tone}` : ""}`}
+              aria-hidden="true"
+            >
+              {now.mark}
+            </span>
           ) : (
-            <Glyph name={playback.playing ? "pause" : "play"} />
+            <span className="meet-avatar" aria-hidden="true">
+              <Glyph name="mic" />
+            </span>
           )}
-        </button>
-        <button
-          className="meet-dock-skip"
-          type="button"
-          aria-label={t("ui2.meet.player.forward")}
-          title={t("ui2.meet.player.forward")}
-          onClick={() => playback.skip(SKIP_MS)}
-        >
-          <Glyph name="fwd10" />
-        </button>
+          <span className="meet-dock-now-copy">
+            <strong>{now ? now.label : title}</strong>
+            <span>{now ? title : t("ui2.meet.player.label")}</span>
+          </span>
+        </div>
+        <div className="meet-dock-center">
+          <div className="meet-dock-controls">
+            <button
+              className="meet-dock-skip"
+              type="button"
+              aria-label={t("ui2.meet.player.back")}
+              title={t("ui2.meet.player.back")}
+              onClick={() => playback.skip(-SKIP_MS)}
+            >
+              <Glyph name="back10" />
+            </button>
+            <button
+              className="meet-play"
+              type="button"
+              disabled={loading}
+              aria-label={
+                playback.playing
+                  ? t("ui2.meet.player.pause")
+                  : t("ui2.meet.player.play")
+              }
+              onClick={() => void playback.toggle()}
+            >
+              {loading ? (
+                <span className="meet-spinner" aria-hidden="true" />
+              ) : (
+                <Glyph name={playback.playing ? "pause" : "play"} />
+              )}
+            </button>
+            <button
+              className="meet-dock-skip"
+              type="button"
+              aria-label={t("ui2.meet.player.forward")}
+              title={t("ui2.meet.player.forward")}
+              onClick={() => playback.skip(SKIP_MS)}
+            >
+              <Glyph name="fwd10" />
+            </button>
+          </div>
+          <div className="meet-dock-bar">
+            <span className="meet-dock-time">
+              {formatClock(playback.position)}
+            </span>
+            <input
+              className="meet-scrubber"
+              type="range"
+              min={0}
+              max={Math.max(1, Math.round(duration))}
+              step={100}
+              value={Math.min(playback.position, duration)}
+              aria-label={t("ui2.meet.player.position")}
+              aria-valuetext={formatClock(playback.position)}
+              style={{ "--progress": `${progress}%` } as CSSProperties}
+              onChange={(event) =>
+                void playback.seek(Number(event.target.value), playback.playing)
+              }
+            />
+            <span className="meet-dock-time">{formatClock(duration)}</span>
+          </div>
+        </div>
+        <div className="meet-dock-end">
+          {playback.state === "error" && (
+            <span className="meet-dock-error" role="alert">
+              {playback.error ?? t("ui2.meet.player.failed")}
+            </span>
+          )}
+          <button
+            className="meet-rate"
+            type="button"
+            aria-label={t("ui2.meet.player.speed", { rate: playback.rate })}
+            title={t("ui2.meet.player.speed", { rate: playback.rate })}
+            onClick={playback.cycleRate}
+          >
+            {playback.rate}×
+          </button>
+        </div>
       </div>
-      <span className="meet-dock-time">{formatClock(playback.position)}</span>
-      <input
-        className="meet-scrubber"
-        type="range"
-        min={0}
-        max={Math.max(1, Math.round(duration))}
-        step={100}
-        value={Math.min(playback.position, duration)}
-        aria-label={t("ui2.meet.player.position")}
-        aria-valuetext={formatClock(playback.position)}
-        style={{ "--progress": `${progress}%` } as CSSProperties}
-        onChange={(event) =>
-          void playback.seek(Number(event.target.value), playback.playing)
-        }
-      />
-      <span className="meet-dock-time">{formatClock(duration)}</span>
-      <button
-        className="meet-rate"
-        type="button"
-        aria-label={t("ui2.meet.player.speed", { rate: playback.rate })}
-        title={t("ui2.meet.player.speed", { rate: playback.rate })}
-        onClick={playback.cycleRate}
-      >
-        {playback.rate}×
-      </button>
     </div>
   );
 }
@@ -995,6 +1074,9 @@ function MeetingView({
   );
   const visible = useMemo(() => filterTurns(turns, query), [turns, query]);
   const currentKey = playback.playing ? turnAt(turns, playback.position) : null;
+  const heardKey = turnAt(turns, playback.position);
+  const heard = turns.find((turn) => turn.key === heardKey);
+  const now = heard?.speakerId ? (looks.get(heard.speakerId) ?? null) : null;
   const multiSource = new Set(meeting.sources).size > 1;
   const { seek } = playback;
   const onSeek = useCallback((ms: number) => void seek(ms), [seek]);
@@ -1157,100 +1239,109 @@ function MeetingView({
   }
 
   return (
-    <article className="meet-view" aria-labelledby="meet-view-title">
-      <header className="meet-view-head">
-        <div className="meet-view-nav">
-          <button
-            className="meet-back"
-            type="button"
-            onClick={() => openMeeting(null)}
-          >
-            <Glyph name="chev-left" />
-            {t("ui2.meet.detail.back")}
-          </button>
-          {otherRecording && (
+    <>
+      <article
+        className="page-wrap meet-wrap meet-view"
+        aria-labelledby="meet-view-title"
+      >
+        <header className="meet-view-head">
+          <div className="meet-view-nav">
             <button
-              className="meet-live-pill"
+              className="meet-back"
               type="button"
               onClick={() => openMeeting(null)}
             >
-              <span className="meet-live-dot" aria-hidden="true" />
-              {t("ui2.meet.live.recording")}
+              <Glyph name="chev-left" />
+              {t("ui2.meet.detail.back")}
             </button>
-          )}
-        </div>
-        <div className="meet-view-title">
-          <div>
-            <h1 id="meet-view-title">{meeting.title}</h1>
-            <p className="meet-meta">
-              <span>{when}</span>
-              <span>{formatClock(meeting.duration_ms)}</span>
-              <span>{sourcesText}</span>
-            </p>
-          </div>
-          <div className="meet-view-actions">
-            {isProcessing ? (
-              <button className="button" type="button" onClick={cancel}>
-                {t("ui2.meet.detail.cancel")}
+            {otherRecording && (
+              <button
+                className="meet-live-pill"
+                type="button"
+                onClick={() => openMeeting(null)}
+              >
+                <span className="meet-live-dot" aria-hidden="true" />
+                {t("ui2.meet.live.recording")}
               </button>
-            ) : (
-              meeting.transcript_revision != null && (
-                <button
-                  className="button"
-                  type="button"
-                  disabled={isRecording || processing != null}
-                  onClick={runProcess}
-                >
-                  <Glyph name="refresh" />
-                  {t("ui2.meet.detail.reprocess")}
-                </button>
-              )
             )}
-            <button
-              className="icon-button"
-              type="button"
-              disabled={turns.length === 0}
-              aria-label={t("ui2.meet.detail.copy")}
-              title={t("ui2.meet.detail.copy")}
-              onClick={copy}
-            >
-              <Glyph name="copy" />
-            </button>
-            <button
-              className="icon-button meet-delete"
-              type="button"
-              disabled={isRecording || isProcessing}
-              aria-label={t("ui2.meet.detail.delete")}
-              title={t("ui2.meet.detail.delete")}
-              onClick={remove}
-            >
-              <Glyph name="trash" />
-            </button>
           </div>
-        </div>
-      </header>
+          <div className="meet-view-title">
+            <div>
+              <h1 id="meet-view-title">{meeting.title}</h1>
+              <p className="meet-meta">
+                <span>{when}</span>
+                <span>{formatClock(meeting.duration_ms)}</span>
+                <span>{sourcesText}</span>
+              </p>
+            </div>
+            <div className="meet-view-actions">
+              {isProcessing ? (
+                <button className="button" type="button" onClick={cancel}>
+                  {t("ui2.meet.detail.cancel")}
+                </button>
+              ) : (
+                meeting.transcript_revision != null && (
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={isRecording || processing != null}
+                    onClick={runProcess}
+                  >
+                    <Glyph name="refresh" />
+                    {t("ui2.meet.detail.reprocess")}
+                  </button>
+                )
+              )}
+              <button
+                className="icon-button"
+                type="button"
+                disabled={turns.length === 0}
+                aria-label={t("ui2.meet.detail.copy")}
+                title={t("ui2.meet.detail.copy")}
+                onClick={copy}
+              >
+                <Glyph name="copy" />
+              </button>
+              <button
+                className="icon-button meet-delete"
+                type="button"
+                disabled={isRecording || isProcessing}
+                aria-label={t("ui2.meet.detail.delete")}
+                title={t("ui2.meet.detail.delete")}
+                onClick={remove}
+              >
+                <Glyph name="trash" />
+              </button>
+            </div>
+          </div>
+        </header>
 
-      {isProcessing && processing && (
-        <ProcessingSteps stage={processing.stage} />
-      )}
+        {isProcessing && processing && (
+          <ProcessingSteps stage={processing.stage} />
+        )}
 
-      {notes.map((note) => (
-        <p key={note} className="meet-note">
-          {note}
-        </p>
-      ))}
-      {transcriptError && (
-        <p className="meet-inline-error" role="alert">
-          {transcriptError}
-        </p>
-      )}
+        {notes.map((note) => (
+          <p key={note} className="meet-note">
+            {note}
+          </p>
+        ))}
+        {transcriptError && (
+          <p className="meet-inline-error" role="alert">
+            {transcriptError}
+          </p>
+        )}
 
-      <div className="meet-view-body">{body}</div>
-
+        <div className="meet-view-body">{body}</div>
+      </article>
       {!isRecording && (
-        <Player playback={playback} fallbackDuration={meeting.duration_ms} />
+        <Player
+          playback={playback}
+          fallbackDuration={meeting.duration_ms}
+          title={meeting.title}
+          now={now}
+        />
       )}
-    </article>
+    </>
   );
 }
 
@@ -1272,7 +1363,7 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
     content = meeting ? (
       <MeetingView key={meeting.id} meet={meet} meeting={meeting} />
     ) : meet.loading ? null : (
-      <div className="meet-empty">
+      <div className="page-wrap meet-wrap meet-empty">
         <strong>{t("ui2.meet.detail.missing")}</strong>
         <button
           className="button"
@@ -1285,7 +1376,7 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
     );
   } else {
     content = (
-      <>
+      <div className="page-wrap meet-wrap">
         <header className="meet-head">
           <h1>{t("ui2.meet.name")}</h1>
           <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
@@ -1301,13 +1392,13 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
           </div>
         )}
         <Recordings meet={meet} />
-      </>
+      </div>
     );
   }
 
   return (
     <section ref={pageRef} className="page active" data-page-panel="meet">
-      <div className="page-wrap meet-wrap">{content}</div>
+      {content}
     </section>
   );
 }

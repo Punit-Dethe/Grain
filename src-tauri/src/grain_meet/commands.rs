@@ -84,6 +84,10 @@ pub struct MeetingSummary {
     pub state: SessionState,
     pub duration_ms: u64,
     pub transcript_revision: Option<u32>,
+    /// The opening words of the newest transcript, for the list.
+    pub preview: Option<String>,
+    /// Speakers in the newest transcript (0 before transcription).
+    pub speaker_count: u32,
     /// What each track recorded, in track order.
     pub sources: Vec<SourceKind>,
 }
@@ -178,6 +182,8 @@ fn emit_status(app: &AppHandle) {
 }
 
 fn summary(dir: &std::path::Path, manifest: &storage::Manifest) -> Result<MeetingSummary, String> {
+    // A broken sidecar never hides a meeting from the list.
+    let preview = transcript::preview(dir).ok().flatten();
     Ok(MeetingSummary {
         id: manifest.id.clone(),
         title: manifest.title.clone(),
@@ -185,6 +191,8 @@ fn summary(dir: &std::path::Path, manifest: &storage::Manifest) -> Result<Meetin
         state: manifest.state,
         duration_ms: manifest.duration_ns() / 1_000_000,
         transcript_revision: transcript::latest_revision(dir)?,
+        speaker_count: preview.as_ref().map_or(0, |p| p.speakers),
+        preview: preview.map(|p| p.text).filter(|text| !text.is_empty()),
         sources: manifest
             .tracks
             .iter()

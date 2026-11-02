@@ -2560,6 +2560,14 @@ last_error: string | null }
 export type MeetStatusChanged = MeetStatus
 export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null;
 /**
+ * The opening words of the newest transcript, for the list.
+ */
+preview: string | null;
+/**
+ * Speakers in the newest transcript (0 before transcription).
+ */
+speaker_count: number;
+/**
  * What each track recorded, in track order.
  */
 sources: SourceKind[] }
