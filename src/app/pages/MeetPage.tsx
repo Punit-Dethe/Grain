@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -15,11 +16,13 @@ import type {
   MeetingSummary,
   SourceDevice,
   SourceKind,
+  SourceSettings,
   SourceStatus,
   Stage,
   TrackStatus,
   TranscriptRevision,
 } from "@/bindings";
+import { hashForRoute } from "../navigation";
 import {
   buildTurns,
   filterTurns,
@@ -50,9 +53,18 @@ const STAGES: Stage[] = [
   "Transcribing",
   "Publishing",
 ];
+const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
+const SKIP_MS = 10_000;
+const METER_TICKS = 18;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function openMeeting(id: string | null) {
+  window.location.hash = hashForRoute(
+    id ? { page: "meet", meeting: id } : { page: "meet" },
+  );
 }
 
 function Glyph({ name }: { name: string }) {
@@ -90,7 +102,7 @@ function trackStatusNote(status: TrackStatus, t: T): string | null {
 }
 
 /* ------------------------------------------------------------------------ */
-/* Sources and recording                                                     */
+/* Recording studio                                                          */
 /* ------------------------------------------------------------------------ */
 
 function DevicePicker({
@@ -112,7 +124,7 @@ function DevicePicker({
     selected !== null && !devices.some((device) => device.id === selected);
   return (
     <select
-      className="select meet-source-device"
+      className="meet-device"
       value={selected ?? ""}
       disabled={disabled}
       aria-label={label}
@@ -135,9 +147,8 @@ function DevicePicker({
   );
 }
 
-function SourceTile({
+function SourceRow({
   kind,
-  hint,
   enabled,
   locked,
   unavailable,
@@ -145,9 +156,7 @@ function SourceTile({
   onToggle,
 }: {
   kind: SourceKind;
-  hint: string;
   enabled: boolean;
-  /** The last source left on cannot be turned off. */
   locked: boolean;
   unavailable: boolean;
   children: ReactNode;
@@ -155,35 +164,34 @@ function SourceTile({
 }) {
   const { t } = useTranslation();
   const name = sourceName(kind, t);
+  const on = enabled && !unavailable;
   return (
-    <div
-      className={`meet-source${enabled && !unavailable ? " is-on" : ""}`}
-      data-source={kind}
-    >
-      <div className="meet-source-head">
-        <span className="meet-source-icon">
-          <Glyph name={SOURCE_ICON[kind]} />
-        </span>
-        <div className="meet-source-copy">
-          <strong>{name}</strong>
-          <small>
-            {unavailable ? t("ui2.meet.sources.unsupported") : hint}
-          </small>
-        </div>
-        <button
-          className={`toggle${enabled && !unavailable ? " on" : ""}`}
-          type="button"
-          role="switch"
-          aria-checked={enabled && !unavailable}
-          aria-label={name}
-          title={locked ? t("ui2.meet.sources.keepOne") : undefined}
-          disabled={locked || unavailable}
-          onClick={() => onToggle(!enabled)}
-        >
-          <span />
-        </button>
+    <div className={`meet-source${on ? " is-on" : ""}`}>
+      <span className="meet-source-icon">
+        <Glyph name={SOURCE_ICON[kind]} />
+      </span>
+      <div className="meet-source-body">
+        <span className="meet-source-name">{name}</span>
+        {unavailable ? (
+          <span className="meet-source-note">
+            {t("ui2.meet.sources.unsupported")}
+          </span>
+        ) : (
+          children
+        )}
       </div>
-      {!unavailable && children}
+      <button
+        className={`toggle${on ? " on" : ""}`}
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={name}
+        title={locked ? t("ui2.meet.sources.keepOne") : undefined}
+        disabled={locked || unavailable}
+        onClick={() => onToggle(!enabled)}
+      >
+        <span />
+      </button>
     </div>
   );
 }
@@ -203,22 +211,18 @@ function SourceSetup({ meet }: { meet: MeetController }) {
   const micOn = settings.microphone.enabled;
   const systemOn =
     settings.system_audio.enabled && sources.system_audio_supported;
-  const save = (next: typeof settings) => {
+  const save = (next: SourceSettings) => {
     meet.setSources(next).catch((error) => toast.error(errorText(error)));
   };
   return (
     <div className="meet-sources">
-      <SourceTile
+      <SourceRow
         kind="Microphone"
-        hint={t("ui2.meet.sources.microphoneHint")}
         enabled={micOn}
         locked={micOn && !systemOn}
         unavailable={false}
         onToggle={(enabled) =>
-          save({
-            ...settings,
-            microphone: { ...settings.microphone, enabled },
-          })
+          save({ ...settings, microphone: { ...settings.microphone, enabled } })
         }
       >
         <DevicePicker
@@ -233,10 +237,9 @@ function SourceSetup({ meet }: { meet: MeetController }) {
             })
           }
         />
-      </SourceTile>
-      <SourceTile
+      </SourceRow>
+      <SourceRow
         kind="SystemAudio"
-        hint={t("ui2.meet.sources.systemAudioHint")}
         enabled={systemOn}
         locked={systemOn && !micOn}
         unavailable={!sources.system_audio_supported}
@@ -259,7 +262,7 @@ function SourceSetup({ meet }: { meet: MeetController }) {
             })
           }
         />
-      </SourceTile>
+      </SourceRow>
       {micOn && systemOn && (
         <p className="meet-sources-hint">{t("ui2.meet.sources.headphones")}</p>
       )}
@@ -267,64 +270,75 @@ function SourceSetup({ meet }: { meet: MeetController }) {
   );
 }
 
+function Meter({ fraction, label }: { fraction: number; label: string }) {
+  const lit = Math.round(fraction * METER_TICKS);
+  return (
+    <div
+      className="meet-ticks"
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(fraction * 100)}
+    >
+      {Array.from({ length: METER_TICKS }, (_, index) => (
+        <i
+          key={index}
+          className={
+            index < lit
+              ? index >= METER_TICKS - 3
+                ? "on is-hot"
+                : "on"
+              : undefined
+          }
+        />
+      ))}
+    </div>
+  );
+}
+
 function LiveSource({ source }: { source: SourceStatus }) {
   const { t } = useTranslation();
-  const fraction = levelFraction(source.level);
+  const name = sourceName(source.kind, t);
   const note = source.active
-    ? null
+    ? source.name
     : source.kind === "Microphone"
       ? t("ui2.meet.live.micSilent")
       : t("ui2.meet.live.systemWaiting");
   return (
-    <div className="meet-source is-on is-live" data-source={source.kind}>
-      <div className="meet-source-head">
-        <span className="meet-source-icon">
-          <Glyph name={SOURCE_ICON[source.kind]} />
+    <div className="meet-source is-on">
+      <span className="meet-source-icon">
+        <Glyph name={SOURCE_ICON[source.kind]} />
+      </span>
+      <div className="meet-source-body">
+        <span className="meet-source-name">{name}</span>
+        <span className="meet-source-note" title={source.name}>
+          {note}
         </span>
-        <div className="meet-source-copy">
-          <strong>{sourceName(source.kind, t)}</strong>
-          <small title={source.name}>{note ?? source.name}</small>
-        </div>
       </div>
-      <div
-        className="meet-meter"
-        role="meter"
-        aria-label={t("ui2.meet.live.level", {
-          source: sourceName(source.kind, t),
-        })}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(fraction * 100)}
-      >
-        <i style={{ transform: `scaleX(${fraction})` }} />
-      </div>
+      <Meter
+        fraction={levelFraction(source.level)}
+        label={t("ui2.meet.live.level", { source: name })}
+      />
     </div>
   );
 }
 
 function Studio({ meet }: { meet: MeetController }) {
   const { t } = useTranslation();
-  const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const live = useLiveRecording(meet.status.recording);
   const recording = live ?? meet.status.recording;
+  const settings = meet.sources?.settings;
+  const micOn = Boolean(settings?.microphone.enabled);
+  const systemOn = Boolean(
+    settings?.system_audio.enabled && meet.sources?.system_audio_supported,
+  );
 
-  const start = async () => {
+  const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     try {
-      await meet.startRecording(title.trim() || null);
-      setTitle("");
-    } catch (error) {
-      toast.error(errorText(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const stop = async () => {
-    setBusy(true);
-    try {
-      await meet.stopRecording();
+      await action();
     } catch (error) {
       toast.error(errorText(error));
     } finally {
@@ -333,71 +347,79 @@ function Studio({ meet }: { meet: MeetController }) {
   };
 
   if (recording) {
+    const level = Math.max(
+      0,
+      ...recording.sources.map((source) => levelFraction(source.level)),
+    );
     return (
       <section
         className="meet-studio is-recording"
         aria-label={t("ui2.meet.live.label")}
       >
-        <div className="meet-studio-row">
-          <span className="meet-rec-dot" aria-hidden="true" />
-          <div className="meet-live-copy">
-            <strong>{t("ui2.meet.live.recording")}</strong>
-            <span>{t("ui2.meet.live.afterStop")}</span>
-          </div>
-          <span className="meet-clock" role="timer">
-            {formatClock(recording.elapsed_ms)}
-          </span>
+        <div className="meet-studio-main">
           <button
-            className="button meet-stop"
+            className="meet-orb is-live"
             type="button"
             disabled={busy}
-            onClick={stop}
+            aria-label={t("ui2.meet.studio.stop")}
+            title={t("ui2.meet.studio.stop")}
+            style={{ "--level": level } as CSSProperties}
+            onClick={() => void run(meet.stopRecording)}
           >
-            <Glyph name="stop" />
-            {t("ui2.meet.live.stop")}
+            <span className="meet-orb-core" aria-hidden="true" />
           </button>
+          <div className="meet-studio-copy">
+            <strong className="meet-clock" role="timer">
+              {formatClock(recording.elapsed_ms)}
+            </strong>
+            <span className="meet-studio-hint">
+              <span className="meet-live-dot" aria-hidden="true" />
+              {t("ui2.meet.live.recording")}
+            </span>
+          </div>
         </div>
         <div className="meet-sources">
           {recording.sources.map((source) => (
             <LiveSource key={source.kind} source={source} />
           ))}
+          {recording.error && (
+            <p className="meet-inline-error" role="alert">
+              {recording.error}
+            </p>
+          )}
         </div>
-        {recording.error && (
-          <p className="meet-inline-error" role="alert">
-            {recording.error}
-          </p>
-        )}
       </section>
     );
   }
 
+  const summary =
+    micOn && systemOn
+      ? t("ui2.meet.studio.sourcesBoth")
+      : micOn
+        ? t("ui2.meet.studio.sourcesMic")
+        : t("ui2.meet.studio.sourcesSystem");
   return (
     <section className="meet-studio" aria-label={t("ui2.meet.studio.label")}>
-      <form
-        className="meet-studio-row"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void start();
-        }}
-      >
-        <label className="meet-title-field">
-          <span className="sr-only">{t("ui2.meet.studio.titleLabel")}</span>
-          <input
-            value={title}
-            maxLength={120}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder={t("ui2.meet.studio.titlePlaceholder")}
-          />
-        </label>
+      <div className="meet-studio-main">
         <button
-          className="button primary meet-record"
-          type="submit"
-          disabled={busy || !meet.sources}
+          className="meet-start"
+          type="button"
+          disabled={busy || !meet.sources || (!micOn && !systemOn)}
+          onClick={() => void run(() => meet.startRecording(null))}
         >
-          <span className="meet-record-dot" aria-hidden="true" />
-          {busy ? t("ui2.meet.studio.starting") : t("ui2.meet.studio.record")}
+          <span className="meet-orb" aria-hidden="true">
+            <span className="meet-orb-core" />
+          </span>
+          <span className="meet-studio-copy">
+            <strong>
+              {busy
+                ? t("ui2.meet.studio.starting")
+                : t("ui2.meet.studio.start")}
+            </strong>
+            <span className="meet-studio-hint">{summary}</span>
+          </span>
         </button>
-      </form>
+      </div>
       <SourceSetup meet={meet} />
     </section>
   );
@@ -417,38 +439,30 @@ function SpeakerModelNotice({ meet }: { meet: MeetController }) {
     }
   };
   return (
-    <div className="meet-notice">
-      <div className="meet-notice-copy">
-        <strong>{t("ui2.meet.speakerModel.title")}</strong>
-        <p>{t("ui2.meet.speakerModel.body")}</p>
-        {downloading && (
-          <div
-            className="meet-progress"
-            role="progressbar"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={percent}
-          >
-            <i style={{ transform: `scaleX(${percent / 100})` }} />
-          </div>
-        )}
-      </div>
-      <button
-        className="button"
-        type="button"
-        disabled={downloading}
-        onClick={download}
-      >
-        {downloading
-          ? t("ui2.meet.speakerModel.downloading", { percent })
-          : t("ui2.meet.speakerModel.download")}
-      </button>
+    <div className="meet-callout">
+      <p>{t("ui2.meet.speakerModel.body")}</p>
+      {downloading ? (
+        <div
+          className="meet-progress"
+          role="progressbar"
+          aria-label={t("ui2.meet.speakerModel.downloading", { percent })}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+        >
+          <i style={{ transform: `scaleX(${percent / 100})` }} />
+        </div>
+      ) : (
+        <button className="text-button meet-callout-action" onClick={download}>
+          {t("ui2.meet.speakerModel.download")}
+        </button>
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------------ */
-/* Meeting list                                                              */
+/* Recordings                                                                */
 /* ------------------------------------------------------------------------ */
 
 function SourceGlyphs({ sources }: { sources: SourceKind[] }) {
@@ -457,8 +471,8 @@ function SourceGlyphs({ sources }: { sources: SourceKind[] }) {
   return (
     <span
       className="meet-source-glyphs"
-      aria-label={kinds.map((kind) => sourceName(kind, t)).join(", ")}
       role="img"
+      aria-label={kinds.map((kind) => sourceName(kind, t)).join(", ")}
     >
       {kinds.map((kind) => (
         <Glyph key={kind} name={SOURCE_ICON[kind]} />
@@ -467,15 +481,7 @@ function SourceGlyphs({ sources }: { sources: SourceKind[] }) {
   );
 }
 
-function MeetingList({
-  meet,
-  selected,
-  onSelect,
-}: {
-  meet: MeetController;
-  selected: string | null;
-  onSelect: (id: string) => void;
-}) {
+function Recordings({ meet }: { meet: MeetController }) {
   const { t, i18n } = useTranslation();
   const groups = useMemo(
     () => groupByDay(meet.meetings, new Date()),
@@ -499,81 +505,85 @@ function MeetingList({
     [i18n.language],
   );
 
+  let body: ReactNode;
   if (meet.loading) {
-    return (
-      <div className="meet-list meet-list-state">
-        {t("ui2.meet.list.loading")}
-      </div>
-    );
-  }
-  if (meet.loadError) {
-    return (
-      <div className="meet-list meet-list-state">
+    body = <p className="meet-list-state">{t("ui2.meet.list.loading")}</p>;
+  } else if (meet.loadError) {
+    body = (
+      <div className="meet-list-state">
         <p>{t("ui2.meet.list.loadError")}</p>
         <button className="button" type="button" onClick={meet.reload}>
           {t("ui2.meet.list.retry")}
         </button>
       </div>
     );
-  }
-  if (meet.meetings.length === 0) {
-    return (
-      <div className="meet-list meet-list-state">
+  } else if (meet.meetings.length === 0) {
+    body = (
+      <div className="meet-list-empty">
+        <strong>{t("ui2.meet.list.emptyTitle")}</strong>
         <p>{t("ui2.meet.list.empty")}</p>
       </div>
     );
+  } else {
+    const processingId = meet.status.processing?.session_id;
+    const recordingId = meet.status.recording?.session_id;
+    body = groups.map((group) => (
+      <section key={group.key} className="meet-day">
+        <h3>
+          {group.kind === "today"
+            ? t("ui2.meet.list.today")
+            : group.kind === "yesterday"
+              ? t("ui2.meet.list.yesterday")
+              : dayFormat.format(group.day)}
+        </h3>
+        <ul>
+          {group.meetings.map((meeting) => {
+            const state =
+              meeting.id === recordingId
+                ? "recording"
+                : meeting.id === processingId
+                  ? "processing"
+                  : meeting.transcript_revision != null
+                    ? "transcribed"
+                    : "new";
+            return (
+              <li key={meeting.id}>
+                <button
+                  type="button"
+                  className="meet-row"
+                  onClick={() => openMeeting(meeting.id)}
+                >
+                  <time className="meet-row-time">
+                    {timeFormat.format(meeting.created_unix_ms)}
+                  </time>
+                  <span className="meet-row-title">{meeting.title}</span>
+                  <SourceGlyphs sources={meeting.sources} />
+                  <span className="meet-row-duration">
+                    {formatClock(meeting.duration_ms)}
+                  </span>
+                  <span className="meet-row-state" data-state={state}>
+                    {state === "processing" && (
+                      <span className="meet-spinner" aria-hidden="true" />
+                    )}
+                    {t(`ui2.meet.list.state.${state}`)}
+                  </span>
+                  <span className="meet-row-go" aria-hidden="true">
+                    <Glyph name="chev-right" />
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    ));
   }
-  const processingId = meet.status.processing?.session_id;
-  const recordingId = meet.status.recording?.session_id;
+
   return (
-    <nav className="meet-list" aria-label={t("ui2.meet.list.label")}>
-      {groups.map((group) => (
-        <section key={group.key} className="meet-day">
-          <h3>
-            {group.kind === "today"
-              ? t("ui2.meet.list.today")
-              : group.kind === "yesterday"
-                ? t("ui2.meet.list.yesterday")
-                : dayFormat.format(group.day)}
-          </h3>
-          <ul>
-            {group.meetings.map((meeting) => {
-              const state =
-                meeting.id === recordingId
-                  ? "recording"
-                  : meeting.id === processingId
-                    ? "processing"
-                    : meeting.transcript_revision != null
-                      ? "transcribed"
-                      : "new";
-              return (
-                <li key={meeting.id}>
-                  <button
-                    type="button"
-                    className="meet-row"
-                    aria-current={selected === meeting.id ? "true" : undefined}
-                    onClick={() => onSelect(meeting.id)}
-                  >
-                    <span className="meet-row-title">{meeting.title}</span>
-                    <span className="meet-row-meta">
-                      <time>{timeFormat.format(meeting.created_unix_ms)}</time>
-                      <span>{formatClock(meeting.duration_ms)}</span>
-                      <SourceGlyphs sources={meeting.sources} />
-                    </span>
-                    <span className="meet-row-state" data-state={state}>
-                      {state === "processing" && (
-                        <span className="meet-spinner" aria-hidden="true" />
-                      )}
-                      {t(`ui2.meet.list.state.${state}`)}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      ))}
-    </nav>
+    <section className="meet-recordings" aria-labelledby="meet-recordings">
+      <h2 id="meet-recordings">{t("ui2.meet.list.heading")}</h2>
+      {body}
+    </section>
   );
 }
 
@@ -586,13 +596,14 @@ type PlaybackState = "idle" | "loading" | "ready" | "error";
 /** One meeting's mixed audio, prepared on first use. */
 function usePlayback(meet: MeetController, sessionId: string) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const pendingSeek = useRef<number | null>(null);
+  const pending = useRef<{ ms: number; play: boolean } | null>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [state, setState] = useState<PlaybackState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [rate, setRate] = useState<number>(1);
 
   // A blob URL (Linux) holds the file in memory until revoked.
   useEffect(
@@ -602,31 +613,35 @@ function usePlayback(meet: MeetController, sessionId: string) {
     [src],
   );
 
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+  }, [rate, src]);
+
   const load = useCallback(async () => {
-    if (src) return true;
+    if (src) return;
     setState("loading");
     setError(null);
     try {
       setSrc(await meet.loadPlayback(sessionId));
       setState("ready");
-      return true;
     } catch (failure) {
       setError(errorText(failure));
       setState("error");
-      return false;
     }
   }, [meet, sessionId, src]);
 
   const seek = useCallback(
-    async (ms: number) => {
+    async (ms: number, play = true) => {
       const audio = audioRef.current;
+      const at = Math.max(0, ms);
       if (audio && src && audio.readyState >= 1) {
-        audio.currentTime = ms / 1_000;
-        setPosition(ms);
-        void audio.play().catch(() => undefined);
+        audio.currentTime = at / 1_000;
+        setPosition(at);
+        if (play) void audio.play().catch(() => undefined);
         return;
       }
-      pendingSeek.current = ms;
+      pending.current = { ms: at, play };
+      setPosition(at);
       await load();
     },
     [load, src],
@@ -635,14 +650,34 @@ function usePlayback(meet: MeetController, sessionId: string) {
   const toggle = useCallback(async () => {
     const audio = audioRef.current;
     if (!src) {
-      pendingSeek.current = 0;
-      await load();
+      await seek(position, true);
       return;
     }
     if (!audio) return;
     if (audio.paused) void audio.play().catch(() => undefined);
     else audio.pause();
-  }, [load, src]);
+  }, [position, seek, src]);
+
+  const skip = useCallback(
+    (delta: number) => {
+      const audio = audioRef.current;
+      const limit = duration > 0 ? duration : Number.POSITIVE_INFINITY;
+      void seek(
+        Math.min(limit, position + delta),
+        Boolean(audio && !audio.paused),
+      );
+    },
+    [duration, position, seek],
+  );
+
+  const cycleRate = useCallback(() => {
+    setRate((current) => {
+      const index = PLAYBACK_RATES.indexOf(
+        current as (typeof PLAYBACK_RATES)[number],
+      );
+      return PLAYBACK_RATES[(index + 1) % PLAYBACK_RATES.length];
+    });
+  }, []);
 
   const audioProps = {
     ref: audioRef,
@@ -650,12 +685,13 @@ function usePlayback(meet: MeetController, sessionId: string) {
     preload: "metadata" as const,
     onLoadedMetadata: (event: SyntheticEvent<HTMLAudioElement>) => {
       const audio = event.currentTarget;
+      audio.playbackRate = rate;
       setDuration(Number.isFinite(audio.duration) ? audio.duration * 1_000 : 0);
-      const at = pendingSeek.current;
-      pendingSeek.current = null;
-      if (at !== null) {
-        audio.currentTime = at / 1_000;
-        void audio.play().catch(() => undefined);
+      const next = pending.current;
+      pending.current = null;
+      if (next) {
+        audio.currentTime = next.ms / 1_000;
+        if (next.play) void audio.play().catch(() => undefined);
       }
     },
     onTimeUpdate: (event: SyntheticEvent<HTMLAudioElement>) =>
@@ -675,43 +711,78 @@ function usePlayback(meet: MeetController, sessionId: string) {
     playing,
     position,
     duration,
+    rate,
     toggle,
     seek,
+    skip,
+    cycleRate,
     audioProps,
   };
 }
+
+type Playback = ReturnType<typeof usePlayback>;
 
 function Player({
   playback,
   fallbackDuration,
 }: {
-  playback: ReturnType<typeof usePlayback>;
+  playback: Playback;
   fallbackDuration: number;
 }) {
   const { t } = useTranslation();
   const duration = playback.duration || fallbackDuration;
   const loading = playback.state === "loading";
+  const progress = duration > 0 ? (playback.position / duration) * 100 : 0;
   return (
-    <div className="meet-player">
+    <div
+      className="meet-dock"
+      role="region"
+      aria-label={t("ui2.meet.player.label")}
+    >
       <audio {...playback.audioProps} />
-      <button
-        className="meet-play"
-        type="button"
-        disabled={loading}
-        aria-label={
-          playback.playing
-            ? t("ui2.meet.player.pause")
-            : t("ui2.meet.player.play")
-        }
-        onClick={() => void playback.toggle()}
-      >
-        {loading ? (
-          <span className="meet-spinner" aria-hidden="true" />
-        ) : (
-          <Glyph name={playback.playing ? "pause" : "play"} />
-        )}
-      </button>
-      <span className="meet-player-time">{formatClock(playback.position)}</span>
+      {playback.state === "error" && (
+        <p className="meet-dock-error" role="alert">
+          {playback.error ?? t("ui2.meet.player.failed")}
+        </p>
+      )}
+      <div className="meet-dock-controls">
+        <button
+          className="meet-dock-skip"
+          type="button"
+          aria-label={t("ui2.meet.player.back")}
+          title={t("ui2.meet.player.back")}
+          onClick={() => playback.skip(-SKIP_MS)}
+        >
+          <Glyph name="back10" />
+        </button>
+        <button
+          className="meet-play"
+          type="button"
+          disabled={loading}
+          aria-label={
+            playback.playing
+              ? t("ui2.meet.player.pause")
+              : t("ui2.meet.player.play")
+          }
+          onClick={() => void playback.toggle()}
+        >
+          {loading ? (
+            <span className="meet-spinner" aria-hidden="true" />
+          ) : (
+            <Glyph name={playback.playing ? "pause" : "play"} />
+          )}
+        </button>
+        <button
+          className="meet-dock-skip"
+          type="button"
+          aria-label={t("ui2.meet.player.forward")}
+          title={t("ui2.meet.player.forward")}
+          onClick={() => playback.skip(SKIP_MS)}
+        >
+          <Glyph name="fwd10" />
+        </button>
+      </div>
+      <span className="meet-dock-time">{formatClock(playback.position)}</span>
       <input
         className="meet-scrubber"
         type="range"
@@ -719,31 +790,29 @@ function Player({
         max={Math.max(1, Math.round(duration))}
         step={100}
         value={Math.min(playback.position, duration)}
-        disabled={loading}
         aria-label={t("ui2.meet.player.position")}
         aria-valuetext={formatClock(playback.position)}
-        style={{
-          ["--progress" as string]: `${duration > 0 ? (playback.position / duration) * 100 : 0}%`,
-        }}
-        onChange={(event) => void playback.seek(Number(event.target.value))}
+        style={{ "--progress": `${progress}%` } as CSSProperties}
+        onChange={(event) =>
+          void playback.seek(Number(event.target.value), playback.playing)
+        }
       />
-      <span className="meet-player-time">{formatClock(duration)}</span>
-      {loading && (
-        <span className="meet-player-note" role="status">
-          {t("ui2.meet.player.preparing")}
-        </span>
-      )}
-      {playback.state === "error" && (
-        <span className="meet-inline-error" role="alert">
-          {playback.error ?? t("ui2.meet.player.failed")}
-        </span>
-      )}
+      <span className="meet-dock-time">{formatClock(duration)}</span>
+      <button
+        className="meet-rate"
+        type="button"
+        aria-label={t("ui2.meet.player.speed", { rate: playback.rate })}
+        title={t("ui2.meet.player.speed", { rate: playback.rate })}
+        onClick={playback.cycleRate}
+      >
+        {playback.rate}×
+      </button>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------------ */
-/* Transcript                                                                */
+/* Recording view                                                            */
 /* ------------------------------------------------------------------------ */
 
 interface SpeakerLook {
@@ -845,14 +914,20 @@ function ProcessingSteps({ stage }: { stage: Stage }) {
   );
 }
 
-function MeetingDetail({
+function isTyping(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName))
+  );
+}
+
+function MeetingView({
   meet,
   meeting,
-  onDeleted,
 }: {
   meet: MeetController;
   meeting: MeetingSummary;
-  onDeleted: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const [transcript, setTranscript] = useState<TranscriptRevision | null>(null);
@@ -861,6 +936,7 @@ function MeetingDetail({
   const processing = meet.status.processing;
   const isProcessing = processing?.session_id === meeting.id;
   const isRecording = meet.status.recording?.session_id === meeting.id;
+  const otherRecording = Boolean(meet.status.recording) && !isRecording;
   const playback = usePlayback(meet, meeting.id);
 
   useEffect(() => {
@@ -876,6 +952,19 @@ function MeetingDetail({
       active = false;
     };
   }, [meet, meeting.id, meeting.transcript_revision]);
+
+  // Space plays and pauses, as in every media app.
+  const { toggle } = playback;
+  useEffect(() => {
+    if (isRecording) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "Space" || isTyping(event.target)) return;
+      event.preventDefault();
+      void toggle();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isRecording, toggle]);
 
   const turns = useMemo(
     () => (transcript ? buildTurns(transcript) : []),
@@ -944,7 +1033,7 @@ function MeetingDetail({
     if (!confirmed) return;
     try {
       await meet.deleteMeeting(meeting.id);
-      onDeleted();
+      openMeeting(null);
     } catch (error) {
       toast.error(errorText(error));
     }
@@ -958,8 +1047,8 @@ function MeetingDetail({
     ),
   ];
   const when = new Intl.DateTimeFormat(i18n.language, {
-    weekday: "short",
-    month: "short",
+    weekday: "long",
+    month: "long",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
@@ -974,6 +1063,13 @@ function MeetingDetail({
       <div className="meet-empty">
         <strong>{t("ui2.meet.detail.recordingTitle")}</strong>
         <p>{t("ui2.meet.detail.recordingBody")}</p>
+        <button
+          className="button"
+          type="button"
+          onClick={() => openMeeting(null)}
+        >
+          {t("ui2.meet.detail.backToRecorder")}
+        </button>
       </div>
     );
   } else if (transcript) {
@@ -1061,63 +1157,81 @@ function MeetingDetail({
   }
 
   return (
-    <article className="meet-detail" aria-labelledby="meet-detail-title">
-      <header className="meet-detail-head">
-        <div className="meet-detail-title">
-          <h2 id="meet-detail-title">{meeting.title}</h2>
-          <p className="meet-detail-meta">
-            <span>{when}</span>
-            <span>{formatClock(meeting.duration_ms)}</span>
-            <span>{sourcesText}</span>
-          </p>
-        </div>
-        <div className="meet-detail-actions">
-          {isProcessing ? (
-            <button className="button" type="button" onClick={cancel}>
-              {t("ui2.meet.detail.cancel")}
+    <article className="meet-view" aria-labelledby="meet-view-title">
+      <header className="meet-view-head">
+        <div className="meet-view-nav">
+          <button
+            className="meet-back"
+            type="button"
+            onClick={() => openMeeting(null)}
+          >
+            <Glyph name="chev-left" />
+            {t("ui2.meet.detail.back")}
+          </button>
+          {otherRecording && (
+            <button
+              className="meet-live-pill"
+              type="button"
+              onClick={() => openMeeting(null)}
+            >
+              <span className="meet-live-dot" aria-hidden="true" />
+              {t("ui2.meet.live.recording")}
             </button>
-          ) : (
-            meeting.transcript_revision != null && (
-              <button
-                className="button"
-                type="button"
-                disabled={isRecording || processing != null}
-                onClick={runProcess}
-              >
-                <Glyph name="refresh" />
-                {t("ui2.meet.detail.reprocess")}
-              </button>
-            )
           )}
-          <button
-            className="icon-button"
-            type="button"
-            disabled={turns.length === 0}
-            aria-label={t("ui2.meet.detail.copy")}
-            title={t("ui2.meet.detail.copy")}
-            onClick={copy}
-          >
-            <Glyph name="copy" />
-          </button>
-          <button
-            className="icon-button meet-delete"
-            type="button"
-            disabled={isRecording || isProcessing}
-            aria-label={t("ui2.meet.detail.delete")}
-            title={t("ui2.meet.detail.delete")}
-            onClick={remove}
-          >
-            <Glyph name="trash" />
-          </button>
+        </div>
+        <div className="meet-view-title">
+          <div>
+            <h1 id="meet-view-title">{meeting.title}</h1>
+            <p className="meet-meta">
+              <span>{when}</span>
+              <span>{formatClock(meeting.duration_ms)}</span>
+              <span>{sourcesText}</span>
+            </p>
+          </div>
+          <div className="meet-view-actions">
+            {isProcessing ? (
+              <button className="button" type="button" onClick={cancel}>
+                {t("ui2.meet.detail.cancel")}
+              </button>
+            ) : (
+              meeting.transcript_revision != null && (
+                <button
+                  className="button"
+                  type="button"
+                  disabled={isRecording || processing != null}
+                  onClick={runProcess}
+                >
+                  <Glyph name="refresh" />
+                  {t("ui2.meet.detail.reprocess")}
+                </button>
+              )
+            )}
+            <button
+              className="icon-button"
+              type="button"
+              disabled={turns.length === 0}
+              aria-label={t("ui2.meet.detail.copy")}
+              title={t("ui2.meet.detail.copy")}
+              onClick={copy}
+            >
+              <Glyph name="copy" />
+            </button>
+            <button
+              className="icon-button meet-delete"
+              type="button"
+              disabled={isRecording || isProcessing}
+              aria-label={t("ui2.meet.detail.delete")}
+              title={t("ui2.meet.detail.delete")}
+              onClick={remove}
+            >
+              <Glyph name="trash" />
+            </button>
+          </div>
         </div>
       </header>
 
       {isProcessing && processing && (
         <ProcessingSteps stage={processing.stage} />
-      )}
-
-      {!isRecording && (
-        <Player playback={playback} fallbackDuration={meeting.duration_ms} />
       )}
 
       {notes.map((note) => (
@@ -1131,65 +1245,69 @@ function MeetingDetail({
         </p>
       )}
 
-      {body}
+      <div className="meet-view-body">{body}</div>
+
+      {!isRecording && (
+        <Player playback={playback} fallbackDuration={meeting.duration_ms} />
+      )}
     </article>
   );
 }
 
-export function MeetPage() {
+export function MeetPage({ meetingId }: { meetingId: string | null }) {
   const { t } = useTranslation();
   const meet = useMeetController();
-  const [selected, setSelected] = useState<string | null>(null);
-  const meeting =
-    meet.meetings.find((m) => m.id === selected) ?? meet.meetings[0] ?? null;
+  const pageRef = useRef<HTMLElement>(null);
+  const meeting = meetingId
+    ? (meet.meetings.find((m) => m.id === meetingId) ?? null)
+    : null;
 
-  // Follow a just-started recording.
-  const recordingId = meet.status.recording?.session_id;
+  // Each view starts at its top.
   useEffect(() => {
-    if (recordingId) setSelected(recordingId);
-  }, [recordingId]);
+    pageRef.current?.scrollTo({ top: 0 });
+  }, [meetingId]);
 
-  return (
-    <section className="page active" data-page-panel="meet">
-      <div className="page-wrap wide">
-        <div className="page-header">
-          <div>
-            <h1>{t("ui2.meet.name")}</h1>
-            <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-          </div>
-        </div>
+  let content: ReactNode;
+  if (meetingId) {
+    content = meeting ? (
+      <MeetingView key={meeting.id} meet={meet} meeting={meeting} />
+    ) : meet.loading ? null : (
+      <div className="meet-empty">
+        <strong>{t("ui2.meet.detail.missing")}</strong>
+        <button
+          className="button"
+          type="button"
+          onClick={() => openMeeting(null)}
+        >
+          {t("ui2.meet.detail.back")}
+        </button>
+      </div>
+    );
+  } else {
+    content = (
+      <>
+        <header className="meet-head">
+          <h1>{t("ui2.meet.name")}</h1>
+          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
+        </header>
         <Studio meet={meet} />
         <SpeakerModelNotice meet={meet} />
         {meet.status.last_error && (
-          <div className="meet-notice is-error" role="alert">
-            <div className="meet-notice-copy">
-              <strong>{t("ui2.meet.processFailed")}</strong>
-              <p>{meet.status.last_error}</p>
-            </div>
+          <div className="meet-callout is-error" role="alert">
+            <p>
+              <strong>{t("ui2.meet.processFailed")}</strong>{" "}
+              {meet.status.last_error}
+            </p>
           </div>
         )}
-        <div className="meet-layout">
-          <MeetingList
-            meet={meet}
-            selected={meeting?.id ?? null}
-            onSelect={setSelected}
-          />
-          {meeting ? (
-            <MeetingDetail
-              key={meeting.id}
-              meet={meet}
-              meeting={meeting}
-              onDeleted={() => setSelected(null)}
-            />
-          ) : (
-            !meet.loading && (
-              <div className="meet-detail meet-detail-empty">
-                <p>{t("ui2.meet.detail.pick")}</p>
-              </div>
-            )
-          )}
-        </div>
-      </div>
+        <Recordings meet={meet} />
+      </>
+    );
+  }
+
+  return (
+    <section ref={pageRef} className="page active" data-page-panel="meet">
+      <div className="page-wrap meet-wrap">{content}</div>
     </section>
   );
 }

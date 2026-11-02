@@ -35,7 +35,7 @@ export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
 export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
-  | { page: "meet" }
+  | { page: "meet"; meeting?: string }
   | { page: "agent" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
@@ -50,6 +50,8 @@ export function routeFromHash(hash: string): AppRoute {
 
   if (path === "/history") return { page: "history" };
   if (path === "/meet") return { page: "meet" };
+  const meetingMatch = path.match(/^\/meet\/([A-Za-z0-9-]+)$/);
+  if (meetingMatch) return { page: "meet", meeting: meetingMatch[1] };
   if (path === "/agent" || path === "/tools/agent") return { page: "agent" };
   // Legacy destination from the brief period About was its own tab.
   if (path === "/about") return { page: "settings", section: "about" };
@@ -93,6 +95,7 @@ export function hashForRoute(route: AppRoute): string {
   if (route.page === "settings") return `#/settings/${route.section}`;
   if (route.page === "tools") return `#/tools/${route.section}`;
   if (route.page === "extensions") return `#/extensions/${route.view}`;
+  if (route.page === "meet" && route.meeting) return `#/meet/${route.meeting}`;
   return `#/${route.page}`;
 }
 

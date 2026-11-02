@@ -187,6 +187,20 @@ function IconSprite() {
       <symbol id="i-stop" viewBox="0 0 24 24">
         <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
       </symbol>
+      <symbol id="i-chev-left" viewBox="0 0 24 24">
+        <path d="m14.5 6-6 6 6 6" />
+      </symbol>
+      <symbol id="i-chev-right" viewBox="0 0 24 24">
+        <path d="m9.5 6 6 6-6 6" />
+      </symbol>
+      <symbol id="i-back10" viewBox="0 0 24 24">
+        <path d="M5 12.5a7 7 0 1 0 2.1-5" />
+        <path d="M6.5 3.5v4h4" />
+      </symbol>
+      <symbol id="i-fwd10" viewBox="0 0 24 24">
+        <path d="M19 12.5a7 7 0 1 1-2.1-5" />
+        <path d="M17.5 3.5v4h-4" />
+      </symbol>
       <symbol id="i-command" viewBox="0 0 24 24">
         <path d="M9 6a3 3 0 1 0-3 3h3zM15 6a3 3 0 1 1 3 3h-3zM9 15H6a3 3 0 1 0 3 3zM15 15h3a3 3 0 1 1-3 3zM9 9h6v6H9z" />
       </symbol>
@@ -701,7 +715,7 @@ function NextShell() {
         {route.page === "history" ? (
           <HistorySettings variant="next" controller={history} />
         ) : route.page === "meet" ? (
-          <MeetPage />
+          <MeetPage meetingId={route.meeting ?? null} />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (
