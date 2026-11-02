@@ -543,3 +543,14 @@ new persistence command in owned grain_shortcuts.rs rather than exposing
 Handy's two shared setters (including an unused threshold setting). This is
 reviewed removal/ownership divergence, not added feature code in the shared tree.
 No new diverged shared file or native fork change is accepted.
+
+## Grain Meet after the main merge (2026-11-02)
+
+Merging main (Handy #2315 file transcription, onboarding, paste, catalogue, shortcut and macOS ports) under the Grain Meet hooks moves only these budgets, each the same reviewed hook measured on the newer base:
+
+| Shared path | Main | Accepted | Reason |
+| --- | --- | --- | --- |
+| lib.rs | 1323 | 1340 | `mod grain_meet;`, the Grain Meet commands and events in the existing lists (17 lines, listed above). |
+| managers/transcription.rs | 120 | 121 | The dictation `LoadSpec` names `Role::Asr` (listed above). |
+
+The meeting inference claim uses the shared `claim_foreground` so an in-flight file transcription chunk finishes first; that logic is in Grain-owned `grain_transcription_manager.rs`. No other shared file changes.
