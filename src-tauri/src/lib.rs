@@ -74,6 +74,7 @@ mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of up
 // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
 // every `crate::settings::` path working.
 mod grain_settings;
+mod grain_shortcuts;
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
 mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
@@ -348,6 +349,12 @@ fn apply_window_corner_rounding(window: &tauri::WebviewWindow) {
 }
 
 fn show_main_window(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
+            log::error!("Failed to set activation policy to Regular: {}", e);
+        }
+    }
     // [GRAIN] The window is destroyed on close to free RAM, so recreate it if
     // absent. Every reopen path (tray, single-instance, macOS Reopen) lands here.
     let main_window = match app.get_webview_window("main") {
@@ -369,12 +376,6 @@ fn show_main_window(app: &AppHandle) {
     }
     if let Err(e) = main_window.set_focus() {
         log::error!("Failed to focus webview window: {}", e);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
-            log::error!("Failed to set activation policy to Regular: {}", e);
-        }
     }
 }
 
@@ -504,15 +505,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     #[cfg(unix)]
     signal_handle::setup_signal_handler(app_handle.clone());
 
-    // Apply macOS Accessory policy if starting hidden and tray is available.
-    // If the tray icon is disabled, keep the dock icon so the user can reopen.
-    #[cfg(target_os = "macos")]
-    {
-        let settings = settings::get_settings(app_handle);
-        if settings.start_hidden && settings.show_tray_icon {
-            let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-        }
-    }
+    // [GRAIN] Launch policy is chosen before run(); never demote an activated
+    // application during setup just because start-hidden is selected.
     // Get the current theme to set the appropriate initial icon
     let initial_theme = tray::get_current_theme(app_handle);
 
@@ -1063,7 +1057,8 @@ pub fn run(cli_args: CliArgs) {
         }));
     }
 
-    builder
+    #[allow(unused_mut)]
+    let mut app = builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1320,37 +1315,48 @@ pub fn run(cli_args: CliArgs) {
         })
         .invoke_handler(invoke_handler)
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(move |app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = &event {
-                show_main_window(app);
+        .expect("error while building tauri application");
+
+    // [GRAIN] Core settings are created during setup/Ready, so start GUI
+    // launches as Accessory. The existing show-window decision promotes to
+    // Regular for visible/no-tray/onboarding/update launches. Accessory ->
+    // Regular is supported; a post-launch Regular -> Accessory demotion is not
+    // reliable on recent macOS. Headless CLI runs keep their original policy.
+    #[cfg(target_os = "macos")]
+    if !headless_mode {
+        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    }
+
+    app.run(move |app, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = &event {
+            show_main_window(app);
+        }
+        // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
+        // process alive in the tray so dictation/rolling/pill keep working —
+        // unless launched with --no-tray, where closing is meant to quit. The
+        // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+            // An updater restart must pass through even though ordinary
+            // window closure keeps the process alive in the tray.
+            if should_prevent_tray_exit(
+                *code,
+                app.state::<CliArgs>().no_tray,
+                INTENTIONAL_QUIT.load(Ordering::Relaxed),
+            ) {
+                api.prevent_exit();
             }
-            // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
-            // process alive in the tray so dictation/rolling/pill keep working —
-            // unless launched with --no-tray, where closing is meant to quit. The
-            // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
-                // An updater restart must pass through even though ordinary
-                // window closure keeps the process alive in the tray.
-                if should_prevent_tray_exit(
-                    *code,
-                    app.state::<CliArgs>().no_tray,
-                    INTENTIONAL_QUIT.load(Ordering::Relaxed),
-                ) {
-                    api.prevent_exit();
-                }
+        }
+        if let tauri::RunEvent::Exit = &event {
+            if let Some(ctx) = app
+                .try_state::<Arc<grain_core::AppContext>>()
+                .filter(|_| !headless_mode)
+            {
+                events_server::disable_dev_control(&ctx.data_dir);
             }
-            if let tauri::RunEvent::Exit = &event {
-                if let Some(ctx) = app
-                    .try_state::<Arc<grain_core::AppContext>>()
-                    .filter(|_| !headless_mode)
-                {
-                    events_server::disable_dev_control(&ctx.data_dir);
-                }
-            }
-            let _ = (app, event); // suppress unused warnings on non-macOS
-        });
+        }
+        let _ = (app, event); // suppress unused warnings on non-macOS
+    });
 }
 
 // Keep non-visual binding generation on the same registry the application uses.
@@ -1362,7 +1368,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_update::install_update,
             shortcut::change_binding,
             shortcut::reset_binding,
-            shortcut::change_ptt_setting,
+            grain_shortcuts::change_shortcut_activation_setting,
             shortcut::change_audio_feedback_setting,
             shortcut::change_audio_feedback_volume_setting,
             shortcut::change_sound_theme_setting,

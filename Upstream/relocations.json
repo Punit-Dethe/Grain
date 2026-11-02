@@ -108,5 +108,15 @@
       "src-tauri/src/grain_audio_manager.rs"
     ],
     "why": "Handy recorder is now a dependency; the shared CaptureSink is the Grain journal/retention seam. Review first-sample acknowledgement, partial valid tail, disabled VAD, frame geometry, Prompt Record marks, cancellation and disconnect cleanup across Grain callers."
+  },
+  "src-tauri/src/transcription_coordinator.rs": {
+    "kind": "relocated",
+    "grain": [
+      "src-tauri/src/handy/transcription_coordinator.rs",
+      "src-tauri/src/grain_coordinator.rs",
+      "src-tauri/src/grain_dictation_routing.rs",
+      "src-tauri/src/grain_shortcuts.rs"
+    ],
+    "why": "Handy owns the production CoordinatorState, grace/debounce/hold/busy-input transitions and sequence tests. Grain delegates runtime effects and alternate AI finish to an owned include so capture admission and the action resolved at start survive through stop. Review both shared transitions and owned effects when upstream changes coordinator behavior."
   }
 }

@@ -406,6 +406,16 @@ pub enum PasteMethod {
     ExternalScript,
 }
 
+/// How the dictation shortcut starts and ends a recording.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutActivation {
+    #[default]
+    Toggle,
+    PushToTalk,
+    HoldOrToggle,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipboardHandling {
@@ -603,7 +613,7 @@ pub struct AppSettings {
     #[serde(default)]
     pub settings_schema_version: u32,
     pub bindings: HashMap<String, ShortcutBinding>,
-    pub push_to_talk: bool,
+    pub shortcut_activation: ShortcutActivation,
     /// Setup is committed only after the final shortcut screen succeeds.
     #[serde(default)]
     pub onboarding_completed: bool,
@@ -1639,7 +1649,7 @@ pub fn get_default_settings() -> AppSettings {
         bindings,
         // [GRAIN] Push-to-talk defaults OFF — a fresh install uses toggle-style
         // capture (press once to start, again to stop) rather than hold-to-talk.
-        push_to_talk: false,
+        shortcut_activation: ShortcutActivation::Toggle,
         audio_feedback: false,
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),

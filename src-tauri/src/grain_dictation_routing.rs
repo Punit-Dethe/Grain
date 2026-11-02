@@ -9,6 +9,16 @@ use tauri::{AppHandle, Manager};
 use crate::managers::model::ModelManager;
 use crate::settings::get_settings;
 
+pub(crate) fn is_coordinated_binding(id: &str) -> bool {
+    matches!(
+        id,
+        "transcribe"
+            | "transcribe_with_post_process"
+            | "transcribe_send_to_ai"
+            | "transcribe_native_asr"
+    )
+}
+
 pub(crate) fn action_id_for(app: &AppHandle, binding_id: &str) -> String {
     let settings = get_settings(app);
     let action_id = grain_core::capture::action_id_for(&settings, binding_id);

@@ -221,6 +221,7 @@ coverage for `grain_* as upstream_name` inert module aliases.
 | `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`src-tauri/src/tdt_flow.rs`<br>`crates/grain-tdt/src`<br>`src-tauri/src/grain_overlay.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src-tauri/src/grain_transcription.rs`<br>`src-tauri/src/grain_transcription_manager.rs`<br>`src-tauri/src/grain_engine.rs`<br>`src-tauri/src/context_bias.rs` |
 | `src-tauri/src/overlay.rs` | relocated | `src-tauri/src/handy/overlay.rs`<br>`src-tauri/src/grain_overlay.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src/app/overlay/wave.ts`<br>`src/app/overlay/overlay.css`<br>`src-tauri/src/grain_events.rs`<br>`recording-overlay.html`<br>`vite.config.ts`<br>`src-tauri/src/pill_icon.rs`<br>`src-tauri/src/surface_watch.rs`<br>`src/app/overlay/main.tsx`<br>`crates/grain-sdk/src/event.rs` |
 | `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs`<br>`crates/grain-core/src/context.rs`<br>`src/app/components/settings/ShowOverlay.tsx`<br>`src/app/components/settings/PillCloseButton.tsx`<br>`src/app/components/settings/PillAppIcon.tsx`<br>`src/app/stores/settingsStore.ts`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx`<br>`crates/grain-core/src/providers.rs`<br>`src-tauri/src/grain_provider_commands.rs`<br>`src/app/stores/ppPoolStore.ts`<br>`src/app/components/settings/post-processing/pool/PostProcessingPool.tsx`<br>`src/app/components/settings/experimentations/AgentSection.tsx`<br>`src/app/components/settings/DecodeSettings.tsx` |
+| `src-tauri/src/transcription_coordinator.rs` | relocated | `src-tauri/src/handy/transcription_coordinator.rs`<br>`src-tauri/src/grain_coordinator.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src-tauri/src/grain_shortcuts.rs` |
 
 <!-- END GENERATED RELOCATION POLICY -->
 
@@ -480,3 +481,40 @@ Reviewed post-merge ratchet changes against #2315:
 
 No deleted upstream file, stray root source, native fork change or unassessed
 feature is being accepted by this budget update.
+
+## Deferred shortcut/macOS ports adopted — 2 November 2026
+
+#1910/#1971: shared coordinator transitions and tests come from canonical
+`c62a5fcdef4196e0ab36ea56cd3863f8f17fd9c5`. #2303's later Try-it events remain
+excluded because Grain already owns the recording/overlay event contract. Keep
+Handy's machine verbatim around marked Grain effect/input hooks. Runtime capture
+admission, start acknowledgement, retained action and alternate AI finish live
+in `grain_coordinator.rs`; activation persistence and shadow identity policy live
+in `grain_shortcuts.rs`. Core settings own ShortcutActivation with Grain's Toggle
+default; the 300 ms threshold is a constant, not an unused settings subsystem.
+A new structured coordinator relocation rule gates future upstream changes.
+
+#2002: adopt current canonical secure_input.rs differential reconciliation;
+retain only the Prompt Record eligibility hook, platform-gated event import and
+owned/testable registration-identity call. No new Carbon manager or polling loop.
+
+#2003: root composition launches GUI as Accessory before run, promoting before
+main-window creation when the existing launch/reopen decision needs Regular.
+Core is created at Ready, so do not copy an upstream pre-run get_settings call
+or create a duplicate Core. Headless launches, no-tray reachability, update
+restart, window destruction and Agent lifetime remain Grain-owned. macOS native
+acceptance remains pending; Windows compilation does not validate Cocoa behavior.
+
+Review shared-file ratchet changes for these integration seams only. There is
+no native fork/dependency/ABI change and no authorization to merge held language
+detection or single-writer tray coordination. Hero UI edits are unrelated and
+must remain unstaged in the developer checkout.
+
+Measured post-adoption boundary review: secure_input.rs shrinks 212 → 10 lines,
+shortcut/handler.rs 12 → 7, transcription_coordinator.rs 1669 → 101, lib.rs
+1335 → 1323, and signal_handle.rs converges 2 → 0. shortcut/mod.rs grows
+441 → 446 only because Grain removes the old boolean setter and keeps the
+new persistence command in owned grain_shortcuts.rs rather than exposing
+Handy's two shared setters (including an unused threshold setting). This is
+reviewed removal/ownership divergence, not added feature code in the shared tree.
+No new diverged shared file or native fork change is accepted.

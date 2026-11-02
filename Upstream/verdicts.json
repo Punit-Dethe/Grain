@@ -1,4 +1,7 @@
 {
+  "00d255492d3aa3585c762142d54273447b6752bc": {
+    "notes": "2026-11-02: adopted differential Secure Input Carbon reconciliation, preserving unchanged callback-id/chord registrations so held keys keep their release. Grain Prompt Record eligibility retained. The actual identity comparator is covered by host-independent unit tests; native macOS acceptance remains pending."
+  },
   "055c7a5eb87305ff6e8348aa164de6c6745a3b50": {
     "status": "Ignored",
     "notes": "Reorders Handy Development Setup heading in its README; Grain has its own Build from source section",
@@ -201,6 +204,16 @@
           "src-tauri/src/context_bias.rs"
         ],
         "evidence": "The active manager and owned grain_transcription_manager use the new effective-language API with an empty preference list, retaining existing explicit recognition intent and native capabilities. Distinct Chinese regional output types reach native conversion and settings. No acoustic language-ID model, worker or inference pass is added."
+      },
+      "src-tauri/src/transcription_coordinator.rs": {
+        "outcome": "not-applicable",
+        "destinations": [
+          "src-tauri/src/handy/transcription_coordinator.rs",
+          "src-tauri/src/grain_coordinator.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src-tauri/src/grain_shortcuts.rs"
+        ],
+        "evidence": "The coordinator portion adds events for Handys replacement Try-it onboarding. Grain keeps its own onboarding and generation-tagged recording/overlay bridge; no consumer requires these extra events. Shared activation policy is imported at c62a5fc, preserving all runtime fixes before this telemetry-only edit."
       }
     },
     "frontend_review": {
@@ -534,7 +547,19 @@
     "notes": "Safely merged into `tray.rs`"
   },
   "31d8fc2442c2412d6e9de6e018cf70edfbc37ca5": {
-    "notes": "transcribe.cpp introduction — Grain's entire transcription is unified on transcribe-cpp (managers/transcription.rs); absorbed as architecture, not a discrete port."
+    "notes": "transcribe.cpp introduction — Grain's entire transcription is unified on transcribe-cpp (managers/transcription.rs); absorbed as architecture, not a discrete port.",
+    "ports": {
+      "src-tauri/src/transcription_coordinator.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/transcription_coordinator.rs",
+          "src-tauri/src/grain_coordinator.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src-tauri/src/grain_shortcuts.rs"
+        ],
+        "evidence": "The current production coordinator retains the is_some_and start acknowledgement and debounce logic; Grain runtime start acknowledges actual recording before retaining its resolved action."
+      }
+    }
   },
   "330b2ddbed3daab8f1fb09385cc1aaf73708e9d7": {
     "frontend_review": {
@@ -648,7 +673,19 @@
     "status": "Ignored"
   },
   "438582fc64321a8a17838db6703079ccdcc15982": {
-    "notes": "Deferral gate auto-threaded ahead of Grain debounce/send-to-AI; 7 new tests pass"
+    "notes": "Deferral gate auto-threaded ahead of Grain debounce/send-to-AI; 7 new tests pass",
+    "ports": {
+      "src-tauri/src/transcription_coordinator.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/transcription_coordinator.rs",
+          "src-tauri/src/grain_coordinator.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src-tauri/src/grain_shortcuts.rs"
+        ],
+        "evidence": "The shared production CoordinatorState and its real sequence tests retain X11 release-grace absorption, pending release cancellation and genuine release behavior across all activation modes."
+      }
+    }
   },
   "45e3eed8df242339453cda16888376d6305c06b5": {
     "notes": "Updated `it` translations."
@@ -1500,28 +1537,62 @@
   },
   "c62a5fcdef4196e0ab36ea56cd3863f8f17fd9c5": {
     "frontend_review": {
-      "outcome": "not-applicable",
-      "problem": "New hold-or-toggle shortcut mode",
-      "destinations": [],
-      "evidence": "Grain currently uses a boolean push-to-talk contract plus Flow-specific start/stop routing; upstream UI commands are absent. Feature deferred for a dedicated capture-mode port."
+      "outcome": "adapted",
+      "problem": "Expose the new three-mode activation contract without losing Grain capture and AI routing.",
+      "destinations": [
+        "src/app/components/settings/ShortcutActivation.tsx",
+        "src/app/settings/panes/CapturePane.tsx",
+        "src/app/components/settings/capture/CaptureModes.tsx",
+        "src/app/quick-panel/registry.ts",
+        "src/app/stores/settingsStore.ts"
+      ],
+      "evidence": "Replaced the old push-to-talk switch with the existing settings Dropdown for toggle, hold and hold-or-toggle; kept Toggle default and 300 ms boundary. Cancel/AI settings stay available for locked holds. Build and 102 frontend tests pass."
     },
     "suppressed_review": {
-      "outcome": "not-applicable",
-      "problem": "Handy release docs for hold-or-toggle mode",
-      "destinations": [],
-      "evidence": "That capture mode was not introduced in Grain in this compatibility round."
+      "outcome": "adapted",
+      "problem": "Grain needs accurate mode ownership and command registration rather than Handy-specific release docs.",
+      "destinations": [
+        "crates/grain-core/src/settings.rs",
+        "src-tauri/src/lib.rs",
+        "Upstream/SYNC-2026-11-02.md"
+      ],
+      "evidence": "Grain schema/defaults and existing settings UI now own the three activation choices; composition registers the owned fallible command. No Handy-branded docs or migration-only code copied."
     },
     "ports": {
       "src-tauri/src/settings.rs": {
-        "outcome": "not-applicable",
+        "outcome": "ported",
         "destinations": [
           "src-tauri/src/grain_settings.rs",
-          "crates/grain-core/src/settings.rs"
+          "crates/grain-core/src/settings.rs",
+          "crates/grain-core/src/context.rs",
+          "src/app/components/settings/ShowOverlay.tsx",
+          "src/app/components/settings/PillCloseButton.tsx",
+          "src/app/components/settings/PillAppIcon.tsx",
+          "src/app/stores/settingsStore.ts",
+          "crates/grain-core/src/capture.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src/app/components/settings/capture/CaptureModes.tsx",
+          "crates/grain-core/src/providers.rs",
+          "src-tauri/src/grain_provider_commands.rs",
+          "src/app/stores/ppPoolStore.ts",
+          "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx",
+          "src/app/components/settings/experimentations/AgentSection.tsx",
+          "src/app/components/settings/DecodeSettings.tsx"
         ],
-        "evidence": "The new hold-or-toggle setting is not part of Grain's current boolean push-to-talk capture contract; full feature port is deferred."
+        "evidence": "Replaced the obsolete boolean directly with ShortcutActivation in owned Core schema/defaults/bundled settings and persisted through an owned fallible command. Existing recording settings/Quick Panel gates now distinguish hold-only from locked/toggle modes. No compatibility migration or adjustable threshold API."
+      },
+      "src-tauri/src/transcription_coordinator.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/transcription_coordinator.rs",
+          "src-tauri/src/grain_coordinator.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src-tauri/src/grain_shortcuts.rs"
+        ],
+        "evidence": "Toggle, PushToTalk and HoldOrToggle share the canonical machine and sequence tests. Grain keeps Toggle default, a fixed 300 ms hold boundary, native action retention, AI finishing and cancel/drain behavior. 754 backend tests pass."
       }
     },
-    "notes": "Hold-or-toggle activation mode deferred; do not expose upstream UI until Grain capture-mode and Flow semantics are ported together."
+    "notes": "2026-11-02: hold-or-toggle is implemented using the shared production state machine and owned Grain capture effects, alongside existing toggle/hold choices. Toggle remains default; real desktop checks remain separate from automated passing tests."
   },
   "c6fa60da2f13a5af660fba17f37af548855119c5": {
     "ports": {
@@ -1535,9 +1606,19 @@
           "src/app/overlay/wave.ts"
         ],
         "evidence": "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending."
+      },
+      "src-tauri/src/transcription_coordinator.rs": {
+        "outcome": "ported",
+        "destinations": [
+          "src-tauri/src/handy/transcription_coordinator.rs",
+          "src-tauri/src/grain_coordinator.rs",
+          "src-tauri/src/grain_dictation_routing.rs",
+          "src-tauri/src/grain_shortcuts.rs"
+        ],
+        "evidence": "Adopted canonical shared CoordinatorState busy-window remember/forget parity and external-trigger debounce bypass. Grain-owned effects retain capture admission, actual start acknowledgement, model-resolved action and AI intent. Full backend suite passes (754 tests)."
       }
     },
-    "notes": "Shortcut parity state-machine rewrite deferred because Grain coordinator retains action IDs and Flow routing across start/stop."
+    "notes": "2026-11-02: previously deferred coordinator parity is implemented through shared production state machine and owned Grain effects. Overlay generation guards remain covered by the existing port. Windows desktop acceptance is still requested."
   },
   "c8262ab3ebe56da7f7c4021a6d447d3c42e73176": {
     "suppressed_review": {
@@ -1956,6 +2037,18 @@
   },
   "f96a7afb285c900879a2863ccce76d14e1a07fed": {
     "notes": "AUDIT 2026-07-17: was HALF-applied - run-extension gate was correct but the fuzzy-correction gate still used Feature::InitialPrompt, so custom words were silently dropped for non-whisper models advertising it. Fixed, and the same root cause fixed in the Grain-only rolling path (upstream fix could not reach it)."
+  },
+  "fbd4e15fa14a721c66c57006ae110428b9e255b3": {
+    "suppressed_review": {
+      "outcome": "adapted",
+      "problem": "Starting hidden must avoid unreliable post-launch Regular-to-Accessory demotion and preserve a way back without a tray.",
+      "destinations": [
+        "src-tauri/src/lib.rs",
+        "Upstream/SYNC-2026-11-02.md"
+      ],
+      "evidence": "Grain creates Core settings during Ready, so all GUI launches start Accessory before run, then the existing show-window decision promotes to Regular before building/showing a visible window (also no-tray, onboarding and updater cases). Headless CLI policy and window destruction stay unchanged. Native macOS runtime acceptance pending."
+    },
+    "notes": "2026-11-02: adopted pre-run macOS Accessory startup, adapted for Grain lazy Core/window ownership. Existing show-main-window decision and early Regular promotion retain no-tray/permissions/update visibility. No macOS runtime acceptance is claimed."
   },
   "fc465b49f0522ca359b36a784a325db8521dfb1c": {
     "notes": "Irrelevant (Grain manages its own custom prompts).",

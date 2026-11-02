@@ -523,3 +523,15 @@ exclusions, 721 backend / 245 Core / 102 frontend test evidence, five passing
 boundary gates, and native desktop acceptance still required. No release or
 main merge. Language detection and older deferred ports remain held; the user's
 upcoming single dictation model selection is a separate product change.
+
+### 2026-11-02 deferred follow-up ports
+
+Adopted shortcut busy-input parity and hold-or-toggle (#1910/#1971), unchanged
+Carbon shadow preservation (#2002), and pre-run macOS Accessory launch (#2003).
+These commits were already in ancestry: this is a runtime adaptation, not a new
+upstream merge or a close-out of held features. Shared coordinator/sequence tests
+are canonical, with small Grain effect adapters and a structured relocation rule.
+754 backend / 245 Core / 102 frontend tests and the frontend build pass. Native
+macOS and the short new real-app shortcut checks remain pending; the exact
+procedures are in SYNC-2026-11-02.md. Language detection and tray serialization
+remain deferred. No release or main merge; hero edits remain local.

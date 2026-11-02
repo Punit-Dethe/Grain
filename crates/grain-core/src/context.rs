@@ -325,7 +325,10 @@ mod tests {
         assert!(dir.path().join("data").join(SETTINGS_FILE).exists());
         // Known Grain defaults: push-to-talk ships OFF (toggle-style capture),
         // update checks ship ON.
-        assert!(!ctx.settings().push_to_talk);
+        assert_eq!(
+            ctx.settings().shortcut_activation,
+            crate::settings::ShortcutActivation::Toggle
+        );
         assert!(ctx.settings().update_checks_enabled);
     }
 
