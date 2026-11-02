@@ -99,6 +99,10 @@ Upstream/merge-report.md
 
 # Local planning documents
 docs/
+# Public release notes are versioned and read by the Windows release workflow.
+!docs/
+docs/*
+!docs/releases/
 
 # Persistent Agent harness definitions are versioned; builds/runs are disposable.
 /tests/agent-harness/.build/

@@ -132,8 +132,16 @@ export function HistoryCard({
             type="button"
             onClick={() => void copy()}
             disabled={!hasText || retrying}
-            title={copied ? t("settings.history.copied") : t("settings.history.copyToClipboard")}
-            aria-label={copied ? t("settings.history.copied") : t("settings.history.copyToClipboard")}
+            title={
+              copied
+                ? t("settings.history.copied")
+                : t("settings.history.copyToClipboard")
+            }
+            aria-label={
+              copied
+                ? t("settings.history.copied")
+                : t("settings.history.copyToClipboard")
+            }
           >
             <PrototypeIcon name={copied ? "check" : "copy"} />
           </button>

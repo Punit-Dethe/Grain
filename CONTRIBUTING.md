@@ -78,12 +78,12 @@ cannot access retired host context/prompt/screen capabilities.
 For changes to Grain itself, use the [active platform plan](docs/Extensions%202.0/PLATFORM-STABILIZATION.md)
 and [operations runbook](docs/Extensions%202.0/EXTENSION-OPERATIONS.md). Current code:
 
-| Area | Location | Start verification here |
-| --- | --- | --- |
-| Author contract/CLI | `crates/grain-sdk`, `grain-ext-cli`, `grain-extension-checks` | The affected crate's `cargo test --locked -p PACKAGE`. |
-| Review/signing/publication | `crates/grain-registry-tools` and registry workflows | Crate tests and the Python CI helper tests; no real key/account required. |
-| MCP accounts/lifecycle/dispatch | `src-tauri/src/grain_mcp*.rs`, `grain_store.rs` | Affected normal host tests from `src-tauri/`, e.g. `cargo test --locked --lib grain_mcp::`. |
-| Store presentation | `src/app/extensions`, `src/app/pages/ExtensionsPage.tsx` | Selected Vitest tests, TypeScript and scoped ESLint; user checks the real app's layout. |
+| Area                            | Location                                                      | Start verification here                                                                     |
+| ------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Author contract/CLI             | `crates/grain-sdk`, `grain-ext-cli`, `grain-extension-checks` | The affected crate's `cargo test --locked -p PACKAGE`.                                      |
+| Review/signing/publication      | `crates/grain-registry-tools` and registry workflows          | Crate tests and the Python CI helper tests; no real key/account required.                   |
+| MCP accounts/lifecycle/dispatch | `src-tauri/src/grain_mcp*.rs`, `grain_store.rs`               | Affected normal host tests from `src-tauri/`, e.g. `cargo test --locked --lib grain_mcp::`. |
+| Store presentation              | `src/app/extensions`, `src/app/pages/ExtensionsPage.tsx`      | Selected Vitest tests, TypeScript and scoped ESLint; user checks the real app's layout.     |
 
 On Windows, before running host tests, set
 `$env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER='powershell.exe -NoProfile -File C:/PATH/TO/GRAIN/scripts/run-rust-test.ps1'`.
