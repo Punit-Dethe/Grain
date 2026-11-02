@@ -426,9 +426,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
               alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
             />
             <h2 className="hero-image-title">
-              Speak naturally.
-              <br />
-              Write effortlessly
+              Speak naturally. Write effortlessly
             </h2>
             <button
               className="hero-image-toggle"

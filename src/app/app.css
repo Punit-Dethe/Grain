@@ -1349,7 +1349,7 @@ html[data-theme="dark"] .grain-root .toggle.on span {
 
 html[data-theme="light"] .hero {
   --hero-image-shadow: rgba(0, 0, 0, 0.22);
-  background: var(--bg-1);
+  background: #f5f4f0;
   border-color: #eeebe3;
 }
 
@@ -1383,6 +1383,7 @@ html[data-theme="light"] .hero {
   font-size: clamp(20px, 2vw, 26px);
   font-weight: 650;
   line-height: 1.15;
+  white-space: nowrap;
   letter-spacing: -0.03em;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
   pointer-events: none;
@@ -1421,7 +1422,7 @@ html[data-theme="light"] .hero {
   grid-row: 2;
   z-index: 0;
   min-width: 0;
-  padding: 16px 24px 12px;
+  padding: 22px 24px 12px;
 }
 
 .hero-start .overview-shortcut-strip {
