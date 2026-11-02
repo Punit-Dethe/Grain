@@ -160,7 +160,8 @@ const SETTING_DEFS: SettingDef[] = [
     titleKey: "ui2.capture.ai.end.title",
     section: "capture",
     keywords: ["ai after recording", "refine on end"],
-    enabled: (s) => !s?.capture_always_ai && !s?.push_to_talk,
+    enabled: (s) =>
+      !s?.capture_always_ai && s?.shortcut_activation !== "push_to_talk",
   },
   {
     id: "ai-start-mode",

@@ -5,6 +5,7 @@ import { AutostartToggle } from "@/components/settings/AutostartToggle";
 import DefaultPanel from "@/components/settings/DefaultPanel";
 import { ExperimentalToggle } from "@/components/settings/ExperimentalToggle";
 import { HistoryLimit } from "@/components/settings/HistoryLimit";
+import { FileTranscriptionSettings } from "@/components/settings/FileTranscriptionSettings";
 import { LazyStreamClose } from "@/components/settings/LazyStreamClose";
 import { PillAppIcon } from "@/components/settings/PillAppIcon";
 import { PillCloseButton } from "@/components/settings/PillCloseButton";
@@ -66,6 +67,7 @@ export function ApplicationPane() {
       >
         <HistoryLimit descriptionMode="tooltip" grouped />
         <RecordingRetentionPeriodSelector descriptionMode="tooltip" grouped />
+        <FileTranscriptionSettings />
       </SettingsGroup>
 
       {/* The switch that reveals the rest of the group leads it, so turning

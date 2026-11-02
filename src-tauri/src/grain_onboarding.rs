@@ -32,9 +32,10 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::managers::model::ModelManager;
+use crate::settings::get_settings;
 
 // [GRAIN] `recommended` is intentionally a broad catalog badge. Onboarding
 // needs one editorial default per model family, so keep that narrower policy in
@@ -198,22 +199,35 @@ pub async fn resolve_onboarding_state(
         });
     }
 
+    let completed = get_settings(&app).onboarding_completed;
     if permissions_ok(&app).await == Some(false) {
         if let Err(e) = crate::show_main_window_command(app.clone()) {
             log::warn!("failed to reveal main window for permission onboarding: {e}");
         }
-        return Ok(OnboardingState {
-            step: OnboardingStep::Accessibility,
-            is_returning_user: true,
-            blocked_on_permissions: true,
-        });
+        return Ok(onboarding_after_model_check(completed, true));
     }
 
-    Ok(OnboardingState {
-        step: OnboardingStep::Done,
-        is_returning_user: true,
-        blocked_on_permissions: false,
-    })
+    Ok(onboarding_after_model_check(completed, false))
+}
+
+fn onboarding_after_model_check(completed: bool, permissions_blocked: bool) -> OnboardingState {
+    OnboardingState {
+        step: if permissions_blocked {
+            OnboardingStep::Accessibility
+        } else if completed {
+            OnboardingStep::Done
+        } else {
+            OnboardingStep::Model
+        },
+        is_returning_user: completed,
+        blocked_on_permissions: permissions_blocked,
+    }
+}
+
+pub(crate) fn complete_setup(app: &AppHandle) -> Result<(), String> {
+    app.state::<Arc<grain_core::AppContext>>()
+        .complete_onboarding()
+        .map_err(|error| format!("Could not save setup: {error}"))
 }
 
 /// Where "permissions granted" leads. A returning user already has a model, so
@@ -231,6 +245,57 @@ pub fn onboarding_step_after_permissions(is_returning_user: bool) -> OnboardingS
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_default_script_policy_matches_native_output_policy() {
+        for tag in [
+            "en-US",
+            "zh",
+            "zh-Hans-HK",
+            "zh-Hant",
+            "zh-TW",
+            "zh-HK",
+            "zh-MO",
+            "yue",
+            "yue-TW",
+            "yue-Hans",
+        ] {
+            assert_eq!(
+                grain_core::settings::ChineseScript::for_locale(tag),
+                crate::chinese_script::chinese_script_for_locale(tag),
+                "{tag}",
+            );
+        }
+    }
+
+    #[test]
+    fn downloaded_models_do_not_complete_an_unfinished_setup() {
+        let state = onboarding_after_model_check(false, false);
+        assert_eq!(state.step, OnboardingStep::Model);
+        assert!(!state.is_returning_user);
+    }
+
+    #[test]
+    fn permission_recovery_resumes_the_correct_setup_owner() {
+        for completed in [false, true] {
+            let state = onboarding_after_model_check(completed, true);
+            assert_eq!(state.step, OnboardingStep::Accessibility);
+            assert!(state.blocked_on_permissions);
+            assert_eq!(state.is_returning_user, completed);
+            assert_eq!(
+                onboarding_step_after_permissions(state.is_returning_user),
+                if completed {
+                    OnboardingStep::Done
+                } else {
+                    OnboardingStep::Model
+                },
+            );
+        }
+        assert_eq!(
+            onboarding_after_model_check(true, false).step,
+            OnboardingStep::Done
+        );
+    }
 
     #[test]
     fn returning_users_skip_the_remaining_setup() {

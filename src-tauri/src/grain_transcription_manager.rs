@@ -9,7 +9,8 @@ impl TranscriptionManager {
     }
 
     pub(crate) fn initiate_model_load_for(&self, model_id: String) {
-        if self.is_model_loaded()
+        if !self.job_active() // A background chunk can still replace this model before it yields.
+            && self.is_model_loaded()
             && self.get_current_model().as_deref() == Some(&model_id)
             && !self.reload_model_on_next_use.load(Ordering::Acquire)
         {
@@ -38,6 +39,7 @@ impl TranscriptionManager {
         let info = self.model_manager.get_model_info(model_id)?;
         let language = crate::managers::model::effective_language(
             intent,
+            &[],
             &info.supported_languages,
             info.supports_language_detection,
         );
@@ -66,8 +68,7 @@ impl TranscriptionManager {
             }
         }
         let _lease = self
-            .grain
-            .claim(crate::grain_transcription::Use::Flow(session_id))
+            .grain_claim_foreground(crate::grain_transcription::Use::Flow(session_id))
             .map_err(anyhow::Error::msg)?;
         if !self.is_model_loaded() || self.get_current_model().as_deref() != Some(expected_model) {
             anyhow::bail!("The selected Flow model is not loaded");
@@ -113,7 +114,8 @@ impl TranscriptionManager {
         }
         let lease = self
             .grain
-            .claim(crate::grain_transcription::Use::Meeting(attempt_id))
+            // A file transcription chunk in flight finishes first, then yields.
+            .claim_foreground(crate::grain_transcription::Use::Meeting(attempt_id))
             .map_err(anyhow::Error::msg)?;
         // Freeze the device policy exactly as a dictation load resolves it.
         let settings = get_settings(&self.app_handle);
@@ -179,5 +181,76 @@ impl Drop for MeetingCleanup<'_> {
         if self.restore {
             self.manager.initiate_model_load();
         }
+    }
+}
+
+impl TranscriptionManager {
+    fn grain_claim_foreground(
+        &self,
+        usage: crate::grain_transcription::Use,
+    ) -> std::result::Result<crate::grain_transcription::Lease, String> {
+        self.grain.claim_foreground(usage)
+    }
+
+    fn grain_background_lease(
+        &self,
+        control: &dyn ChunkControl,
+    ) -> Option<crate::grain_transcription::Lease> {
+        loop {
+            if !control.proceed() {
+                return None;
+            }
+            {
+                // A capture cannot begin between the idle check and admission.
+                let _start = crate::grain_actions::capture_start_guard();
+                if !crate::grain_file_transcription::dictation_in_progress(&self.app_handle) {
+                    if let Ok(lease) = self.grain.claim(crate::grain_transcription::Use::File) {
+                        return Some(lease);
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn grain_background_context(&self, control: &dyn ChunkControl) -> Result<Option<BatchContext>> {
+        let Some(_lease) = self.grain_background_lease(control) else {
+            return Ok(None);
+        };
+        let selected = get_settings(&self.app_handle).selected_model;
+        crate::grain_capture::require_transcribable_model(&self.app_handle, &selected)
+            .map_err(anyhow::Error::msg)?;
+        self.grain_ensure_background_model(&selected)?;
+        // No asynchronous load can replace the model while this lease is held.
+        self.loaded_batch_context().map(Some)
+    }
+
+    fn grain_ensure_background_model(&self, model: &str) -> Result<()> {
+        if self.get_current_model().as_deref() != Some(model)
+            || !self.is_model_loaded()
+            || self.reload_model_on_next_use.load(Ordering::Acquire)
+        {
+            self.load_model_with_device_held(model, None)?;
+            self.reload_model_on_next_use
+                .store(false, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    fn grain_background_chunk(
+        &self,
+        control: &dyn ChunkControl,
+        pcm: Vec<f32>,
+        options: &RunOptions,
+        model: &str,
+    ) -> Result<Option<Transcript>> {
+        let Some(_lease) = self.grain_background_lease(control) else {
+            return Ok(None);
+        };
+        self.grain_ensure_background_model(model)?;
+        let mark = self.engine.cancel_mark();
+        self.run_batch(mark, pcm, options, model)
+            .map(Some)
+            .map_err(engine_error)
     }
 }

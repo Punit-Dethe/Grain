@@ -1,6 +1,6 @@
 # Extension platform: publishing and release work order
 
-Updated 31 October 2026. This is the **single active forward plan** for finishing
+Updated 2 November 2026. This is the **single active forward plan** for finishing
 extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
 Completed evidence stays in [progress](MCP-EXTENSION-PROGRESS.md) and the focused
@@ -29,6 +29,30 @@ row, and a harmless Notion read before/after app restart. The artifact build and
 installer/archive verification also pass. No repeat user batch or build is needed.
 Real key custody/backup setup is explicitly
 deferred by the user until public release (17 October). No stable SDK release.
+
+**Normal-release installation / 0.0.10 rerelease, 2 November:** the user reports
+the now-visible Extensions page still refuses installation in the normal build.
+Work from current main `44cd5c7d`, preserving all subsequent physical retirement.
+The shared source-aware store policy now allows signed store MCPs in normal
+releases; custom MCP management stays development-only. Normal Windows release
+CI supplies/validates the already registered GitHub OAuth identity. The existing
+policy regression, current suites, workflow scripts and build checks pass; see
+progress for exact counts and preserved boundaries.
+
+Next: publish the tested fix to main, dispatch the existing release workflow with
+explicit `rerelease=true,draft=false` for 0.0.10, then verify the replacement assets,
+updater feed and tag/source identity. Old public files are backed up before
+replacement. Do not credit the re-release or the user's packaged install/sign-in
+check before evidence exists; no old machinery or alpha branch is restored.
+
+**Status:** fix `42d537df` is now on main; exact-source release run
+[41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217) is
+**Success** with both rerelease/publication inputs explicitly selected. The public
+Windows x64 installer, asset hashes, updater feed and actual version tag are
+verified; exact evidence/local download are in the latest progress entry.
+Only the user's packaged install/account/read check remains Pending. Separate
+automatic macOS/ARM64/formatting/Nix CI failures are recorded there; they did not
+fail the Windows release and are not silently counted as resolved.
 
 **Navigation update, 31 October:** the user now requests the Extensions sidebar
 entry in the normal app. Removed only the old build-mode visibility condition;

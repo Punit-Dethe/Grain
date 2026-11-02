@@ -922,21 +922,14 @@ pub(crate) fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
     }
 }
 
-fn access_policy(development_build: bool, alpha: bool, developer_mode: bool, store: bool) -> bool {
-    if store {
-        development_build || alpha
-    } else {
-        development_build && developer_mode
-    }
+fn access_policy(development_build: bool, developer_mode: bool, store: bool) -> bool {
+    // Store provenance is verified from the signed catalogue/connection record.
+    // Build type restricts custom servers, not supported store extensions.
+    store || (development_build && developer_mode)
 }
 
-fn access_allowed(app: &AppHandle, developer_mode: bool, store: bool) -> bool {
-    access_policy(
-        cfg!(debug_assertions),
-        app.config().identifier == "com.grain.extensions.alpha",
-        developer_mode,
-        store,
-    )
+fn access_allowed(_app: &AppHandle, developer_mode: bool, store: bool) -> bool {
+    access_policy(cfg!(debug_assertions), developer_mode, store)
 }
 
 pub(crate) fn require_store_access(app: &AppHandle) -> Result<(), String> {
@@ -2888,22 +2881,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn store_alpha_access_does_not_unlock_custom_mcp_or_ordinary_releases() {
-        for developer_mode in [false, true] {
-            assert!(access_policy(false, true, developer_mode, true));
-            assert!(!access_policy(false, true, developer_mode, false));
-            assert!(!access_policy(false, false, developer_mode, true));
-            assert!(!access_policy(false, false, developer_mode, false));
-            assert!(access_policy(true, false, developer_mode, true));
-            assert_eq!(
-                access_policy(true, false, developer_mode, false),
-                developer_mode
-            );
+    fn signed_store_access_works_in_releases_without_unlocking_custom_mcp() {
+        for development_build in [false, true] {
+            for developer_mode in [false, true] {
+                assert!(access_policy(development_build, developer_mode, true));
+                assert_eq!(
+                    access_policy(development_build, developer_mode, false),
+                    development_build && developer_mode
+                );
+            }
         }
-        // The backend uses the dedicated Tauri identity, not a frontend label.
-        let alpha: serde_json::Value =
-            serde_json::from_str(include_str!("../tauri.extensions-alpha.conf.json")).unwrap();
-        assert_eq!(alpha["identifier"], "com.grain.extensions.alpha");
     }
 
     #[test]

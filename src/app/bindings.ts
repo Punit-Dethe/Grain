@@ -62,9 +62,9 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async changePttSetting(enabled: boolean) : Promise<Result<null, string>> {
+async changeShortcutActivationSetting(activation: ShortcutActivation) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_ptt_setting", { enabled }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_shortcut_activation_setting", { activation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1025,7 +1025,7 @@ async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionVie
 }
 },
 /**
- * Signed-store acquisition in development and the dedicated extensions alpha.
+ * Signed-store acquisition in every supported application build.
  * Custom server configuration retains its separate development-only gate.
  */
 async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
@@ -1527,6 +1527,18 @@ async initializeShortcuts() : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Mark onboarding as finished; called when its last screen closes, so quitting
+ * midway resumes the flow.
+ */
+async completeOnboarding() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_onboarding") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getAvailableModels() : Promise<Result<ModelInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_available_models") };
@@ -1821,6 +1833,10 @@ async deleteHistoryEntry(id: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Queues the entry to be transcribed again with the current model. Its
+ * progress and outcome arrive as `TranscriptionJob` events.
+ */
 async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("retry_history_entry_transcription", { id }) };
@@ -1828,6 +1844,29 @@ async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>>
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Stops the entry's background transcription: a queued one is dropped, a
+ * running one stops after the chunk it is on. The entry keeps the text it
+ * had before.
+ */
+async cancelHistoryEntryTranscription(id: number) : Promise<void> {
+    await TAURI_INVOKE("cancel_history_entry_transcription", { id });
+},
+/**
+ * Adds an audio or video file to History and queues its transcription.
+ * Fails without adding anything if the file has no audio Handy can read.
+ */
+async transcribeFile(path: string) : Promise<Result<HistoryEntry, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcribe_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getTranscriptionJobs() : Promise<TranscriptionJob[]> {
+    return await TAURI_INVOKE("get_transcription_jobs");
 },
 async updateHistoryLimit(limit: number) : Promise<Result<null, string>> {
     try {
@@ -2025,6 +2064,7 @@ showOverlay: ShowOverlay,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 themeChanged: ThemeChanged,
+transcriptionJob: TranscriptionJob,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
@@ -2052,6 +2092,7 @@ showOverlay: "show-overlay",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 themeChanged: "theme-changed",
+transcriptionJob: "transcription-job",
 updateAvailable: "update-available",
 updateDownloadProgress: "update-download-progress"
 })
@@ -2135,7 +2176,11 @@ export type AppSettings = {
  * Missing in pre-schema settings files; the field-level default of zero
  * intentionally triggers one-time migrations instead of using `Self::default()`.
  */
-settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; shortcut_activation: ShortcutActivation;
+/**
+ * Setup is committed only after the final shortcut screen succeeds.
+ */
+onboarding_completed?: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
@@ -2337,7 +2382,7 @@ expires_at: string | null }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
-export type ChineseScript = "as_transcribed" | "simplified" | "traditional"
+export type ChineseScript = "as_transcribed" | "simplified" | "traditional_tw" | "traditional_hk"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
@@ -2489,7 +2534,12 @@ export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
 export type GrainOverlayPosition = OverlayPosition
 export type HideOverlay = null
-export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
+export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean;
+/**
+ * The name of the file this entry was transcribed from; `None` for a
+ * dictation.
+ */
+source_name: string | null }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
  * Result of changing keyboard implementation
@@ -2592,7 +2642,7 @@ export type ModelDownloadComplete = string
 /**
  * Byte progress for a model download. Mirrors `managers::model::DownloadProgress`.
  */
-export type ModelDownloadProgress = { model_id: string; downloaded: number; total: number; percentage: number }
+export type ModelDownloadProgress = { model_id: string; downloaded: number; total: number; percentage: number; bytes_per_sec: number | null }
 /**
  * Archive extraction finished.
  */
@@ -2785,6 +2835,10 @@ export type SessionState =
  * Every chunk is sealed; the recording is complete or recovered.
  */
 "Recorded"
+/**
+ * How the dictation shortcut starts and ends a recording.
+ */
+export type ShortcutActivation = "toggle" | "push_to_talk" | "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type ShowOverlay = string
 /**
@@ -2989,6 +3043,23 @@ activity: Activity[] }
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TranscriptRevision = { version: number; revision: number; session_id: string; attempt_id: string; created_unix_ms: number; diarizer: ModelRef | null; asr: ModelRef | null; speakers: Speaker[]; tracks: TrackTranscript[] }
+/**
+ * A background transcription of one History entry.
+ */
+export type TranscriptionJob = { entry_id: number; status: TranscriptionJobStatus }
+export type TranscriptionJobStatus =
+/**
+ * Waiting behind another job.
+ */
+{ state: "queued" } |
+/**
+ * `percent` of the audio is transcribed.
+ */
+{ state: "running"; percent: number } |
+/**
+ * The entry has its new text.
+ */
+{ state: "finished" } | { state: "cancelled" } | { state: "failed"; error: string }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
  * A newly discovered release. The cache covers WebViews created after this

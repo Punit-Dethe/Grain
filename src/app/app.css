@@ -1335,30 +1335,63 @@ html[data-theme="dark"] .grain-root .toggle.on span {
 
 /* Overview */
 .hero {
+  --hero-image-shadow: rgba(0, 0, 0, 0.55);
   position: relative;
-  height: clamp(352px, 44vh, 470px);
-  margin-bottom: -30px;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: minmax(132px, 1fr) auto;
+  min-height: clamp(400px, 50vh, 490px);
   overflow: hidden;
   border-radius: var(--hero-radius);
-  background: var(--bg-2, #15171c);
+  background: var(--bg-0);
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.07));
 }
 
 html[data-theme="light"] .hero {
-  background: #fcfcfb;
+  --hero-image-shadow: rgba(0, 0, 0, 0.22);
+  background: #f5f4f0;
   border-color: #eeebe3;
 }
 
+.hero-art {
+  position: relative;
+  grid-row: 1;
+  margin: 12px 12px 0;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: var(--hero-radius);
+  box-shadow: 0 2px 10px 1px var(--hero-image-shadow);
+}
+
 .hero-image {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
 }
 
-.hero-image-toggle {
+.hero-image-title {
   position: absolute;
   z-index: 1;
+  inset-inline: 24px;
+  bottom: 20px;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(20px, 2vw, 26px);
+  font-weight: 650;
+  line-height: 1.15;
+  white-space: nowrap;
+  letter-spacing: -0.03em;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.hero-image-toggle {
+  position: absolute;
+  z-index: 2;
   top: 16px;
   right: 16px;
   display: grid;
@@ -1384,47 +1417,19 @@ html[data-theme="light"] .hero {
   outline-offset: 2px;
 }
 
-.hero-content {
-  position: absolute;
-  right: 22px;
-  bottom: 32px;
-  left: 22px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
+.hero-start {
+  position: relative;
+  grid-row: 2;
+  z-index: 0;
+  min-width: 0;
+  padding: 22px 24px 12px;
 }
 
-.hero-copy {
-  max-width: 600px;
-}
-
-.hero h2 {
-  max-width: 540px;
-  color: #fff;
-  font-size: clamp(25px, 2.7vw, 34px);
-  font-weight: 560;
-  line-height: 1.04;
-  letter-spacing: -0.043em;
-}
-
-.hero-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
-}
-
-.hero .button.primary {
-  color: #fff !important;
-  background: rgb(17 17 17 / 70%) !important;
-  border: 1px solid rgb(255 255 255 / 18%);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-}
-
-.hero .button.primary:hover {
-  background: rgb(17 17 17 / 80%) !important;
-  border-color: rgb(255 255 255 / 28%);
+.hero-start .overview-shortcut-strip {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .section-head {
@@ -1433,11 +1438,6 @@ html[data-theme="light"] .hero {
   justify-content: space-between;
   gap: 18px;
   margin: 28px 0 12px;
-}
-
-.compact-section-head {
-  margin-top: 56px;
-  margin-bottom: 14px;
 }
 
 .section-head p {
@@ -1539,9 +1539,6 @@ html[data-theme="light"] .hero {
   container-type: inline-size;
   container-name: overview-strip;
 }
-.grain-root[data-theme="dark"] .overview-shortcut-strip {
-  background: #292929;
-}
 .grain-root[data-theme="dark"]
   .overview-shortcut-strip
   :is(.overview-shortcut-key, .overview-shortcut-settings) {
@@ -1562,7 +1559,7 @@ html[data-theme="light"] .hero {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   padding-inline: 20px;
 }
 .overview-shortcut:first-child {
@@ -1676,7 +1673,7 @@ html[data-theme="light"] .hero {
   font-weight: 600;
 }
 .overview-shortcut-info p {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   color: var(--text-3);
   font-size: 11.5px;
   line-height: 1.5;
@@ -1697,7 +1694,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
 @container overview-strip (max-width: 640px) {
   .overview-shortcut-layout {
     grid-template-columns: minmax(0, 1fr);
-    gap: 20px;
+    gap: 12px;
   }
   .overview-shortcut-info {
     display: flex;
@@ -1705,7 +1702,7 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
     justify-content: space-between;
     gap: 20px;
     padding-inline-end: 0;
-    padding-block-end: 16px;
+    padding-block-end: 12px;
     border-inline-end: 0;
     border-block-end: 1px solid var(--hairline);
   }

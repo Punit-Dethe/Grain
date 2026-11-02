@@ -70,8 +70,6 @@ const PROTOTYPE_COPY = {
   quickPanelShortcut: "Ctrl K",
   original: "Original",
   processed: "AI processed",
-  heroTitle: "Speak before the thought disappears.",
-  personalize: "Personalize",
   quickActions: "Start here",
   quickActionsBody:
     "Your keys, your words, and what Grain can be taught to do.",
@@ -457,50 +455,32 @@ function OverviewPage({ history }: { history: HistoryController }) {
   return (
     <section className="page active" data-page-panel="overview">
       <div className="page-wrap wide">
-        <div className="hero">
-          <img
-            className="hero-image"
-            src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
-            alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
-          />
-          <button
-            className="hero-image-toggle"
-            type="button"
-            aria-label={
-              heroImageIndex === 0 ? "Show hero image 4" : "Show hero image 2"
-            }
-            title="Switch hero image"
-            onClick={() => setHeroImageIndex((current) => 1 - current)}
-          >
-            <Icon name="refresh" small />
-          </button>
-          <div className="hero-content">
-            <div className="hero-copy">
-              <h2>{PROTOTYPE_COPY.heroTitle}</h2>
-            </div>
-            <div className="hero-actions">
-              <button
-                className="button primary"
-                type="button"
-                onClick={() => {
-                  window.location.hash = hashForRoute({
-                    page: "tools",
-                    section: "dictionary",
-                  });
-                }}
-              >
-                {PROTOTYPE_COPY.personalize}
-              </button>
-            </div>
+        <section className="hero" aria-label={PROTOTYPE_COPY.quickActions}>
+          <div className="hero-art">
+            <img
+              className="hero-image"
+              src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
+              alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
+            />
+            <h2 className="hero-image-title">
+              Speak naturally. Write effortlessly
+            </h2>
+            <button
+              className="hero-image-toggle"
+              type="button"
+              aria-label={
+                heroImageIndex === 0 ? "Show hero image 4" : "Show hero image 2"
+              }
+              title="Switch hero image"
+              onClick={() => setHeroImageIndex((current) => 1 - current)}
+            >
+              <Icon name="refresh" small />
+            </button>
           </div>
-        </div>
-
-        <div className="section-head compact-section-head">
-          <div>
-            <h2>{PROTOTYPE_COPY.quickActions}</h2>
+          <div className="hero-start">
+            <OverviewCards />
           </div>
-        </div>
-        <OverviewCards />
+        </section>
 
         <div className="section-head transcript-section-head">
           <div>

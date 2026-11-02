@@ -76,6 +76,13 @@ class ForkInputsTest(unittest.TestCase):
             fork.check(self.pin, True, False, "aarch64-pc-windows-msvc")
         with self.resolution("metal"):
             fork.check(self.pin, True, False, "aarch64-apple-darwin")
+        with self.resolution(""):
+            fork.check(self.pin, True, False, "x86_64-apple-darwin")
+
+    def test_intel_mac_metal_is_rejected(self):
+        with self.resolution("metal"):
+            with self.assertRaisesRegex(ValueError, "target features"):
+                fork.check(self.pin, True, False, "x86_64-apple-darwin")
 
     def test_unintended_backend_is_rejected(self):
         with self.resolution("cuda,dynamic-backends,shared,vulkan"):

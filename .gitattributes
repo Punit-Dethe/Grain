@@ -95,3 +95,6 @@ crates/grain-core/seed/** -text -diff
 # line-ending convert or the committed signatures stop matching.
 src-tauri/tests/fixtures/store/** -text -diff
 src-tauri/tests/fixtures/store-generation/** -text -diff
+
+# Package catalogue copies must stay byte-identical on Windows as well.
+src-tauri/src/handy/catalog/catalog.json -text

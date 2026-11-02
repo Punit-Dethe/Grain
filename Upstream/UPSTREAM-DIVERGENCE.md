@@ -16,6 +16,82 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
+## Onboarding backend integration — 2 November 2026
+
+#2303 is integrated through `0e5e9ca9` with Grain's owned permission/model/
+shortcut design and durable final-step completion. Relevant model progress,
+native microphone status/settings and regional Chinese-script behavior are
+adopted. Do not restore Handy's replacement Try-it demo, guessed-language
+wizard, injected JS global, migration defaults, app sizing or frontend assets.
+The new `handy/system_languages.rs` is retained byte-for-byte as an undeclared
+upstream reference; Grain does not mount its plugin or expose its globals.
+
+The completion command delegates to the owned fallible store; Core persists
+public settings before memory and does not rewrite credentials. Explicit
+recognition language stays authoritative (empty wizard-preference slices in
+shared/owned runtime adapters). Chinese defaults and output conversion are
+checked together in owned tests; the shared converter stays byte-identical.
+
+Reviewed new-base measurements: Cargo.toml 156 to 160 (no unused wizard OS
+reader dependencies), actions 762 to 848 and transcription coordinator 1619 to
+1669 (omit Try-it-only telemetry while retaining Grain lifecycle hooks),
+commands/mod.rs 16 to 21 (owned persistence delegate), download/tests.rs new
+16 (resumed/stalled rate regression), transcription manager 90 to 92 (explicit
+language policy), shortcut/mod.rs 429 to 441 (no unused spoken-language wizard
+command), lib.rs 1296 to 1321 (owned composition, not Handy wizard startup).
+commands/models.rs tightens 89 to 86. These are measured differences, not
+reserved feature headroom. See SYNC-2026-11-02.md for validation and limits.
+
+## Non-blocking paste — 2 November 2026
+
+After integrating #2302 through `5a9451e7`, the shared clipboard retains Grain's
+options entry point and marked routing hooks; put the upstream serialization
+lock there so all owned callers receive it. The two extra compared lines are
+the hook comment/spacing (clipboard budget 58 to 60).
+
+The shared actions module delegates paste scheduling through the existing
+Grain action adapter instead of adopting Handy's inline detached std-thread
+block. The adapter awaits the existing blocking pool, preserves Grain's
+caret-fit option and completion/history lifetime, and leaves OS injection on
+the main thread. Keep Grain's session ID when guarding late tray completion.
+The measured actions difference against this new base is 713 to 762; this
+counts Handy's omitted inline scheduling as well as the narrow owned hook,
+not new feature implementation inside the shared tree. Flow and Native ASR
+callers and the terminal-error session guard stay in grain_actions.rs.
+Windows compilation and 704 backend tests pass; desktop acceptance is pending.
+
+## Platform dependency ports — 2 November 2026
+
+Adapted #2336's Debian OpenSSL runtime declaration and package audit to Grain's
+owned config/workflow. Adapted #2340's per-architecture macOS native features:
+Apple Silicon Metal, Intel static CPU; preserve the paired immutable fork and
+Windows/Linux backends. Actual Cargo feature resolution and 11 contract tests
+verify both Mac and both Windows targets; native Mac/Linux acceptance remains
+pending. Against the current staged merge base, reviewed Cargo.toml divergence
+is 152 to 156 and owned tauri.conf.json divergence is 22 to 28. These are
+isolated adapted ports with exact source trailers, not ancestry close-outs of
+the intervening feature commits. See SYNC-2026-11-02.md.
+
+## Catalogue integration — 2 November 2026
+
+The #2299 integration adopts the shared model catalogue and cache fixes.
+Grain pins the integration commit's models package 0.2.2. Its ASR catalogue is
+identical to fetched Handy main's 0.2.3; the later language-ID default-quant
+change stays with the held language-detection work. The JSON remains an exact
+package copy. The catalogue's two narrow test adaptations account for
+the relocated Cargo.toml and Grain's exact `=0.4.0` native dependency pin.
+Keep the portable current-cache-only policy: cache-file deletion must not
+restore the intentionally retired pre-release migration into a shared legacy
+cache. Do not restore the retired ONNX migration table or its UI-only test.
+Existing Standard/Streaming ownership and quant metadata stay intact.
+See SYNC-2026-11-02.md for the source boundary and verification evidence.
+New-base budget differences are reviewed after recording the staged merge;
+do not grant thousands of lines of temporary headroom against the old base.
+The assessed new-base measurements are 4 lines for catalogue test paths/version
+parsing, model manager 197 to 228 (current-cache-only deletion
+and omission of the retired ONNX migration test), and portable 27 to 28 (the
+same existing migration retirement against upstream's added accessor).
+
 ## Verification budget reconciliation — 1 November 2026
 
 Reviewed the full current Cargo.toml difference against the actual merge base
@@ -145,6 +221,7 @@ coverage for `grain_* as upstream_name` inert module aliases.
 | `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`src-tauri/src/tdt_flow.rs`<br>`crates/grain-tdt/src`<br>`src-tauri/src/grain_overlay.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src-tauri/src/grain_transcription.rs`<br>`src-tauri/src/grain_transcription_manager.rs`<br>`src-tauri/src/grain_engine.rs`<br>`src-tauri/src/context_bias.rs` |
 | `src-tauri/src/overlay.rs` | relocated | `src-tauri/src/handy/overlay.rs`<br>`src-tauri/src/grain_overlay.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src/app/overlay/wave.ts`<br>`src/app/overlay/overlay.css`<br>`src-tauri/src/grain_events.rs`<br>`recording-overlay.html`<br>`vite.config.ts`<br>`src-tauri/src/pill_icon.rs`<br>`src-tauri/src/surface_watch.rs`<br>`src/app/overlay/main.tsx`<br>`crates/grain-sdk/src/event.rs` |
 | `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs`<br>`crates/grain-core/src/context.rs`<br>`src/app/components/settings/ShowOverlay.tsx`<br>`src/app/components/settings/PillCloseButton.tsx`<br>`src/app/components/settings/PillAppIcon.tsx`<br>`src/app/stores/settingsStore.ts`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx`<br>`crates/grain-core/src/providers.rs`<br>`src-tauri/src/grain_provider_commands.rs`<br>`src/app/stores/ppPoolStore.ts`<br>`src/app/components/settings/post-processing/pool/PostProcessingPool.tsx`<br>`src/app/components/settings/experimentations/AgentSection.tsx`<br>`src/app/components/settings/DecodeSettings.tsx` |
+| `src-tauri/src/transcription_coordinator.rs` | relocated | `src-tauri/src/handy/transcription_coordinator.rs`<br>`src-tauri/src/grain_coordinator.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src-tauri/src/grain_shortcuts.rs` |
 
 <!-- END GENERATED RELOCATION POLICY -->
 
@@ -185,7 +262,8 @@ conflict rules.
 | `audio_toolkit/text.rs` | Moderate (+104): custom-words extensions | Merge; watch word-boundary semantics |
 | `commands/models.rs`, `managers/history.rs`, `clipboard.rs`, `cli.rs`, `utils.rs` | Light. `clipboard.rs` also has Grain's Agent/Paste Catch hooks; **2026-08-22:** #1817/#1892's post-xdotool keyup cleanup is ported in addition to `--clearmodifiers`, because the latter can re-latch a modifier released during synthetic typing | Merge normally; keep Grain paste interceptors and upstream's explicit modifier cleanup |
 | `catalog/catalog.json` | Matches the last integrated upstream blob after removing accidental formatting-only drift on 2026-08-21. It is **generated upstream** by `scripts/gen_catalog.py`, which Grain deliberately does not vendor. Current `upstream/main` has pending generated model additions, so blob audits will report ancestry/content drift until the final sync takes that file. | **Take current upstream's version verbatim at sync.** Never hand-edit or reformat this file, and do not add a divergence budget for it. |
-| `catalog/mod.rs`, `managers/gguf_meta.rs`, `managers/model_capabilities.rs` | Converged (byte-identical to upstream) — re-verified by blob hash 2026-08-02 | Merge freely. Do not "fix" upstream's comments here (e.g. `catalog/mod.rs` refers to `gen_catalog.py`, which is correct in upstream's tree) — editing them would re-open a conflict for no gain |
+| `managers/gguf_meta.rs`, `managers/model_capabilities.rs` | Converged (byte-identical to the assessed upstream baseline). | Merge freely. |
+| `catalog/mod.rs` | Shared catalogue reader; two test-only adaptations resolve Grain's relocated manifest and exact engine-version pin. | Merge freely and preserve those narrow test adaptations. |
 | `audio_toolkit/audio/resampler.rs` | **Not converged (+166/−13)** — the row above used to claim it was, for ~2 weeks. It carries the resampler tail-drop drain (`output_delay`), a real fix logged as [UPSTREAMABLE.md](UPSTREAMABLE.md) #1: `FftFixedIn` holds `output_delay()` frames in its FFT delay line, so end-of-stream dropped the last ~30–60 ms — inaudible to local ASR, a clipped final word for cloud STT | Merge upstream freely; **keep the drain**. Do not restore upstream's `finish()` |
 | `audio_toolkit/mod.rs` | Grain-only `snippets`/`grain_text` module exports. | Merge upstream freely; keep the marked module exports. |
 | `audio_toolkit/audio/mod.rs` | Converged after conditioning removal on 2026-09-26. | Take upstream verbatim. |
@@ -378,7 +456,90 @@ No worker, thread, queue, retry policy or protocol variant is added. A
 diarizer reuses `Request::Grain`/`Response::Grain`.
 
 - `lib.rs` 1296 → 1297 (2026-11-02): one `mod grain_meet;` declaration for the Grain-owned meeting module, like every other `grain_*` module. No logic.
-- `Cargo.toml` 152 → 153 (2026-11-02): direct `rubato = "=5.0.0"` dependency for Grain Meet analysis resampling. The lockfile already carried this exact version through `handy-recorder`, whose resampler is private; no new crate is downloaded.
+- `Cargo.toml` (2026-11-02): Grain Meet analysis resampling uses `rubato`. Since the main merge it relies on the shared `rubato = "5"` that Handy's file transcription (#2315) added; Grain Meet adds no Cargo.toml line of its own.
 - `lib.rs` 1297 → 1310 (2026-11-02): registers the ten Grain Meet commands and its two typed events in the existing `collect_commands!`/`collect_events!` lists, with one comment line. All logic is in `grain_meet/commands.rs`. The meeting microphone path adds no Handy hook: `grain_audio.rs` routes frames and `grain_audio_manager.rs` adds `try_start_meeting_recording` through the existing `[GRAIN]` include seams.
 - `lib.rs` 1310 → 1311 (2026-11-02): registers `meet_playback_audio`. It grants the webview access to exactly one generated playback file per request, so the asset scope stays unchanged.
 - `lib.rs` 1311 → 1313 (2026-11-02): registers `meet_sources` and `meet_set_sources`. Recall now owns its capture (its own `handy-recorder` microphone instance and a cpal WASAPI loopback, both in `grain_meet/sources.rs`), so the `grain_audio.rs`/`grain_audio_manager.rs` meeting seams from the previous entry were removed again and dictation's recorder and microphone setting are untouched.
+
+## Settings-only file transcription adaptation (2026-11-02, #2315)
+
+Keep Handy's decoder/history/chunking implementation. Grain's only import UI
+lives in Application settings; upstream file-drop, footer status and History
+import UI stay frozen out. `grain_file_transcription.rs` owns the import duration,
+decode admission and actual Grain capture-state policy. The decoder calls a
+marked duration hook after each bounded packet.
+
+`grain_transcription_jobs.rs` contains queue-worker startup/snapshot adapters;
+marked shared hooks replace the permanent idle thread with lazy startup/atomic
+idle exit. Job events publish under admission locking to prevent terminal/queued
+inversion; cancellation has an explicit status. File names use UUIDs. The shared
+post-processing call receives Grain's absent Prompt Record arguments, and tray
+refreshes receive Grain's locale argument. These are reviewed integration hooks,
+not a second decoder, engine, harness or scheduler.
+
+`grain_transcription_manager.rs` and `grain_transcription.rs` own background
+model admission. Shared batch context factoring must retain the inference lease
+for the entire foreground decode, wait for loading before acquiring it, and
+avoid waiting for a foreground loader while holding the background lease.
+Background chunks revalidate the Standard model after dictation. The public
+loader keeps its normal admission hook; an internal held-lease implementation
+allows the already-admitted chunk to use the same loading code. The user plans
+a single selected dictation model: do not build out multi-model scheduling.
+
+New shared-file differences and the manager/lib/tray budget changes are accepted
+only for the marked hooks above, the native job cancellation contract, and the
+existing fallible History retry command. Shared history/decoder/resampler logic
+otherwise stays upstream-owned. No native fork or ABI change is included.
+
+Reviewed post-merge ratchet changes against #2315:
+
+| Shared path | Previous → accepted lines | Reason |
+| --- | --- | --- |
+| audio_toolkit/audio/decode.rs | new → 2 | Calls owned decoded-duration limit at both input paths. |
+| managers/transcription.rs | 92 → 120 | Shared lease/held-loader/context seams; foreground admission lives in owned code. |
+| managers/transcription/job.rs | new → 38 | Two owned background context/chunk hooks replace Handy's single-model/retry assumption. |
+| managers/transcription_jobs.rs | new → 94 | Lazy worker/snapshot include, idle exit, ordered/cancelled events, UUID names and owned policy calls; decoder/queue algorithm retained. |
+| tray.rs | 642 → 659 | Grain's tray composition replaces the upstream job-state tray change; one History fixture field. |
+| lib.rs | 1321 → 1335 | Grain composition registers jobs/commands/events and guards tray unload. |
+| commands/history.rs | 13 → 6 | Old synchronous retry adapter removed; keep fallible command result. |
+| commands/models.rs | 86 → 78 | Adopt upstream blocking-pool unload and active-job guard. |
+
+No deleted upstream file, stray root source, native fork change or unassessed
+feature is being accepted by this budget update.
+
+## Deferred shortcut/macOS ports adopted — 2 November 2026
+
+#1910/#1971: shared coordinator transitions and tests come from canonical
+`c62a5fcdef4196e0ab36ea56cd3863f8f17fd9c5`. #2303's later Try-it events remain
+excluded because Grain already owns the recording/overlay event contract. Keep
+Handy's machine verbatim around marked Grain effect/input hooks. Runtime capture
+admission, start acknowledgement, retained action and alternate AI finish live
+in `grain_coordinator.rs`; activation persistence and shadow identity policy live
+in `grain_shortcuts.rs`. Core settings own ShortcutActivation with Grain's Toggle
+default; the 300 ms threshold is a constant, not an unused settings subsystem.
+A new structured coordinator relocation rule gates future upstream changes.
+
+#2002: adopt current canonical secure_input.rs differential reconciliation;
+retain only the Prompt Record eligibility hook, platform-gated event import and
+owned/testable registration-identity call. No new Carbon manager or polling loop.
+
+#2003: root composition launches GUI as Accessory before run, promoting before
+main-window creation when the existing launch/reopen decision needs Regular.
+Core is created at Ready, so do not copy an upstream pre-run get_settings call
+or create a duplicate Core. Headless launches, no-tray reachability, update
+restart, window destruction and Agent lifetime remain Grain-owned. macOS native
+acceptance remains pending; Windows compilation does not validate Cocoa behavior.
+
+Review shared-file ratchet changes for these integration seams only. There is
+no native fork/dependency/ABI change and no authorization to merge held language
+detection or single-writer tray coordination. Hero UI edits are unrelated and
+must remain unstaged in the developer checkout.
+
+Measured post-adoption boundary review: secure_input.rs shrinks 212 → 10 lines,
+shortcut/handler.rs 12 → 7, transcription_coordinator.rs 1669 → 101, lib.rs
+1335 → 1323, and signal_handle.rs converges 2 → 0. shortcut/mod.rs grows
+441 → 446 only because Grain removes the old boolean setter and keeps the
+new persistence command in owned grain_shortcuts.rs rather than exposing
+Handy's two shared setters (including an unused threshold setting). This is
+reviewed removal/ownership divergence, not added feature code in the shared tree.
+No new diverged shared file or native fork change is accepted.

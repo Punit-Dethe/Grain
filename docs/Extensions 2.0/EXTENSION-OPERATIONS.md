@@ -74,6 +74,21 @@ its official usage; it was not executed here and Minisign was not installed.
 
 ## Routine publication and renewal
 
+### Application same-version rerelease
+
+Only an explicit operator request authorizes replacing an existing public app
+version. Back up its installer, signature, feed, release metadata and original tag
+first. The Windows app workflow's `rerelease=true` requires `draft=false`, a mutable
+public release and a lightweight version tag; it pins checkout to the run SHA.
+After successful publishing/native verification it refuses tag drift, moves that
+tag to the built source and appends source/reinstall instructions. Default builds
+do not retarget existing tags. This is separate from extension catalogue signing.
+The [Tauri action replaces existing asset names](https://github.com/tauri-apps/tauri-action/blob/v0/src/upload-release-assets.ts);
+draft mode alone does not stage a separate copy of an already public release.
+The [GitHub job token suppresses recursive push-triggered runs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).
+Verify final assets/feed/tag afterward; a same-version rebuild needs manual
+installation for users who already have that version.
+
 Use the [CLI operator instructions](../../crates/grain-registry-tools/README.md)
 for exact commands and argument contracts. Authors use `grain-ext submit`; operators
 select trusted CI evidence and approve the exact source/candidate before

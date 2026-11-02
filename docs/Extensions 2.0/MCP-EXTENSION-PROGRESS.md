@@ -1,5 +1,155 @@
 # Extension implementation: progress, changes and user testing
 
+**Compact lower hero section, 2 November:** user requests a shorter Start here
+section and larger image within the same overall hero. Halve its vertical padding
+from 24px to 12px, tighten shortcut label/key and note/button gaps, and reduce
+stacked-layout separation at narrow widths. Keep horizontal padding, 40px shortcut
+targets, current 400–490px / 50vh hero sizing and two-row grid. The flexible image
+row receives the recovered space automatically; no hardcoded footer height clips
+wrapped/localized text. No release/version change; visual acceptance remains Pending.
+
+**Nested overview surfaces, 2 November:** user replaces the inset-panel direction
+with one sidebar-colored outer hero and a nested top image flush to its top/left/
+right edges. Preserve the 400–490px / 50vh hero height; both outer and image use
+the same corner radius. The image casts a downward shadow over the outer surface;
+Start here sits below in that shared background with no separate panel border,
+overlap or black surround. Remove Just use voice and the image gradient. Existing
+shortcut controls, image switching and narrow reflow remain. This supersedes the
+prior panel/heading iterations. Keep changes on the UI branch for 0.0.11; no release.
+
+**Artwork lower edge, 2 November:** user requests the image end slightly below
+the top of Start here, with black beneath. Use two grid rows and a 12px panel
+overlap so the image ends 12px below the panel top without JS measurement. The
+hero's lower background is solid black in both themes; the panel remains opaque
+with 12px side/bottom insets and the same taller hero. Narrow content can still
+grow naturally. TypeScript/Vite build passes; real-app visual acceptance remains
+Pending. No release/version change.
+
+**Tighter opaque Start here panel, 2 November:** user requests smaller outer gaps
+and opacity instead of frost. Reduce the hero-panel inset from 20px to 8px; use
+solid dark/light fills, remove backdrop blur and the now-unnecessary glass text
+overrides. Keep the taller hero, rounded panel and internal padding. This
+supersedes the glass material direction; no release/version change. Build passes;
+real-app visual acceptance remains Pending on the same UI branch.
+
+**Glass layout restored with taller hero, 2 November:** user explicitly chooses
+the version immediately before the rollback (`0eddbe95`). Restore that exact
+frosted-panel/artwork/fade layout and change only the hero height from
+370–450px / 46vh to 420–510px / 52vh. Product diff against the selected version
+is one height declaration. This supersedes the prior split-layout request;
+retain the release hold and UI branch pending real-app visual acceptance.
+
+**Overview direction restored, 2 November:** user requests the layout from before
+the full-image/glass treatment, with only the fade removed. Restore exactly the
+pre-experiment hero CSS from `41102e87` (image above the solid Start here section,
+original heights/spacing/colors); delete the gradient CSS and its decorative JSX
+element. The combined UI branch now differs from that baseline only by this fade
+removal in the product files. Earlier glass/height experiments below are superseded,
+not additional pending work. Build verification and real-app visual confirmation
+apply to this final layout. No release or version change.
+
+**Overview visual correction, 2 November:** user reports the glass barely shows
+in dark mode and does not show in light mode. Increase the hero's preferred height
+by 30px (370–450px). Reduce the light panel fill from 94% to 66% opacity so artwork
+shows through, increase backdrop blur to 26px/saturation to 140%, and darken only
+the panel's light-theme text tokens for readability. Dark fill is retained. This
+supersedes the first implementation's too-opaque light treatment; visual acceptance
+remains Pending. No release/version change; keep this on the UI branch for 0.0.11.
+
+**Overview layout / release hold, 2 November 2026:** the user explicitly requests
+no further release now; intended next delivery is 0.0.11 in a few days. No version,
+tag, release or installer workflow is changed or dispatched for this UI work.
+Branch `ui/overview-glass-panel-20261102` starts from current main `41102e87`.
+
+Shortened the overview hero's preferred minimum range from 460–560px to 340–420px.
+Artwork fills the hero behind a bottom-inset Start here panel with four rounded
+corners, theme-specific translucent fill and 18px backdrop blur. The panel stays
+in document flow so narrow layouts, zoom and longer text can increase the section
+height; existing container-query shortcut reflow, focus order, buttons and image
+switching are retained. Only overview CSS changes; no legacy machinery returns.
+102 frontend tests and the TypeScript/Vite build pass; the one mechanical layout
+scan has no findings. No browser automation, visual replica, new tests or backend
+rebuild. Visual acceptance in the real app remains Pending before merging this
+UI branch for 0.0.11.
+
+**Windows 0.0.10 rerelease complete and verified, 2 November 2026:** run
+[41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217) is
+**Success**. The public release now serves the rebuilt Windows x64 installer,
+signature and updater feed. The actual version tag resolves to built source
+`42d537dfdcb698cdb75488bf9de530ea46f45555`; release notes record that source and
+manual same-version reinstall instructions. Earlier In-progress records below
+are superseded by this completed result, not by an inferred pass.
+
+Downloaded all three assets into
+`C:\Users\watrm\Downloads\Grain-v0.0.10-rerelease-20261102` and verified their
+SHA256s against GitHub's current asset digests. Installer digest:
+`326ac9aae14958080e8b3c4209ef25c75f5c7f378c6846a36afd9a3bd561ad64`.
+The anonymous public latest feed equals the downloaded feed, version is 0.0.10,
+its installer URL is correct, and embedded signature text matches the .sig asset.
+No cryptographic verification beyond CI's existing signing checks is claimed.
+Packaged install/sign-in/read acceptance remains for the user; no app was launched.
+
+The red checks the user noticed are separate automatic main-branch CI, not this
+Windows release failure. Main Branch Build 41340371700 has Windows x64 and all
+Linux jobs Pass, but macOS certificate import fails (SecKeychainItemImport) and
+Windows ARM64 packaging lacks transcribe-libs. Code quality 41340263701 reports
+24 Prettier files; Nix 41340263681 reports stale bun.nix. These also appeared on
+the earlier main baseline; do not disable them or claim repository-wide green CI.
+No additional release/rebuild is needed for the successful Windows x64 installer.
+
+**0.0.10 rerelease dispatched, 2 November 2026:** tested fix
+`42d537dfdcb698cdb75488bf9de530ea46f45555` is pushed to main and
+`fix/store-release-install-20261102`. The completed retirement commit `30a4e74d`
+remains an ancestor. [Release run 41340263217](https://github.com/Punit-Dethe/Grain/actions/runs/41340263217)
+is **In progress**, pinned to that main SHA, with explicit
+`draft=false,rerelease=true`. It will replace the existing public 0.0.10 assets
+through the existing signed release pipeline and retarget the tag only in its
+successful finish step. Do not count publication/tag/feed verification or a
+packaged install/account check as Pass before their evidence exists. The old
+release backup listed below remains available. No user account sign-in is needed
+while CI builds; already installed 0.0.10 users must manually run the new installer.
+
+**Normal release store installation fix, 2 November 2026:** based exclusively on
+current main `44cd5c7d85ccb196d453ffdce91a824a09b160a5`, including the completed
+legacy extension retirement and latest overview changes. No old branch is merged
+and no retired machinery/file is restored. Sidebar navigation was already enabled;
+the reported "Store extensions are not available in this build" came from a
+separate host policy that still allowed store MCPs only in debug/alpha builds.
+
+The shared policy now permits verified signed-store records in normal release
+builds across install/update, account controls, discovery and execution. Custom
+records and built-in validation providers still require a debug build and Developer
+Mode; signed descriptor admission, main-window ownership, revision/provenance,
+vault binding, metadata freshness and revocation checks are unchanged. Updated
+the existing policy regression to cover release/debug and Developer Mode on/off.
+Normal release CI also validates and supplies the existing GitHub desktop OAuth
+registration: previously those build values were supplied only to alpha builds.
+No account tokens/private App key or new registration is introduced.
+
+Checks Pass: **102 frontend tests, 432 workspace tests, 696 backend tests**
+(23 existing backend tests ignored), normal TypeScript/Vite build, release
+readiness, relocation policy, scoped whitespace and Actionlint 1.7.12. The actual
+OAuth preflight passes seven dummy-credential cases; actual rerelease scripts
+pass six cases with a fake `gh`, including refusal of draft/immutable releases and
+changed tags. First host build hit an open app's DLL lock; the user closed Grain,
+then the complete host suite passed. No new harness/framework or live provider
+test was added. Graph coverage does not index these changes; inspected the actual
+diff and existing signed-store/runtime paths rather than treating its zero as audit.
+
+The user explicitly requests re-releasing **0.0.10**, so the version stays fixed.
+Backed up all three existing public assets and release metadata in
+`C:\Users\watrm\Downloads\Grain-v0.0.10-before-rerelease-20261102-17c46e`;
+downloaded hashes match GitHub's recorded digests. The old version tag points to
+`9deb7e509dea5ef8cc7f2eccc67b7ace8c5b6f10`. The existing release workflow gains an
+explicit `rerelease` opt-in (requires `draft=false` and a mutable public release),
+exact run-SHA checkout and serialized release jobs. After successful build/sign/
+publication and native verification, it refuses tag drift, retargets the exact
+version tag to the build source and records that source in release notes.
+This uses the job's GITHUB_TOKEN to avoid spawning another tag-triggered build.
+Actual run/publication results are recorded separately; fixture tests do not
+credit a completed release. Existing 0.0.10 users need the rebuilt installer:
+same-version replacements are not offered automatically by the updater.
+
 **Normal-build Extensions sidebar, 31 October 2026:** at the user's request,
 remove the old alpha/development-only sidebar condition and its unused visibility
 helper. Extensions now uses its existing enabled Installed-page destination in

@@ -417,6 +417,47 @@ same commit.
 
 ## Sync log
 
+### November 2 catalogue checkpoint
+
+The onboarding stage through `0e5e9ca9` (#2303) preserves Grain's existing
+design, adds durable final-step completion through the owned Core store,
+adopts native rate progress and regional Chinese output, and retains the
+shared silence status/microphone-settings improvements. Excludes the replacement
+Try-it wizard, OS-language JS injection and upgrade guesses. Windows checks
+pass 712 backend tests, 245 Core tests and 102 frontend tests; frontend build,
+binding export and all five upstream gates pass. The measured baseline is 39
+files. Native UI/macOS acceptance remains explicit in `SYNC-2026-11-02.md`;
+audio-file import is the next and last approved feature block, Settings-only.
+
+Integrated #2299 through `93c9ee05` on `sync/handy-audit-20261102`, retaining
+Grain UI and the current paired native fork. The shared models 0.2.2 snapshot
+contains the same ASR entries as fetched Handy main's 0.2.3; language detection
+remains held. Package parity, Rust compilation, 704 backend tests (23 opt-in
+skips), 16 final-snapshot catalogue tests, 102 frontend tests, 28 upstream
+process tests and all five preflight gates pass. The existing Windows Cargo
+manifest runner is required. Regenerated the existing Nix derivative/hash;
+Linux Nix evaluation, native macOS/Linux execution and real model inference
+are not claimed. The staged baseline is 38 reviewed diverged files. Seven
+newer Handy commits remain outside ancestry; see `SYNC-2026-11-02.md`.
+
+The same branch separately adapts #2336 Debian OpenSSL packaging and #2340
+Intel Mac CPU-only features, retaining Apple Silicon Metal and the paired
+fork. Both native layers' target features resolve correctly for both Mac and
+both Windows architectures; 11 contract tests and the Windows Rust check
+pass. Windows #2326 has no matching GradeChip surface in Grain. Final
+post-platform preflight passes all five gates. Native Mac/Linux acceptance
+remains pending; these two adapted ports do not close out intervening commits.
+
+The next staged merge integrates #2302 through `5a9451e7`: shared clipboard
+transactions stay serialized and macOS input injection stays on the main
+thread; Standard, Flow and Streaming wait through Grain's existing blocking
+pool instead of sleeping on the UI thread. Preserve the options/Agent/Paste
+Catch hooks and session-tagged completion, with tray/terminal-error guards.
+Windows Rust check and 704 backend tests pass (23 opt-in skips), as do all
+five final preflight gates. Desktop paste responsiveness/restoration and
+macOS native acceptance remain in the sync plan. Six newer commits remain
+outside ancestry; the reviewed baseline stays at 38 files.
+
 ### October 17 full integration
 
 Merged the complete 34-commit range through `9e57a0d7` on
@@ -472,3 +513,25 @@ execution plan for subsequent native/capture and final frontend stages.
 | 2026-08-15    | `98a4d80c` (6 commits)             | Backlog to **zero**. Two frozen Handy web-overlay conflicts were auto-dropped; one real `managers/audio.rs` conflict was resolved per policy. Adopted #37a26fd6's Secure Input/tray rebuild race fix (including atomic template-icon updates), #1908 portable `HF_HOME` under `Data/huggingface`, #1911 layout-aware macOS Cmd+V key resolution (active keyboard layout with ANSI-V fallback), and #1902's pre-init `GGML_METAL_NO_RESIDENCY=1` shutdown workaround (`HANDY_METAL_RESIDENCY=1` opts back in). #1907's Turkish semantic corrections were **manually ported** into Grain's owned locale schema with Grain branding. #549cbde3's webview arming visualization and compiled first-sample recorder API were **not adopted**: Grain's overlay is the native pill, and the upstream API would cut across batch, rolling, Agent, onboarding, and extension capture paths; the inert `handy/overlay.rs` was nevertheless taken verbatim. Decision recorded in `verdicts.json` and the per-file map. `cargo check --lib` passed (only upstream's documented Windows `Emitter` warning); `cargo test --lib` **510 passed, 1 ignored**; `bun install` unchanged; `tsc --noEmit` clean; ratchet + audit + freeze + port-audit green.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 2026-08-22    | `0e503672` (10 commits)            | Audited every Handy commit after 2026-08-15 and closed ancestry to **zero behind**. Fixed four missed runtime/product changes: #1874 race-safe default-microphone fallback + UI refresh; #1406 phrase support across all Grain dictionary entry points; #1817/#1892 explicit xdotool modifier keyup cleanup; handy-keys 0.3.4. Completed #1924 beyond the earlier partial port by taking the generated catalog/architecture changes verbatim while preserving the exact 0.2.0 vendor baseline and isolated rolling/TDT patch contract. Adapted three suppressed docs fixes (Bluetooth input tradeoff, Apple-only fn/Globe limitation, stale macOS Accessibility grants). The new frontend/suppressed gates require problem, applicability, Grain destinations, and evidence and include upstream merge commits; d55ea7ef's conflict-marker accident is valid only with repair merge 0e503672. `cargo test --lib`: **622 passed, 1 ignored**; grain-core **111 passed**; frontend **81 passed**; TypeScript, policy, semantic audits, ancestry, and ratchet green.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2026-09-23    | `8f9cf53c` (42 commits)            | Bulk merge driver advanced ancestry to zero behind. It auto-resolved 14 frozen-frontend conflicts and reverted 13 routed UI changes; ten backend/product conflicts were resolved under the divergence policy. Ported model-file recovery, empty-recording unload, transcript-log redaction, Norwegian language alias, compound-key names, Wayland paste fixes, Nix updater guard, and Windows Vulkan default. Frontend, suppressed-path, relocation, divergence, policy, and ratchet gates pass after reviewing and locking 26 intentional temporary divergence increases. Seven larger tray/capture/shortcut/platform ports remain explicitly deferred in [REVIEW-2026-09-23.md](REVIEW-2026-09-23.md); zero behind does not imply feature parity. Bun production build and eight focused frontend tests passed; Rust check stopped in the vendored transcribe.cpp CMake build before Grain code compiled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+### 2026-11-02 staged completion
+
+On branch `sync/handy-audit-20261102`, onboarding #2303 and Settings-only
+file transcription #2315 are integrated after the catalogue, platform and paste
+checkpoints. See [SYNC-2026-11-02.md](SYNC-2026-11-02.md) for exact scope,
+exclusions, 721 backend / 245 Core / 102 frontend test evidence, five passing
+boundary gates, and native desktop acceptance still required. No release or
+main merge. Language detection and older deferred ports remain held; the user's
+upcoming single dictation model selection is a separate product change.
+
+### 2026-11-02 deferred follow-up ports
+
+Adopted shortcut busy-input parity and hold-or-toggle (#1910/#1971), unchanged
+Carbon shadow preservation (#2002), and pre-run macOS Accessory launch (#2003).
+These commits were already in ancestry: this is a runtime adaptation, not a new
+upstream merge or a close-out of held features. Shared coordinator/sequence tests
+are canonical, with small Grain effect adapters and a structured relocation rule.
+754 backend / 245 Core / 102 frontend tests and the frontend build pass. Native
+macOS and the short new real-app shortcut checks remain pending; the exact
+procedures are in SYNC-2026-11-02.md. Language detection and tray serialization
+remain deferred. No release or main merge; hero edits remain local.

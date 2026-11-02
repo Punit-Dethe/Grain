@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { type } from "@tauri-apps/plugin-os";
 import { CaptureModes } from "@/components/settings/capture/CaptureModes";
 import { ModelSettingsCard } from "@/components/settings/general/ModelSettingsCard";
-import { PushToTalk } from "@/components/settings/PushToTalk";
+import { ShortcutActivation } from "@/components/settings/ShortcutActivation";
 import { ShortcutInput } from "@/components/settings/ShortcutInput";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
@@ -16,7 +16,7 @@ import { ModelPicker } from "@/components/settings/speech-to-text/ModelPicker";
 export function CapturePane() {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
-  const pushToTalk = getSetting("push_to_talk");
+  const pushToTalk = getSetting("shortcut_activation") === "push_to_talk";
   const isLinux = type() === "linux";
 
   return (
@@ -28,7 +28,7 @@ export function CapturePane() {
         title={t("ui2.settings.groups.recording")}
         info={t("ui2.settings.groups.recordingInfo")}
       >
-        <PushToTalk descriptionMode="tooltip" grouped />
+        <ShortcutActivation />
         <CaptureDecodeSettings />
         {/* Push-to-talk cancels by releasing the key, so a cancel shortcut would
             be a key that can never fire. Linux keeps it hidden regardless:

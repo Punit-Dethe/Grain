@@ -11,11 +11,13 @@ pub(crate) enum Use {
     Flow(u64),
     /// One meeting processing attempt; owns every model role it loads.
     Meeting(u64),
+    File,
 }
 
 #[derive(Default)]
 pub(crate) struct State {
     owner: std::sync::Mutex<(u64, Option<Use>)>,
+    released: std::sync::Condvar,
 }
 
 pub(crate) struct Lease {
@@ -24,8 +26,26 @@ pub(crate) struct Lease {
 }
 
 impl State {
+    /// A background chunk may finish before foreground inference takes over.
+    /// Other foreground contention still fails as before.
+    pub(crate) fn claim_foreground(self: &Arc<Self>, usage: Use) -> Result<Lease, String> {
+        let mut owner = self.owner.lock().unwrap_or_else(|e| e.into_inner());
+        while owner.1 == Some(Use::File) {
+            owner = self.released.wait(owner).unwrap_or_else(|e| e.into_inner());
+        }
+        self.claim_locked(owner, usage)
+    }
+
     pub(crate) fn claim(self: &Arc<Self>, usage: Use) -> Result<Lease, String> {
-        let mut owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        let owner = self.owner.lock().unwrap_or_else(|error| error.into_inner());
+        self.claim_locked(owner, usage)
+    }
+
+    fn claim_locked(
+        self: &Arc<Self>,
+        mut owner: std::sync::MutexGuard<'_, (u64, Option<Use>)>,
+        usage: Use,
+    ) -> Result<Lease, String> {
         if owner.1.is_some() {
             return Err("The transcription model is already in use".into());
         }
@@ -63,6 +83,7 @@ impl Drop for Lease {
             .unwrap_or_else(|error| error.into_inner());
         if owner.0 == self.ticket {
             owner.1 = None;
+            self.state.released.notify_all();
         }
     }
 }
@@ -390,6 +411,26 @@ mod admission_tests {
         assert!(validate_diarization(Vec::new(), 4, samples)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn foreground_waits_for_file_chunk_then_claims_the_same_engine() {
+        let state = Arc::new(State::default());
+        let file = state.claim(Use::File).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let next = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            let _foreground = next.claim_foreground(Use::Stream).unwrap();
+            tx.send(()).unwrap();
+        });
+        assert!(rx
+            .recv_timeout(std::time::Duration::from_millis(30))
+            .is_err());
+        drop(file);
+        rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        let _flow = state.claim(Use::Flow(1)).unwrap();
+        assert!(state.claim_foreground(Use::Batch).is_err());
     }
 }
 
