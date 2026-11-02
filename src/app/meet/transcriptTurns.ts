@@ -14,6 +14,14 @@ export interface Turn {
   startMs: number;
   endMs: number;
   text: string;
+  /** The turn's words with their times, for word-level playback. */
+  words: TurnWord[];
+}
+
+export interface TurnWord {
+  text: string;
+  startMs: number;
+  endMs: number;
 }
 
 /** A pause this long starts a new turn even with the same speaker. */
@@ -23,6 +31,10 @@ function speakerKey(track: number, attribution: Attribution): string | null {
   return typeof attribution === "object" && "Speaker" in attribution
     ? `t${track}-s${attribution.Speaker}`
     : null;
+}
+
+function timed(word: Word): TurnWord {
+  return { text: word.text, startMs: word.start_ms, endMs: word.end_ms };
 }
 
 /**
@@ -47,6 +59,7 @@ export function buildTurns(revision: TranscriptRevision): Turn[] {
     if (current && continues) {
       current.text = `${current.text} ${word.text}`;
       current.endMs = Math.max(current.endMs, word.end_ms);
+      current.words.push(timed(word));
       continue;
     }
     const turn: Turn = {
@@ -56,6 +69,7 @@ export function buildTurns(revision: TranscriptRevision): Turn[] {
       startMs: word.start_ms,
       endMs: word.end_ms,
       text: word.text,
+      words: [timed(word)],
     };
     turns.push(turn);
     open.set(track, turn);

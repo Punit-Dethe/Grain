@@ -1,5 +1,5 @@
 import type { MeetingSummary } from "@/bindings";
-import type { Turn } from "./transcriptTurns";
+import type { Turn, TurnWord } from "./transcriptTurns";
 
 /** Quietest level the meter shows, in dBFS. */
 const METER_FLOOR_DB = -60;
@@ -70,6 +70,18 @@ export function highlightParts(
   }
   if (from < text.length) parts.push({ text: text.slice(from), match: false });
   return parts;
+}
+
+/** The word being heard at `ms`: the last word that has started (-1 before the first). */
+export function wordAt(words: TurnWord[], ms: number): number {
+  let low = 0;
+  let high = words.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (words[mid].startMs <= ms) low = mid + 1;
+    else high = mid;
+  }
+  return low - 1;
 }
 
 /** The turn being heard at `ms`: the latest one that has started and not ended. */

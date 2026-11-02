@@ -5,6 +5,7 @@ import {
   highlightParts,
   levelFraction,
   turnAt,
+  wordAt,
 } from "./meetFormat";
 import type { Turn } from "./transcriptTurns";
 
@@ -30,6 +31,7 @@ function turn(key: string, startMs: number, endMs: number): Turn {
     startMs,
     endMs,
     text: key,
+    words: [],
   };
 }
 
@@ -84,5 +86,21 @@ describe("turnAt", () => {
     expect(turnAt(turns, 1_500)).toBeNull();
     expect(turnAt(turns, 2_000)).toBe("b");
     expect(turnAt(turns, 9_000)).toBeNull();
+  });
+});
+
+describe("wordAt", () => {
+  it("finds the last word that has started", () => {
+    const words = [
+      { text: "a", startMs: 0, endMs: 200 },
+      { text: "b", startMs: 300, endMs: 500 },
+      { text: "c", startMs: 600, endMs: 900 },
+    ];
+    expect(wordAt(words, -1)).toBe(-1);
+    expect(wordAt(words, 0)).toBe(0);
+    expect(wordAt(words, 250)).toBe(0);
+    expect(wordAt(words, 300)).toBe(1);
+    expect(wordAt(words, 5_000)).toBe(2);
+    expect(wordAt([], 10)).toBe(-1);
   });
 });

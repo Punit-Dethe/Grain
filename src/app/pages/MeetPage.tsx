@@ -2,11 +2,13 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
   type SyntheticEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -30,12 +32,14 @@ import {
   speakerLabels,
   transcriptText,
   type Turn,
+  type TurnWord,
 } from "../meet/transcriptTurns";
 import {
   groupByDay,
   highlightParts,
   levelFraction,
   turnAt,
+  wordAt,
 } from "../meet/meetFormat";
 import {
   useLiveRecording,
@@ -475,7 +479,12 @@ function RecordingLead({
   if (state === "recording") {
     return (
       <span className="meet-lead is-live" aria-hidden="true">
-        <span className="meet-live-dot" />
+        <span className="meet-bars">
+          <i />
+          <i />
+          <i />
+          <i />
+        </span>
       </span>
     );
   }
@@ -512,8 +521,21 @@ function RecordingLead({
   );
 }
 
+/** A clock that ticks once a second while `active`, for live durations. */
+function useSecondTick(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
 function Recordings({ meet }: { meet: MeetController }) {
   const { t, i18n } = useTranslation();
+  const recordingId = meet.status.recording?.session_id;
+  const now = useSecondTick(Boolean(recordingId));
   const groups = useMemo(
     () => groupByDay(meet.meetings, new Date()),
     [meet.meetings],
@@ -557,7 +579,6 @@ function Recordings({ meet }: { meet: MeetController }) {
     );
   } else {
     const processingId = meet.status.processing?.session_id;
-    const recordingId = meet.status.recording?.session_id;
     body = groups.map((group) => (
       <section key={group.key} className="meet-day">
         <h3>
@@ -593,7 +614,11 @@ function Recordings({ meet }: { meet: MeetController }) {
                     <span className="meet-row-top">
                       <span className="meet-row-title">{meeting.title}</span>
                       <span className="meet-row-duration">
-                        {formatClock(meeting.duration_ms)}
+                        {formatClock(
+                          state === "recording"
+                            ? now - meeting.created_unix_ms
+                            : meeting.duration_ms,
+                        )}
                       </span>
                     </span>
                     <span className="meet-row-preview">
@@ -763,6 +788,7 @@ function usePlayback(meet: MeetController, sessionId: string) {
     skip,
     cycleRate,
     audioProps,
+    audioRef,
   };
 }
 
@@ -901,24 +927,113 @@ interface SpeakerLook {
   tone: string | null;
 }
 
+/** The current turn's words: the word being heard is underlined, and the
+ * underline glides from word to word. While playing it follows the audio
+ * every frame; the component only re-renders when the word changes. */
+function SpokenText({
+  words,
+  audio,
+  playing,
+  position,
+  onSeek,
+}: {
+  words: TurnWord[];
+  audio: RefObject<HTMLAudioElement | null>;
+  playing: boolean;
+  position: number;
+  onSeek: (ms: number) => void;
+}) {
+  const [index, setIndex] = useState(() => wordAt(words, position));
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const lineRef = useRef<HTMLSpanElement>(null);
+  const lastTop = useRef<number | null>(null);
+
+  // Paused: follow seeks. Playing: follow the audio every frame.
+  useEffect(() => {
+    if (!playing) setIndex(wordAt(words, position));
+  }, [playing, position, words]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    const tick = () => {
+      const element = audio.current;
+      if (element) {
+        const next = wordAt(words, element.currentTime * 1_000);
+        setIndex((current) => (current === next ? current : next));
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [audio, playing, words]);
+
+  useLayoutEffect(() => {
+    const line = lineRef.current;
+    const word = textRef.current?.querySelector<HTMLElement>(
+      `[data-word="${index}"]`,
+    );
+    if (!line) return;
+    if (!word) {
+      line.style.opacity = "0";
+      lastTop.current = null;
+      return;
+    }
+    const top = word.offsetTop + word.offsetHeight - 2;
+    // Moving to a new line jumps; along a line the underline glides.
+    line.classList.toggle("is-jump", lastTop.current !== top);
+    lastTop.current = top;
+    line.style.opacity = "1";
+    line.style.width = `${word.offsetWidth}px`;
+    line.style.transform = `translate(${word.offsetLeft}px, ${top}px)`;
+  }, [index]);
+
+  return (
+    <p ref={textRef} className="meet-spoken">
+      {words.map((word, i) => (
+        <span key={i}>
+          <span
+            data-word={i}
+            className={i <= index ? "is-said" : undefined}
+            onClick={() => onSeek(word.startMs)}
+          >
+            {word.text}
+          </span>{" "}
+        </span>
+      ))}
+      <span ref={lineRef} className="meet-underline" aria-hidden="true" />
+    </p>
+  );
+}
+
+interface Heard {
+  audio: RefObject<HTMLAudioElement | null>;
+  playing: boolean;
+  position: number;
+}
+
 const TurnRow = memo(function TurnRow({
   turn,
   look,
   source,
-  current,
+  heard,
   query,
   onSeek,
 }: {
   turn: Turn;
   look: SpeakerLook;
   source: SourceKind | null;
-  current: boolean;
+  /** Set only on the turn being heard. */
+  heard: Heard | null;
   query: string;
   onSeek: (ms: number) => void;
 }) {
   const { t } = useTranslation();
   return (
-    <li className={`meet-turn${current ? " is-current" : ""}`}>
+    <li
+      className={`meet-turn${heard ? " is-current" : ""}`}
+      data-turn={turn.key}
+    >
       <span
         className={`meet-avatar${look.tone ? ` tone-${look.tone}` : ""}`}
         aria-hidden="true"
@@ -949,11 +1064,21 @@ const TurnRow = memo(function TurnRow({
             {formatClock(turn.startMs)}
           </button>
         </div>
-        <p>
-          {highlightParts(turn.text, query).map((part, index) =>
-            part.match ? <mark key={index}>{part.text}</mark> : part.text,
-          )}
-        </p>
+        {heard && !query.trim() ? (
+          <SpokenText
+            words={turn.words}
+            audio={heard.audio}
+            playing={heard.playing}
+            position={heard.position}
+            onSeek={onSeek}
+          />
+        ) : (
+          <p>
+            {highlightParts(turn.text, query).map((part, index) =>
+              part.match ? <mark key={index}>{part.text}</mark> : part.text,
+            )}
+          </p>
+        )}
       </div>
     </li>
   );
@@ -1073,10 +1198,41 @@ function MeetingView({
     [t],
   );
   const visible = useMemo(() => filterTurns(turns, query), [turns, query]);
-  const currentKey = playback.playing ? turnAt(turns, playback.position) : null;
-  const heardKey = turnAt(turns, playback.position);
-  const heard = turns.find((turn) => turn.key === heardKey);
-  const now = heard?.speakerId ? (looks.get(heard.speakerId) ?? null) : null;
+  // The turn being heard, once audio is loaded (paused keeps its place).
+  const heardKey =
+    playback.state === "ready" ? turnAt(turns, playback.position) : null;
+  const heardTurn = turns.find((turn) => turn.key === heardKey);
+  const now = heardTurn?.speakerId
+    ? (looks.get(heardTurn.speakerId) ?? null)
+    : null;
+  const heard = useMemo<Heard>(
+    () => ({
+      audio: playback.audioRef,
+      playing: playback.playing,
+      position: playback.position,
+    }),
+    [playback.audioRef, playback.playing, playback.position],
+  );
+
+  // Keep the turn being heard in view while playing, clear of the player.
+  useEffect(() => {
+    if (!heardKey || !playback.playing) return;
+    const row = document.querySelector<HTMLElement>(
+      `[data-turn="${CSS.escape(heardKey)}"]`,
+    );
+    const page = row?.closest<HTMLElement>(".page");
+    if (!row || !page) return;
+    const box = row.getBoundingClientRect();
+    const view = page.getBoundingClientRect();
+    if (box.top >= view.top + 24 && box.bottom <= view.bottom - 140) return;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    page.scrollTo({
+      top: page.scrollTop + box.top - view.top - view.height / 3,
+      behavior: reduce ? "auto" : "smooth",
+    });
+  }, [heardKey, playback.playing]);
   const multiSource = new Set(meeting.sources).size > 1;
   const { seek } = playback;
   const onSeek = useCallback((ms: number) => void seek(ms), [seek]);
@@ -1210,7 +1366,7 @@ function MeetingView({
                 source={
                   multiSource ? (meeting.sources[turn.track] ?? null) : null
                 }
-                current={turn.key === currentKey}
+                heard={turn.key === heardKey ? heard : null}
                 query={query}
                 onSeek={onSeek}
               />

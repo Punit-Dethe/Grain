@@ -6243,6 +6243,7 @@ html[data-theme="light"] .qp-overlay {
   --meet-page: var(--bg-1);
   --meet-surface: #292929;
   --meet-surface-hover: #313131;
+  --meet-dock: #262626;
   --meet-line: rgba(255, 255, 255, 0.07);
   --meet-lift: inset 0 1px rgba(255, 255, 255, 0.035);
 }
@@ -6254,6 +6255,7 @@ html[data-theme="light"] .grain-root {
   --meet-page: #fcfcfb;
   --meet-surface: #f3f1ec;
   --meet-surface-hover: #ebe8e1;
+  --meet-dock: #efece6;
   --meet-line: rgba(26, 26, 26, 0.08);
   --meet-lift: none;
 }
@@ -7265,6 +7267,96 @@ html[data-theme="light"] .grain-root {
   background: color-mix(in srgb, var(--peach) 38%, transparent);
 }
 
+/* Word-level playback: spoken words take full ink and one underline glides
+   along under the word being heard. */
+.meet-spoken {
+  position: relative;
+}
+
+.meet-spoken [data-word] {
+  border-radius: 3px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.meet-spoken [data-word]:hover {
+  background: var(--accent-soft-hover);
+}
+
+.meet-spoken .is-said {
+  color: var(--text-1);
+}
+
+.meet-underline {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text-1);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.18s var(--ease-out),
+    width 0.18s var(--ease-out),
+    opacity 0.2s ease;
+}
+
+.meet-underline.is-jump {
+  transition: opacity 0.2s ease;
+}
+
+/* Live recording row: a soft red wash and moving level bars. */
+.meet-row[data-state="recording"] {
+  background: color-mix(in srgb, var(--meet-live) 6%, transparent);
+}
+
+.meet-row[data-state="recording"]:hover {
+  background: color-mix(in srgb, var(--meet-live) 10%, transparent);
+}
+
+.meet-row[data-state="recording"] .meet-row-duration {
+  color: var(--meet-error-ink);
+  font-weight: 600;
+}
+
+.meet-bars {
+  height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+}
+
+.meet-bars i {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--meet-live);
+  transform-origin: center;
+  animation: meet-bar 0.9s ease-in-out infinite alternate;
+}
+
+.meet-bars i:nth-child(2) {
+  animation-delay: -0.35s;
+}
+
+.meet-bars i:nth-child(3) {
+  animation-delay: -0.6s;
+}
+
+.meet-bars i:nth-child(4) {
+  animation-delay: -0.15s;
+}
+
+@keyframes meet-bar {
+  from {
+    transform: scaleY(0.3);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
 .meet-empty {
   display: grid;
   justify-items: start;
@@ -7300,13 +7392,22 @@ html[data-theme="light"] .grain-root {
   position: sticky;
   z-index: 5;
   bottom: 0;
-  margin-inline: calc(-1 * var(--meet-pad-x));
-  padding: 56px var(--meet-pad-x) 18px;
+  margin: 28px calc(-1 * var(--meet-pad-x)) 0;
+  padding: 12px var(--meet-pad-x) 14px;
+  background: var(--meet-dock);
+  box-shadow: inset 0 1px var(--meet-line);
+}
+
+/* A short fade of the bar's own colour softens the transcript scrolling
+   under it, instead of a tall page-coloured gradient. */
+.meet-dock::before {
+  content: "";
+  position: absolute;
+  inset: -28px 0 100% 0;
   background: linear-gradient(
     to top,
-    var(--meet-page) 0%,
-    var(--meet-page) 52%,
-    color-mix(in srgb, var(--meet-page) 0%, transparent) 100%
+    color-mix(in srgb, var(--meet-dock) 70%, transparent),
+    color-mix(in srgb, var(--meet-dock) 0%, transparent)
   );
   pointer-events: none;
 }
@@ -7322,7 +7423,6 @@ html[data-theme="light"] .grain-root {
   align-items: center;
   gap: 24px;
   margin: 0 auto;
-  pointer-events: auto;
 }
 
 @media (max-width: 760px) {
@@ -7535,7 +7635,8 @@ html[data-theme="light"] .grain-root {
 
 @media (prefers-reduced-motion: reduce) {
   .meet-live-dot,
-  .meet-spinner {
+  .meet-spinner,
+  .meet-bars i {
     animation: none;
   }
 
@@ -7543,7 +7644,8 @@ html[data-theme="light"] .grain-root {
   .meet-orb-core,
   .meet-ticks i,
   .meet-progress i,
-  .meet-row-go {
+  .meet-row-go,
+  .meet-underline {
     transition: none;
   }
 
