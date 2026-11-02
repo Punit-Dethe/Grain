@@ -30,9 +30,10 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 
 | `agent_input_type_to_expand` | Retained for future typed Agent input; production voice pills do not expand or expose this preference. Existing Agent result/conversation settings remain available. |
 
-| Field                     | Reason                                                                                                |
-| ------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `settings_schema_version` | Internal settings-file format version used to run migrations after upgrades; never user-configurable. |
+| Field                     | Reason                                                                                                                                                                |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `settings_schema_version` | Internal settings-file format version used to run migrations after upgrades; never user-configurable.                                                                 |
+| `onboarding_completed`    | Internal first-run completion state, saved by the Finish action through `complete_onboarding`; it controls startup routing and is not a user-configurable preference. |
 
 ## Write-only by design
 

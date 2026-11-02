@@ -212,21 +212,21 @@ SHA256 fields have 64 characters and commit fields have 40. `submission_sha256`
 is the SHA256 of `serde_json::to_vec(SourceSubmission)` in contract field order,
 not TOML bytes or arbitrarily reformatted JSON.
 
-| Policy field | Trusted meaning |
-| --- | --- |
-| `schema` | Integer `3`; older policies are refused, not migrated |
-| `candidate_sha256`, `submission_sha256`, `receipt_sha256` | Exact approved candidate, complete structured source submission and preparation receipt |
-| `producer_sha256`, `verifier_sha256` | Independently approved registry builder and official `gh` executable bytes |
-| `authority_sha256` | SHA256 of the exact operator-owned ownership file supplied as `--authority` |
-| `registry_repo` | GitHub `owner/repo` whose CI provenance must verify |
-| `registry_commit`, `registry_ref` | Exact registry commit and `refs/heads/<branch>`; scoped branch names are allowed, ambiguous/invalid components refuse |
-| `signer_workflow`, `signer_commit` | Same-repository `owner/repo/.github/workflows/<file>.yml` or `.yaml` and immutable workflow commit; reusable workflow identity is the signer |
-| `reviewer`, `submitter` | Eligible reviewer and authorized submitting maintainer from the ownership file; only submitter becomes catalogue `author` |
-| `review_pull_request`, `review_head`, `review_id` | Nonzero merged registry PR number, exact full reviewed PR head and nonzero latest effective approving GitHub review ID |
-| `maintainer_approval` | Optional bounded operator approval record reference, allowed only for an opted-in extension and its owning reviewer; uses `review_id: 0`, never a fabricated GitHub review |
-| `approved_at`, `expires_at` | RFC3339 approval window: not future-dated, still valid and at most seven days; rechecked before opening the key |
-| `publishing_public_key` | Independently approved base64 minisign publishing public key |
-| `previous_index_sha256`, `previous_index_version` | Exact currently signed index bytes and monotonic version to extend |
+| Policy field                                              | Trusted meaning                                                                                                                                                            |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`                                                  | Integer `3`; older policies are refused, not migrated                                                                                                                      |
+| `candidate_sha256`, `submission_sha256`, `receipt_sha256` | Exact approved candidate, complete structured source submission and preparation receipt                                                                                    |
+| `producer_sha256`, `verifier_sha256`                      | Independently approved registry builder and official `gh` executable bytes                                                                                                 |
+| `authority_sha256`                                        | SHA256 of the exact operator-owned ownership file supplied as `--authority`                                                                                                |
+| `registry_repo`                                           | GitHub `owner/repo` whose CI provenance must verify                                                                                                                        |
+| `registry_commit`, `registry_ref`                         | Exact registry commit and `refs/heads/<branch>`; scoped branch names are allowed, ambiguous/invalid components refuse                                                      |
+| `signer_workflow`, `signer_commit`                        | Same-repository `owner/repo/.github/workflows/<file>.yml` or `.yaml` and immutable workflow commit; reusable workflow identity is the signer                               |
+| `reviewer`, `submitter`                                   | Eligible reviewer and authorized submitting maintainer from the ownership file; only submitter becomes catalogue `author`                                                  |
+| `review_pull_request`, `review_head`, `review_id`         | Nonzero merged registry PR number, exact full reviewed PR head and nonzero latest effective approving GitHub review ID                                                     |
+| `maintainer_approval`                                     | Optional bounded operator approval record reference, allowed only for an opted-in extension and its owning reviewer; uses `review_id: 0`, never a fabricated GitHub review |
+| `approved_at`, `expires_at`                               | RFC3339 approval window: not future-dated, still valid and at most seven days; rechecked before opening the key                                                            |
+| `publishing_public_key`                                   | Independently approved base64 minisign publishing public key                                                                                                               |
+| `previous_index_sha256`, `previous_index_version`         | Exact currently signed index bytes and monotonic version to extend                                                                                                         |
 
 Keep the policy, ownership file, expected policy digest, verifier and publishing key in
 immutable operator-owned locations outside author/build workspaces. A digest
@@ -380,13 +380,13 @@ the serving store, author/prepared/candidate trees and operator policy/ownership
 key directories. Those roots are canonicalized before containment checks,
 including Windows path prefixes. Existing output is never reused or overwritten.
 
-| Output | Meaning |
-| --- | --- |
-| `base/v1/` | Verified capture selected by the original current-pointer pin |
-| `signed-update/` | Existing signer's exact approved signed fragment |
-| `assembly/` | Complete verified serving tree and conditional promotion parent |
-| `bundle/` | Verified static hosting handoff retaining existing store history/assets |
-| `release.json` | Successful local summary: prior/new pointer pins, bundle receipt pin, selected snapshot and index version. Not GitHub activation or another approval credential. |
+| Output           | Meaning                                                                                                                                                          |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `base/v1/`       | Verified capture selected by the original current-pointer pin                                                                                                    |
+| `signed-update/` | Existing signer's exact approved signed fragment                                                                                                                 |
+| `assembly/`      | Complete verified serving tree and conditional promotion parent                                                                                                  |
+| `bundle/`        | Verified static hosting handoff retaining existing store history/assets                                                                                          |
+| `release.json`   | Successful local summary: prior/new pointer pins, bundle receipt pin, selected snapshot and index version. Not GitHub activation or another approval credential. |
 
 Stages are reported separately. Failures retain the owned output for inspection
 and do not automatically repeat signing, promotion or publication. Before local
@@ -434,13 +434,15 @@ The following is an example, **not an approved operator configuration**:
   "registry_ref": "refs/heads/main",
   "publishing_public_key": "<approved Minisign public key>",
   "reviewers": ["registry-reviewer"],
-  "extensions": [{
-    "id": "com.example.tools",
-    "source_repo": "https://github.com/example/tools",
-    "artifact_kind": "mcp-descriptor",
-    "maintainers": ["extension-owner"],
-    "allow_maintainer_approval": false
-  }]
+  "extensions": [
+    {
+      "id": "com.example.tools",
+      "source_repo": "https://github.com/example/tools",
+      "artifact_kind": "mcp-descriptor",
+      "maintainers": ["extension-owner"],
+      "allow_maintainer_approval": false
+    }
+  ]
 }
 ```
 
@@ -453,14 +455,14 @@ first-party self-authored releases, explicitly opt the grant into
 This flag alone never approves a version. Every release still needs a fresh exact
 policy and approval record. Publisher/display names do not establish ownership.
 
-| Operation | Required operator action |
-| --- | --- |
-| New ID | Review source-repository control and proposed ID, kind and submitting maintainers; approve enrollment before accepting a release. New IDs do not enroll themselves through a submission. |
-| Update | Keep the approved source/kind/owners; approve the new exact candidate using the existing review route. |
-| Transfer/source or kind change | Obtain recorded consent from the current and receiving owners, review the new source and permissions, then explicitly change the grant. Never infer transfer from a matching name or a new submission. |
-| Add/remove maintainer or reviewer | Review the identity change separately, update the protected file and issue new release policies. Authors cannot approve their own role/approval-flag changes. |
-| Withdraw ownership/review authority | Remove the grant, maintainer or reviewer from the current operator file; old pinned policies stop matching. Replacing only a per-release policy does not revoke another copy of it. |
-| Withdraw an already published version | Use the existing signed revocation/publication path; removing an ownership grant stops future signing but does not uninstall or revoke published bytes. |
+| Operation                             | Required operator action                                                                                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| New ID                                | Review source-repository control and proposed ID, kind and submitting maintainers; approve enrollment before accepting a release. New IDs do not enroll themselves through a submission.               |
+| Update                                | Keep the approved source/kind/owners; approve the new exact candidate using the existing review route.                                                                                                 |
+| Transfer/source or kind change        | Obtain recorded consent from the current and receiving owners, review the new source and permissions, then explicitly change the grant. Never infer transfer from a matching name or a new submission. |
+| Add/remove maintainer or reviewer     | Review the identity change separately, update the protected file and issue new release policies. Authors cannot approve their own role/approval-flag changes.                                          |
+| Withdraw ownership/review authority   | Remove the grant, maintainer or reviewer from the current operator file; old pinned policies stop matching. Replacing only a per-release policy does not revoke another copy of it.                    |
+| Withdraw an already published version | Use the existing signed revocation/publication path; removing an ownership grant stops future signing but does not uninstall or revoke published bytes.                                                |
 
 Keep the canonical current ownership file and approval policies in an immutable
 operator-owned directory outside all submission/build/candidate/prior trees.
@@ -817,6 +819,7 @@ owned output is cleaned, while pre-existing inputs/outputs stay intact.
 [Capture audit](../../docs/Extensions%202.0/EXTENSION-GITHUB-CAPTURE-AUDIT.md)
 records historical verification. The clean first-publication/activation work is
 tracked in the clean-break audit below; old registry migration is not required.
+
 ## Clean catalogue bootstrap (unreleased platform)
 
 Grain has no deployed users; there is no old-registry migration or archive lane.
@@ -849,7 +852,6 @@ publication; do not fake a previous bundle to pass the ordinary gate. Source rev
 key ownership, current hosting integrity and app/hosted metadata coherence still
 apply. Routine signed updates/renewal use the existing current-contract path.
 See [clean-break audit](../../docs/Extensions%202.0/EXTENSION-CLEAN-BREAK-AUDIT.md).
-
 
 ## Clean first publication and manual GitHub activation
 

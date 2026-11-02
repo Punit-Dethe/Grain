@@ -1,7 +1,6 @@
 import React, { useLayoutEffect, useRef } from "react";
 
-interface TextareaProps
-  extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   variant?: "default" | "compact";
   /** Grow with content from one line up to `maxRows`, then scroll. When set,
    * the fixed min-height of the variant is dropped so the field starts single-

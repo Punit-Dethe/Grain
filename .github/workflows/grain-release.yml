@@ -92,6 +92,24 @@ jobs:
           echo "Application version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Load versioned release notes
+        id: release_notes
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $notesPath = Join-Path $env:GITHUB_WORKSPACE "docs/releases/v$env:RELEASE_VERSION.md"
+          if (-not (Test-Path -LiteralPath $notesPath -PathType Leaf)) {
+            throw "Release notes are missing: $notesPath"
+          }
+          $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding utf8
+          if ([string]::IsNullOrWhiteSpace($notes)) { throw 'Release notes are empty' }
+          $delimiter = "GRAIN_RELEASE_NOTES_$([guid]::NewGuid().ToString('N'))"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "body<<$delimiter" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value $notes -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value $delimiter -Encoding utf8
+
       - name: Check explicitly requested rerelease
         if: github.event_name == 'workflow_dispatch' && inputs.rerelease
         id: rerelease
@@ -265,17 +283,7 @@ jobs:
           releaseName: v${{ steps.version.outputs.version }}
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
-          releaseBody: |
-            # Grain v0.0.10
-
-            The extension beta is now included in the main Windows release. Update Grain to try the extension platform without installing a separate alpha build.
-
-            - Added the extension beta to the main application.
-            - Improved Agent responsiveness when working with extension tools.
-            - Restored Handy's waveform sensitivity while keeping Grain's waveform appearance and animation.
-            - Included small bug fixes and reliability improvements.
-
-            The extension platform is in beta; feedback is welcome as we continue improving it.
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
 
