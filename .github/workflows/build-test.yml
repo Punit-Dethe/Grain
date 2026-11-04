@@ -3,6 +3,10 @@ name: "Build Test"
 on:
   workflow_dispatch:
     inputs:
+      linux-only:
+        description: "Build only Linux deb, AppImage and RPM test artifacts"
+        type: boolean
+        default: false
       github-extension-alpha:
         description: "Build only the isolated Windows extension alpha with the registered GitHub client"
         type: boolean
@@ -10,7 +14,7 @@ on:
 
 jobs:
   build-test:
-    if: ${{ !inputs.github-extension-alpha }}
+    if: ${{ !inputs.github-extension-alpha && !inputs.linux-only }}
     permissions:
       contents: write
     strategy:
@@ -48,6 +52,34 @@ jobs:
       asset-prefix: "handy-test"
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
+    secrets: inherit
+
+  linux-build:
+    if: ${{ inputs.linux-only && !inputs.github-extension-alpha }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "ubuntu-22.04"
+            args: "--bundles deb"
+            target: "x86_64-unknown-linux-gnu"
+          - platform: "ubuntu-24.04"
+            args: "--bundles appimage,rpm"
+            target: "x86_64-unknown-linux-gnu"
+          - platform: "ubuntu-24.04-arm"
+            args: "--bundles appimage,deb,rpm"
+            target: "aarch64-unknown-linux-gnu"
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      build-args: ${{ matrix.args }}
+      sign-binaries: true
+      asset-prefix: "grain-linux-test"
+      upload-artifacts: true
     secrets: inherit
 
   extension-alpha:
