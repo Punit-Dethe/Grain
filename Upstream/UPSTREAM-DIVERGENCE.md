@@ -1,5 +1,19 @@
 # Divergence Map (Grain vs Handy)
 
+## Streaming history cleanup latency (2026-11-05)
+
+Grain's Native ASR saves text-only history with an empty audio filename. At the
+history limit, retention joined that name onto the recordings directory and
+retried deleting the directory as a file, adding four 80 ms waits before paste.
+The exact old helper reproduced 322–323 ms of delay on Windows. Audio deletion
+now lives in owned `grain_history_audio.rs`; the two history deletion callers
+delegate through marked hooks. Empty names skip filesystem cleanup, while real
+files retain the existing transient-lock retries. Regression tests cover an
+empty name with other audio present, actual/missing audio, and a Windows lock.
+No inference, recorder, paste timing, retention policy, or native pin changes.
+The owned module declaration adds one shared `lib.rs` line (1340 -> 1341);
+moving the retry implementation out reduces history divergence (33 -> 29).
+
 The complete, file-level map of where Grain has deliberately diverged from
 upstream. Regenerate the raw list any time with:
 

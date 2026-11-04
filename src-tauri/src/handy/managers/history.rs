@@ -10,30 +10,6 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 use tauri_specta::Event;
 
-/// [GRAIN] Delete a file, retrying briefly on transient locks. On Windows a
-/// just-finished recording (or one being previewed in the history UI, or a
-/// virus scanner) can hold the handle for a moment, so a single `remove_file`
-/// intermittently hits ERROR_ACCESS_DENIED (os error 5) even though the file is
-/// about to be free. Retry with a short backoff before giving up; a missing file
-/// counts as success.
-fn remove_file_with_retry(path: &std::path::Path) -> std::io::Result<()> {
-    const ATTEMPTS: usize = 5;
-    let mut last_err: Option<std::io::Error> = None;
-    for attempt in 0..ATTEMPTS {
-        match fs::remove_file(path) {
-            Ok(()) => return Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => {
-                last_err = Some(e);
-                if attempt + 1 < ATTEMPTS {
-                    std::thread::sleep(std::time::Duration::from_millis(80));
-                }
-            }
-        }
-    }
-    Err(last_err.expect("loop ran at least once"))
-}
-
 /// Database migrations for transcription history.
 /// Each migration is applied in order. The library tracks which migrations
 /// have been applied using SQLite's user_version pragma.
@@ -452,15 +428,14 @@ impl HistoryManager {
                 error!("Failed to emit retained history deletion: {error}");
             }
 
-            // Delete WAV file
-            let file_path = self.recordings_dir.join(file_name);
-            if file_path.exists() {
-                if let Err(e) = remove_file_with_retry(&file_path) {
-                    error!("Failed to delete WAV file {}: {}", file_name, e);
-                } else {
+            // [GRAIN] Text-only streaming entries have no audio file to delete.
+            match crate::grain_history_audio::remove_audio(&self.recordings_dir, file_name) {
+                Ok(true) => {
                     debug!("Deleted old WAV file: {}", file_name);
                     deleted_count += 1;
                 }
+                Ok(false) => {}
+                Err(e) => error!("Failed to delete WAV file {}: {}", file_name, e),
             }
         }
 
@@ -708,13 +683,12 @@ impl HistoryManager {
 
         // Get the entry to find the file name
         if let Some(entry) = self.get_entry_by_id(id).await? {
-            // Delete the audio file first
-            let file_path = self.get_audio_file_path(&entry.file_name);
-            if file_path.exists() {
-                if let Err(e) = remove_file_with_retry(&file_path) {
-                    error!("Failed to delete audio file {}: {}", entry.file_name, e);
-                    // Continue with database deletion even if file deletion fails
-                }
+            // [GRAIN] Skip absent audio; retain retries for real recording files.
+            if let Err(e) =
+                crate::grain_history_audio::remove_audio(&self.recordings_dir, &entry.file_name)
+            {
+                error!("Failed to delete audio file {}: {}", entry.file_name, e);
+                // Continue with database deletion even if file deletion fails
             }
         }
 

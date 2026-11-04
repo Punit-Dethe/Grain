@@ -21,7 +21,7 @@
   "src-tauri/src/handy/engine_supervisor/worker.rs": 8,
   "src-tauri/src/handy/input.rs": 39,
   "src-tauri/src/handy/managers/audio.rs": 45,
-  "src-tauri/src/handy/managers/history.rs": 33,
+  "src-tauri/src/handy/managers/history.rs": 29,
   "src-tauri/src/handy/managers/model.rs": 228,
   "src-tauri/src/handy/managers/model/download/tests.rs": 16,
   "src-tauri/src/handy/managers/transcription.rs": 121,
@@ -37,7 +37,7 @@
   "src-tauri/src/handy/transcription_coordinator.rs": 101,
   "src-tauri/src/handy/tray.rs": 659,
   "src-tauri/src/handy/utils.rs": 60,
-  "src-tauri/src/lib.rs": 1340,
+  "src-tauri/src/lib.rs": 1341,
   "src-tauri/src/main.rs": 4,
   "src-tauri/tauri.conf.json": 28
 }
