@@ -61,6 +61,7 @@ mod grain_audio;
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
 mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
 mod grain_engine;
+mod grain_history_audio;
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
