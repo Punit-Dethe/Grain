@@ -1234,9 +1234,6 @@ impl ModelManager {
             let is_available = {
                 let models = self.available_models.lock().unwrap();
                 Self::selected_model_is_available(&models, &settings.selected_model)
-                    && models
-                        .get(&settings.selected_model)
-                        .is_some_and(|model| !model.supports_streaming) // [GRAIN] Standard category only.
             };
 
             if !is_available {
@@ -1257,8 +1254,7 @@ impl ModelManager {
             if let Some(available_model) = self
                 .get_available_models()
                 .into_iter()
-                .find(|model| model.is_downloaded && !model.supports_streaming)
-            // [GRAIN]
+                .find(|model| model.is_downloaded)
             {
                 info!(
                     "Auto-selecting model: {} ({})",

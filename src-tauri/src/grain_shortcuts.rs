@@ -34,7 +34,7 @@ mod tests {
         let mut changed = original.clone();
         changed.name = "Renamed display label".into();
         assert!(same_shadow(&original, &changed));
-        changed.id = "transcribe_native_asr".into();
+        changed.id = "summon_agent".into();
         assert!(!same_shadow(&original, &changed));
         changed = original.clone();
         changed.current_binding = "ctrl+shift+f12".into();

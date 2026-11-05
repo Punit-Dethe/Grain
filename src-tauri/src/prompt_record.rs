@@ -182,7 +182,7 @@ pub async fn transcribe_split(
     }
 }
 
-/// Finish Standard's live chunks, or drain them before independently decoding
+/// Finish dictation's live decode, or drain them before independently decoding
 /// content and its spoken instruction. No finalization runs on discarded text.
 pub(crate) async fn transcribe_recording_split(
     app: &AppHandle,

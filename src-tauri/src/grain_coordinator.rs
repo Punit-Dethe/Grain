@@ -132,7 +132,7 @@ mod grain_routing_tests {
         ] {
             let mut state = CoordinatorState::new();
             let now = Instant::now();
-            state.on_input(input("transcribe_native_asr", mode, true), now);
+            state.on_input(input("transcribe", mode, true), now);
             assert!(state
                 .grain_input_with_ai(
                     input("transcribe_send_to_ai", mode, true),

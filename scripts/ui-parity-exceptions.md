@@ -32,6 +32,7 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 
 | Field                     | Reason                                                                                                |
 | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `onboarding_completed` | Backend-owned durable setup completion; `complete_onboarding` writes it only after the final shortcut step. It is not a user preference. |
 | `settings_schema_version` | Internal settings-file format version used to run migrations after upgrades; never user-configurable. |
 
 ## Write-only by design
@@ -51,4 +52,4 @@ capture policy controls when AI processing runs.
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `custom_filler_words` | Handy keeps this power-user override backend-only and exposes only the master filler-removal toggle. Grain mirrors that product boundary instead of inventing a fork-only editor.                                                                                                                                                                                                                            |
 | `paste_catch_hold_ms` | Internal expiry for Recover Missed Text Insertion. The feature switch is surfaced; its 20-second safety window is implementation tuning, not a second user preference.                                                                                                                                                                                                                                       |
-| `selected_model`      | **Reachable, just not as a setting** — triaged 2026-08-15. Not dead and not upstream-only: it is the live Batch/Rolling model id (`rolling.rs`, `lib.rs` preload, `actions.rs` language resolution). Its control is the Model Library, which writes it through the `set_active_model` command rather than the generic settings updater — and a command writer is what the gate cannot see. Nothing to build. |
+| `selected_model` | The single dictation model, selected by Handy's catalogue via `set_active_model` rather than a generic settings updater. Shared by streaming, batch and the reviewed Flow exception. |

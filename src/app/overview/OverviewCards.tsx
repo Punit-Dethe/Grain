@@ -7,7 +7,6 @@ import { hashForRoute } from "../navigation";
 
 const SHORTCUTS = [
   { mode: "standard", bindingId: "transcribe" },
-  { mode: "streaming", bindingId: "transcribe_native_asr" },
   { mode: "agent", bindingId: "summon_agent" },
 ] as const;
 
