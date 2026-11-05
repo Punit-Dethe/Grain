@@ -6,8 +6,21 @@ import { formatKeyPart } from "@/lib/utils/keyboard";
 import { hashForRoute } from "../navigation";
 
 const SHORTCUTS = [
-  { mode: "standard", bindingId: "transcribe" },
-  { mode: "agent", bindingId: "summon_agent" },
+  {
+    mode: "standard",
+    bindingId: "transcribe",
+    labelKey: "overview.shortcuts.standard",
+  },
+  {
+    mode: "agent",
+    bindingId: "summon_agent",
+    labelKey: "overview.shortcuts.agent",
+  },
+  {
+    mode: "prompt",
+    bindingId: "prompt_record",
+    labelKey: "settings.general.shortcut.bindings.prompt_record.name",
+  },
 ] as const;
 
 const CAPTURE_SETTINGS = hashForRoute({ page: "settings", section: "capture" });
@@ -72,8 +85,8 @@ export function OverviewCards() {
           </button>
         </aside>
         <div className="overview-shortcuts">
-          {SHORTCUTS.map(({ mode, bindingId }) => {
-            const label = t(`overview.shortcuts.${mode}`);
+          {SHORTCUTS.map(({ mode, bindingId, labelKey }) => {
+            const label = t(labelKey);
             const combination = bindings[bindingId]?.current_binding?.trim();
             const shortcut = combination
               ? combination
