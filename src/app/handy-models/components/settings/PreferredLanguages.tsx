@@ -64,7 +64,7 @@ const LanguageMenu: React.FC<{
             // Escape with a query clears it; without one, the menu closes.
             if (picker.onKeyDown(e)) e.stopPropagation();
           }}
-          className="h-9 w-full min-w-0 bg-transparent text-sm text-text outline-none placeholder:text-ink-3"
+          className="model-catalogue-search-input h-9 w-full min-w-0 bg-transparent text-sm text-text outline-none placeholder:text-ink-3"
         />
       </label>
       <div className="min-h-0 overflow-y-auto p-1">

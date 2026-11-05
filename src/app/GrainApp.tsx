@@ -19,10 +19,6 @@ import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
-import {
-  createOnboardingDraft,
-  onboardingShortcutIds,
-} from "./components/onboarding/onboardingState";
 import { OnboardingLayout } from "./components/onboarding/OnboardingLayout";
 import {
   hashForRoute,
@@ -553,7 +549,6 @@ function NextShell() {
     null,
   );
   const [isReturningUser, setIsReturningUser] = useState(false);
-  const [modelDraft, setModelDraft] = useState(createOnboardingDraft);
   const { settings, updateSetting, refreshAudioDevices, refreshOutputDevices } =
     useSettings();
   const hasInitializedRuntime = useRef(false);
@@ -637,8 +632,6 @@ function NextShell() {
     );
   };
 
-  const shortcutIds = onboardingShortcutIds(modelDraft);
-
   if (onboardingStep === null)
     return (
       <OnboardingLayout step={0}>
@@ -659,8 +652,6 @@ function NextShell() {
     return (
       <>
         <Onboarding
-          draft={modelDraft}
-          onDraftChange={setModelDraft}
           onBack={() => setOnboardingStep("accessibility")}
           onModelSelected={() => setOnboardingStep("shortcuts")}
         />
@@ -672,7 +663,7 @@ function NextShell() {
     return (
       <>
         <ShortcutsOnboarding
-          shortcutIds={shortcutIds}
+          shortcutIds={["transcribe"]}
           onBack={() => setOnboardingStep("model")}
           onComplete={() => setOnboardingStep("done")}
         />

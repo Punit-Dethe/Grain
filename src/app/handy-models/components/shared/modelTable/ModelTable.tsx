@@ -318,7 +318,7 @@ export const ModelTable: React.FC<ModelTableProps> = ({
                     press();
                   }
                 }}
-                className="h-full min-w-0 flex-1 bg-transparent text-body text-text outline-none placeholder:text-ink-3 [&::-webkit-search-cancel-button]:appearance-none"
+                className="model-catalogue-search-input h-full min-w-0 flex-1 bg-transparent text-body text-text outline-none placeholder:text-ink-3 [&::-webkit-search-cancel-button]:appearance-none"
               />
             </label>
             <div className="flex max-w-full flex-wrap items-center gap-1">

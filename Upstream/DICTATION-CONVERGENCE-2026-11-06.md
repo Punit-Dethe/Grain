@@ -1,7 +1,10 @@
 # Single-model dictation convergence
 
-User-authorized implementation, 6 November 2026. Working branch:
+User-authorized implementation, 6 November 2026. Original working branch:
 `converge/handy-dictation-20261106`, based on `origin/main` at `b40330eef`.
+Current working branch: `ui/dictation-v11-20261106`, created from that current
+main, with the missing v11 release-preparation changes and all convergence/UI
+commits carried forward. See the alignment record below.
 Handy reference: `82dfab9fda18c4bc24e1f6e56d36474d38eca0bc`; adopted
 backend baseline: `73c095857bc4eadff097f64767c40ad129cc372d`.
 
@@ -97,7 +100,7 @@ existing manager, without another routing/model-selection layer.
 Exit other Grain instances, then run:
 
 ```powershell
-cd C:\Projects\Grain\grain-dictation-unified-20261106
+cd C:\Projects\Grain\grain-dictation-v11-20261106
 $env:CARGO_TARGET_DIR = 'C:\gtc'
 bun run tauri dev
 ```
@@ -143,3 +146,37 @@ different model closes the list. Empty first-run setup initially opens it.
 Closing unmounts the catalogue and its keyboard/popup listeners. Catalogue
 data is computed once and shared by the summary/list; recognition is unchanged.
 User visual acceptance of collapsed/expanded/selection states remains pending.
+
+### Main / v11 alignment and transparent searches — 6 November 2026
+
+Fetched origin/main is `b40330eef` (package version 0.0.10). The v11 release
+preparation `ef8139863` is not its ancestor; each branch has one unique commit.
+The new working branch starts from main, ports that release commit, and carries
+all original convergence/UI commits. Main and the old dirty dev checkout are
+untouched. No release/tag/installer was started.
+
+The missing v11 functional changes are the 0.0.11 version bump, Recall's sidebar
+placement, hero #292929 background/no image shadow/localized tagline, and
+versioned release-note loading. Recall itself, file import, Handy integration
+and catalogue refresh were already in their common history. Other v11 edits
+are largely documentation/formatting. Main's newer history latency fix is
+retained as well.
+
+The frontend merge=ours rule initially retained the release-side shell/CSS.
+The frontend build caught stale dual-model onboarding imports. The five files
+changed by both lines of work were explicitly reconciled using the release
+commit's true parent as the base, preserving both feature sets; the duplicate
+onboarding-completion documentation row remains a single reviewed entry.
+Checks confirm 24 v11-only files match the release source, all three package
+versions are 0.0.11, Recall/tagline/hero updates coexist with unified onboarding,
+and core capture/routing, history cleanup and native pin match the tested
+convergence branch exactly.
+
+The model and language search inputs now share a narrow transparent-input CSS
+class. Its scoped override defeats the general settings input fill and focus
+shadow in both themes, including the portalled language menu. Other inputs
+retain their existing styles. User visual acceptance remains pending.
+
+Frontend build, 115 unit tests, focused lint, catalogue sync and settings parity
+pass after reconciliation. The backend compilation check is awaiting release
+of ggml-base.dll by the running old dev app; it is not marked passed yet.
