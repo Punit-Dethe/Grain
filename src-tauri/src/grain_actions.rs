@@ -1,6 +1,6 @@
 //! [GRAIN] Grain's own shortcut actions, out of the Handy-derived `actions.rs`
 //! (Handy Isolation phase 6). Everything here has no upstream counterpart:
-//! rolling real-time dictation, Native ASR streaming,
+//! rolling real-time dictation
 //! and the Agent bindings. `actions.rs` keeps
 //! upstream's actions and calls [`register`] once from its `ACTION_MAP`.
 
@@ -12,14 +12,13 @@ use crate::audio_feedback::{play_feedback_sound, SoundType};
 use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
-use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils;
 use grain_core::{DaemonEvent, SessionMode};
-use log::{error, warn};
+use log::error;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -275,7 +274,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         let binding_id = binding_id.to_string();
         // Flow uses exact continuous audio and does not load or run the ASR VAD.
         let vad_policy = VadPolicy::Disabled;
-        let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Dictation);
+        let overlay_generation = crate::grain_overlay::show_capture(app, false);
         let mut readiness = None;
         let mut recording_error = None;
         match rm.try_start_recording_low_ram(&binding_id, vad_policy) {
@@ -518,239 +517,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
     }
 }
 
-// Native ASR — push-to-talk live streaming, on the SAME unified
-// TranscriptionManager engine as Batch/Flow: the shortcut loads the selected
-// streaming model into the shared slot, opens the mic (frames fan out to the
-// manager's StreamRouter), and the manager's stream worker emits live committed
-// text to the Studio Window (`AsrStreamText` `DaemonEvent`s — this action only
-// owns the recording lifecycle, not the live text). `stop` finalizes the
-// stream, pastes the transcript, and saves history.
-struct NativeAsrAction;
-
-impl ShortcutAction for NativeAsrAction {
-    fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
-        // Require a selected + installed + streaming-capable model. Without one,
-        // surface a clear, actionable error to the pill and don't open the mic.
-        let settings = get_settings(app);
-        let selected = settings.selected_asr_model;
-        let mm = app.state::<Arc<ModelManager>>();
-        let ok = mm
-            .get_model_info(&selected)
-            .is_some_and(|m| m.supports_streaming);
-        if !ok {
-            warn!("Native ASR: no streaming model selected/installed");
-            crate::bridge::emit(
-                app,
-                DaemonEvent::ModelError {
-                    error: "Install and select a streaming model in Settings → Speech to Text"
-                        .into(),
-                },
-            );
-            return;
-        }
-
-        if let Err(error) = crate::grain_capture::require_transcribable_model(app, &selected) {
-            crate::bridge::emit(app, DaemonEvent::ModelError { error });
-            return;
-        }
-
-        let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
-        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-
-        // Load the streaming model into the shared engine slot (swaps out a
-        // resident Batch model if needed), then open the stream worker: it waits
-        // for the load, and frames queued on the router are never lost.
-        tm.initiate_model_load_for(selected);
-        tm.start_stream();
-
-        let binding_id = binding_id.to_string();
-        change_tray_icon(app, TrayIconState::Recording);
-
-        let vad_policy = crate::grain_audio::capture_vad_policy(settings.vad_enabled, true);
-        let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::NativeAsr);
-        let mut recording_error: Option<anyhow::Error> = None;
-        let mut readiness = None;
-        match rm.try_start_recording(&binding_id, vad_policy) {
-            Ok(ready) => readiness = Some(ready),
-            Err(error) => recording_error = Some(error),
-        }
-
-        if recording_error.is_none() {
-            session_started(app, SessionMode::NativeAsr);
-
-            shortcut::register_cancel_shortcut(app);
-            if let Some(readiness) = readiness {
-                crate::grain_capture::announce_ready(app, &rm, readiness, true);
-            }
-        } else {
-            crate::grain_overlay::hide_failed_capture(app, overlay_generation);
-            // Tear down the pending stream worker so its channel doesn't leak
-            // and block the next start_stream.
-            tm.cancel_stream();
-            change_tray_icon(app, TrayIconState::Idle);
-            if let Some(err) = recording_error {
-                let error_type = crate::managers::audio::recording_error_type(&err);
-                let _ = app.emit(
-                    "recording-error",
-                    RecordingErrorEvent {
-                        error_type: error_type.to_string(),
-                        detail: Some(err.to_string()),
-                    },
-                );
-            }
-        }
-    }
-
-    fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
-        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-        let stop_context = (crate::settings::get_settings(app).context_awareness_enabled
-            && rm.has_prompt_mark())
-        .then(crate::context_detect::capture_stop_context)
-        .unwrap_or_default();
-        shortcut::unregister_cancel_shortcut(app);
-
-        let ah = app.clone();
-        let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
-        let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
-        let binding_id = binding_id.to_string();
-
-        let session_id = emit_recording_stopped(app);
-
-        change_tray_icon(app, TrayIconState::Transcribing);
-        rm.remove_mute();
-        play_feedback_sound(app, SoundType::Stop);
-
-        // Snapshot before the stop so a cancel landing during the extra
-        // recording buffer (or later, mid-pipeline) is observed.
-        let cancel_generation = rm.cancel_generation();
-        tauri::async_runtime::spawn(async move {
-            let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
-
-            // The mic frames already reached the stream worker live; keep the
-            // captured samples only as the batch-fallback input (mirrors Handy:
-            // a model that turned out not to stream still yields a transcript).
-            let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) else {
-                tm.cancel_stream();
-                if !rm.was_cancelled_since(cancel_generation) {
-                    crate::bridge::emit(
-                        &ah,
-                        DaemonEvent::ModelError {
-                            error: "Audio capture failed; no partial transcript was produced"
-                                .to_string(),
-                        },
-                    );
-                }
-                return;
-            };
-            // Prompt Record split mark (the explicit Studio hover control).
-            let prompt_mark = rm.take_prompt_mark();
-
-            // `finalize_stream` blocks up to its internal timeout while the worker
-            // flushes, so keep the wait off the async executor. Always run it (even
-            // under Prompt Record) so the stream worker never leaks — its text is
-            // just unused when we re-transcribe the sliced audio below.
-            let tm_finalize = Arc::clone(&tm);
-            let samples_for_fallback = samples.clone();
-            let finalized = tauri::async_runtime::spawn_blocking(move || {
-                match tm_finalize.finalize_stream() {
-                    // A finalized stream with usable text wins (already
-                    // custom-word/filler processed by finalize_stream).
-                    Ok(Some(text)) if !text.trim().is_empty() => text,
-                    // No usable stream → batch-transcribe the captured audio.
-                    Ok(_) if !samples_for_fallback.is_empty() => {
-                        warn!("Native ASR: stream produced no text — batch fallback");
-                        tm_finalize
-                            .transcribe(samples_for_fallback)
-                            .unwrap_or_default()
-                    }
-                    Ok(_) => String::new(),
-                    Err(e) => {
-                        error!("Native ASR: stream finalize failed: {e}");
-                        String::new()
-                    }
-                }
-            })
-            .await
-            .unwrap_or_default();
-
-            let (final_text, suppress_trailing_space) = if let Some(m) =
-                prompt_mark.filter(|&m| m > 0 && m < samples.len())
-            {
-                // Prompt Record on the streaming path: the live transcript
-                // covered content + the spoken instruction together, so it can't be
-                // split. Re-transcribe the two audio slices and post-process the
-                // content with the spoken instruction (AI forced on, regardless of
-                // which shortcut stopped the session). `process_transcription_output`
-                // also runs voice actions on the content.
-                let (content_res, spoken) =
-                    crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
-                let content = content_res.unwrap_or_default();
-                let processed =
-                    process_transcription_output(&ah, &content, true, spoken, Some(&stop_context))
-                        .await;
-                let suppress_trailing_space = processed.suppress_trailing_space;
-                let ft = processed.final_text;
-                if !ft.trim().is_empty() {
-                    if let Err(e) = hm.save_entry(
-                        String::new(),
-                        content.clone(),
-                        true,
-                        processed.post_processed_text.clone(),
-                        processed.post_process_prompt.clone(),
-                    ) {
-                        error!("Failed to save Native ASR history entry: {e}");
-                    }
-                    crate::bridge::emit(
-                        &ah,
-                        DaemonEvent::AsrSessionFinal {
-                            session_id,
-                            text: ft.clone(),
-                        },
-                    );
-                }
-                (ft, suppress_trailing_space)
-            } else {
-                if finalized.trim().is_empty() {
-                    (String::new(), false)
-                } else {
-                    if let Err(e) =
-                        hm.save_entry(String::new(), finalized.clone(), false, None, None)
-                    {
-                        error!("Failed to save Native ASR history entry: {e}");
-                    }
-                    // Protocol parity with the old worker: announce the session's
-                    // final transcript on the event bus.
-                    crate::bridge::emit(
-                        &ah,
-                        DaemonEvent::AsrSessionFinal {
-                            session_id,
-                            text: finalized.clone(),
-                        },
-                    );
-                    (finalized, false)
-                }
-            };
-
-            if final_text.trim().is_empty() {
-                change_tray_icon(&ah, TrayIconState::Idle);
-            } else {
-                if let Err(e) =
-                    paste_transcription(ah.clone(), final_text, suppress_trailing_space).await
-                {
-                    error!("Failed to paste Native ASR transcription: {e}");
-                    let _ = ah.emit("paste-error", ());
-                }
-                if current_session_id() == session_id {
-                    change_tray_icon(&ah, TrayIconState::Idle);
-                }
-            }
-
-            // processing finished → pill/Studio Window hides.
-            emit_processing_complete(&ah, session_id);
-        });
-    }
-}
-
 /// Register every Grain action into the shared `ACTION_MAP`. Called once from
 /// `actions.rs` — the single hook the Handy-derived registry needs.
 pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
@@ -761,11 +527,6 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         Arc::new(RealtimeTranscribeAction {
             post_process_override: AtomicBool::new(false),
         }) as Arc<dyn ShortcutAction>,
-    );
-    // Native ASR — streaming dictation in the Studio Window.
-    map.insert(
-        "transcribe_native_asr".to_string(),
-        Arc::new(NativeAsrAction) as Arc<dyn ShortcutAction>,
     );
     // Summon the Agent window.
     map.insert(

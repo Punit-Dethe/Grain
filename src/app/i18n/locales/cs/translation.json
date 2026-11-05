@@ -156,22 +156,40 @@
       "noSettingsNeeded": "Tento model funguje automaticky bez nutnosti konfigurace."
     },
     "models": {
-      "title": "Modely přepisu",
-      "description": "Vyberte model přepisu nebo stáhněte další modely. Různé modely nabízejí různé úrovně přesnosti a rychlosti.",
-      "downloaded": "Staženo",
-      "available": "K dispozici ke stažení",
-      "deleteConfirm": "Opravdu chcete smazat {{modelName}}? Pro opětovné použití jej budete muset znovu stáhnout.",
-      "deleteActiveConfirm": "{{modelName}} je váš aktivní model. Jeho smazáním se zastaví přepisy, dokud nevyberete nový model. Opravdu chcete pokračovat?",
-      "deleteTitle": "Smazat model",
-      "filters": {
-        "all": "Vše",
-        "multiLanguage": "Vícejazyčný",
-        "translation": "Překlad",
-        "allLanguages": "Všechny jazyky"
+      "title": "Modely",
+      "changeLanguages": "Změnit jazyky",
+      "sections": {
+        "yours": "V tomto počítači",
+        "fits": "Pro vaše jazyky",
+        "untested": "Netestováno"
       },
-      "noModelsMatch": "Tomuto filtru neodpovídají žádné modely.",
-      "yourModels": "Stažené modely",
-      "availableModels": "Dostupné ke stažení"
+      "untestedNote": "Netestováno s Handy. Mohou být pomalejší nebo dělat více chyb.",
+      "untestedHidden_one": "Další {{count}} model není vyladěn pro diktování. Najdete ho hledáním.",
+      "untestedHidden_other": "Dalších {{count}} modelů není vyladěno pro diktování. Najdete je hledáním.",
+      "emptyYours": "Zatím žádné modely. Vyberte některý níže: stáhne se a Grain ho začne používat.",
+      "showMore": "Zobrazit další ({{count}})",
+      "showFewer": "Zobrazit méně",
+      "download": "Stáhnout a použít",
+      "downloadingThenUse": "{{percent}} % z {{total}}, poté se přepne",
+      "loading": "Načítání…",
+      "deleteAsk": "Smazat {{name}}? Uvolní se {{size}}.",
+      "deleteAskActive": "Smazat {{name}}? Grain nebude moci přepisovat, dokud nevyberete jiný model.",
+      "cancel": "Zrušit",
+      "deleteModel": "Smazat {{name}}",
+      "cancelDownload": "Zastavit stahování {{name}}",
+      "legend": {
+        "open": "Jak se modely hodnotí",
+        "accuracyNote": "Pro každý z vašich jazyků: kolik slov model v našich testovacích nahrávkách napsal špatně.",
+        "speedNote": {
+          "accelerated": "Jak dlouho trvá napsat 30 sekund řeči na grafickém čipu našeho testovacího notebooku. Tento počítač se může lišit.",
+          "cpu": "Jak dlouho trvá napsat 30 sekund řeči na procesoru našeho testovacího notebooku. Tento počítač se může lišit."
+        },
+        "marks": "? zatím nebylo změřeno. — tomuto jazyku nerozumí."
+      },
+      "rescan": {
+        "label": "Znovu prohledat",
+        "tooltip": "Znovu prohledat modely přidané do složky modelů nebo mezipaměti Hugging Face mimo Grain"
+      }
     },
     "general": {
       "title": "Obecné",
@@ -213,6 +231,12 @@
       "pushToTalk": {
         "label": "Stisk a mluv",
         "description": "Podržte pro nahrávání, uvolněte pro zastavení"
+      },
+      "preferredLanguages": {
+        "title": "Preferované jazyky",
+        "description": "Jazyky, kterými mluvíte. Grain podle nich doporučuje modely.",
+        "noMatch": "Žádný jazyk neodpovídá „{{query}}“",
+        "weak": "Zatím žádný model dobře nerozpoznává: {{languages}}."
       }
     },
     "sound": {
@@ -628,5 +652,91 @@
   "overlay": {
     "transcribing": "Přepisuji...",
     "processing": "Zpracovávám..."
+  },
+  "modelTable": {
+    "tags": {
+      "preview": "Živý náhled",
+      "previewTitle": "Zobrazuje vaše slova v překryvu Živě, zatímco mluvíte, a po skončení je napíše",
+      "translate": "Překládá",
+      "translateTitle": "Umí změnit to, co řeknete, na anglický text. Zapnete to v nastavení"
+    },
+    "rubric": {
+      "gradeTitle": "Přesnost pro {{language}}: {{grade}}",
+      "accuracyTitle": "Přesnost pro {{language}}",
+      "overallTitle": "Přesnost ve vašich jazycích: {{grade}}",
+      "overall": "Přesnost ve vašich jazycích",
+      "meaning": {
+        "A": "Velmi málo chyb: vaše slova obvykle vyjdou tak, jak jste je řekli",
+        "B": "Několik chyb: občas budete muset opravit slovo",
+        "C": "Časté chyby: některé detaily se mohou ztratit",
+        "D": "Mnoho chyb: počítejte s tím, že napsaný text budete kontrolovat a opravovat",
+        "F": "Často nesrozumitelné: velká část toho, co řeknete, může vyjít špatně"
+      },
+      "unsupported": "Tento model nerozumí jazyku {{language}}, takže v něm nemůže psát",
+      "unrated": "Tento model rozumí jazyku {{language}}, ale zatím jsme neměřili, jak dobře",
+      "under": "pod {{max}} %",
+      "between": "{{min}} až {{max}} %",
+      "over": "{{min}} % nebo více",
+      "speedTitle": "Rychlost: {{speed}}",
+      "speedName": {
+        "0": "Velmi pomalý",
+        "1": "Pomalý",
+        "2": "Střední",
+        "3": "Rychlý",
+        "4": "Velmi rychlý"
+      },
+      "speedMeaning": {
+        "0": "Vaše slova se objeví po dlouhém čekání",
+        "1": "Vaše slova se objeví po chvíli čekání",
+        "2": "Vaše slova se objeví po krátkém čekání",
+        "3": "Vaše slova se objeví téměř okamžitě",
+        "4": "Vaše slova se objeví okamžitě"
+      },
+      "speedPreview": "{{meaning}}, s živým náhledem během mluvení",
+      "untimed": "Rychlost zatím nebyla změřena",
+      "underSeconds": "pod {{max}} s",
+      "betweenSeconds": "{{min}} až {{max}} s",
+      "overSeconds": "{{min}} s nebo více"
+    },
+    "roles": {
+      "recommended": "Doporučeno",
+      "faster": "Rychlejší",
+      "accurate": "Přesnější",
+      "fromAll": "Ze všech modelů"
+    },
+    "speed": "Rychlost",
+    "size": "Velikost",
+    "accuracy": "Přesnost",
+    "search": "Hledat modely",
+    "allLabel": "Modely řeči",
+    "noMatch": "Pro „{{query}}“ nic nenalezeno. Zkuste jazyk nebo rodinu modelů, například Whisper či Parakeet",
+    "noFilterMatch": "Těmto filtrům žádné modely neodpovídají",
+    "speedUntested": "Rychlost zatím nebyla změřena",
+    "speedWords": {
+      "0": "Velmi pomalý, slova se objeví po dlouhém čekání",
+      "1": "Pomalý, slova se objeví po chvíli čekání",
+      "2": "Střední, slova se objeví po krátkém čekání",
+      "3": "Rychlý, slova se objeví téměř okamžitě",
+      "4": "Velmi rychlý, slova se objeví okamžitě"
+    },
+    "speedWordsPreview": {
+      "0": "Velmi pomalý, s živým náhledem během mluvení",
+      "1": "Pomalý, s živým náhledem během mluvení",
+      "2": "Střední, s živým náhledem během mluvení",
+      "3": "Rychlý, s živým náhledem během mluvení",
+      "4": "Velmi rychlý, s živým náhledem během mluvení"
+    },
+    "missingLanguage": "Chybí jazyk",
+    "allLanguages": "Vše",
+    "downloadingLine": "Stahuje se {{percent}} % z {{total}}",
+    "customLine": "Přidáno z vaší složky modelů. Nehodnoceno.",
+    "legacyLine": "Starší stažená verze. Nehodnoceno."
+  },
+  "languagePicker": {
+    "search": "Hledat jazyky",
+    "addAnother": "Přidat další",
+    "remove": "Odebrat: {{language}}",
+    "alreadyAdded_one": "{{languages}} je již přidán.",
+    "alreadyAdded_other": "{{languages}} jsou již přidány."
   }
 }

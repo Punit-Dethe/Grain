@@ -419,17 +419,6 @@ async resolveOnboardingState() : Promise<Result<OnboardingState, string>> {
 async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<OnboardingStep> {
     return await TAURI_INVOKE("onboarding_step_after_permissions", { isReturningUser });
 },
-/**
- * Resolve the Grain-owned editorial defaults against the live catalog.
- */
-async getOnboardingModelDefaults() : Promise<Result<OnboardingModelDefaults, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("get_onboarding_model_defaults") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async getTheme() : Promise<ThemeState> {
     return await TAURI_INVOKE("get_theme");
 },
@@ -538,12 +527,11 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 }
 },
 /**
- * [GRAIN] Which mode the AI shortcut starts from idle. Runtime-only — every
- * capture mode is always registered, so no key is added or dropped by this.
+ * Catalogue preferences do not alter the recognition language or selected model.
  */
-async changeCaptureAiStartModeSetting(mode: string) : Promise<Result<null, string>> {
+async changeSpokenLanguagesSetting(languages: string[]) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_capture_ai_start_mode_setting", { mode }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_spoken_languages_setting", { languages }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1306,9 +1294,9 @@ async agentRun(messages: AgentMessage[], context: string | null) : Promise<Resul
 }
 },
 /**
- * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, §2.5). The
+ * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, Â§2.5). The
  * user approved (or declined) the exact prepared call named by `token`; the host
- * revalidates and replays *that* call — the model is never re-consulted, so its
+ * revalidates and replays *that* call â€” the model is never re-consulted, so its
  * nondeterminism cannot change what runs. Returns the receipt/result (or the
  * decline) rendered for the chat.
  */
@@ -1343,9 +1331,9 @@ async agentSetPanelMode(expanded: boolean) : Promise<Result<null, string>> {
  * [GRAIN] CENTER panel: the webview reports the exact content height it wants
  * and the backend sizes the window to match (clamped to the work area), keeping
  * it centred and top-anchored so it grows downward. No-op unless the center
- * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] —
+ * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] â€”
  * never resize a visible window from a sync command on the main thread
- * (tauri#3990) — so the height feedback loop stays smooth.
+ * (tauri#3990) â€” so the height feedback loop stays smooth.
  */
 async agentResizePanel(height: number) : Promise<Result<null, string>> {
     try {
@@ -1356,8 +1344,8 @@ async agentResizePanel(height: number) : Promise<Result<null, string>> {
 }
 },
 /**
- * Confirm (⏎ on the reply card): close the panel, refocus the summon target,
- * and paste `text` — the latest assistant reply — at the cursor. A selection
+ * Confirm (âŽ on the reply card): close the panel, refocus the summon target,
+ * and paste `text` â€” the latest assistant reply â€” at the cursor. A selection
  * still held in the target app is replaced by the paste.
  */
 async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
@@ -1370,7 +1358,7 @@ async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
 },
 /**
  * Consume the retained Quick-Agent conversation (the panel calls this on
- * mount). Non-empty only when the panel is reopening from a follow-up offer —
+ * mount). Non-empty only when the panel is reopening from a follow-up offer â€”
  * in that case the panel starts EXPANDED with this history.
  */
 async agentTakeConversation() : Promise<AgentMessage[]> {
@@ -1634,33 +1622,6 @@ async hasAnyModelsOrDownloads() : Promise<Result<boolean, string>> {
 async rescanLocalModels() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("rescan_local_models") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * The streaming slice of the unified model catalog (`supports_streaming`),
- * for the "Streaming model" section of Settings → Speech to Text.
- */
-async listAsrModels() : Promise<Result<ModelInfo[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("list_asr_models") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Persist the selected streaming model. Accepts any catalog id (download may
- * happen afterward); the shortcut's start path checks it is actually on disk.
- * Hard category guard: only streaming-capable models may become
- * `selected_asr_model` (the mirror of `switch_active_model`'s standard-only
- * guard). Clearing the selection with an empty id is always allowed.
- */
-async selectAsrModel(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("select_asr_model", { modelId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2190,11 +2151,6 @@ default_panel?: DefaultPanel;
  */
 theme?: ThemeMode;
 /**
- * [GRAIN] Which capture binding the AI shortcut borrows from idle:
- * Dictation (model-selected Standard/Flow) or Streaming.
- */
-capture_ai_start_mode?: string;
-/**
  * [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
  * routes the transcript to AI. On by default — this is what replaces the
  * separate "Send to AI (End)" row that only ever appeared with
@@ -2207,11 +2163,9 @@ capture_end_with_ai?: boolean;
  */
 capture_always_ai?: boolean; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string;
 /**
- * [GRAIN] Native ASR model id (separate registry from `selected_model`).
- * Empty = none selected. Never overload `selected_model`: Batch/Rolling and
- * Native ASR have different model topologies and lifecycles.
+ * Languages used to rank and filter the model catalogue (Handy).
  */
-selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null;
+spoken_languages?: string[]; always_on_microphone?: boolean; selected_microphone?: string | null;
 /**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
@@ -2692,14 +2646,6 @@ export type ModelVerificationCompleted = string
  * Checksum verification began.
  */
 export type ModelVerificationStarted = string
-/**
- * The single editorially "best" model in each onboarding family.
- *
- * These are full registry IDs (repo + default quant filename), ready to pass
- * to the existing download/select commands. Keeping the pair behind a command
- * lets us update the defaults without teaching the frontend catalog internals.
- */
-export type OnboardingModelDefaults = { standard_model_id: string; asr_model_id: string }
 export type OnboardingState = { step: OnboardingStep;
 /**
  * Has models already. Decides where "permissions granted" goes next: a

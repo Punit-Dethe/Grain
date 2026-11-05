@@ -1,83 +1,22 @@
-/**
- * [GRAIN] Capture bindings — Dictation and Streaming, plus the AI key.
- *
- * Dictation chooses Standard or Flow in Rust from the selected model;
- * Streaming keeps its separate model and shortcut.
- *
- * The mode names and descriptions come from the Grain translation table
- * (`settings.general.shortcut.bindings.*`), the same source the Overview key
- * cards and the shortcut rows read, so a rename lands everywhere at once. The
- * backend binding is the fallback when a locale has no entry — never a
- * hardcoded list, which is how the old UI grew a dead row.
- */
-import React, { useMemo } from "react";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
-import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
-import { Dropdown } from "../../ui/Dropdown";
 import { ShortcutInput } from "../ShortcutInput";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
 
-/** Mirrors `CAPTURE_MODE_IDS` in grain-core. Order = least to most machinery. */
-const CAPTURE_MODE_IDS = ["transcribe", "transcribe_native_asr"] as const;
-
-type CaptureModeId = (typeof CAPTURE_MODE_IDS)[number];
-
-interface CaptureMode {
-  id: CaptureModeId;
-  name: string;
-  description: string;
-}
-
 export const CaptureModes: React.FC = () => {
   const { t } = useTranslation();
-  const { settings, getSetting, updateSetting, isUpdating } = useSettings();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
 
   const pushToTalk = getSetting("shortcut_activation") === "push_to_talk";
   const alwaysAi = getSetting("capture_always_ai") ?? false;
   const endWithAi = getSetting("capture_end_with_ai") ?? true;
-  const aiStartMode = getSetting("capture_ai_start_mode") ?? "transcribe";
-  const modes = useMemo<CaptureMode[]>(
-    () =>
-      CAPTURE_MODE_IDS.map((id) => {
-        const binding = settings?.bindings?.[id];
-        return {
-          id,
-          name: t(
-            `settings.general.shortcut.bindings.${id}.name`,
-            binding?.name ?? id,
-          ),
-          description: t(
-            `settings.general.shortcut.bindings.${id}.description`,
-            binding?.description ?? "",
-          ),
-        };
-      }),
-    [settings, t],
-  );
-
-  const effectiveAiStartMode = modes.some((mode) => mode.id === aiStartMode)
-    ? aiStartMode
-    : "transcribe";
-
   return (
     <>
       <SettingsGroup title={t("ui2.capture.group")}>
-        <div className="capture-mode-picker">
-          {modes.map((mode) => (
-            <div key={mode.id} className="capture-mode-option">
-              <span className="capture-mode-copy">
-                <strong>{mode.name}</strong>
-                <small>{mode.description}</small>
-              </span>
-              <span className="capture-mode-shortcut">
-                <ShortcutInput shortcutId={mode.id} bare />
-              </span>
-            </div>
-          ))}
-        </div>
+        <ShortcutInput shortcutId="transcribe" grouped />
         <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped />
       </SettingsGroup>
 
@@ -91,26 +30,6 @@ export const CaptureModes: React.FC = () => {
           isUpdating={isUpdating("capture_always_ai")}
           onChange={(value) => updateSetting("capture_always_ai", value)}
         />
-
-        {!alwaysAi && (
-          <SettingContainer
-            title={t("ui2.capture.ai.startMode.title")}
-            description={t("ui2.capture.ai.startMode.description")}
-            descriptionMode="tooltip"
-            grouped
-          >
-            <Dropdown
-              options={modes.map((mode) => ({
-                value: mode.id,
-                label: mode.name,
-              }))}
-              selectedValue={effectiveAiStartMode}
-              onSelect={(value) =>
-                updateSetting("capture_ai_start_mode", value)
-              }
-            />
-          </SettingContainer>
-        )}
 
         {/* With every capture already going to AI there is nothing for the AI
             key to add mid-capture, so we do not offer a switch that changes

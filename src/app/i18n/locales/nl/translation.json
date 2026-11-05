@@ -196,25 +196,49 @@
       "pushToTalk": {
         "label": "Push-to-talk",
         "description": "Ingedrukt houden om op te nemen, loslaten om te stoppen"
+      },
+      "preferredLanguages": {
+        "title": "Voorkeurstalen",
+        "description": "De talen die je spreekt. Grain gebruikt ze om modellen aan te bevelen.",
+        "noMatch": "Geen taal gevonden voor „{{query}}”",
+        "weak": "Geen enkel model herkent {{languages}} al goed."
       }
     },
     "models": {
-      "title": "Transcriptiemodellen",
-      "description": "Selecteer een transcriptiemodel of download extra modellen. Verschillende modellen bieden variërende niveaus van nauwkeurigheid en snelheid.",
-      "searchPlaceholder": "Modellen zoeken op naam...",
-      "yourModels": "Gedownloade modellen",
-      "availableModels": "Beschikbaar voor download",
-      "deleteConfirm": "Weet je zeker dat je {{modelName}} wilt verwijderen? Je moet het model opnieuw downloaden om het weer te gebruiken.",
-      "deleteActiveConfirm": "{{modelName}} is je actieve model. Als je dit verwijdert, stoppen de transcripties totdat je een nieuw model selecteert. Weet je het zeker?",
-      "deleteTitle": "Model verwijderen",
-      "filters": {
-        "allLanguages": "Alle talen"
+      "title": "Modellen",
+      "changeLanguages": "Talen wijzigen",
+      "sections": {
+        "yours": "Op deze computer",
+        "fits": "Voor jouw talen",
+        "untested": "Niet getest"
+      },
+      "untestedNote": "Niet getest met Handy. Ze kunnen langzamer zijn of meer fouten maken.",
+      "untestedHidden_one": "{{count}} ander model is niet afgestemd op dicteren. Zoek om het te vinden.",
+      "untestedHidden_other": "{{count}} andere modellen zijn niet afgestemd op dicteren. Zoek om er een te vinden.",
+      "emptyYours": "Nog geen modellen. Kies hieronder een model: het wordt gedownload en daarna gebruikt Grain het.",
+      "showMore": "{{count}} meer tonen",
+      "showFewer": "Minder tonen",
+      "download": "Downloaden en gebruiken",
+      "downloadingThenUse": "{{percent}}% van {{total}}, daarna wordt overgeschakeld",
+      "loading": "Laden…",
+      "deleteAsk": "{{name}} verwijderen? Dit maakt {{size}} vrij.",
+      "deleteAskActive": "{{name}} verwijderen? Grain kan niet transcriberen totdat je een ander model kiest.",
+      "cancel": "Annuleren",
+      "deleteModel": "{{name}} verwijderen",
+      "cancelDownload": "Downloaden van {{name}} stoppen",
+      "legend": {
+        "open": "Hoe modellen worden beoordeeld",
+        "accuracyNote": "Per taal van jou: hoeveel woorden een model fout had in onze testopnames.",
+        "speedNote": {
+          "accelerated": "Hoe lang het duurt om 30 seconden spraak uit te typen op de grafische chip van onze testlaptop. Deze computer kan afwijken.",
+          "cpu": "Hoe lang het duurt om 30 seconden spraak uit te typen op de processor van onze testlaptop. Deze computer kan afwijken."
+        },
+        "marks": "? is nog niet gemeten. — verstaat die taal niet."
       },
       "rescan": {
         "label": "Opnieuw scannen",
-        "tooltip": "Scannen naar modellen die buiten Handy om zijn toegevoegd aan de modellenmap of Hugging Face-cache"
-      },
-      "noModelsMatch": "Geen modellen voldoen aan dit filter."
+        "tooltip": "Scannen naar modellen die buiten Grain om zijn toegevoegd aan de modellenmap of Hugging Face-cache"
+      }
     },
     "sound": {
       "title": "Geluid",
@@ -624,5 +648,91 @@
   "overlay": {
     "transcribing": "Transcriberen...",
     "processing": "Verwerken..."
+  },
+  "modelTable": {
+    "tags": {
+      "preview": "Live voorvertoning",
+      "previewTitle": "Toont je woorden in de Live-overlay terwijl je praat en typt ze zodra je stopt",
+      "translate": "Vertaalt",
+      "translateTitle": "Kan wat je zegt omzetten in Engelse tekst. Zet dit aan in de instellingen"
+    },
+    "rubric": {
+      "gradeTitle": "Nauwkeurigheid {{language}}: {{grade}}",
+      "accuracyTitle": "Nauwkeurigheid {{language}}",
+      "overallTitle": "Nauwkeurigheid in jouw talen: {{grade}}",
+      "overall": "Nauwkeurigheid in jouw talen",
+      "meaning": {
+        "A": "Zeer weinig fouten: je woorden komen meestal precies zo uit als je ze zei",
+        "B": "Enkele fouten: af en toe moet je een woord verbeteren",
+        "C": "Regelmatig fouten: sommige details kunnen verloren gaan",
+        "D": "Veel fouten: controleer en corrigeer wat het typt",
+        "F": "Vaak onduidelijk: veel van wat je zegt kan fout uitkomen"
+      },
+      "unsupported": "Dit model verstaat geen {{language}} en kan het dus niet typen",
+      "unrated": "Dit model verstaat {{language}}, maar we hebben nog niet gemeten hoe goed",
+      "under": "onder {{max}}%",
+      "between": "{{min}} tot {{max}}%",
+      "over": "{{min}}% of meer",
+      "speedTitle": "Snelheid: {{speed}}",
+      "speedName": {
+        "0": "Zeer langzaam",
+        "1": "Langzaam",
+        "2": "Gemiddeld",
+        "3": "Snel",
+        "4": "Zeer snel"
+      },
+      "speedMeaning": {
+        "0": "Je woorden verschijnen na lang wachten",
+        "1": "Je woorden verschijnen na een tijdje wachten",
+        "2": "Je woorden verschijnen na even wachten",
+        "3": "Je woorden verschijnen bijna meteen",
+        "4": "Je woorden verschijnen meteen"
+      },
+      "speedPreview": "{{meaning}}, met een live voorvertoning terwijl je praat",
+      "untimed": "We hebben nog niet gemeten hoe snel het is",
+      "underSeconds": "onder {{max}} s",
+      "betweenSeconds": "{{min}} tot {{max}} s",
+      "overSeconds": "{{min}} s of meer"
+    },
+    "roles": {
+      "recommended": "Aanbevolen",
+      "faster": "Sneller",
+      "accurate": "Nauwkeuriger",
+      "fromAll": "Uit alle modellen"
+    },
+    "speed": "Snelheid",
+    "size": "Grootte",
+    "accuracy": "Nauwkeurigheid",
+    "search": "Modellen zoeken",
+    "allLabel": "Spraakmodellen",
+    "noMatch": "Niets gevonden voor „{{query}}”. Probeer een taal of een familie zoals Whisper of Parakeet",
+    "noFilterMatch": "Geen modellen die bij deze filters passen",
+    "speedUntested": "Snelheid nog niet gemeten",
+    "speedWords": {
+      "0": "Zeer langzaam, woorden verschijnen na lang wachten",
+      "1": "Langzaam, woorden verschijnen na een tijdje wachten",
+      "2": "Gemiddeld, woorden verschijnen na even wachten",
+      "3": "Snel, woorden verschijnen bijna meteen",
+      "4": "Zeer snel, woorden verschijnen meteen"
+    },
+    "speedWordsPreview": {
+      "0": "Zeer langzaam, met een live voorvertoning terwijl je praat",
+      "1": "Langzaam, met een live voorvertoning terwijl je praat",
+      "2": "Gemiddeld, met een live voorvertoning terwijl je praat",
+      "3": "Snel, met een live voorvertoning terwijl je praat",
+      "4": "Zeer snel, met een live voorvertoning terwijl je praat"
+    },
+    "missingLanguage": "Een taal ontbreekt",
+    "allLanguages": "Alle",
+    "downloadingLine": "{{percent}}% van {{total}} gedownload",
+    "customLine": "Toegevoegd vanuit je modellenmap. Niet beoordeeld.",
+    "legacyLine": "Een oudere download. Niet beoordeeld."
+  },
+  "languagePicker": {
+    "search": "Talen zoeken",
+    "addAnother": "Nog een toevoegen",
+    "remove": "{{language}} verwijderen",
+    "alreadyAdded_one": "{{languages}} is al toegevoegd.",
+    "alreadyAdded_other": "{{languages}} zijn al toegevoegd."
   }
 }

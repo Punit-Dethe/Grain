@@ -156,22 +156,40 @@
       "noSettingsNeeded": "Este modelo funciona automáticamente sin necesidad de configuración."
     },
     "models": {
-      "title": "Modelos de transcripción",
-      "description": "Selecciona un modelo de transcripción o descarga modelos adicionales. Diferentes modelos ofrecen distintos niveles de precisión y velocidad.",
-      "downloaded": "Descargados",
-      "available": "Disponibles para Descargar",
-      "deleteConfirm": "¿Estás seguro de que deseas eliminar {{modelName}}? Necesitarás descargarlo de nuevo para usarlo.",
-      "deleteActiveConfirm": "{{modelName}} es tu modelo activo. Eliminarlo detendrá las transcripciones hasta que selecciones un nuevo modelo. ¿Estás seguro?",
-      "deleteTitle": "Eliminar modelo",
-      "filters": {
-        "all": "Todos",
-        "multiLanguage": "Multiidioma",
-        "translation": "Traducción",
-        "allLanguages": "Todos los idiomas"
+      "title": "Modelos",
+      "changeLanguages": "Cambiar idiomas",
+      "sections": {
+        "yours": "En este equipo",
+        "fits": "Para tus idiomas",
+        "untested": "Sin probar"
       },
-      "noModelsMatch": "Ningún modelo coincide con este filtro.",
-      "yourModels": "Modelos descargados",
-      "availableModels": "Disponibles para descargar"
+      "untestedNote": "No probados con Handy. Pueden ser más lentos o cometer más errores.",
+      "untestedHidden_one": "{{count}} modelo más no está optimizado para dictado. Búscalo para encontrarlo.",
+      "untestedHidden_other": "{{count}} modelos más no están optimizados para dictado. Busca para encontrar uno.",
+      "emptyYours": "Aún no hay modelos. Elige uno abajo: se descarga y Grain lo usa.",
+      "showMore": "Mostrar {{count}} más",
+      "showFewer": "Mostrar menos",
+      "download": "Descargar y usar",
+      "downloadingThenUse": "{{percent}} % de {{total}}, luego se activa",
+      "loading": "Cargando…",
+      "deleteAsk": "¿Eliminar {{name}}? Libera {{size}}.",
+      "deleteAskActive": "¿Eliminar {{name}}? Grain no podrá transcribir hasta que elijas otro.",
+      "cancel": "Cancelar",
+      "deleteModel": "Eliminar {{name}}",
+      "cancelDownload": "Detener la descarga de {{name}}",
+      "legend": {
+        "open": "Cómo se califican los modelos",
+        "accuracyNote": "Para cada uno de tus idiomas: cuántas palabras erró un modelo en nuestras grabaciones de prueba.",
+        "speedNote": {
+          "accelerated": "Cuánto tarda en transcribirse 30 segundos de voz con el chip gráfico de nuestra laptop de pruebas. Este equipo puede variar.",
+          "cpu": "Cuánto tarda en transcribirse 30 segundos de voz con el procesador de nuestra laptop de pruebas. Este equipo puede variar."
+        },
+        "marks": "? aún no se ha medido. — no entiende ese idioma."
+      },
+      "rescan": {
+        "label": "Volver a escanear",
+        "tooltip": "Vuelve a escanear en busca de modelos añadidos a la carpeta de modelos o a la caché de Hugging Face fuera de Grain"
+      }
     },
     "general": {
       "title": "General",
@@ -213,6 +231,12 @@
       "pushToTalk": {
         "label": "Presionar para hablar",
         "description": "Mantén presionado para grabar, suelta para detener"
+      },
+      "preferredLanguages": {
+        "title": "Idiomas preferidos",
+        "description": "Los idiomas que hablas. Grain los usa para recomendar modelos.",
+        "noMatch": "Ningún idioma coincide con «{{query}}»",
+        "weak": "Ningún modelo reconoce bien {{languages}} todavía."
       }
     },
     "sound": {
@@ -639,5 +663,91 @@
   "overlay": {
     "transcribing": "Transcribiendo...",
     "processing": "Procesando..."
+  },
+  "modelTable": {
+    "tags": {
+      "preview": "Vista previa en vivo",
+      "previewTitle": "Muestra tus palabras en la superposición En vivo mientras hablas y las escribe cuando terminas",
+      "translate": "Traduce",
+      "translateTitle": "Puede convertir lo que dices en texto en inglés. Actívalo en la configuración"
+    },
+    "rubric": {
+      "gradeTitle": "Precisión en {{language}}: {{grade}}",
+      "accuracyTitle": "Precisión en {{language}}",
+      "overallTitle": "Precisión en tus idiomas: {{grade}}",
+      "overall": "Precisión en tus idiomas",
+      "meaning": {
+        "A": "Muy pocos errores: tus palabras suelen salir tal como las dijiste",
+        "B": "Algunos errores: tendrás que corregir alguna palabra de vez en cuando",
+        "C": "Errores frecuentes: pueden perderse algunos detalles",
+        "D": "Muchos errores: tendrás que revisar y corregir lo que escribe",
+        "F": "A menudo poco claro: gran parte de lo que dices puede salir mal"
+      },
+      "unsupported": "Este modelo no entiende {{language}}, así que no puede escribirlo",
+      "unrated": "Este modelo entiende {{language}}, pero aún no hemos medido qué tan bien",
+      "under": "menos de {{max}} %",
+      "between": "{{min}} a {{max}} %",
+      "over": "{{min}} % o más",
+      "speedTitle": "Velocidad: {{speed}}",
+      "speedName": {
+        "0": "Muy lento",
+        "1": "Lento",
+        "2": "Moderado",
+        "3": "Rápido",
+        "4": "Muy rápido"
+      },
+      "speedMeaning": {
+        "0": "Tus palabras aparecen tras una larga espera",
+        "1": "Tus palabras aparecen tras una espera",
+        "2": "Tus palabras aparecen tras una breve espera",
+        "3": "Tus palabras aparecen casi al instante",
+        "4": "Tus palabras aparecen al instante"
+      },
+      "speedPreview": "{{meaning}}, con vista previa en vivo mientras hablas",
+      "untimed": "Aún no hemos medido su velocidad",
+      "underSeconds": "menos de {{max}} s",
+      "betweenSeconds": "{{min}} a {{max}} s",
+      "overSeconds": "{{min}} s o más"
+    },
+    "roles": {
+      "recommended": "Recomendado",
+      "faster": "Más rápido",
+      "accurate": "Más preciso",
+      "fromAll": "De todos los modelos"
+    },
+    "speed": "Velocidad",
+    "size": "Tamaño",
+    "accuracy": "Precisión",
+    "search": "Buscar modelos",
+    "allLabel": "Modelos de voz",
+    "noMatch": "Nada coincide con «{{query}}». Prueba con un idioma o una familia como Whisper o Parakeet",
+    "noFilterMatch": "Ningún modelo coincide con estos filtros",
+    "speedUntested": "Velocidad aún sin medir",
+    "speedWords": {
+      "0": "Muy lento, las palabras aparecen tras una larga espera",
+      "1": "Lento, las palabras aparecen tras una espera",
+      "2": "Moderado, las palabras aparecen tras una breve espera",
+      "3": "Rápido, las palabras aparecen casi al instante",
+      "4": "Muy rápido, las palabras aparecen al instante"
+    },
+    "speedWordsPreview": {
+      "0": "Muy lento, con vista previa en vivo mientras hablas",
+      "1": "Lento, con vista previa en vivo mientras hablas",
+      "2": "Moderado, con vista previa en vivo mientras hablas",
+      "3": "Rápido, con vista previa en vivo mientras hablas",
+      "4": "Muy rápido, con vista previa en vivo mientras hablas"
+    },
+    "missingLanguage": "Falta un idioma",
+    "allLanguages": "Todos",
+    "downloadingLine": "Descargando {{percent}} % de {{total}}",
+    "customLine": "Añadido desde tu carpeta de modelos. Sin calificar.",
+    "legacyLine": "Una descarga antigua. Sin calificar."
+  },
+  "languagePicker": {
+    "search": "Buscar idiomas",
+    "addAnother": "Añadir otro",
+    "remove": "Quitar {{language}}",
+    "alreadyAdded_one": "{{languages}} ya está añadido.",
+    "alreadyAdded_other": "{{languages}} ya están añadidos."
   }
 }

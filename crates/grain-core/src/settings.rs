@@ -350,13 +350,8 @@ impl Default for ThemeMode {
     }
 }
 
-/// The two binding ids that start a capture. Order is the order they are
-/// offered in the UI: least to most machinery.
-pub const CAPTURE_MODE_IDS: [&str; 2] = ["transcribe", "transcribe_native_asr"];
-
-pub fn default_capture_mode() -> String {
-    "transcribe".to_string()
-}
+/// The single everyday dictation binding.
+pub const CAPTURE_MODE_IDS: [&str; 1] = ["transcribe"];
 
 fn default_capture_end_with_ai() -> bool {
     true
@@ -628,10 +623,6 @@ pub struct AppSettings {
     /// [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
     #[serde(default)]
     pub theme: ThemeMode,
-    /// [GRAIN] Which capture binding the AI shortcut borrows from idle:
-    /// Dictation (model-selected Standard/Flow) or Streaming.
-    #[serde(default = "default_capture_mode")]
-    pub capture_ai_start_mode: String,
     /// [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
     /// routes the transcript to AI. On by default — this is what replaces the
     /// separate "Send to AI (End)" row that only ever appeared with
@@ -650,11 +641,9 @@ pub struct AppSettings {
     pub update_checks_enabled: bool,
     #[serde(default = "default_model")]
     pub selected_model: String,
-    /// [GRAIN] Native ASR model id (separate registry from `selected_model`).
-    /// Empty = none selected. Never overload `selected_model`: Batch/Rolling and
-    /// Native ASR have different model topologies and lifecycles.
+    /// Languages used to rank and filter the model catalogue (Handy).
     #[serde(default)]
-    pub selected_asr_model: String,
+    pub spoken_languages: Vec<String>,
     #[serde(default = "default_always_on_microphone")]
     pub always_on_microphone: bool,
     #[serde(default)]
@@ -1406,7 +1395,6 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "summon_agent",
         "agent_followup",
         "transcribe_send_to_ai",
-        "transcribe_native_asr",
         "prompt_record",
     ] {
         if !settings.bindings.contains_key(id) {
@@ -1417,31 +1405,12 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         }
     }
 
-    // [GRAIN] Drop bindings for actions that no longer exist. A settings file is
-    // long-lived, so a retired id survives an upgrade and keeps occupying a real
-    // global chord — registered against an action that was removed, which means a
-    // key the user can never use and can never see to rebind. Add ids here when
-    // an action is deleted; never reuse one for something else.
-    for id in [
-        // Upstream's AI key. `transcribe_send_to_ai` starts an AI dictation AND
-        // ends a running one; this could only do the first, so it held a global
-        // chord for a subset of another key's behaviour. The ACTION id lives on
-        // for the CLI and SIGUSR1 -- it is only the binding that retires here.
-        "transcribe_with_post_process",
-        // Flow remains an internal action selected by the Dictation model.
-        "transcribe_realtime",
-    ] {
-        if settings.bindings.remove(id).is_some() {
-            if id == "transcribe_realtime" {
-                // Development reset: retire Flow's chord and use the new
-                // Dictation default directly, without migrating custom keys.
-                settings
-                    .bindings
-                    .insert("transcribe".into(), defaults.bindings["transcribe"].clone());
-            }
-            changed = true;
-        }
-    }
+    // Only the current public shortcut contract may hold a global chord.
+    let previous_count = settings.bindings.len();
+    settings
+        .bindings
+        .retain(|id, _| defaults.bindings.contains_key(id));
+    changed |= settings.bindings.len() != previous_count;
 
     // [GRAIN] Re-point bindings to the current default scheme.
     //
@@ -1498,14 +1467,7 @@ pub fn get_default_settings() -> AppSettings {
     //
     //   Space  = speak            Enter = speak to AI       letter = a surface
     //
-    // Standard uses Alt+Space (Option+Space on macOS); Streaming uses the
-    // user-requested Ctrl+Space chord. Both are supported by our shortcut backends.
-    //
-    // What we deliberately do NOT bind, because a global hotkey outranks the
-    // focused app and would break these everywhere:
-    //   Shift+Enter        newline in Slack, Discord, Teams, Gmail, Excel
-    //   Ctrl+Shift+Arrow   extend-selection-by-word in every text field
-    //   Alt+Arrow          Back/Forward in browsers and file managers
+    // Dictation uses one shortcut for every selected model.
     #[cfg(target_os = "macos")]
     let default_shortcut = "option+space";
     #[cfg(not(target_os = "macos"))]
@@ -1516,7 +1478,7 @@ pub fn get_default_settings() -> AppSettings {
         "transcribe".to_string(),
         ShortcutBinding {
             id: "transcribe".to_string(),
-            name: "Standard".to_string(),
+            name: "Dictation".to_string(),
             description: "Speak, then paste text when you stop.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
@@ -1536,22 +1498,6 @@ pub fn get_default_settings() -> AppSettings {
             description: "Cancels the current recording.".to_string(),
             default_binding: "escape".to_string(),
             current_binding: "escape".to_string(),
-        },
-    );
-
-    // [GRAIN] Native ASR: streaming dictation with live partial/committed text in
-    // the Studio Window overlay. Push-to-talk like the other capture modes — the
-    // engine loads/unloads automatically around the shortcut, never resident
-    // otherwise. Ctrl+Space is supported by both shortcut implementations.
-    let default_native_asr_shortcut = "ctrl+space";
-    bindings.insert(
-        "transcribe_native_asr".to_string(),
-        ShortcutBinding {
-            id: "transcribe_native_asr".to_string(),
-            name: "Streaming".to_string(),
-            description: "See text live as you speak.".to_string(),
-            default_binding: default_native_asr_shortcut.to_string(),
-            current_binding: default_native_asr_shortcut.to_string(),
         },
     );
 
@@ -1655,14 +1601,13 @@ pub fn get_default_settings() -> AppSettings {
         sound_theme: default_sound_theme(),
         default_panel: DefaultPanel::default(),
         theme: ThemeMode::default(),
-        capture_ai_start_mode: default_capture_mode(),
         capture_end_with_ai: default_capture_end_with_ai(),
         capture_always_ai: false,
         start_hidden: default_start_hidden(),
         autostart_enabled: default_autostart_enabled(),
         update_checks_enabled: default_update_checks_enabled(),
         selected_model: "".to_string(),
-        selected_asr_model: String::new(),
+        spoken_languages: Vec::new(),
         onboarding_completed: false,
         always_on_microphone: false,
         selected_microphone: None,
@@ -1797,12 +1742,10 @@ mod prompt_migration_tests {
         settings.post_process_enabled = false;
         settings.capture_always_ai = false;
         settings.capture_end_with_ai = false;
-        settings.capture_ai_start_mode = "transcribe_native_asr".into();
         assert!(apply_settings_migrations(&mut settings));
         assert!(settings.post_process_enabled);
         assert!(!settings.capture_always_ai);
         assert!(!settings.capture_end_with_ai);
-        assert_eq!(settings.capture_ai_start_mode, "transcribe_native_asr");
         assert!(!apply_settings_migrations(&mut settings));
     }
 
@@ -2076,7 +2019,7 @@ mod binding_migration_tests {
         let expected = "alt+space";
         assert_eq!(settings.bindings["transcribe"].current_binding, expected);
         assert_eq!(settings.bindings["transcribe"].default_binding, expected);
-        assert_eq!(CAPTURE_MODE_IDS, ["transcribe", "transcribe_native_asr"]);
+        assert_eq!(CAPTURE_MODE_IDS, ["transcribe"]);
         assert!(!settings.bindings.contains_key("transcribe_realtime"));
     }
 
