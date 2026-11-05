@@ -8,7 +8,7 @@ This directory is an intentional, scoped exception to the frontend freeze;
 it is not a second ASR engine, model registry or selection store.
 
 The directory mirrors upstream `src/` paths. Imports point here unless they
-use Grain's generated bindings, settings/model stores, or SettingContainer.
+use Grain's generated bindings or settings/model stores.
 Local adaptations:
 
 - `modelJobs.ts` connects the table's lock UI to Grain's existing file-job
@@ -16,7 +16,8 @@ Local adaptations:
   remains authoritative.
 - `lib/models/source.ts` retains only the repository join; ONNX migration
   controls and `RetiredModelsNotice` are omitted.
-- PreferredLanguages uses Grain's stacked setting row. Preferences rank the
+- PreferredLanguages is a searchable control in the table toolbar alongside
+  Live preview and Translate, rather than a separate setting row. Preferences rank the
   catalogue; they do not change recognition language or automatically switch
   models. No system-language plugin is installed by this port.
 - `ModelPicker` mounts this same catalogue in Settings and onboarding, with

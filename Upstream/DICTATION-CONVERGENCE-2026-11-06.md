@@ -121,3 +121,13 @@ bun run tauri dev
 The implementation is committed on the isolated convergence branch. Main is
 unchanged; no installer/release was started. Device/visual acceptance above
 remains open before any requested merge.
+
+### Catalogue language control — 6 November 2026
+
+User-requested UI refinement only: the existing language preferences/search now
+live in the table toolbar alongside Live preview and Translate. The standalone
+Preferred Languages section and Change languages link are removed. Grading,
+model rows, recognition settings and ranking behavior are retained. The menu
+uses the existing language search/toggle logic; its popup escapes table clipping
+and releases its listeners on close. Frontend build, type check, focused lint,
+115 unit tests and locale checks pass. Visual acceptance remains a user check.
