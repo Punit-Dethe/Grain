@@ -70,7 +70,8 @@ used instead:
   routing, shortcut contract and settings persistence tests.
 - Frontend unit tests: **115 passed**. Catalogue grouping/custom model/download
   checks and file-job snapshot/event/unmount/failure races are included.
-- TypeScript, frontend production build, focused ESLint, catalogue sync,
+- Windows production-configuration `cargo check --lib`, TypeScript, frontend
+  production build, focused ESLint, catalogue sync,
   all 23 locale structural checks, settings reachability and frontend freeze pass.
   Build retains the existing bundle-size warning.
 - `policy.rs`, `live.rs` and `chunked.rs` are byte-identical to the adopted Handy
