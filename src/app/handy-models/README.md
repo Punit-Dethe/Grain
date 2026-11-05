@@ -23,6 +23,10 @@ Local adaptations:
 - `ModelPicker` mounts this same catalogue in Settings and onboarding, with
   Grain's error display and a bounded scrolling area. Theme aliases live in
   `app.css`; Grain's global controls are not replaced by upstream controls.
+  With a selected model it starts collapsed, showing its name, size, speed and
+  first preferred language's accuracy through Handy's existing metric components.
+  Expanding mounts the full catalogue; selecting a different model closes it.
+  Delete controls are available only in the expanded list.
 - Catalogue translations come from Handy; product instructions name Grain
   while benchmark provenance continues to identify Handy's measurements.
 

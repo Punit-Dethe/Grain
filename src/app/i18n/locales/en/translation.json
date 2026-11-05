@@ -112,6 +112,9 @@
       "speed": "speed"
     },
     "models": {
+      "choose": "Choose a model",
+      "browseCatalogue": "Browse models",
+      "hideCatalogue": "Close model catalogue",
       "small": {
         "name": "Whisper Small",
         "description": "Fast and fairly accurate."

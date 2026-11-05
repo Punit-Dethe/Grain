@@ -131,3 +131,15 @@ model rows, recognition settings and ranking behavior are retained. The menu
 uses the existing language search/toggle logic; its popup escapes table clipping
 and releases its listeners on close. Frontend build, type check, focused lint,
 115 unit tests and locale checks pass. Visual acceptance remains a user check.
+
+### Compact selected-model row — 6 November 2026
+
+User-requested catalogue presentation: a selected model starts collapsed, with
+name on the left and size, speed and first preferred language's accuracy on
+the right. The summary reuses Handy's existing metric components and has no
+delete control. Expanding shows the same installed/downloadable model list,
+with Search, Languages, Live preview and Translate at its top. Selecting a
+different model closes the list. Empty first-run setup initially opens it.
+Closing unmounts the catalogue and its keyboard/popup listeners. Catalogue
+data is computed once and shared by the summary/list; recognition is unchanged.
+User visual acceptance of collapsed/expanded/selection states remains pending.
