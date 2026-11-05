@@ -178,5 +178,7 @@ shadow in both themes, including the portalled language menu. Other inputs
 retain their existing styles. User visual acceptance remains pending.
 
 Frontend build, 115 unit tests, focused lint, catalogue sync and settings parity
-pass after reconciliation. The backend compilation check is awaiting release
-of ggml-base.dll by the running old dev app; it is not marked passed yet.
+pass after reconciliation. After the user closed the old dev app, the Windows
+`cargo check --manifest-path src-tauri/Cargo.toml --lib` also passed for 0.0.11
+(15 seconds, no compilation errors). The previous ggml-base.dll lock is cleared.
+User visual acceptance remains pending; main is unchanged and no release was started.
