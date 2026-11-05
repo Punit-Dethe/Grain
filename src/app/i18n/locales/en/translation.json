@@ -1166,6 +1166,7 @@
     "loadingModel": "Loading model…"
   },
   "modelTable": {
+    "languages": "Languages",
     "tags": {
       "preview": "Live preview",
       "previewTitle": "Shows your words in the Live overlay while you talk, then types them when you stop",

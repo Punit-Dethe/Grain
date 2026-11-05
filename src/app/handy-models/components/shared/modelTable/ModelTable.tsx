@@ -89,6 +89,8 @@ const isTyping = (e: KeyboardEvent) =>
   e.key.length === 1 && e.key !== " " && !e.metaKey && !e.ctrlKey && !e.altKey;
 
 interface ModelTableProps {
+  /** Additional controls beside the capability filters. */
+  toolbarControls?: React.ReactNode;
   grading: Grading;
   filters: Filters;
   setFilters: Dispatch<SetStateAction<Filters>>;
@@ -110,6 +112,7 @@ interface ModelTableProps {
 /** The searchable, sectioned model list shared by onboarding's Show all and the Models page. */
 export const ModelTable: React.FC<ModelTableProps> = ({
   grading,
+  toolbarControls,
   filters,
   setFilters,
   sections,
@@ -139,6 +142,11 @@ export const ModelTable: React.FC<ModelTableProps> = ({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isComposingKeyEvent(e)) return;
+      if (
+        e.target instanceof Element &&
+        e.target.closest("[data-model-toolbar-popup]")
+      )
+        return;
       if (e.key === "Escape") {
         if (query.current) {
           e.preventDefault();
@@ -280,8 +288,8 @@ export const ModelTable: React.FC<ModelTableProps> = ({
       >
         {/* The magnifier and input align with the marks and names columns. */}
         <div className="flex-none border-b border-line px-[6px]">
-          <div className="flex h-[46px] items-center gap-[4px] ps-[14px] pe-[4px]">
-            <label className="flex h-full min-w-0 flex-1 cursor-text items-center gap-[10px]">
+          <div className="flex min-h-[46px] flex-wrap items-center gap-x-[4px] gap-y-1 py-2 ps-[14px] pe-[4px]">
+            <label className="flex h-[30px] min-w-[140px] flex-1 cursor-text items-center gap-[10px]">
               <span className="grid w-[18px] shrink-0 place-items-center text-ink-3">
                 <Search size={15} aria-hidden="true" />
               </span>
@@ -313,11 +321,14 @@ export const ModelTable: React.FC<ModelTableProps> = ({
                 className="h-full min-w-0 flex-1 bg-transparent text-body text-text outline-none placeholder:text-ink-3 [&::-webkit-search-cancel-button]:appearance-none"
               />
             </label>
-            <span
-              aria-hidden="true"
-              className="me-[2px] h-[16px] w-px shrink-0 bg-line"
-            />
-            {CAPABILITY_KEYS.map(filter)}
+            <div className="flex max-w-full flex-wrap items-center gap-1">
+              <span
+                aria-hidden="true"
+                className="me-[2px] h-[16px] w-px shrink-0 bg-line"
+              />
+              {toolbarControls}
+              {CAPABILITY_KEYS.map(filter)}
+            </div>
           </div>
         </div>
         {!empty && (

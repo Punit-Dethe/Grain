@@ -11,6 +11,7 @@ import {
 } from "@/handy-models/components/shared/modelTable/ModelTable";
 import { ModelRow } from "@/handy-models/components/settings/models/ModelRow";
 import { Legend } from "@/handy-models/components/settings/models/Legend";
+import { PreferredLanguages } from "@/handy-models/components/settings/PreferredLanguages";
 import { useModelEntries } from "@/handy-models/components/settings/models/modelEntries";
 
 /** Past this many models on disk, the rest fold under "Show N more". */
@@ -38,15 +39,8 @@ const Rescan: React.FC = () => {
   );
 };
 
-interface ModelsSettingsProps {
-  /** Where the languages are changed (General). */
-  onChangeLanguages?: () => void;
-}
-
-/** The Models page: onboarding's model table, filling the window. */
-export const ModelsSettings: React.FC<ModelsSettingsProps> = ({
-  onChangeLanguages,
-}) => {
+/** The shared model catalogue, including its language and capability controls. */
+export const ModelsSettings: React.FC = () => {
   const { t } = useTranslation();
   const loading = useModelStore((s) => s.loading);
   const { facts, lists } = useModelEntries();
@@ -136,21 +130,11 @@ export const ModelsSettings: React.FC<ModelsSettingsProps> = ({
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
-      {/* The title, and across from it where to change the languages the
-          grades are for. */}
-      <div className="mb-[16px] flex flex-none items-center justify-between gap-[12px] px-[12px]">
+      <div className="mb-[16px] flex-none px-[12px]">
         <h1 className="text-xl font-semibold">{t("settings.models.title")}</h1>
-        {onChangeLanguages && (
-          <button
-            type="button"
-            onClick={onChangeLanguages}
-            className="shrink-0 cursor-pointer text-sm text-text underline decoration-line-strong underline-offset-[3px] hover:decoration-text focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary"
-          >
-            {t("settings.models.changeLanguages")}
-          </button>
-        )}
       </div>
       <ModelTable
+        toolbarControls={<PreferredLanguages />}
         grading={facts}
         filters={filters}
         setFilters={setFilters}

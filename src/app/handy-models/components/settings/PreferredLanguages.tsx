@@ -1,10 +1,16 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
+import { Check, ChevronDown, Languages, Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { SettingContainer } from "@/components/ui/SettingContainer";
-import {
-  LanguageChip,
-  useLanguagePicker,
-} from "@/handy-models/components/shared/LanguagePicker";
+import { useLanguagePicker } from "@/handy-models/components/shared/LanguagePicker";
 import { suggestedLanguages } from "@/handy-models/lib/utils/languageSuggestions";
 import { isWeakLanguage } from "@/handy-models/lib/models/catalog";
 import { useSettings } from "@/hooks/useSettings";
@@ -12,101 +18,9 @@ import { isComposingKeyEvent } from "@/handy-models/lib/utils/keyboard";
 import { cjkSubsetFont } from "@/handy-models/lib/utils/cjkFont";
 import { languageList } from "@/handy-models/lib/constants/languages";
 
-interface PreferredLanguagesProps {
-  descriptionMode?: "inline" | "tooltip";
-  grouped?: boolean;
-}
-
 type Picker = ReturnType<typeof useLanguagePicker>;
-
-const PlusIcon = () => (
-  <svg
-    width="12"
-    height="12"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2.2}
-    strokeLinecap="round"
-    aria-hidden="true"
-  >
-    <path d="M12 5v14M5 12h14" />
-  </svg>
-);
-
-const SearchIcon = () => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    aria-hidden="true"
-  >
-    <circle cx="11" cy="11" r="6.5" />
-    <path d="M16 16l4 4" />
-  </svg>
-);
-
-const CheckIcon = () => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2.2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M5 12.5l4.5 4.5L19 7.5" />
-  </svg>
-);
-
-// Matches the row's gap-1.
-const CHIP_GAP = 4;
-
-/**
- * How many of `measure`'s chips fit in `box`, leaving room for "+N" (the
- * last child of `measure`) when some don't.
- */
-const useChipsThatFit = (
-  box: React.RefObject<HTMLDivElement | null>,
-  measure: React.RefObject<HTMLDivElement | null>,
-  languages: string[],
-) => {
-  const [count, setCount] = useState(languages.length);
-  const key = languages.join();
-  useLayoutEffect(() => {
-    const b = box.current;
-    const m = measure.current;
-    if (!b || !m) return;
-    const fit = () => {
-      const kids = [...m.children] as HTMLElement[];
-      const more = kids.pop()?.offsetWidth ?? 0;
-      const room = b.clientWidth;
-      let used = 0;
-      let n = 0;
-      for (const [i, kid] of kids.entries()) {
-        const left = kids.length - i - 1;
-        if (used + kid.offsetWidth + (left ? CHIP_GAP + more : 0) > room) break;
-        used += kid.offsetWidth + CHIP_GAP;
-        n++;
-      }
-      setCount(n);
-    };
-    fit();
-    // CJK endonyms can arrive in a web font after the first measure.
-    document.fonts?.ready.then(fit);
-    const observer = new ResizeObserver(fit);
-    observer.observe(b);
-    return () => observer.disconnect();
-  }, [box, measure, key]);
-  return count;
-};
+const SearchIcon = () => <Search size={14} aria-hidden="true" />;
+const CheckIcon = () => <Check size={16} aria-hidden="true" />;
 
 /** The menu under +: a search over every language, the picked ones first and ticked. */
 const LanguageMenu: React.FC<{
@@ -132,9 +46,9 @@ const LanguageMenu: React.FC<{
       onMouseDown={(e) => {
         if (e.target !== inputRef.current) e.preventDefault();
       }}
-      className="absolute end-0 top-full z-50 mt-1 w-[248px] overflow-hidden rounded-lg border border-line bg-background text-start shadow-lg"
+      className="flex min-h-0 flex-1 flex-col"
     >
-      <label className="flex items-center gap-2 border-b border-line px-3 text-ink-3">
+      <label className="flex shrink-0 items-center gap-2 border-b border-line px-3 text-ink-3">
         <SearchIcon />
         <input
           ref={inputRef}
@@ -153,7 +67,7 @@ const LanguageMenu: React.FC<{
           className="h-9 w-full min-w-0 bg-transparent text-sm text-text outline-none placeholder:text-ink-3"
         />
       </label>
-      <div className="max-h-56 overflow-y-auto p-1">
+      <div className="min-h-0 overflow-y-auto p-1">
         {rows.map((l) => {
           const name = picker.nameOf(l.code);
           const picked = languages.includes(l.code);
@@ -204,168 +118,149 @@ const LanguageMenu: React.FC<{
   );
 };
 
-/**
- * Edits `spoken_languages`; leaves the model's own Language as is. One line
- * like its neighbours: as many chips as fit, "+N" for the rest, and + to
- * open the menu that adds and removes.
- */
-export const PreferredLanguages: React.FC<PreferredLanguagesProps> = ({
-  descriptionMode = "tooltip",
-  grouped = false,
-}) => {
+/** Catalogue language preferences, beside the capability filters. */
+export const PreferredLanguages: React.FC = () => {
   const { t, i18n } = useTranslation();
   const { getSetting, updateSetting } = useSettings();
-  const languages = getSetting("spoken_languages") ?? [];
-  const ui = i18n.language;
-
-  // Nothing picked yet (onboarded before this setting): suggest their language.
-  const suggestion = languages.length ? null : suggestedLanguages()[0];
+  const stored = getSetting("spoken_languages");
+  const languages = stored?.length ? stored : suggestedLanguages();
   const picker = useLanguagePicker({
     languages,
     onChange: (next) => updateSetting("spoken_languages", next),
-    // At least one language, once there is one.
     keepOne: true,
-    suggestion,
   });
-
+  const { setQuery, inputRef } = picker;
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState<string[]>([]);
+  const [box, setBox] = useState<CSSProperties | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  const addRef = useRef<HTMLButtonElement>(null);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const measureRef = useRef<HTMLDivElement>(null);
-
-  const fit = useChipsThatFit(boxRef, measureRef, languages);
-  const shown = languages.slice(0, fit);
-  const hidden = languages.slice(fit);
-
-  const openMenu = () => {
-    setPinned(languages);
-    setOpen(true);
-  };
-  const closeMenu = () => {
-    setOpen(false);
-    picker.setQuery("");
-  };
-  const toggleMenu = () => (open ? closeMenu() : openMenu());
-
-  useEffect(() => {
-    if (open) picker.inputRef.current?.focus({ preventScroll: true });
-  }, [open, picker.inputRef]);
-
-  const chip = (code: string) => (
-    <LanguageChip
-      key={code}
-      variant="soft"
-      code={code}
-      removeLabel={t("languagePicker.remove", {
-        language: picker.nameOf(code),
-      })}
-      onRemove={() => {
-        picker.toggle(code);
-        // The chip goes, and with the menu shut there's no search to take
-        // focus: give it to +.
-        if (!open) addRef.current?.focus({ preventScroll: true });
-      }}
-      locked={!picker.removable}
-    />
-  );
-  const moreLabel = hidden.length ? languageList(hidden, ui) : undefined;
-  const moreClasses =
-    "inline-flex h-[26px] shrink-0 items-center rounded-md px-2 text-xs font-medium tabular-nums";
-
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const menuId = useId();
   const weak = languages.filter(isWeakLanguage);
+  const close = () => {
+    setOpen(false);
+    setQuery("");
+  };
+
+  // The same viewport placement as Grain's dropdowns. A portal avoids clipping
+  // the search menu inside the model table's scrolling/rounded container.
+  const place = useCallback(() => {
+    const anchor = buttonRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(280, window.innerWidth - 16);
+    const below = window.innerHeight - rect.bottom - 12;
+    const above = rect.top - 12;
+    const up = below < 160 && above > below;
+    setBox({
+      width,
+      left: Math.max(
+        8,
+        Math.min(rect.right - width, window.innerWidth - width - 8),
+      ),
+      maxHeight: Math.max(0, Math.min(320, up ? above : below)),
+      ...(up
+        ? { bottom: window.innerHeight - rect.top + 4 }
+        : { top: rect.bottom + 4 }),
+    });
+  }, []);
+  useLayoutEffect(() => {
+    if (open) place();
+  }, [open, place]);
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus({ preventScroll: true });
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        !rootRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        setOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("pointerdown", outside, true);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, place, inputRef, setQuery]);
 
   return (
-    <div>
-      <SettingContainer
-        title={t("settings.general.preferredLanguages.title")}
-        description={t("settings.general.preferredLanguages.description")}
-        descriptionMode={descriptionMode}
-        grouped={grouped}
-        layout="stacked"
+    <div
+      ref={rootRef}
+      onBlur={(event) => {
+        const target = event.relatedTarget as Node | null;
+        if (
+          !rootRef.current?.contains(target) &&
+          !menuRef.current?.contains(target)
+        )
+          close();
+      }}
+    >
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        aria-label={`${t("settings.general.preferredLanguages.title")}: ${languageList(languages, i18n.language)}`}
+        title={languageList(languages, i18n.language)}
+        onClick={() => {
+          if (open) close();
+          else {
+            setPinned(languages);
+            setOpen(true);
+          }
+        }}
+        className={`flex h-[26px] shrink-0 cursor-pointer items-center gap-[6px] whitespace-nowrap rounded-[7px] px-[8px] text-small font-medium transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary ${open ? "bg-line text-text" : "text-ink-3 hover:bg-wash hover:text-text"}`}
       >
-        <div
-          ref={rootRef}
-          onBlur={(e) => {
-            if (rootRef.current?.contains(e.relatedTarget as Node)) return;
-            closeMenu();
-          }}
-          onKeyDown={(e) => {
-            if (e.key !== "Escape" || !open) return;
-            e.preventDefault();
-            e.stopPropagation();
-            closeMenu();
-            addRef.current?.focus();
-          }}
-          className="relative flex min-w-0 flex-1 items-center gap-1"
-        >
+        <Languages size={14} aria-hidden="true" />
+        {t("modelTable.languages", "Languages")}
+        <span className="text-xs tabular-nums">{languages.length}</span>
+        <ChevronDown size={12} aria-hidden="true" />
+      </button>
+      {open &&
+        createPortal(
           <div
-            ref={boxRef}
-            className="relative flex min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden"
+            id={menuId}
+            ref={menuRef}
+            role="dialog"
+            aria-label={t("settings.general.preferredLanguages.title")}
+            data-model-toolbar-popup=""
+            style={box ?? { visibility: "hidden" }}
+            className="fixed z-[100] flex flex-col overflow-hidden rounded-lg border border-line bg-background text-start text-text"
+            onKeyDown={(event) => {
+              if (isComposingKeyEvent(event.nativeEvent)) return;
+              if (event.key === "Escape" && !event.defaultPrevented) {
+                event.preventDefault();
+                event.stopPropagation();
+                close();
+                buttonRef.current?.focus({ preventScroll: true });
+              }
+            }}
           >
-            {/* Every chip, unseen, to measure how many fit. */}
-            <div
-              ref={measureRef}
-              aria-hidden="true"
-              className="invisible absolute start-0 top-0 flex gap-1"
-            >
-              {languages.map(chip)}
-              <span className={moreClasses}>{`+${languages.length}`}</span>
-            </div>
-            {shown.map(chip)}
-            {hidden.length > 0 && (
-              <button
-                type="button"
-                title={moreLabel}
-                aria-label={moreLabel}
-                aria-expanded={open}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={toggleMenu}
-                className={`${moreClasses} cursor-pointer transition-colors hover:bg-line hover:text-text ${
-                  open ? "bg-line text-text" : "bg-wash text-ink-2"
-                }`}
-              >
-                {`+${hidden.length}`}
-              </button>
-            )}
-          </div>
-          <button
-            ref={addRef}
-            type="button"
-            aria-label={
-              languages.length
-                ? t("languagePicker.addAnother")
-                : t("languagePicker.search")
-            }
-            aria-expanded={open}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={toggleMenu}
-            className={`inline-flex h-[26px] shrink-0 cursor-pointer items-center justify-center gap-1 whitespace-nowrap rounded-md text-xs font-medium transition-colors hover:bg-wash hover:text-text ${
-              languages.length ? "w-[26px]" : "px-2"
-            } ${open ? "bg-wash text-text" : "text-ink-2"}`}
-          >
-            <PlusIcon />
-            {/* With nothing picked, + alone would say too little. */}
-            {!languages.length && t("languagePicker.search")}
-          </button>
-          {open && (
             <LanguageMenu
               picker={picker}
               pinned={pinned}
-              highlightFirst={!!suggestion}
+              highlightFirst={false}
             />
-          )}
-        </div>
-      </SettingContainer>
-
-      {weak.length > 0 && (
-        <p className="-mt-1 mb-0 px-4 pb-2 text-end text-xs text-ink-3">
-          {t("settings.general.preferredLanguages.weak", {
-            languages: languageList(weak, ui),
-          })}
-        </p>
-      )}
+            {weak.length > 0 && (
+              <p className="shrink-0 border-t border-line px-3 py-2 text-xs text-ink-3">
+                {t("settings.general.preferredLanguages.weak", {
+                  languages: languageList(weak, i18n.language),
+                })}
+              </p>
+            )}
+          </div>,
+          rootRef.current?.closest<HTMLElement>("[data-theme]") ??
+            document.body,
+        )}
     </div>
   );
 };
