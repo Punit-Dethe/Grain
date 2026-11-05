@@ -1,5 +1,13 @@
 # Extension platform: publishing and release work order
 
+**Reliability follow-up, 5 November:** the user reports other-account GitHub
+installation/sign-in failures and a signed-in/enabled alpha whose Agent cannot
+find GitHub tools. Follow the prioritized
+[production-readiness audit](EXTENSION-PRODUCTION-READINESS-AUDIT.md) for this work.
+Local alpha logs corroborate unavailable/empty catalogues but do not identify the
+failed provider stage. Prior tester checkpoints retain their recorded scope;
+they do not close these newly reported reliability failures.
+
 Updated 31 October 2026. This is the **single active forward plan** for finishing
 extension authoring, review, publication and store delivery. It replaces this
 file's earlier chronological work order and the historical E4–E8 phase counts.
