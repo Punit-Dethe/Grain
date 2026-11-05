@@ -12,7 +12,10 @@ import {
 import { ModelRow } from "@/handy-models/components/settings/models/ModelRow";
 import { Legend } from "@/handy-models/components/settings/models/Legend";
 import { PreferredLanguages } from "@/handy-models/components/settings/PreferredLanguages";
-import { useModelEntries } from "@/handy-models/components/settings/models/modelEntries";
+import type {
+  Facts,
+  Lists,
+} from "@/handy-models/components/settings/models/modelEntries";
 
 /** Past this many models on disk, the rest fold under "Show N more". */
 const YOURS_LIMIT = 5;
@@ -40,10 +43,12 @@ const Rescan: React.FC = () => {
 };
 
 /** The shared model catalogue, including its language and capability controls. */
-export const ModelsSettings: React.FC = () => {
+export const ModelsSettings: React.FC<{ facts: Facts; lists: Lists }> = ({
+  facts,
+  lists,
+}) => {
   const { t } = useTranslation();
   const loading = useModelStore((s) => s.loading);
-  const { facts, lists } = useModelEntries();
   const { filters, setFilters, searching, matches } = useModelFilters();
   const [more, setMore] = useState(false);
 
@@ -130,9 +135,6 @@ export const ModelsSettings: React.FC = () => {
 
   return (
     <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col">
-      <div className="mb-[16px] flex-none px-[12px]">
-        <h1 className="text-xl font-semibold">{t("settings.models.title")}</h1>
-      </div>
       <ModelTable
         toolbarControls={<PreferredLanguages />}
         grading={facts}
