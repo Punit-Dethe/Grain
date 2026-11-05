@@ -259,14 +259,6 @@ function IconSprite() {
 const NAV_ITEMS = [
   { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
   { page: "history", label: "History", icon: "clock", href: "#/history" },
-  // The meeting workspace's user-facing name is the one `ui2.meet.name` string.
-  {
-    page: "meet",
-    label: "",
-    labelKey: "ui2.meet.name",
-    icon: "mic",
-    href: "#/meet",
-  },
   {
     page: "tools",
     label: "Personalize",
@@ -279,6 +271,14 @@ const NAV_ITEMS = [
     label: "Extensions",
     icon: "box",
     href: "#/extensions/installed",
+  },
+  // The meeting workspace's user-facing name is the one `ui2.meet.name` string.
+  {
+    page: "meet",
+    label: "",
+    labelKey: "ui2.meet.name",
+    icon: "mic",
+    href: "#/meet",
   },
   {
     page: "settings",
@@ -420,6 +420,7 @@ const OVERVIEW_HERO_IMAGES = [
 ] as const;
 
 function OverviewPage({ history }: { history: HistoryController }) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<HistoryViewMode>("original");
   const [heroImageIndex, setHeroImageIndex] = useState(0);
 
@@ -463,7 +464,7 @@ function OverviewPage({ history }: { history: HistoryController }) {
               alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
             />
             <h2 className="hero-image-title">
-              Speak naturally. Write effortlessly
+              {t("overview.heroTagline", "Speak naturally. Write effortlessly")}
             </h2>
             <button
               className="hero-image-toggle"

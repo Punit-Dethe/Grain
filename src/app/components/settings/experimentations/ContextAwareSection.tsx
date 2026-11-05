@@ -29,12 +29,7 @@ import {
 } from "@/bindings";
 
 type ContextProfileId =
-  | "email"
-  | "work"
-  | "casual"
-  | "technical"
-  | "ai_chat"
-  | "other";
+  "email" | "work" | "casual" | "technical" | "ai_chat" | "other";
 
 const INSTRUCTION_EDITOR_MAX_HEIGHT = 184;
 
@@ -123,8 +118,7 @@ type CustomProfileTarget = {
 };
 
 type CustomProfileDialogState =
-  | { mode: "create" }
-  | { mode: "edit"; profile: CustomContextProfile };
+  { mode: "create" } | { mode: "edit"; profile: CustomContextProfile };
 
 /** Most icons a stack shows. Past three the overlap stops reading as separate
  *  icons and starts reading as a smudge. */

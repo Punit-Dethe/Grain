@@ -72,7 +72,6 @@ Confirm the Agent Context row is absent, selection-based rewrite and follow-ups
 still work, and normal dictation context remains available. The separate image
 switch remains available. No browser-only harness or UI automation was used.
 
-
 ### Recorded results (2026-10-04)
 
 - 213 grain-core unit tests and four capability benchmark tests pass, including

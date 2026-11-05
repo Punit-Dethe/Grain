@@ -1335,7 +1335,6 @@ html[data-theme="dark"] .grain-root .toggle.on span {
 
 /* Overview */
 .hero {
-  --hero-image-shadow: rgba(0, 0, 0, 0.55);
   position: relative;
   isolation: isolate;
   display: grid;
@@ -1343,12 +1342,11 @@ html[data-theme="dark"] .grain-root .toggle.on span {
   min-height: clamp(400px, 50vh, 490px);
   overflow: hidden;
   border-radius: var(--hero-radius);
-  background: var(--bg-0);
+  background: #292929;
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.07));
 }
 
 html[data-theme="light"] .hero {
-  --hero-image-shadow: rgba(0, 0, 0, 0.22);
   background: #f5f4f0;
   border-color: #eeebe3;
 }
@@ -1360,7 +1358,6 @@ html[data-theme="light"] .hero {
   z-index: 1;
   overflow: hidden;
   border-radius: var(--hero-radius);
-  box-shadow: 0 2px 10px 1px var(--hero-image-shadow);
 }
 
 .hero-image {

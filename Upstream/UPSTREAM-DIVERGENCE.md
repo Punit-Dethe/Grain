@@ -223,6 +223,8 @@ implemented in Grain. First-sample readiness and the compiled overlay were subse
 `policy_check.py` requires this block to match the JSON exactly and also derives
 coverage for `grain_* as upstream_name` inert module aliases.
 
+<!-- prettier-ignore-start -->
+
 <!-- BEGIN GENERATED RELOCATION POLICY -->
 <!-- prettier-ignore -->
 | Upstream source | Kind | Grain runtime destinations |
@@ -238,6 +240,8 @@ coverage for `grain_* as upstream_name` inert module aliases.
 | `src-tauri/src/transcription_coordinator.rs` | relocated | `src-tauri/src/handy/transcription_coordinator.rs`<br>`src-tauri/src/grain_coordinator.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src-tauri/src/grain_shortcuts.rs` |
 
 <!-- END GENERATED RELOCATION POLICY -->
+
+<!-- prettier-ignore-end -->
 
 ## Recording overlay audit (current)
 
@@ -507,16 +511,16 @@ otherwise stays upstream-owned. No native fork or ABI change is included.
 
 Reviewed post-merge ratchet changes against #2315:
 
-| Shared path | Previous → accepted lines | Reason |
-| --- | --- | --- |
-| audio_toolkit/audio/decode.rs | new → 2 | Calls owned decoded-duration limit at both input paths. |
-| managers/transcription.rs | 92 → 120 | Shared lease/held-loader/context seams; foreground admission lives in owned code. |
-| managers/transcription/job.rs | new → 38 | Two owned background context/chunk hooks replace Handy's single-model/retry assumption. |
-| managers/transcription_jobs.rs | new → 94 | Lazy worker/snapshot include, idle exit, ordered/cancelled events, UUID names and owned policy calls; decoder/queue algorithm retained. |
-| tray.rs | 642 → 659 | Grain's tray composition replaces the upstream job-state tray change; one History fixture field. |
-| lib.rs | 1321 → 1335 | Grain composition registers jobs/commands/events and guards tray unload. |
-| commands/history.rs | 13 → 6 | Old synchronous retry adapter removed; keep fallible command result. |
-| commands/models.rs | 86 → 78 | Adopt upstream blocking-pool unload and active-job guard. |
+| Shared path                    | Previous → accepted lines | Reason                                                                                                                                  |
+| ------------------------------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| audio_toolkit/audio/decode.rs  | new → 2                   | Calls owned decoded-duration limit at both input paths.                                                                                 |
+| managers/transcription.rs      | 92 → 120                  | Shared lease/held-loader/context seams; foreground admission lives in owned code.                                                       |
+| managers/transcription/job.rs  | new → 38                  | Two owned background context/chunk hooks replace Handy's single-model/retry assumption.                                                 |
+| managers/transcription_jobs.rs | new → 94                  | Lazy worker/snapshot include, idle exit, ordered/cancelled events, UUID names and owned policy calls; decoder/queue algorithm retained. |
+| tray.rs                        | 642 → 659                 | Grain's tray composition replaces the upstream job-state tray change; one History fixture field.                                        |
+| lib.rs                         | 1321 → 1335               | Grain composition registers jobs/commands/events and guards tray unload.                                                                |
+| commands/history.rs            | 13 → 6                    | Old synchronous retry adapter removed; keep fallible command result.                                                                    |
+| commands/models.rs             | 86 → 78                   | Adopt upstream blocking-pool unload and active-job guard.                                                                               |
 
 No deleted upstream file, stray root source, native fork change or unassessed
 feature is being accepted by this budget update.
@@ -562,9 +566,9 @@ No new diverged shared file or native fork change is accepted.
 
 Merging main (Handy #2315 file transcription, onboarding, paste, catalogue, shortcut and macOS ports) under the Grain Meet hooks moves only these budgets, each the same reviewed hook measured on the newer base:
 
-| Shared path | Main | Accepted | Reason |
-| --- | --- | --- | --- |
-| lib.rs | 1323 | 1340 | `mod grain_meet;`, the Grain Meet commands and events in the existing lists (17 lines, listed above). |
-| managers/transcription.rs | 120 | 121 | The dictation `LoadSpec` names `Role::Asr` (listed above). |
+| Shared path               | Main | Accepted | Reason                                                                                                |
+| ------------------------- | ---- | -------- | ----------------------------------------------------------------------------------------------------- |
+| lib.rs                    | 1323 | 1340     | `mod grain_meet;`, the Grain Meet commands and events in the existing lists (17 lines, listed above). |
+| managers/transcription.rs | 120  | 121      | The dictation `LoadSpec` names `Role::Asr` (listed above).                                            |
 
 The meeting inference claim uses the shared `claim_foreground` so an in-flight file transcription chunk finishes first; that logic is in Grain-owned `grain_transcription_manager.rs`. No other shared file changes.

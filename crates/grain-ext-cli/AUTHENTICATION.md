@@ -6,13 +6,13 @@ a client, sign in, or prove users can connect. No Grain API key is needed.
 
 ## Supported remote MCP routes
 
-| Provider setup | Author supplies | User experience | Support today |
-| --- | --- | --- | --- |
-| Intentionally anonymous | HTTPS Streamable HTTP URL; `authentication.type: none` | Install/enable and use tools | Supported if the server actually permits anonymous access. |
-| Dynamic client registration (DCR) | URL; OAuth; compatible discovery/registration | Grain registers the client, then opens consent | Supported through the MCP SDK; registration must work without an author-supplied initial-access credential. |
-| Publisher-registered public desktop client | URL, OAuth, public client ID and exact issuer in `oauthClient` | Browser consent, without each user creating a developer app | Supported when the provider accepts Grain's callback, S256 PKCE and token authentication `none`. |
-| Existing host integration | Supported service/extension identity and endpoint | Browser consent using that Grain build's registration | GitHub is the current specific tester integration; this registration is not shared with arbitrary extensions. |
-| Secret-required client, API-key-only server or another custom grant | Separately supported host integration or publisher service | Depends on that reviewed integration | Not supported merely by adding package fields. Do not embed credentials or publish a setup requiring ordinary users to register developer apps. |
+| Provider setup                                                      | Author supplies                                                | User experience                                             | Support today                                                                                                                                   |
+| ------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Intentionally anonymous                                             | HTTPS Streamable HTTP URL; `authentication.type: none`         | Install/enable and use tools                                | Supported if the server actually permits anonymous access.                                                                                      |
+| Dynamic client registration (DCR)                                   | URL; OAuth; compatible discovery/registration                  | Grain registers the client, then opens consent              | Supported through the MCP SDK; registration must work without an author-supplied initial-access credential.                                     |
+| Publisher-registered public desktop client                          | URL, OAuth, public client ID and exact issuer in `oauthClient` | Browser consent, without each user creating a developer app | Supported when the provider accepts Grain's callback, S256 PKCE and token authentication `none`.                                                |
+| Existing host integration                                           | Supported service/extension identity and endpoint              | Browser consent using that Grain build's registration       | GitHub is the current specific tester integration; this registration is not shared with arbitrary extensions.                                   |
+| Secret-required client, API-key-only server or another custom grant | Separately supported host integration or publisher service     | Depends on that reviewed integration                        | Not supported merely by adding package fields. Do not embed credentials or publish a setup requiring ordinary users to register developer apps. |
 
 Grain discovers authorization endpoints/scopes and uses the existing MCP SDK's
 authorization-code/PKCE and refresh flow. Account tokens stay in the OS vault.
