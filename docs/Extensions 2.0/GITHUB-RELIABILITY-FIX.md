@@ -68,6 +68,30 @@ GitHub Release or an updater publication. Build artifacts and final non-owner
 consent/read results remain separate acceptance from the backend proof above.
 An old installed executable cannot acquire these fixes without an updated build.
 
+## Agent call quotas removed for development
+
+The owner's normal-beta request to find the latest Grain commit across branches
+failed after successful authentication, discovery and six GitHub calls. The
+production trace for task `b1932400-33b8-4fa9-aad6-1f684bc7a134` shows the fifth
+model round requested 16 calls; the host rejected the message against its
+eight-call frame ceiling. This is independent of the catalogue transport failure.
+
+At the owner's explicit request, remove the eight-call frame ceiling, 50-round
+ceiling, 200-call task ceiling and cumulative 256 KiB transcript quota. Do not
+replace them with higher ceilings, a hidden alpha switch or compatibility paths.
+Keep task-local counts and duplicate observations for later measurement, with
+saturating arithmetic. Keep model-call and transport deadlines, individual
+argument/result bounds, offered-tool and identity validation, uncertain-write
+no-replay rules, cancellation and owned cleanup. Model-provider context windows
+and service rate limits still apply; no automatic compaction is introduced.
+
+Deterministic production-loop fixtures cover 60 successive 16-call messages
+(960 calls), preserved ordered results above the former transcript quota, no
+replayed call IDs, and manual cancellation after 60 rounds/240 calls with a new
+request admitted afterward. Existing invalid-ID, argument, UTF-8 result, approval,
+uncertain-outcome and ownership tests remain. The earlier bounded-batch feedback
+draft was replaced before commit; no batch-rejection recovery path is retained.
+
 ## Remaining acceptance
 
 Verify public installation availability after the owner applies the setting,

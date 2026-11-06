@@ -117,7 +117,7 @@ const FINAL_REPLY_MARKER: &str = "[final]";
 /// not to spend rounds re-checking successful results, and may finish in the
 /// same message as its last calls. Grain shows such a reply only when every
 /// call in that message succeeded (see `same_round_final_reply`).
-const AGENT_TOOL_GUIDANCE: &str = "Tool-use rules: A tool result that reports success is authoritative; do not search, fetch or re-read an object to verify a change you just made unless the user asked you to check it. Call independent tools together in one message. When the tool calls in a message are the last steps the request needs and your reply does not depend on what they return, also write the final reply to the user in that same message, starting with [final]. Grain shows that reply only if every call succeeds; otherwise you receive the results and continue. Do not invent identifiers, numbers or links that only a result would reveal. If more steps may remain, leave the message text empty.";
+const AGENT_TOOL_GUIDANCE: &str = "Tool-use rules: A tool result that reports success is authoritative; do not search, fetch or re-read an object to verify a change you just made unless the user asked you to check it. Call independent tools together in one message. Continue calling tools until the requested work is complete or the user cancels; Grain imposes no tool-call or round quota. When the tool calls in a message are the last steps the request needs and your reply does not depend on what they return, also write the final reply to the user in that same message, starting with [final]. Grain shows that reply only if every call succeeds; otherwise you receive the results and continue. Do not invent identifiers, numbers or links that only a result would reveal. If more steps may remain, leave the message text empty.";
 
 /// Strip the same-round marker. Returns the reply only when the marker leads
 /// the text and something follows it.
@@ -2819,18 +2819,11 @@ fn outcome_to_reply(outcome: grain_core::execution::ActionOutcome) -> AgentReply
     AgentReply::plain(grain_core::interaction::to_markdown(&interaction))
 }
 
-/// Generous observation ceiling requested for the tester workflow. Discovery
-/// and action rounds count alike; duplicates are observed, not suppressed.
-/// Cancellation, per-request timeouts and bounded context remain independent.
-const MAX_AGENT_TOOL_HOPS: usize = 50;
-const MAX_AGENT_TOOL_CALLS: usize = 200;
-
-const MAX_TOOL_TRANSCRIPT_BYTES: usize = 256 * 1024;
 const MAX_TOOL_RESULT_BYTES: usize = 16 * 1024;
-const MAX_CALLS_PER_FRAME: usize = 8;
 
-/// Task-local transcript and budgets. No runtime, listener or credential is
-/// retained across approval; only the already-selected schema snapshots remain.
+/// Task-local transcript and observation counters, without call/round quotas.
+/// No runtime, listener or credential is retained across approval; only the
+/// already-selected schema snapshots remain. Individual results stay bounded.
 struct ToolTurn {
     entries: Vec<crate::llm_client::ChatEntry>,
     session: crate::capability::CapabilitySession,
@@ -2868,32 +2861,6 @@ impl PendingToolTurn {
     }
 }
 
-fn transcript_bytes(entries: &[crate::llm_client::ChatEntry]) -> usize {
-    use crate::llm_client::ChatEntry;
-    entries
-        .iter()
-        .map(|entry| match entry {
-            ChatEntry::System(text) | ChatEntry::User(text) | ChatEntry::Assistant(text) => {
-                text.len().saturating_add(64)
-            }
-            ChatEntry::ToolResult { call_id, content } => call_id
-                .len()
-                .saturating_add(content.len())
-                .saturating_add(64),
-            ChatEntry::AssistantToolCalls(calls) => calls
-                .iter()
-                .map(|call| {
-                    call.id
-                        .len()
-                        .saturating_add(call.name.len())
-                        .saturating_add(call.arguments.len())
-                        .saturating_add(64)
-                })
-                .sum(),
-        })
-        .sum()
-}
-
 impl ToolTurn {
     fn observe_call(&mut self, call: &crate::llm_client::ToolCallOut) -> usize {
         use sha2::{Digest, Sha256};
@@ -2910,7 +2877,7 @@ impl ToolTurn {
             .call_occurrences
             .entry(digest.finalize().into())
             .or_default();
-        *count += 1;
+        *count = count.saturating_add(1);
         *count
     }
 
@@ -2940,11 +2907,8 @@ impl ToolTurn {
 
     fn admit_frame(&mut self, calls: &[crate::llm_client::ToolCallOut]) -> Result<(), String> {
         let mut seen = HashSet::new();
-        if calls.is_empty() || calls.len() > MAX_CALLS_PER_FRAME {
-            return Err(
-                "Invalid or oversized model tool batch; no additional calls were dispatched."
-                    .into(),
-            );
+        if calls.is_empty() {
+            return Err("Empty model tool batch; no additional calls were dispatched.".into());
         }
         for call in calls {
             if call.id.is_empty()
@@ -2958,19 +2922,12 @@ impl ToolTurn {
                 return Err("Invalid or repeated model tool-call identity; no additional calls were dispatched. Earlier actions may have had effects.".into());
             }
         }
-        let frame = crate::llm_client::ChatEntry::AssistantToolCalls(calls.to_vec());
-        // Reserve a bounded result for EVERY id, including deferred/denied ids.
-        let reserved = calls.len().saturating_mul(MAX_TOOL_RESULT_BYTES + 256);
-        if transcript_bytes(&self.entries)
-            .saturating_add(transcript_bytes(std::slice::from_ref(&frame)))
-            .saturating_add(reserved)
-            > MAX_TOOL_TRANSCRIPT_BYTES
-        {
-            return Err("Tool transcript budget reached; no additional calls were dispatched. Earlier actions may have had effects.".into());
-        }
         self.seen_ids.extend(seen);
-        self.hops += 1;
-        self.entries.push(frame);
+        self.hops = self.hops.saturating_add(1);
+        self.entries
+            .push(crate::llm_client::ChatEntry::AssistantToolCalls(
+                calls.to_vec(),
+            ));
         Ok(())
     }
 
@@ -3125,11 +3082,6 @@ async fn run_with_tools(
             .count();
         entries.insert(position, ChatEntry::System(directory));
     }
-    if transcript_bytes(&entries) > MAX_TOOL_TRANSCRIPT_BYTES {
-        return Err(
-            "The tool request exceeds the context budget; shorten the supplied text.".into(),
-        );
-    }
     drive_tool_turn(
         app,
         ToolTurn {
@@ -3268,7 +3220,7 @@ mod tool_continuation_tests {
     }
 
     #[tokio::test]
-    async fn production_loop_retains_ids_schemas_and_budgets_through_approval() {
+    async fn production_loop_retains_ids_schemas_and_counters_through_approval() {
         let control = AgentRunControl::default();
         let (run, registration) = control.begin().unwrap();
         let dispatched = Arc::new(Mutex::new(Vec::new()));
@@ -3609,41 +3561,139 @@ mod tool_continuation_tests {
             }
             _ => panic!(),
         }
-        turn.entries
-            .push(ChatEntry::User("x".repeat(MAX_TOOL_TRANSCRIPT_BYTES)));
-        assert!(turn.admit_frame(&[call("more", "read")]).is_err());
-        assert!(!turn.seen_ids.contains("more"));
     }
 
     #[tokio::test]
-    async fn exhausted_task_budget_offers_no_tools_and_dispatches_none() {
-        for hops in [false, true] {
-            let mut turn = turn();
-            if hops {
-                turn.hops = MAX_AGENT_TOOL_HOPS;
-            } else {
-                turn.calls = MAX_AGENT_TOOL_CALLS;
-            }
-            let control = AgentRunControl::default();
-            let (run, registration) = control.begin().unwrap();
-            assert!(run
-                .wait(
-                    registration,
-                    drive_each(
-                        turn,
-                        &run,
-                        |_, tools| {
-                            assert!(tools.is_empty());
-                            Box::pin(async { Ok(frame(vec![call("extra", "write")])) })
-                        },
-                        |_, _| { panic!("exhausted task cannot dispatch") },
-                        |_| {}
-                    )
-                )
-                .await
-                .unwrap()
-                .is_ok());
-        }
+    async fn branch_fanout_continues_beyond_former_frame_round_call_and_context_limits() {
+        let control = AgentRunControl::default();
+        let (run, registration) = control.begin().unwrap();
+        let dispatched = Arc::new(Mutex::new(Vec::new()));
+        let observed = dispatched.clone();
+        let mut round = 0;
+        let reply = run
+            .wait(
+                registration,
+                drive_tool_turn_with(
+                    turn(),
+                    &run,
+                    move |entries, tools| {
+                        assert_eq!(tools.len(), 3, "tools remain offered on every round");
+                        let results: Vec<_> = entries
+                            .iter()
+                            .filter_map(|entry| match entry {
+                                ChatEntry::ToolResult { call_id, content } => {
+                                    Some((call_id, content))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        assert_eq!(results.len(), round * 16);
+                        for (index, (id, content)) in results.iter().enumerate() {
+                            assert_eq!(**id, format!("branch-{}-{}", index / 16, index % 16));
+                            assert_eq!(**content, "x".repeat(512));
+                        }
+                        let reply = if round < 60 {
+                            let calls = (0..16)
+                                .map(|branch| {
+                                    let mut item =
+                                        call(&format!("branch-{round}-{branch}"), "read");
+                                    item.arguments = format!(r#"{{"branch":"branch-{branch}"}}"#);
+                                    item
+                                })
+                                .collect();
+                            round += 1;
+                            frame(calls)
+                        } else {
+                            assert!(
+                                results
+                                    .iter()
+                                    .map(|(_, content)| content.len())
+                                    .sum::<usize>()
+                                    > 256 * 1024
+                            );
+                            LlmToolReply {
+                                content: "Finished all requested work".into(),
+                                tool_calls: vec![],
+                            }
+                        };
+                        Box::pin(async move { Ok(reply) })
+                    },
+                    move |calls, _, _| {
+                        assert_eq!(calls.len(), 16);
+                        observed
+                            .lock()
+                            .unwrap()
+                            .extend(calls.iter().map(|call| call.id.clone()));
+                        let results = calls
+                            .iter()
+                            .map(|_| Some(crate::capability::ToolResult::Text("x".repeat(512))))
+                            .collect();
+                        Box::pin(async move { results })
+                    },
+                    |_| panic!("read-only workflow must not hold confirmation"),
+                ),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.text, "Finished all requested work");
+        let ids = dispatched.lock().unwrap();
+        assert_eq!(ids.len(), 960);
+        assert_eq!(
+            ids.iter().collect::<HashSet<_>>().len(),
+            960,
+            "each call dispatched once"
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_cancel_stops_continuous_tool_use_after_former_quotas_and_releases_owner() {
+        let control = AgentRunControl::default();
+        let (run, registration) = control.begin().unwrap();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let mut started = Some(started);
+        let dispatched = Arc::new(AtomicU64::new(0));
+        let observed = dispatched.clone();
+        let mut round = 0;
+        let operation = run.wait(
+            registration,
+            drive_each(
+                turn(),
+                &run,
+                move |_, tools| {
+                    assert_eq!(tools.len(), 3);
+                    if round == 60 {
+                        started.take().unwrap().send(()).unwrap();
+                        return Box::pin(std::future::pending());
+                    }
+                    let reply = frame(
+                        (0..4)
+                            .map(|index| call(&format!("call-{round}-{index}"), "read"))
+                            .collect(),
+                    );
+                    round += 1;
+                    Box::pin(async move { Ok(reply) })
+                },
+                move |_, _| {
+                    observed.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async { Some(crate::capability::ToolResult::Text("Done".into())) })
+                },
+                |_| panic!("no confirmation expected"),
+            ),
+        );
+        let cancel = async {
+            ready.await.unwrap();
+            control.cancel();
+        };
+        let (result, _) = tokio::join!(operation, cancel);
+        assert!(result.unwrap_err().contains("Agent run cancelled"));
+        assert_eq!(dispatched.load(Ordering::SeqCst), 240);
+        drop(run);
+        let (next, registration) = control.begin().unwrap();
+        assert_eq!(
+            next.wait(registration, async { "Ready" }).await.unwrap(),
+            "Ready"
+        );
     }
 
     #[tokio::test]
@@ -3873,24 +3923,14 @@ async fn drive_tool_turn_with<'a>(
     arm_expiry: impl Fn(String) + Send,
 ) -> Result<AgentReply, String> {
     loop {
-        let exhausted = turn.hops >= MAX_AGENT_TOOL_HOPS || turn.calls >= MAX_AGENT_TOOL_CALLS;
-        let tools = if exhausted {
-            Vec::new()
-        } else {
-            crate::capability::specs(&turn.session)
-        };
+        let tools = crate::capability::specs(&turn.session);
         let offered: HashSet<_> = tools.iter().map(|tool| tool.name.clone()).collect();
-        let mut entries = turn.entries.clone();
-        if exhausted {
-            entries.push(crate::llm_client::ChatEntry::System(
-                "Tool execution is finished for this request. No tools are available. Give a concise final answer from the results already received: distinguish completed work, empty results and unfinished work. Do not request more tools, claim unperformed work succeeded, or repeat completed actions.".into(),
-            ));
-        }
+        let entries = turn.entries.clone();
         info!(
             "[GRAIN] agent-tool-trace {}",
             serde_json::json!({
-                "phase": "round", "task": turn.trace_id, "round": turn.hops + 1,
-                "calls": turn.calls, "offered_count": tools.len(), "finalizing": exhausted,
+                "phase": "round", "task": turn.trace_id, "round": turn.hops.saturating_add(1),
+                "calls": turn.calls, "offered_count": tools.len(), "finalizing": false,
                 "task_elapsed_ms": turn.started.elapsed().as_millis(),
                 "offered_tools": tools.iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>(),
             })
@@ -3903,7 +3943,7 @@ async fn drive_tool_turn_with<'a>(
         info!(
             "[GRAIN] agent-tool-trace {}",
             serde_json::json!({
-                "phase": "model-response", "task": turn.trace_id, "round": turn.hops + 1,
+                "phase": "model-response", "task": turn.trace_id, "round": turn.hops.saturating_add(1),
                 "elapsed_ms": model_started.elapsed().as_millis(), "requested_calls": reply.tool_calls.len(),
                 "task_elapsed_ms": turn.started.elapsed().as_millis()
             })
@@ -3915,27 +3955,11 @@ async fn drive_tool_turn_with<'a>(
                     "phase": "finished", "task": turn.trace_id,
                     "rounds": turn.hops, "calls": turn.calls,
                     "duplicate_calls": turn.call_occurrences.values().map(|count| count - 1).sum::<usize>(),
-                    "limit_reached": exhausted,
+                    "limit_reached": false,
                     "task_elapsed_ms": turn.started.elapsed().as_millis(),
                 })
             );
             return Ok(AgentReply::plain(strip_final_marker(reply.content)));
-        }
-        if exhausted {
-            let notice = "Grain reached this request's tool limit. The model still requested tools despite being asked to finish; those extra calls were not executed. Completed actions must not be repeated automatically.";
-            info!(
-                "[GRAIN] agent-tool-trace {}",
-                serde_json::json!({
-                    "phase": "stopped", "task": turn.trace_id, "reason": "tool-limit",
-                    "rounds": turn.hops, "calls": turn.calls,
-                })
-            );
-            // A noncompliant model cannot erase the results already obtained.
-            return Ok(AgentReply::plain(if turn.receipts.is_empty() {
-                notice.into()
-            } else {
-                format!("{}\n\n{notice}", turn.receipts.join("\n\n"))
-            }));
         }
         if let Err(error) = turn.admit_frame(&reply.tool_calls) {
             return turn.failure(error);
@@ -3952,13 +3976,7 @@ async fn drive_tool_turn_with<'a>(
         let mut eligible = Vec::new();
         let mut eligible_meta = Vec::new();
         for (index, call) in reply.tool_calls.iter().enumerate() {
-            if turn.calls >= MAX_AGENT_TOOL_CALLS {
-                all_succeeded = false;
-                staged[index] =
-                    Some("Not executed because the task's tool-call budget is exhausted.".into());
-                continue;
-            }
-            turn.calls += 1;
+            turn.calls = turn.calls.saturating_add(1);
             let occurrence = turn.observe_call(call);
             // Unknown model-supplied names are not allowed to write arbitrary
             // text into diagnostics. Arguments/results never enter this trace.
@@ -4001,8 +4019,8 @@ async fn drive_tool_turn_with<'a>(
         for (position, (index, call_number, trace_name)) in eligible_meta.into_iter().enumerate() {
             let call = &reply.tool_calls[index];
             if withheld.is_some() || position >= dispatched.len() {
-                // A held approval stops the frame; later calls never ran and do
-                // not consume the task's call budget.
+                // A held approval stops the frame; later calls never ran and are
+                // excluded from the observed call count.
                 all_succeeded = false;
                 turn.calls = turn.calls.saturating_sub(1);
                 staged[index] = Some("Not executed because another call is awaiting approval. Ask for remaining work only after its result.".into());
