@@ -123,7 +123,10 @@ async fn bind_callback(fixed: bool) -> Result<TcpListener, String> {
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 const CALLBACK_MAX_BYTES: usize = 16 * 1024;
 const MAX_TOOL_COUNT: usize = 128;
-const MAX_SSE_EVENT_BYTES: usize = 512 * 1024;
+// Tool catalogues can arrive as a single SSE event or JSON. Apply the same
+// bounded catalogue budget to both representations; GitHub's all-toolset
+// catalogue exceeds the previous 512 KiB SSE-only limit.
+const MAX_SSE_EVENT_BYTES: usize = MAX_CATALOG_BYTES;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_DISCOVERY_PAGES: usize = 32;
@@ -2206,7 +2209,20 @@ async fn discover_on_service(
         )
         .await
         .map_err(|_| "MCP discovery timed out; the catalog is incomplete.")?
-        .map_err(|_| "MCP catalog request failed; the catalog is incomplete.")?;
+        .map_err(|error| {
+            // SDK/provider error strings may contain credentials or response data.
+            let kind = match &error {
+                rmcp::ServiceError::McpError(_) => "rpc",
+                rmcp::ServiceError::TransportSend(_) => "transport_send",
+                rmcp::ServiceError::TransportClosed => "transport_closed",
+                rmcp::ServiceError::UnexpectedResponse => "unexpected_response",
+                rmcp::ServiceError::Timeout { .. } => "timeout",
+                rmcp::ServiceError::Cancelled { .. } => "cancelled",
+                _ => "other",
+            };
+            log::warn!("[GRAIN] MCP catalogue request failed: kind={kind}");
+            "MCP catalog request failed; the catalog is incomplete."
+        })?;
         catalog_count = catalog_count.saturating_add(page.tools.len());
         if catalog_count > MAX_TOOL_COUNT {
             return Err(format!(

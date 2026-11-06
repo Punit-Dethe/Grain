@@ -161,6 +161,17 @@ cargo --config 'target.x86_64-pc-windows-msvc.runner=["powershell.exe","-NoProfi
 
 ## Installed GitHub alpha checkpoint (13 October)
 
+**6 November reliability check:** `--preflight` and `--catalogue` support the
+signed-store account with Developer Mode off; catalogue-only checks do not need
+an Agent model. `GRAIN_GITHUB_ALPHA_BINARY` can select an extracted official alpha
+binary without installing it. The runner still verifies its application identity
+and refuses to attach to an already running copy. Failures record the command and
+a fixed host-message code without retaining raw provider text. The debug headless
+probe likewise relies on the normal source-aware gate rather than demanding
+Developer Mode. Custom/development MCPs retain their original access checks.
+The historical `--workflow` exposure/confirmation assertions are not current
+Agent-policy acceptance; do not restore retired host tools to satisfy them.
+
 **14 October corrected checkpoint:** after the external 9router schema repair,
 issue #2 was created with exact title/body (`github-alpha-hU7Agp`), then updated
 and closed with one approved write (`github-alpha-M3F0FS`). The latter also creates

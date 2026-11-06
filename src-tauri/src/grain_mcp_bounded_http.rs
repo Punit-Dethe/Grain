@@ -272,6 +272,7 @@ impl BoundedClient {
                 match response.chunk().await {
                     Ok(Some(chunk)) => {
                         if chunk.len() > limit.saturating_sub(used) {
+                            log::warn!("[GRAIN] MCP SSE wire limit exceeded: received={used} chunk={} limit={limit}", chunk.len());
                             return Err(io::Error::new(
                                 io::ErrorKind::InvalidData,
                                 "MCP SSE response exceeds the byte limit",
@@ -370,6 +371,7 @@ impl StreamableHttpClient for BoundedClient {
                     return Ok(StreamableHttpPostResponse::Json(reply, session));
                 }
             }
+            log::warn!("[GRAIN] MCP HTTP failure: status={}", status.as_u16());
             return Err(invalid("MCP server returned an HTTP error"));
         }
         if kind.eq_ignore_ascii_case("text/event-stream") {
@@ -385,7 +387,15 @@ impl StreamableHttpClient for BoundedClient {
         match serde_json::from_slice::<ServerJsonRpcMessage>(&bytes) {
             Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session)),
             Err(_) if notification => Ok(StreamableHttpPostResponse::Accepted),
-            Err(_) => Err(invalid("MCP response is not valid JSON-RPC")),
+            Err(error) => {
+                log::warn!(
+                    "[GRAIN] MCP JSON-RPC decoding failed: category={:?} line={} column={}",
+                    error.classify(),
+                    error.line(),
+                    error.column()
+                );
+                Err(invalid("MCP response is not valid JSON-RPC"))
+            }
         }
     }
 

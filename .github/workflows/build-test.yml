@@ -7,10 +7,14 @@ on:
         description: "Build only the isolated Windows extension alpha with the registered GitHub client"
         type: boolean
         default: false
+      windows-only:
+        description: "Build only the normal Windows beta installer"
+        type: boolean
+        default: false
 
 jobs:
   build-test:
-    if: ${{ !inputs.github-extension-alpha }}
+    if: ${{ !inputs.github-extension-alpha && !inputs.windows-only }}
     permissions:
       contents: write
     strategy:
@@ -48,6 +52,24 @@ jobs:
       asset-prefix: "handy-test"
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
+      github-extension-auth: true
+    secrets: inherit
+
+  windows-beta:
+    if: ${{ !inputs.github-extension-alpha && inputs.windows-only }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}
+      platform: windows-latest
+      target: x86_64-pc-windows-msvc
+      build-args: "--bundles nsis"
+      github-extension-auth: true
+      is-debug-build: false
+      asset-prefix: handy-test
+      upload-artifacts: true
+      sign-binaries: true
     secrets: inherit
 
   extension-alpha:

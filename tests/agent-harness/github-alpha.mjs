@@ -20,6 +20,49 @@ import { waitFor, writeReport, Blocked } from "./support.mjs";
 import { hashFile } from "./stamp.mjs";
 
 export const repository = "Punit-Dethe/grain-github-alpha-test";
+// Match only host-owned constant messages; never retain arbitrary IPC/provider text.
+export function mcpFailureCode(error) {
+  const message = String(error);
+  for (const [text, code] of [
+    [
+      "MCP authentication is temporarily unavailable.",
+      "authentication_unavailable",
+    ],
+    ["The MCP account needs sign-in again.", "reconnect_required"],
+    [
+      "OAuth client registration does not match this authorization server.",
+      "registration_mismatch",
+    ],
+    [
+      "The MCP authorization setup is unsupported or changed.",
+      "authorization_configuration",
+    ],
+    ["The OS credential vault is unavailable.", "credential_vault"],
+    ["MCP protocol negotiation failed.", "protocol_negotiation"],
+    ["MCP protocol negotiation timed out.", "protocol_timeout"],
+    [
+      "MCP catalog request failed; the catalog is incomplete.",
+      "catalogue_request",
+    ],
+    [
+      "MCP discovery timed out; the catalog is incomplete.",
+      "catalogue_timeout",
+    ],
+    [
+      "MCP catalog exceeds the 128-tool limit; discovery is incomplete.",
+      "catalogue_tool_limit",
+    ],
+    [
+      "MCP catalog exceeds the metadata byte limit; discovery is incomplete.",
+      "catalogue_byte_limit",
+    ],
+    ["MCP account setup timed out.", "account_setup_timeout"],
+    ["Store extensions are not available in this build.", "unsupported_build"],
+  ]) {
+    if (message.includes(text)) return code;
+  }
+  return "unclassified";
+}
 export function approvedGitHubAction(confirm, titles, required, optional = {}) {
   if (
     required.owner !== "Punit-Dethe" ||
@@ -88,7 +131,8 @@ export async function runInstalledGitHub(mode, updateVersion) {
   const here = dirname(fileURLToPath(import.meta.url));
   const root = await mkdtemp(join(here, ".runs/github-alpha-"));
   const binary = await realpath(
-    join(process.env.LOCALAPPDATA, "Grain Extensions Alpha", "handy.exe"),
+    process.env.GRAIN_GITHUB_ALPHA_BINARY ||
+      join(process.env.LOCALAPPDATA, "Grain Extensions Alpha", "handy.exe"),
   );
   const report = {
     runId: randomUUID(),
@@ -162,6 +206,9 @@ export async function runInstalledGitHub(mode, updateVersion) {
           );
         }),
       ]);
+    } catch (error) {
+      error.diagnostic = { command, code: mcpFailureCode(error) };
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -317,18 +364,13 @@ export async function runInstalledGitHub(mode, updateVersion) {
         model: value.post_process_models?.[value.post_process_provider_id],
       };
     });
-    if (
-      !settings.agentEnabled ||
-      !settings.developerMode ||
-      !settings.modelSelected
-    )
-      throw new Blocked(
-        "Enable Agent, select its model and enable extension Developer Mode in the alpha",
-      );
+    const agentMode = mode === "--read" || mode === "--workflow";
+    if (agentMode && (!settings.agentEnabled || !settings.modelSelected))
+      throw new Blocked("Enable Agent and select its model in the alpha");
     const connections = await invoke("mcp_connections_list");
-    const catalogueIds = (await invoke("mcp_provider_status")).map(
-      (item) => item.id,
-    );
+    const catalogueIds = settings.developerMode
+      ? (await invoke("mcp_provider_status")).map((item) => item.id)
+      : [];
     const enabledCatalogueIds = await main.evaluate(async (ids) => {
       const settings =
         await window.__TAURI_INTERNALS__.invoke("get_app_settings");
@@ -359,8 +401,9 @@ export async function runInstalledGitHub(mode, updateVersion) {
     const enabled = connections.filter((row) => row.state === "enabled");
     const native = await invoke("extensions_overview");
     if (
-      enabled.some((row) => row.id !== connection.id) ||
-      native.some((card) => card.enabled && card.trust !== "core")
+      agentMode &&
+      (enabled.some((row) => row.id !== connection.id) ||
+        native.some((card) => card.enabled && card.trust !== "core"))
     )
       throw new Blocked(
         "Disable other extension tools for this focused GitHub check",

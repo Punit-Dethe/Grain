@@ -45,9 +45,6 @@ pub(crate) fn check_identity(app: &AppHandle) -> Result<(), String> {
 async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
     check_identity(app)?;
     let context = app.state::<Arc<grain_core::AppContext>>();
-    if !context.settings().extension_developer_mode {
-        return Err("Enable extension developer mode in the alpha before probing".into());
-    }
     // Only MCP state is needed. Native workers deliberately remain unavailable;
     // their real-app acceptance stays in the maintained harness.
     app.manage(Arc::new(
