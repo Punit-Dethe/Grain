@@ -118,8 +118,7 @@ export function AgentPanel() {
   const [versions, setVersions] = useState<AgentReply[]>([]);
   const [versionIdx, setVersionIdx] = useState(0);
   const [expanded, setExpanded] = useState(false);
-  // The panel is revealed the instant the user submits — BEFORE the transcript
-  // and reply exist — so it opens in the busy (loading) state.
+  // The warm panel executes the first turn while hidden behind the working pill.
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copyFlash, setCopyFlash] = useState(false);
@@ -177,6 +176,7 @@ export function AgentPanel() {
   // Guards the first LLM run so the mount-take and the `agent-instruction`
   // event (whichever wins the race) only trigger it once.
   const firstRunStartedRef = useRef(false);
+  const firstTurnGenerationRef = useRef<number | null>(null);
   messagesRef.current = messages;
   versionsRef.current = versions;
   versionIdxRef.current = versionIdx;
@@ -247,7 +247,11 @@ export function AgentPanel() {
         const payload: AgentMessage[] = [
           { role: "user", content: instruction },
         ];
-        const res = await commands.agentRun(payload, contextRef.current);
+        const res = await commands.agentRun(
+          payload,
+          contextRef.current,
+          revealedRef.current ? null : firstTurnGenerationRef.current,
+        );
         if (res.status === "ok") {
           const reply = res.data;
           setVersions((prev) => {
@@ -278,7 +282,7 @@ export function AgentPanel() {
           role: m.role,
           content: m.content,
         }));
-        const res = await commands.agentRun(payload, contextRef.current);
+        const res = await commands.agentRun(payload, contextRef.current, null);
         if (res.status === "ok") {
           const reply = res.data;
           setMessages((prev) => [
@@ -429,14 +433,22 @@ export function AgentPanel() {
    * and the `agent-instruction` event fire it at most once. */
   const startFirstIfQueued = useCallback(async () => {
     if (firstRunStartedRef.current) return;
-    let instruction: string | null = null;
+    let instruction: Awaited<ReturnType<typeof commands.agentTakeInstruction>> =
+      null;
     try {
       instruction = await commands.agentTakeInstruction();
     } catch {
       /* nothing queued yet */
     }
-    if (instruction && instruction.trim() && !firstRunStartedRef.current) {
-      instructionRef.current = instruction.trim();
+    if (instruction?.text.trim() && !firstRunStartedRef.current) {
+      firstTurnGenerationRef.current = instruction.generation;
+      if (instruction.is_error) {
+        firstRunStartedRef.current = true;
+        setError(instruction.text);
+        setBusy(false);
+        return;
+      }
+      instructionRef.current = instruction.text.trim();
       await runFirst(instructionRef.current);
     }
   }, [runFirst]);
@@ -522,8 +534,7 @@ export function AgentPanel() {
     // The state events do NOT arm the entrance themselves — two of them can
     // land for a single reveal, and that played the animation twice.
     void win.listen("agent-reveal", reveal).then(track);
-    // Reveal-in-loading handshake: the window is about to be shown; keep the
-    // loading state until the first reply (or an error) lands.
+    // Hidden preparation: keep loading until the first reply or error lands.
     void win
       .listen("agent-loading", () => {
         if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
@@ -531,10 +542,11 @@ export function AgentPanel() {
       .then(track);
     // A backend-side failure (STT/LLM) with no reply to show.
     void win
-      .listen<string>("agent-error", (e) => {
+      .listen<{ message: string; generation: number }>("agent-error", (e) => {
         firstRunStartedRef.current = true;
+        firstTurnGenerationRef.current = e.payload.generation;
         setBusy(false);
-        setError(e.payload || t("agent.error"));
+        setError(e.payload.message || t("agent.error"));
       })
       .then(track);
     // Follow-up offer opened the warm hidden panel → seed the conversation.
@@ -600,6 +612,20 @@ export function AgentPanel() {
     t,
     win,
   ]);
+
+  // Reveal only after reply/error state has committed. The host verifies that
+  // this first turn still owns the waiting pill, so Stop cannot reopen a card.
+  useEffect(() => {
+    const generation = firstTurnGenerationRef.current;
+    if (
+      !busy &&
+      !revealed &&
+      generation !== null &&
+      (versions.length > 0 || error)
+    ) {
+      void commands.agentPresentReply(generation).catch(console.error);
+    }
+  }, [busy, error, revealed, versions.length]);
 
   // Replay the opening animation on each reveal. Restarted imperatively rather
   // than by remounting: the card carries refs (height reporting, scroll) that

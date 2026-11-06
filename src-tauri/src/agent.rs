@@ -369,7 +369,7 @@ pub struct AgentState {
     /// summon.
     pub context: Mutex<Option<String>>,
     /// First instruction handed from the palette to the panel on submit.
-    pub pending_instruction: Mutex<Option<String>>,
+    pub pending_instruction: Mutex<Option<AgentInstruction>>,
     /// Run cancellation and exact host-held confirmation belong to this session.
     execution: AgentRunControl,
     /// Foreground window at summon â€” the paste target for Confirm / Quick Agent.
@@ -402,6 +402,8 @@ pub struct AgentState {
     /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
+    /// First turn executing behind the pill, before a reply/error is rendered.
+    waiting_for_reply: AtomicBool,
     /// [GRAIN] True while the reply panel is in its EXPANDED conversation stage
     /// (it owns a follow-up text field). Dictation is routed INTO that field
     /// only when the panel is expanded AND focused â€” never over the compact
@@ -1452,7 +1454,14 @@ fn clear_pending_action(app: &AppHandle) {
     if let Some(state) = app.try_state::<AgentState>() {
         // Closing before the renderer consumes its first instruction must not
         // leave a queued turn (and its transient-shortcut ownership) alive.
-        state.pending_instruction.lock().unwrap().take();
+        let was_waiting = {
+            let mut pending = state.pending_instruction.lock().unwrap();
+            pending.take();
+            state.waiting_for_reply.swap(false, Ordering::SeqCst)
+        };
+        if was_waiting {
+            crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+        }
         if let Some(token) = state.execution.cancel() {
             crate::action_exec::discard(&token);
         }
@@ -1472,20 +1481,82 @@ pub fn agent_get_context(app: AppHandle) -> Option<String> {
         .and_then(|s| s.context.lock().ok().and_then(|g| g.clone()))
 }
 
-fn set_pending_instruction(app: &AppHandle, text: String) {
-    if let Some(s) = app.try_state::<AgentState>() {
-        if let Ok(mut g) = s.pending_instruction.lock() {
-            *g = Some(text);
-        }
+fn queue_first_message(state: &AgentState, message: AgentInstruction) -> bool {
+    let mut pending = state.pending_instruction.lock().unwrap();
+    if !state.waiting_for_reply.load(Ordering::SeqCst)
+        || state.summon_gen.load(Ordering::SeqCst) != message.generation
+    {
+        return false;
     }
+    *pending = Some(message);
+    true
 }
 
 /// Consume the first instruction (the panel calls this on mount).
+#[derive(Serialize, Type)]
+pub struct AgentInstruction {
+    text: String,
+    generation: u64,
+    is_error: bool,
+}
+
 #[tauri::command]
 #[specta::specta]
-pub fn agent_take_instruction(app: AppHandle) -> Option<String> {
+pub fn agent_take_instruction(app: AppHandle) -> Option<AgentInstruction> {
     app.try_state::<AgentState>()
-        .and_then(|s| s.pending_instruction.lock().ok().and_then(|mut g| g.take()))
+        .and_then(|state| state.pending_instruction.lock().ok()?.take())
+}
+
+/// The hidden renderer calls this after applying its first reply/error state.
+/// Stop or a superseding summon makes a queued reveal a no-op.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = handle.state::<AgentState>();
+        let pending = state.pending_instruction.lock().unwrap();
+        if !reply_wait_is_current(&handle, generation)
+            || handle.get_webview_window(PANEL_LABEL).is_none()
+        {
+            return;
+        }
+        handle
+            .state::<AgentState>()
+            .waiting_for_reply
+            .store(false, Ordering::SeqCst);
+        drop(pending);
+        crate::bridge::emit(&handle, DaemonEvent::AgentInputHide);
+        if let Err(error) = show_panel(
+            &handle,
+            panel_position(&handle) == AgentPanelPosition::Center,
+        ) {
+            error!("[GRAIN] agent: failed to present reply: {error}");
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+pub(crate) fn waiting_for_reply(app: &AppHandle) -> bool {
+    app.try_state::<AgentState>()
+        .is_some_and(|state| state.waiting_for_reply.load(Ordering::SeqCst))
+}
+
+pub(crate) fn reply_wait_is_current(app: &AppHandle, generation: u64) -> bool {
+    app.try_state::<AgentState>().is_some_and(|state| {
+        state.summon_gen.load(Ordering::SeqCst) == generation
+            && state.waiting_for_reply.load(Ordering::SeqCst)
+    })
+}
+
+fn begin_reply_wait(app: &AppHandle) {
+    let state = app.state::<AgentState>();
+    state.waiting_for_reply.store(true, Ordering::SeqCst);
+    register_one_transient(app, close_binding());
+    // Enter has no action until a reply is visible; leave other apps usable.
+    let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
+    crate::surface_watch::stop(app);
+    crate::grain_overlay::show_agent_working(app, state.summon_gen.load(Ordering::SeqCst));
 }
 
 /// Change the side panel's native input region (or resize the fallback window)
@@ -1593,6 +1664,7 @@ pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return; // stale double-submit (global Enter + window Enter, etc.)
     }
+    let generation = state.summon_gen.load(Ordering::SeqCst);
     // Typed text wins â€” abandon the voice capture and release the mic.
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
 
@@ -1602,17 +1674,20 @@ pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
         input_cancel_cleanup(app);
         return;
     }
-    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    if quick {
+        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    } else {
+        begin_reply_wait(app);
+    }
     info!(
         "[GRAIN] agent: typed instruction submitted ({} chars, quick: {quick})",
         text.chars().count()
     );
-    dispatch_instruction(app.clone(), text, quick);
+    dispatch_instruction(app.clone(), text, quick, generation);
 }
 
-/// Pill â†’ core: submit the in-progress VOICE capture. The panel is revealed
-/// with its loading state IMMEDIATELY (before the transcript exists) so the
-/// surface feels snappy even when STT/LLM are slow.
+/// Submit voice capture. Keep the working pill through transcription and the
+/// first model turn; the warm reply panel executes that turn while hidden.
 pub fn input_submit_voice(app: &AppHandle, quick: bool) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
@@ -1620,14 +1695,24 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
-    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    let generation = state.summon_gen.load(Ordering::SeqCst);
+    if quick {
+        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    } else {
+        begin_reply_wait(app);
+    }
 
     let app = app.clone();
     std::thread::spawn(move || {
-        if !quick {
-            reveal_panel_loading(&app);
+        let current = |app: &AppHandle| quick || reply_wait_is_current(app, generation);
+        if !current(&app) {
+            return;
         }
-        let no_speech = |app: &AppHandle, msg: &str| deliver_agent_error(app, msg);
+        let no_speech = |app: &AppHandle, msg: &str| {
+            if current(app) {
+                deliver_agent_error(app, msg, if quick { None } else { Some(generation) });
+            }
+        };
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let cancel_generation = rm.cancel_generation();
         let samples = match rm.stop_recording(AGENT_BINDING, cancel_generation) {
@@ -1653,6 +1738,9 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
                 return;
             }
         };
+        if !current(&app) {
+            return;
+        }
         if text.is_empty() {
             no_speech(&app, "Nothing was heard â€” try again.");
             return;
@@ -1661,7 +1749,7 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
             "[GRAIN] agent: dictation transcript ready ({} chars)",
             text.chars().count()
         );
-        dispatch_instruction(app, text, quick);
+        dispatch_instruction(app, text, quick, generation);
     });
 }
 
@@ -1730,10 +1818,9 @@ pub fn input_typing(app: &AppHandle, active: bool) {
     }
 }
 
-/// Route a submitted instruction: Quick Agent runs headlessly and pastes at the
-/// cursor; the normal path hands it to the (already revealed or revealing)
-/// panel, which runs the LLM itself.
-fn dispatch_instruction(app: AppHandle, text: String, quick: bool) {
+/// Submit the first normal turn to the hidden renderer; Quick Agent retains
+/// its headless paste path. The renderer reveals only after applying its result.
+fn dispatch_instruction(app: AppHandle, text: String, quick: bool, generation: u64) {
     if quick {
         quick_run(app, text);
         return;
@@ -1741,8 +1828,17 @@ fn dispatch_instruction(app: AppHandle, text: String, quick: bool) {
     // Queue first, then poke: the panel consumes via `agent_take_instruction`
     // on BOTH the event and its mount, so delivery is race-free and deduped
     // (take is consuming).
-    set_pending_instruction(&app, text);
-    reveal_panel_loading(&app);
+    if !queue_first_message(
+        &app.state::<AgentState>(),
+        AgentInstruction {
+            text,
+            generation,
+            is_error: false,
+        },
+    ) {
+        return;
+    }
+    prepare_panel_loading(&app);
     let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
 }
 
@@ -1753,7 +1849,13 @@ pub(crate) fn harness_submit_instruction(app: &AppHandle, text: String) {
     if let Some(state) = app.try_state::<AgentState>() {
         state.summon_gen.fetch_add(1, Ordering::SeqCst);
     }
-    dispatch_instruction(app.clone(), text, false);
+    begin_reply_wait(app);
+    dispatch_instruction(
+        app.clone(),
+        text,
+        false,
+        app.state::<AgentState>().summon_gen.load(Ordering::SeqCst),
+    );
 }
 
 #[cfg(feature = "agent-harness")]
@@ -1776,13 +1878,9 @@ pub(crate) fn harness_snapshot(app: &AppHandle) -> serde_json::Value {
     serde_json::json!({"active": run.active.is_some(), "pendingApproval": run.pending_action.is_some(), "generation": run.generation})
 }
 
-/// Show the (pre-created, warm) panel in its loading state and arm the
-/// panel-phase transients. Idempotent â€” safe to call when already visible.
-/// Builds the window on the spot if pre-creation failed.
-fn reveal_panel_loading(app: &AppHandle) {
-    register_one_transient(app, close_binding());
-    register_followup_shortcut(app);
-    arm_global_enter(app, false); // SIDE compact â†’ global Enter = Confirm; CENTER owns its input
+/// Prepare the warm hidden panel to execute the first instruction.
+fn prepare_panel_loading(app: &AppHandle) {
+    let generation = app.state::<AgentState>().summon_gen.load(Ordering::SeqCst);
 
     // CENTER always owns an in-window follow-up field, so mark the panel
     // "expanded" now that the input phase is over (the pill has submitted). This
@@ -1797,6 +1895,9 @@ fn reveal_panel_loading(app: &AppHandle) {
     let (sw, sh) = panel_start_size(app);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
+        if !reply_wait_is_current(&app2, generation) {
+            return;
+        }
         let win = match app2.get_webview_window(PANEL_LABEL) {
             Some(w) => w,
             None => match build_window(&app2, PANEL_LABEL, sw, sh) {
@@ -1809,17 +1910,31 @@ fn reveal_panel_loading(app: &AppHandle) {
         };
         place_panel(&win);
         let _ = app2.emit_to(PANEL_LABEL, "agent-loading", ());
-        reveal_panel(&win);
     });
 }
 
 /// Surface an Agent failure on the panel (the only remaining Agent webview):
 /// reveal it (building it if needed) and hand it the message. The emit is
 /// slightly deferred so a freshly built webview has mounted its listener.
-fn deliver_agent_error(app: &AppHandle, message: &str) {
+fn deliver_agent_error(app: &AppHandle, message: &str, first_generation: Option<u64>) {
+    if let Some(generation) = first_generation {
+        if queue_first_message(
+            &app.state::<AgentState>(),
+            AgentInstruction {
+                text: message.into(),
+                generation,
+                is_error: true,
+            },
+        ) {
+            prepare_panel_loading(app);
+            let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
+        }
+        return;
+    }
     warn!("[GRAIN] agent: {message}");
     register_one_transient(app, close_binding());
     let message = message.to_string();
+    let generation = app.state::<AgentState>().summon_gen.load(Ordering::SeqCst);
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
         let existed = app.get_webview_window(PANEL_LABEL).is_some();
@@ -1840,7 +1955,19 @@ fn deliver_agent_error(app: &AppHandle, message: &str) {
         let app_for_emit = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(delay));
-            let _ = app_for_emit.emit_to(PANEL_LABEL, "agent-error", message);
+            if app_for_emit
+                .state::<AgentState>()
+                .summon_gen
+                .load(Ordering::SeqCst)
+                != generation
+            {
+                return;
+            }
+            let _ = app_for_emit.emit_to(
+                PANEL_LABEL,
+                "agent-error",
+                serde_json::json!({"message": message, "generation": generation}),
+            );
             if let Some(w) = app_for_emit.get_webview_window(PANEL_LABEL) {
                 reveal_panel(&w);
             }
@@ -2169,7 +2296,7 @@ fn quick_run(app: AppHandle, instruction: String) {
             }
             Err(e) => {
                 warn!("[GRAIN] agent: quick run failed: {e}");
-                deliver_agent_error(&app, &e);
+                deliver_agent_error(&app, &e, None);
             }
         }
     });
@@ -2289,6 +2416,7 @@ pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
     }
     app.try_state::<AgentState>().is_some_and(|state| {
         state.input_active.load(Ordering::SeqCst)
+            || state.waiting_for_reply.load(Ordering::SeqCst)
             || state.followup_offer_active.load(Ordering::SeqCst)
     })
 }
@@ -2299,6 +2427,13 @@ pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
 /// panel). During ordinary dictation it delegates to the existing cancel
 /// pipeline and keeps Agent open; only an idle Agent consumes Escape itself.
 pub fn global_close(app: &AppHandle) {
+    if waiting_for_reply(app) {
+        // Invalidate blocking transcription too, before it can dispatch a turn.
+        clear_pending_action(app);
+        app.state::<Arc<AudioRecordingManager>>().cancel_recording();
+        input_cancel_cleanup(app);
+        return;
+    }
     let input_live = app
         .try_state::<AgentState>()
         .map(|s| s.input_active.load(Ordering::SeqCst))
@@ -2437,6 +2572,34 @@ mod escape_priority_tests {
     fn normal_dictation_precedes_agent_panel_close() {
         assert_eq!(escape_target(false, true), EscapeTarget::Dictation);
         assert_eq!(escape_target(false, false), EscapeTarget::AgentPanel);
+    }
+}
+
+#[cfg(test)]
+mod first_reply_handoff_tests {
+    use super::*;
+
+    #[test]
+    fn late_transcription_cannot_queue_work_after_stop_or_into_a_new_summon() {
+        let state = AgentState::default();
+        let message = |generation| AgentInstruction {
+            text: "late transcript".into(),
+            generation,
+            is_error: false,
+        };
+        state.summon_gen.store(1, Ordering::SeqCst);
+        // Stop revoked admission before the blocking transcription returned.
+        assert!(!queue_first_message(&state, message(1)));
+        assert!(state.pending_instruction.lock().unwrap().is_none());
+        // A newer summon is waiting: the old transcript still cannot enter it.
+        state.summon_gen.store(2, Ordering::SeqCst);
+        state.waiting_for_reply.store(true, Ordering::SeqCst);
+        assert!(!queue_first_message(&state, message(1)));
+        assert!(queue_first_message(&state, message(2)));
+        let queued = state.pending_instruction.lock().unwrap().take().unwrap();
+        assert_eq!(queued.generation, 2);
+        assert_eq!(queued.text, "late transcript");
+        assert!(state.pending_instruction.lock().unwrap().take().is_none());
     }
 }
 
@@ -2734,11 +2897,20 @@ pub async fn agent_run(
     app: AppHandle,
     messages: Vec<AgentMessage>,
     context: Option<String>,
+    generation: Option<u64>,
 ) -> Result<AgentReply, String> {
     let state = app
         .try_state::<AgentState>()
         .ok_or("Agent state unavailable")?;
-    let (run, registration) = state.execution.begin()?;
+    let (run, registration) = {
+        // First-turn admission is serialized with Stop. A queued IPC call from
+        // the old hidden renderer cannot start new work after cancellation.
+        let _pending = state.pending_instruction.lock().unwrap();
+        if generation.is_some_and(|generation| !reply_wait_is_current(&app, generation)) {
+            return Err(RUN_CANCELLED.into());
+        }
+        state.execution.begin()?
+    };
     run.wait(registration, agent_run_owned(&app, messages, context, &run))
         .await?
 }

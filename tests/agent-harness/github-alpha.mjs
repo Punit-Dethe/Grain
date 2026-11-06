@@ -427,6 +427,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
           },
         ],
         context: null,
+        generation: null,
       },
       300000,
     );
@@ -542,6 +543,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
           },
         ],
         context: null,
+        generation: null,
       },
       300000,
     );
