@@ -13,3 +13,9 @@ command export, production frontend build, ESLint, formatting and Rust build;
 Clippy retains the existing warning baseline.
 Real-application visual approval remains pending: verify capture colour,
 submission-to-working continuity, reply/error reveal and Stop before replying.
+
+Enter regression: HandyKeys delivers the submit callback on its manager thread,
+but shortcut registration synchronously waits for that manager's response.
+Queue the working-state shortcut update on the existing main loop, guarded by
+summon generation and shortcut ownership, so the callback can return and the
+manager can process registration and subsequent dictation hotkeys.

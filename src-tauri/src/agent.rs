@@ -1552,11 +1552,24 @@ pub(crate) fn reply_wait_is_current(app: &AppHandle, generation: u64) -> bool {
 fn begin_reply_wait(app: &AppHandle) {
     let state = app.state::<AgentState>();
     state.waiting_for_reply.store(true, Ordering::SeqCst);
-    register_one_transient(app, close_binding());
-    // Enter has no action until a reply is visible; leave other apps usable.
-    let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
+    let generation = state.summon_gen.load(Ordering::SeqCst);
+    // HandyKeys invokes Enter on its manager thread. Registration waits for
+    // that same manager's reply, so never mutate shortcuts inside the callback.
+    // Use the existing main queue, without another worker or retained service.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<AgentState>();
+        state.transient_shortcuts.claim(|| {
+            if !reply_wait_is_current(&handle, generation) {
+                return;
+            }
+            register_one_transient_inner(&handle, close_binding());
+            // Enter has no action until a reply is visible.
+            let _ = crate::shortcut::unregister_shortcut(&handle, submit_binding());
+        });
+    });
     crate::surface_watch::stop(app);
-    crate::grain_overlay::show_agent_working(app, state.summon_gen.load(Ordering::SeqCst));
+    crate::grain_overlay::show_agent_working(app, generation);
 }
 
 /// Change the side panel's native input region (or resize the fallback window)
