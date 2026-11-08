@@ -256,3 +256,34 @@ endpoint admission, and MCP account code remain in use.
 - The next product checkpoint is packaged GitHub sign-in and a tool read
   with a non-owner account, followed by packaged Notion sign-in and a tool
   read. External publisher retirement remains a separate operational step.
+
+### 2026-11-08 — Packaged provider acceptance
+
+- The isolated Windows `Grain GitHub Test` build targets `adf2b77c5` in
+  [Build Test run 42495825689](https://github.com/Punit-Dethe/Grain/actions/runs/42495825689).
+  The workflow passed its GitHub OAuth registration input check. It produces
+  an installer artifact with its own app identity and profile.
+- The owner confirmed GitHub shows **Make private** in the registration's
+  Advanced settings, which means the app is currently public. The original
+  tester's failure remains unclassified.
+- The actual [v0.0.11 Windows release run](https://github.com/Punit-Dethe/Grain/actions/runs/41471891681)
+  passed registration validation. Its packaging step supplied the registered
+  GitHub client. This is build evidence and leaves account consent and tool
+  execution to the live checks.
+- Anonymous discovery confirmed the GitHub MCP resource points to
+  `https://github.com/login/oauth`. Notion advertises dynamic registration
+  and S256 at `https://mcp.notion.com`. The two browser sign-ins still need
+  testing with real accounts.
+
+When the run succeeds, use the `grain-github-test-x86_64-pc-windows-msvc`
+artifact and open **Grain GitHub Test**. In **Extensions → Browse
+extensions**, connect GitHub using a non-owner account. Use a test repository
+that account controls and select only that repository if GitHub asks for an
+installation. Record whether browser authorization finishes and **Check
+tools** returns a nonzero count. Ask Agent to read that repository's
+`README.md` and return its first line, then compare it with the file.
+
+Repeat with Notion and a known page in a test workspace. Ask Agent to fetch
+the page from its URL and return the first sentence. Record installer,
+browser, discovery, and Agent failures separately. The hosted connection
+tests are read-only.
