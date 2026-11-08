@@ -159,3 +159,23 @@ the commit, checks and results, open issues, and the next step in this log.
   card. Put Connect, Reconnect, Check tools, and Disconnect in that detail view.
 - Track the UI work separately from the runtime removal. The user will verify
   the layout in the real desktop app.
+
+### 2026-11-08 — Configured MCP acceptance without native tools
+
+Commit `5e4ef5cfa` updates the configured MCP harness to follow the Agent's
+current automatic dispatch. The non-main-window settings check opens the
+real Agent panel with a scripted model reply and needs no native fixture.
+The runtime cases verify typed reads, independent same-endpoint connections,
+revalidation between selection and dispatch, and cancellation of held calls
+with exactly one wire dispatch and no replay.
+
+- The harness build and 75 runner tests passed. The three configured metadata
+  cases and three configured runtime cases passed in `run-1MJnX0` and
+  `run-0Oegcu`. The wrong-owner control failed as expected in `run-XM2Iq3`.
+  Each real-app run reported successful cleanup.
+- The existing `agent.workflow-mcp` case still times out waiting for the
+  removed manual approval step (`run-OSq6E4`). This checkpoint covers the
+  configured cases only. Next, update the shared read/write and interruption
+  cases to verify dispatch and outcomes over MCP, then remove native Agent
+  dispatch and its package fixtures. Packaged GitHub and Notion sign-in and
+  tool reads remain open.
