@@ -74,8 +74,11 @@ also supports user-configured remote MCP servers. See the [retirement
 plan](docs/Extensions%202.0/STORE-RETIREMENT.md) for the remaining cleanup.
 
 Run the normal app with `bun run tauri dev --no-watch`. GitHub sign-in
-requires the registered desktop OAuth build inputs. Test with a packaged build
-or supply the same registered inputs locally.
+requires the dedicated desktop registration at compile time. Use the
+**Build Test** workflow with `github-mcp-test=true` for an isolated Windows
+installer. For local development with GitHub, launch Cargo through the same
+terminal that supplies `GRAIN_GITHUB_OAUTH_CLIENT_ID` and
+`GRAIN_GITHUB_OAUTH_CLIENT_SECRET`. Notion uses dynamic registration.
 
 Run scoped frontend tests and `cargo test --locked --lib grain_mcp::` from
 `src-tauri/`. On Windows, set the Cargo test runner to the absolute path of

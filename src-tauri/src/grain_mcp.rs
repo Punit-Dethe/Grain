@@ -1123,14 +1123,14 @@ pub async fn mcp_provider_status(
         let observation = provider_control(item.id).ticket().recovery();
         let state = if !account_required {
             "fixture_no_auth"
+        } else if item.registration == Registration::PreRegistered && !client_id_configured {
+            "needs_client_credentials"
         } else if stored.is_err() {
             "unavailable"
         } else if let Some(recovery) = observation {
             recovery.state()
         } else if connected {
             "stored"
-        } else if item.registration == Registration::PreRegistered && !client_id_configured {
-            "needs_client_credentials"
         } else {
             "disconnected"
         };
@@ -1628,10 +1628,19 @@ async fn connect_oauth(
 ) -> Result<(), String> {
     let _operation = ticket.acquire().await?;
     require_provider_access(app, item)?;
-    // Preserve the existing immediate conflict refusal for configured clients:
-    // their callback is known before any issuer discovery or credential work.
-    let pre_registered = preregistered(app, item);
-    let configured_listener = if pre_registered {
+    let configured_id = if preregistered(app, item) {
+        Some(provider_client_id(app, item).ok_or_else(|| {
+            if item.id == "github" {
+                "This build is missing the GitHub OAuth registration. Use a build that includes it."
+            } else {
+                "Configure this provider's OAuth client ID in Settings first."
+            }
+        })?)
+    } else {
+        None
+    };
+    // Check the configured callback port before contacting the provider.
+    let configured_listener = if configured_id.is_some() {
         Some(bind_callback(true).await?)
     } else {
         None
@@ -1676,10 +1685,8 @@ async fn connect_oauth(
         .get("authorization_response_iss_parameter_supported")
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    let configured_secret = if pre_registered {
-        let configured_id = provider_client_id(app, item)
-            .ok_or("configure this provider's OAuth client ID in Settings first")?;
-        provider_client_secret(app, item, store, &configured_id, &resolution.metadata)
+    let configured_secret = if let Some(configured_id) = configured_id.as_deref() {
+        provider_client_secret(app, item, store, configured_id, &resolution.metadata)
             .await
             .map_err(|recovery| recovery.message())?
     } else {
@@ -1698,9 +1705,7 @@ async fn connect_oauth(
             .with_client_name("Grain Agent Harness - Linear read-only")
             .with_scopes(["read"]);
     }
-    if pre_registered {
-        let configured_id = provider_client_id(app, item)
-            .ok_or("configure this provider's OAuth client ID in Settings first")?;
+    if let Some(configured_id) = configured_id {
         request = request.with_preregistered_client(configured_id);
         if let Some(configured_secret) = configured_secret {
             request = request.with_client_secret(configured_secret);

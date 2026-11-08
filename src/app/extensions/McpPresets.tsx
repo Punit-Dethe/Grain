@@ -155,11 +155,14 @@ export function McpPresets({
               <strong>{row.name}</strong>
               <p>{row.description}</p>
               {row.state === "needs_client_credentials" && (
-                <p>Sign-in is unavailable in this build.</p>
+                <p>
+                  This build is missing the {row.name} OAuth registration. Use a
+                  build that includes it.
+                </p>
               )}
-              {row.state !== "stored" && row.connected && (
-                <p>{row.state.replace(/_/g, " ")}</p>
-              )}
+              {row.state !== "stored" &&
+                row.state !== "needs_client_credentials" &&
+                row.connected && <p>{row.state.replace(/_/g, " ")}</p>}
             </div>
             <div className="installed-extension-actions">
               {signingIn === row.id ? (
@@ -185,7 +188,9 @@ export function McpPresets({
                   )}
                   <Switch
                     checked={row.enabled}
-                    disabled={busy !== null}
+                    disabled={
+                      busy !== null || row.state === "needs_client_credentials"
+                    }
                     ariaLabel={[
                       row.enabled ? "Disable" : "Enable",
                       row.name,
@@ -204,7 +209,11 @@ export function McpPresets({
                   <button
                     className="button"
                     type="button"
-                    disabled={busy !== null || !row.enabled}
+                    disabled={
+                      busy !== null ||
+                      !row.enabled ||
+                      row.state === "needs_client_credentials"
+                    }
                     onClick={() => void run(row.id, () => test(row))}
                   >
                     Check tools

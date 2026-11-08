@@ -349,3 +349,15 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   and 682 desktop tests passed. The Rust checks used an isolated source
   copy because the running Windows app held a runtime DLL open.
   Live pill interaction and packaged GitHub sign-in remain manual checks.
+
+### 2026-11-09 — GitHub sign-in after the pill merge
+
+- The merge did not change the GitHub connection path. Cargo's dependency
+  record confirmed that the running development binary had neither GitHub
+  OAuth build input. Notion connected, listed 77 tools, and completed an Agent
+  request through dynamic registration.
+- Grain now surfaces missing preregistration before opening the callback
+  listener or contacting GitHub, including when an earlier account is still
+  saved. The isolated Windows installer uses the existing CI registration.
+- Passed 83 MCP tests, five GitHub harness tests, TypeScript, and scoped
+  ESLint. Browser authorization and a live tool read remain manual checks.
