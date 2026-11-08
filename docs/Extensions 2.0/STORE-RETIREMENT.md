@@ -120,3 +120,42 @@ including GitHub with a non-owner account.
 - Frontend build, type check, scoped lint, 94 frontend tests, 78 runner and
   GitHub checks, and 83 desktop MCP tests passed. Live packaged provider
   sign-in and tool reads are still the next checkpoint.
+
+### 2026-11-08 — MCP-only extension decision
+
+Bundled GitHub and Notion presets and user-configured MCP servers share one
+extension runtime. New Grain integrations use MCP. The native package runtime
+still exists in this branch and supports some Agent harness fixtures.
+
+#### Remaining execution order
+
+1. Move shared Agent acceptance cases to the existing MCP fixtures. Keep
+   coverage for tool selection across connections, tool results, approval,
+   cancellation, and preventing replay of writes with an unknown outcome.
+   Drop cases specific to native package loading or authoring.
+2. Make the Agent catalog, schema lookup, and dispatch MCP-only in
+   `src-tauri/src/capability.rs`. Reuse the Agent executor and its safeguards.
+   Preserve MCP discovery, OAuth, account storage, endpoint validation, and
+   per-connection error handling.
+3. Remove the unused native host, package registry, developer bridge, host
+   window and capability, and native-only SDK and frontend code. Check callers
+   before deleting shared code. Move the atomic writer used by the MCP
+   connection store and the SDK manifest helper used for MCP endpoint
+   validation to retained modules. Preserve desktop event types and Handy hooks.
+4. Verify normal and harness desktop builds, frontend checks, and real-app
+   MCP acceptance. Test packaged GitHub with a non-owner account and Notion
+   through sign-in, discovery, and a read call.
+
+Existing native packages require no migration. The external publisher
+repository remains a separate operational cleanup. After each stage, record
+the commit, checks and results, open issues, and the next step in this log.
+
+#### Connection UI to carry forward
+
+- Put **Configure MCP** in the top-right of **My connections**. Open a
+  dedicated page for adding, refreshing, and managing custom MCPs.
+- Show clickable provider cards in **Browse extensions** with an icon, name,
+  and description. Open provider details from the catalog or a connected
+  card. Put Connect, Reconnect, Check tools, and Disconnect in that detail view.
+- Track the UI work separately from the runtime removal. The user will verify
+  the layout in the real desktop app.
