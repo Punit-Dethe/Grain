@@ -207,3 +207,29 @@ ownership and the loaded tool digest before executing calls.
   Before deleting them, move the shared atomic writer and MCP endpoint
   validator out of native modules. Use the focused suite above to verify the
   cutover. Packaged GitHub and Notion sign-in and tool reads remain open.
+
+### 2026-11-08 — Native package controls removed from ordinary builds
+
+Commit `783f5309a` moved the atomic file writer and its Windows lock tests
+into a shared core module. MCP endpoint and descriptor checks now use shared
+host and identity validators directly. MCP still uses the main-window guard
+for settings commands.
+
+- The normal Tauri command registry and generated bindings no longer expose
+  native package management or native OAuth. The Settings page now shows
+  MCP presets and custom connections. The production frontend omits the
+  native supervisor page. The fixture runner still builds the native host
+  and registers its package commands while the remaining fixtures are retired.
+- Production frontend build, scoped lint, 90 frontend tests, normal Rust
+  check, and 231 core and SDK tests passed. TypeScript also passed against
+  the staged binding file with the unrelated local edits excluded. The normal
+  desktop MCP suite passed all 83 tests (`logic-EbEqax`).
+- The rebuilt desktop harness passed 11 MCP cases covering settings access,
+  connection storage and dispatch, write verification, interruption, and
+  reconnect cancellation. Evidence is in `run-jMVyK4`, `run-MLMDGW`,
+  `run-NgSP14`, and `run-R8K77a`.
+- Next, remove the native fixture cases and harness command routing, then
+  delete the native host, loopback bridge, supervisor assets and capability,
+  and package registry and SDK code. Keep the shared validators, file writer,
+  MCP fixtures, and first-party desktop events. Packaged GitHub and Notion
+  acceptance remains open.
