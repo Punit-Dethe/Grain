@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
@@ -593,43 +593,23 @@ struct SupervisorStatus {
     reason: String,
 }
 
-/// The hot-path index. **An installed-but-idle extension must cost the native
-/// pipeline nothing**, so the paste path and the event bus consult this — never
-/// the registry (which clones every record) and never the disk (which is where
-/// manifests live). Rebuilt only when the extension set changes.
-#[derive(Default)]
-struct Index {
-    /// [GRAIN] Capability Index V2 (`docs/Extensions 2.0/PLAN.md` §6): the
-    /// schema-projection action retriever, built from the installed manifests
-    /// on every rebuild — never on a hot path (§11.2). Pure metadata memory; no
-    /// worker. Read by the Agent tool loop.
-    capability: grain_core::capability_index::CapabilityIndex,
-}
-
 struct HostState {
     app: AppHandle,
     workers: Workers,
     native_calls: tokio::sync::Semaphore,
     supervisor: Mutex<Supervisor>,
-    index: RwLock<Index>,
 }
 
 static HOST: OnceLock<HostState> = OnceLock::new();
 
-/// Rebuild the hot-path index from the registry + on-disk manifests. Called on
-/// startup and whenever the extension set changes (enable/disable/grant/import/
-/// uninstall/auto-disable) — **never** from a hot path.
-pub fn refresh_index(app: &AppHandle) {
-    let Some(host) = HOST.get() else {
+pub fn quarantine_invalid_packages(app: &AppHandle) {
+    if HOST.get().is_none() {
         return;
-    };
-    let mut capability_inputs = Vec::new();
+    }
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         for rec in reg.records().into_iter().filter(|record| record.enabled) {
             match load_manifest_result(app, &rec.id) {
-                Ok(pack) => {
-                    collect_capability_actions(&rec, &pack, &mut capability_inputs);
-                }
+                Ok(_) => {}
                 Err(reason) => {
                     if let Err(error) = reg.quarantine(&rec.id, &reason) {
                         log::error!("[ext:{}] could not persist quarantine: {error}", rec.id);
@@ -640,114 +620,6 @@ pub fn refresh_index(app: &AppHandle) {
             }
         }
     }
-    *host.index.write().unwrap() = Index {
-        capability: grain_core::capability_index::CapabilityIndex::build(capability_inputs),
-    };
-}
-
-/// Project actions into Capability Index V2 only while the exact declaration the
-/// user approved is still installed. Any `kind` qualifies: the V2 plan makes
-/// declared actions Agent contributions for standalone and extending packs too.
-fn collect_capability_actions(
-    rec: &grain_core::extensions::ExtensionRecord,
-    pack: &GrainPack,
-    out: &mut Vec<grain_core::capability_index::ActionInput>,
-) {
-    let declared = &pack.manifest.contributes.actions;
-    if declared.is_empty() {
-        return;
-    }
-    let approved = grain_core::extensions::actions_fingerprint(declared);
-    if rec.actions_approved.as_deref() != Some(approved.as_str()) {
-        log::warn!(
-            "[ext:{}] Agent actions withheld because the declaration differs from approval",
-            rec.id
-        );
-        return;
-    }
-    out.extend(grain_core::capability_index::actions_from_manifest(
-        &pack.manifest,
-        true,
-    ));
-}
-
-/// [GRAIN] Level-1 Agent extension directory (Extensions 2.0 Amendment D).
-/// The projection is in-memory and cannot wake a worker or
-/// resolve credentials.
-pub fn capability_extension_directory() -> Vec<grain_core::capability_index::ExtensionDirectoryEntry>
-{
-    let Some(host) = HOST.get() else {
-        return Vec::new();
-    };
-    let index = host.index.read().unwrap();
-    index.capability.extension_directory().into_iter().collect()
-}
-
-pub struct ExtensionActionSet {
-    pub actions: Vec<grain_core::capability_index::ActionInput>,
-    pub manifest_digest: String,
-}
-
-/// [GRAIN] Resolve all currently eligible action records for one exact extension
-/// id. Called only after `load_extension`; discovery itself stays code-free.
-pub fn capability_actions_for_extension(
-    app: &AppHandle,
-    extension_id: &str,
-) -> Result<ExtensionActionSet, String> {
-    let registry = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .ok_or_else(|| "extension registry is unavailable".to_string())?;
-    let record = registry
-        .record(extension_id)
-        .filter(|record| record.enabled)
-        .ok_or_else(|| "that extension is disabled or no longer installed".to_string())?;
-    let pack = load_manifest(app, extension_id)
-        .ok_or_else(|| "that extension's manifest is unavailable".to_string())?;
-    let declared = &pack.manifest.contributes.actions;
-    let digest = grain_core::extensions::actions_fingerprint(declared);
-    if declared.is_empty() || record.actions_approved.as_deref() != Some(digest.as_str()) {
-        return Err("that extension's Agent actions are not currently approved".to_string());
-    }
-
-    let Some(host) = HOST.get() else {
-        return Err("extension host is unavailable".to_string());
-    };
-    let index = host.index.read().unwrap();
-    let actions: Vec<_> = index
-        .capability
-        .actions_for_extension(extension_id)
-        .into_iter()
-        .cloned()
-        .collect();
-    let expected_ids: std::collections::BTreeSet<String> = declared
-        .iter()
-        .map(|action| format!("{}:{}", pack.manifest.id, action.id.trim()))
-        .collect();
-    let indexed_ids: std::collections::BTreeSet<String> = actions
-        .iter()
-        .map(|action| action.canonical_id.clone())
-        .collect();
-    if indexed_ids != expected_ids {
-        return Err("that extension changed while its Agent tools were loading".to_string());
-    }
-    Ok(ExtensionActionSet {
-        actions,
-        manifest_digest: grain_core::extensions::native_call_fingerprint(&record, &pack.manifest)
-            .map_err(|_| {
-            "that extension's call identity could not be verified".to_string()
-        })?,
-    })
-}
-
-/// [GRAIN] The execution-relevant metadata for one action: its extension id,
-/// action id, title, and declared risk. The host executor reads this to classify
-/// and prepare a call without re-opening a manifest. `None` for an unknown id.
-pub fn capability_action_meta(
-    canonical_id: &str,
-) -> Option<grain_core::capability_index::ActionInput> {
-    let host = HOST.get()?;
-    let index = host.index.read().unwrap();
-    index.capability.describe(canonical_id).cloned()
 }
 
 /// Re-read the installed declaration at execution time and return its approved
@@ -918,16 +790,13 @@ pub fn start(app: AppHandle, _ctx: Arc<AppContext>) {
             workers: Workers::new(),
             native_calls: tokio::sync::Semaphore::new(MAX_ACTIVE_NATIVE_CALLS),
             supervisor: Mutex::new(Supervisor::default()),
-            index: RwLock::new(Index::default()),
         })
         .is_err()
     {
         return; // already started
     }
 
-    // Build the hot-path index once up front; the guards stay false (and both
-    // hot paths stay free) until something is actually enabled.
-    refresh_index(&app);
+    quarantine_invalid_packages(&app);
 
     // Supervisor → host: a worker crashed or reported a fatal error.
     app.listen("ext-host://died", move |ev| {
@@ -1795,7 +1664,7 @@ fn auto_disable(app: &AppHandle, ext_id: &str, token: &str, generation: u64, rea
             // A persistence failure must not leave the sampled worker alive.
             log::error!("[ext:{ext_id}] resource disable failed: {error}");
             kill_worker_inner(ext_id, "resource disable failed", Some(token), false);
-            refresh_index(app);
+            quarantine_invalid_packages(app);
             return;
         }
     };
@@ -1804,7 +1673,7 @@ fn auto_disable(app: &AppHandle, ext_id: &str, token: &str, generation: u64, rea
         return;
     }
     log::warn!("[ext:{ext_id}] life auto-disabled: {reason}");
-    refresh_index(app); // drop it from the hot-path index immediately
+    quarantine_invalid_packages(app);
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
             id: ext_id.to_string(),
@@ -1987,7 +1856,7 @@ pub fn reload_dev_extension(
     let installed_generation = installed.map_err(|error| error.to_string())?;
 
     log::info!("[ext:{id}] life developer reload");
-    refresh_index(app);
+    quarantine_invalid_packages(app);
     let mut restarted_worker = false;
     if had_worker && enabled && !is_running(id) {
         let current_revision = reg.record_revision(id);

@@ -182,15 +182,14 @@ pub(crate) async fn run_agent_call(
 /// Run every action requested in one model message under the same policy as
 /// [`run_agent_call`]. Each call is revalidated on its own. MCP calls to one
 /// provider share a connection and revalidation and are sent concurrently;
-/// different providers run concurrently with each other; native worker calls
-/// keep their sequential order. Outcomes are returned in input order.
+/// different providers run concurrently with each other. Outcomes are returned
+/// in input order.
 pub(crate) async fn run_agent_calls(
     app: &AppHandle,
     prepared: Vec<PreparedCall>,
 ) -> Vec<ActionOutcome> {
     let mut outcomes: Vec<Option<ActionOutcome>> = prepared.iter().map(|_| None).collect();
     let mut mcp: std::collections::BTreeMap<String, Vec<usize>> = Default::default();
-    let mut native = Vec::new();
     for (index, call) in prepared.iter().enumerate() {
         log::info!(
             "[GRAIN] agent-tool-trace {}",
@@ -199,17 +198,22 @@ pub(crate) async fn run_agent_calls(
                 "risk": call.risk, "side_effect": call.side_effect,
             })
         );
-        let valid = current_manifest_digest(app, call)
-            .is_some_and(|digest| call.still_valid(&digest, now_ms()).is_ok());
-        if !valid {
+        let Some(provider_id) = call.extension_id.strip_prefix("mcp.") else {
+            outcomes[index] = Some(failed(
+                FailureClass::NotFound,
+                "Only MCP connections provide Agent tools.",
+            ));
+            continue;
+        };
+        if crate::grain_mcp::is_enabled_extension(app, &call.extension_id)
+            && call.still_valid(&call.manifest_digest, now_ms()).is_ok()
+        {
+            mcp.entry(provider_id.to_string()).or_default().push(index);
+        } else {
             outcomes[index] = Some(failed(
                 FailureClass::Cancelled,
                 "The extension action changed or expired before it could run.",
             ));
-        } else if let Some(provider_id) = call.extension_id.strip_prefix("mcp.") {
-            mcp.entry(provider_id.to_string()).or_default().push(index);
-        } else {
-            native.push(index);
         }
     }
     let prepared = &prepared;
@@ -229,16 +233,11 @@ pub(crate) async fn run_agent_calls(
             .map(|(index, result)| (index, mcp_outcome(result, &prepared[index])))
             .collect::<Vec<_>>()
     });
-    let native_run = async {
-        let mut done = Vec::with_capacity(native.len());
-        for index in native {
-            done.push((index, third_party_execute(app, &prepared[index]).await));
-        }
-        done
-    };
-    let (groups, native_done) =
-        futures_util::future::join(futures_util::future::join_all(mcp_groups), native_run).await;
-    for (index, outcome) in groups.into_iter().flatten().chain(native_done) {
+    for (index, outcome) in futures_util::future::join_all(mcp_groups)
+        .await
+        .into_iter()
+        .flatten()
+    {
         outcomes[index] = Some(outcome);
     }
     outcomes

@@ -5,10 +5,10 @@
 //! Agent's live tool loop (`agent::run_with_tools`). It:
 //!
 //! - injects a compact, inert directory of enabled extensions;
-//! - prepares task-local native/MCP catalogues and a lexical first-round shortlist;
+//! - prepares task-local MCP catalogues and a lexical first-round shortlist;
 //! - combines recovery search and schema publication under the task byte budget;
 //! - dispatches action calls through an authoritative task-local name map and the
-//!   existing prepared-call and worker boundary.
+//!   existing prepared-call boundary.
 //!
 use futures_util::{stream, StreamExt};
 use std::collections::{BTreeMap, HashSet};
@@ -63,17 +63,9 @@ pub struct CapabilitySession {
 #[derive(Clone)]
 struct SessionAction {
     spec: ToolSpec,
-    origin: ActionOrigin,
-}
-
-#[derive(Clone)]
-enum ActionOrigin {
-    Native,
-    Mcp {
-        provider_id: String,
-        provider_name: String,
-        tool_name: String,
-    },
+    provider_id: String,
+    provider_name: String,
+    tool_name: String,
 }
 
 struct Catalog {
@@ -112,8 +104,7 @@ fn empty_session(
 }
 
 pub fn open(app: &AppHandle, reserved_names: &[String]) -> Opened {
-    let mut directory = crate::extension_host::capability_extension_directory();
-    directory.extend(crate::grain_mcp::directory(app));
+    let mut directory = crate::grain_mcp::directory(app);
     directory.sort_by(|a, b| a.extension_id.cmp(&b.extension_id));
     directory.dedup_by(|a, b| a.extension_id == b.extension_id);
     let session = empty_session(&directory, reserved_names);
@@ -175,7 +166,6 @@ pub async fn dispatch_frame(
         // report "no such tool"): discovery is not authorisation.
         match resolve_offered_action(&session.exposure, offered_names, &call.name) {
             Ok(Some(loaded)) => match prepare_action(
-                app,
                 session,
                 &loaded.canonical_id,
                 &loaded.manifest_digest,
@@ -246,70 +236,37 @@ async fn fetch_catalog(
     if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
         return Err("Catalogue preparation deadline elapsed; use recovery search.".into());
     }
-    if let Some(provider_id) = extension_id.strip_prefix("mcp.") {
-        let catalog = match deadline {
-            Some(deadline) => {
-                crate::grain_mcp::list_tools_until(app, provider_id, deadline).await?
-            }
-            None => crate::grain_mcp::list_tools(app, provider_id).await?,
-        };
-        let entries = catalog
-            .tools
-            .iter()
-            .map(|tool| {
-                let action = mcp_action_input(extension_id, &catalog.provider_name, tool);
-                let selected = SessionAction {
-                    spec: ToolSpec {
-                        name: capability_agent::tool_name(&action.canonical_id),
-                        description: capability_agent::sanitize(
-                            tool.description.as_deref().unwrap_or(&action.title),
-                            1200,
-                        ),
-                        parameters: serde_json::Value::Object(tool.input_schema.as_ref().clone()),
-                    },
-                    origin: ActionOrigin::Mcp {
-                        provider_id: catalog.provider_id.clone(),
-                        provider_name: catalog.provider_name.clone(),
-                        tool_name: tool.name.to_string(),
-                    },
-                };
-                (action, selected)
-            })
-            .collect();
-        return Ok(Catalog {
-            digest: catalog.digest,
-            entries,
-        });
-    }
-    let catalog = crate::extension_host::capability_actions_for_extension(app, extension_id)?;
-    let account = match deadline {
-        Some(deadline) => {
-            tokio::time::timeout_at(deadline, crate::grain_auth::connection(app, extension_id))
-                .await
-                .map_err(|_| "Native account preparation timed out.".to_string())?
-        }
-        None => crate::grain_auth::connection(app, extension_id).await,
+    let provider_id = extension_id
+        .strip_prefix("mcp.")
+        .ok_or_else(|| "Only MCP connections provide Agent tools.".to_string())?;
+    let catalog = match deadline {
+        Some(deadline) => crate::grain_mcp::list_tools_until(app, provider_id, deadline).await?,
+        None => crate::grain_mcp::list_tools(app, provider_id).await?,
     };
-    match account {
-        Ok(Some(connection)) if !matches!(connection.state.as_str(), "connected" | "expired") => {
-            return Err("Connect the native account in Grain Settings first.".into());
-        }
-        Err(_) => return Err("Could not verify the native account state.".into()),
-        _ => {}
-    };
+    let entries = catalog
+        .tools
+        .iter()
+        .map(|tool| {
+            let action = mcp_action_input(extension_id, &catalog.provider_name, tool);
+            let selected = SessionAction {
+                spec: ToolSpec {
+                    name: capability_agent::tool_name(&action.canonical_id),
+                    description: capability_agent::sanitize(
+                        tool.description.as_deref().unwrap_or(&action.title),
+                        1200,
+                    ),
+                    parameters: serde_json::Value::Object(tool.input_schema.as_ref().clone()),
+                },
+                provider_id: catalog.provider_id.clone(),
+                provider_name: catalog.provider_name.clone(),
+                tool_name: tool.name.to_string(),
+            };
+            (action, selected)
+        })
+        .collect();
     Ok(Catalog {
-        digest: catalog.manifest_digest,
-        entries: catalog
-            .actions
-            .into_iter()
-            .map(|action| {
-                let selected = SessionAction {
-                    spec: to_spec(capability_agent::action_tool_def(&action)),
-                    origin: ActionOrigin::Native,
-                };
-                (action, selected)
-            })
-            .collect(),
+        digest: catalog.digest,
+        entries,
     })
 }
 
@@ -862,7 +819,6 @@ pub(crate) fn mcp_action_input(
 /// runs automatically. Conservative classification and time-of-use checks
 /// remain; execution happens per model message in [`dispatch_frame`].
 fn prepare_action(
-    app: &AppHandle,
     session: &CapabilitySession,
     canonical: &str,
     loaded_manifest_digest: &str,
@@ -873,72 +829,22 @@ fn prepare_action(
             "The action \"{canonical}\" is not available."
         )));
     };
-    if let ActionOrigin::Mcp {
-        provider_id,
-        provider_name,
-        tool_name,
-    } = &session_action.origin
-    {
-        let arguments = parse_mcp_arguments(arguments_json, &session_action.spec.parameters)
-            .map_err(|error| {
-                ToolResult::Text(format!("The action arguments are invalid: {error}."))
-            })?;
-        let extension_id = format!("mcp.{provider_id}");
-        return Ok(crate::action_exec::prepare(
-            canonical,
-            &extension_id,
-            tool_name,
-            provider_name,
-            arguments,
-            RiskClass::Confirm,
-            SideEffect::Write,
-            loaded_manifest_digest,
-        ));
-    }
-
-    let Some(action) = crate::extension_host::capability_action_meta(canonical) else {
-        return Err(ToolResult::Text(format!(
-            "The action \"{canonical}\" is not available."
-        )));
-    };
-    let arguments = capability_agent::parse_and_validate_arguments(&action, arguments_json)
+    let arguments = parse_mcp_arguments(arguments_json, &session_action.spec.parameters)
         .map_err(|error| ToolResult::Text(format!("The action arguments are invalid: {error}.")))?;
-
-    // Automatic approval is a host policy, not a claim that these are reads.
-    let risk = RiskClass::Confirm;
-    let side_effect = SideEffect::Write;
-    let digest =
-        crate::extension_host::approved_action_digest(app, &action.extension_id, &action.action_id);
-    let Some(digest) = digest else {
-        return Err(ToolResult::Text(
-            "The action is no longer approved or available. Ask again after reviewing the extension."
-                .to_string(),
-        ));
-    };
-    if !loaded_digest_is_current(loaded_manifest_digest, &digest) {
-        return Err(ToolResult::Text(
-            "The extension changed after its tools were loaded. Start the request again so Grain can expose the current schemas."
-                .to_string(),
-        ));
-    }
     Ok(crate::action_exec::prepare(
         canonical,
-        &action.extension_id,
-        &action.action_id,
-        &action.provider_name,
+        &format!("mcp.{}", session_action.provider_id),
+        &session_action.tool_name,
+        &session_action.provider_name,
         arguments,
-        risk,
-        side_effect,
-        &digest,
+        RiskClass::Confirm,
+        SideEffect::Write,
+        loaded_manifest_digest,
     ))
 }
 
 fn parse_mcp_arguments(raw: &str, schema: &serde_json::Value) -> Result<serde_json::Value, String> {
     grain_core::tool_schema::parse_arguments(raw, schema)
-}
-
-fn loaded_digest_is_current(loaded: &str, current: &str) -> bool {
-    !loaded.is_empty() && loaded == current
 }
 
 /// Backend-only catalog fixture: uses the production publication boundary and
@@ -1037,7 +943,9 @@ mod tests {
             input,
             SessionAction {
                 spec,
-                origin: ActionOrigin::Native,
+                provider_id: "fixture".into(),
+                provider_name: "Fixture".into(),
+                tool_name: id.into(),
             },
         )
     }
@@ -1529,11 +1437,6 @@ mod tests {
         let (input, mut selected) = candidate("nested", 0);
         let schema = serde_json::json!({"type":"object","properties":{"data":{"type":"object","properties":{"mode":{"enum":["read"]}},"required":["mode"],"additionalProperties":false}},"required":["data"],"additionalProperties":false});
         selected.spec.parameters = schema.clone();
-        selected.origin = ActionOrigin::Mcp {
-            provider_id: "fixture".into(),
-            provider_name: "Fixture".into(),
-            tool_name: "nested".into(),
-        };
         let metadata = capability_agent::search_metadata(std::slice::from_ref(&input), "", 0);
         assert!(!metadata.to_string().contains("properties"));
         publish_selected(
@@ -1546,13 +1449,6 @@ mod tests {
         assert_eq!(specs(&session)[1].parameters, schema);
         assert!(parse_mcp_arguments(r#"{"data":{"mode":"read"}}"#, &schema).is_ok());
         assert!(parse_mcp_arguments(r#"{"data":{"mode":"write"}}"#, &schema).is_err());
-    }
-
-    #[test]
-    fn manifest_change_invalidates_a_loaded_action() {
-        assert!(loaded_digest_is_current("approved-a", "approved-a"));
-        assert!(!loaded_digest_is_current("approved-a", "approved-b"));
-        assert!(!loaded_digest_is_current("", "approved-a"));
     }
 
     #[test]

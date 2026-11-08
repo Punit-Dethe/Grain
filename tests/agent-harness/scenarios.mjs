@@ -1,5 +1,12 @@
 // Stable IDs are report contracts. Numbered checks below are supporting coverage,
 // not permission to change the manual acceptance ledger automatically.
+export const AUTOMATIC_MCP_WORKFLOWS = [
+  "agent.workflow-mcp",
+  "agent.workflow-stop-mcp",
+  "agent.workflow-failure-mcp",
+  "agent.workflow-unknown-mcp",
+];
+
 export const scenarios = [
   ...[
     [
@@ -20,7 +27,7 @@ export const scenarios = [
     ],
     [
       "agent.workflow-stop-mcp",
-      "Close MCP pending write and held post-write model; exact wire counts prevent continuation/replay",
+      "Close a held model before and after an actual MCP write; exact wire counts prevent continuation or replay",
     ],
     [
       "agent.workflow-failure-native",
@@ -100,7 +107,7 @@ export const scenarios = [
     suite: "agent-workflow",
     checks: [47],
     description:
-      "MCP read/approved disposable write/verify continuation, actual independent wire receipts, withheld tails, duplicate/stale confirmations",
+      "Automatic MCP read, disposable write and independent verification in one task, with exact correlated model results and wire receipts",
   },
   {
     id: "native.author-results",
@@ -428,6 +435,10 @@ export const EXTENSION_CONTRACT_CHECKPOINT = [
 ];
 
 export function selectScenarios(suite) {
+  if (suite === "mcp-agent-workflows")
+    return scenarios.filter((scenario) =>
+      AUTOMATIC_MCP_WORKFLOWS.includes(scenario.id),
+    );
   if (suite === "mcp-connection-checkpoint")
     return [
       "mcp-configured",

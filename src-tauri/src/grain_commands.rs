@@ -943,7 +943,7 @@ pub fn extension_set_enabled(
                     .set_enabled(pack_id, false)
                     .map_err(|error| error.to_string());
                 stop_extension_runtime(pack_id, "extension disabled");
-                crate::extension_host::refresh_index(&app);
+                crate::extension_host::quarantine_invalid_packages(&app);
                 // The in-memory disable already took effect. Disk failure must
                 // still retire its worker/account before reporting persistence.
                 persisted?;
@@ -1006,7 +1006,7 @@ pub fn extension_set_enabled(
                 .map_err(|error| error.to_string())?;
             // The activation/transform index is what the paste path and event
             // bus read; it must never lag the registry.
-            crate::extension_host::refresh_index(&app);
+            crate::extension_host::quarantine_invalid_packages(&app);
             return Ok(());
         }
         other => return Err(format!("unknown extension id '{other}'")),
@@ -1368,7 +1368,7 @@ pub fn extension_set_developer_mode(
     current.extension_developer_mode = enabled;
     settings::write_settings(&app, current);
     crate::refresh_webview_log_streaming(&app);
-    crate::extension_host::refresh_index(&app);
+    crate::extension_host::quarantine_invalid_packages(&app);
     match cleanup_error {
         Some(error) => Err(format!(
             "Developer mode is off, but developer artifacts could not be removed: {error}"
@@ -1462,7 +1462,7 @@ pub(crate) fn load_unpacked_project(
     if let Err(error) = crate::extension_icons::purge_dev_cache(app) {
         log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
     }
-    crate::extension_host::refresh_index(app);
+    crate::extension_host::quarantine_invalid_packages(app);
     Ok(id)
 }
 
@@ -1521,7 +1521,7 @@ pub fn extension_unload_dev(
     if let Err(error) = crate::extension_icons::purge_dev_cache(&app) {
         log::warn!("[GRAIN] developer icon-cache cleanup failed: {error}");
     }
-    crate::extension_host::refresh_index(&app);
+    crate::extension_host::quarantine_invalid_packages(&app);
     Ok(())
 }
 
@@ -1629,7 +1629,7 @@ pub fn extension_import_pack(
             crate::grain_auth::cancel_extension_generation(&id, prior.execution_generation);
         }
     }
-    crate::extension_host::refresh_index(&app);
+    crate::extension_host::quarantine_invalid_packages(&app);
     Ok(id)
 }
 
@@ -1675,7 +1675,7 @@ pub fn extension_grant(
         );
         crate::grain_auth::cancel_extension_generation(&id, prior_generation);
     }
-    crate::extension_host::refresh_index(&app);
+    crate::extension_host::quarantine_invalid_packages(&app);
     approved.map(|_| ()).map_err(|error| {
         #[cfg(feature = "agent-harness")]
         log::warn!("[agent-harness] developer approval failed: {error:#}");
@@ -1765,7 +1765,7 @@ pub async fn extension_uninstall(
     // Invalidate publication before blocking on the vault. Cleanup addresses
     // only the removed grant, never a replacement login or active dev account.
     let credential_cleanup = crate::grain_auth::purge_extension(&id, session);
-    crate::extension_host::refresh_index(&app);
+    crate::extension_host::quarantine_invalid_packages(&app);
     if dev_active {
         if purge {
             crate::extension_icons::purge(&app, &id)?;
@@ -1783,6 +1783,6 @@ pub async fn extension_uninstall(
     if purge {
         crate::extension_icons::purge(&app, &id)?;
     }
-    crate::extension_host::refresh_index(&app);
+    crate::extension_host::quarantine_invalid_packages(&app);
     credential_cleanup.await
 }

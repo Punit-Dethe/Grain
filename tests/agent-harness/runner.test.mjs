@@ -1966,6 +1966,7 @@ test("live selected loading keeps unrelated schemas out and sends only the fixed
 });
 
 test("scenario IDs are unique and each suite is explicit", () => {
+  assert.equal(selectScenarios("mcp-agent-workflows").length, 4);
   assert.equal(selectScenarios("agent-workflow").length, 6);
   assert.equal(selectScenarios("agent-live").length, 2);
   assert.equal(selectScenarios("agent-interruption").length, 8);

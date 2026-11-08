@@ -856,6 +856,7 @@ export async function startModel({
           "unknown",
           "expiry",
           "stop",
+          "before-write-stop",
           "model-failure",
         ].includes(mode),
         "Unknown fixed workflow mode",

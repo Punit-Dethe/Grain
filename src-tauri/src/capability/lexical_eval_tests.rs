@@ -44,11 +44,9 @@ fn exported_catalogue_required_sets_under_schema_budget() {
                         ),
                         parameters: serde_json::Value::Object(tool.input_schema.as_ref().clone()),
                     },
-                    origin: ActionOrigin::Mcp {
-                        provider_id: id.clone(),
-                        provider_name: name.into(),
-                        tool_name: tool.name.to_string(),
-                    },
+                    provider_id: id.clone(),
+                    provider_name: name.into(),
+                    tool_name: tool.name.to_string(),
                 };
                 (action, selected)
             })
