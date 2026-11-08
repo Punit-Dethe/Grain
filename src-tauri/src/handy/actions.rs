@@ -1,7 +1,9 @@
 use crate::audio_feedback::{play_feedback_sound, SoundType};
+use crate::audio_toolkit::VadPolicy;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
+use crate::managers::transcription::policy::{live_decode, LiveDecode, ModelTraits};
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{get_settings, AppSettings};
 use crate::shortcut;
@@ -316,30 +318,60 @@ impl ShortcutAction for TranscribeAction {
         let tray_started = Instant::now();
         change_tray_icon(app, TrayIconState::Recording);
         let tray_elapsed = tray_started.elapsed();
-        // [GRAIN] The winit pill is the single overlay surface for BOTH batch and
-        // rolling — driven by the DaemonEvents below (emitted on successful start,
-        // same pattern as the rolling path). No Handy webview overlay.
-
         // Get the microphone mode to determine audio feedback timing
         let plan_started = Instant::now();
         let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
+
+        let selected_model_info = app
+            .state::<Arc<ModelManager>>()
+            .get_model_info(&settings.selected_model);
+
+        // Use the app-facing model capability as the single pre-recording source
+        // for live streaming decisions. Unknown support is represented as false
+        // until the model registry is updated by discovery or runtime load.
+        let model_supports_streaming = selected_model_info
+            .as_ref()
+            .map(|m| m.supports_streaming)
+            .unwrap_or(false);
+        let vad_policy = if !settings.vad_enabled {
+            VadPolicy::Disabled
+        } else if model_supports_streaming {
+            VadPolicy::Streaming
+        } else {
+            VadPolicy::Offline
+        };
+        // Before the model loads, whether it keeps its accuracy on long audio
+        // is unknown, so assume not: the worker decides again with the loaded
+        // model, and a wrong guess costs only an idle worker.
+        let expected_model = ModelTraits {
+            streaming: model_supports_streaming,
+            long_form: false,
+        };
+        if live_decode(expected_model, settings.long_form_chunking) != LiveDecode::None {
+            tm.start_stream();
+        }
         let plan_elapsed = plan_started.elapsed();
+
+        // Sizing the overlay follows the same advertised capability. A model that
+        // doesn't stream (or whose capability is not known yet) gets the compact
+        // pill instead of an oversized transparent live window.
+        let overlay_started = Instant::now();
+        // [GRAIN] Presentation adapter over Handy's shared recording window.
+        let overlay_generation = crate::grain_overlay::show_capture(app, model_supports_streaming);
         // Everything above runs before capture can begin, so each span here is
-        // added keypress->capture latency. [GRAIN] No overlay step: the pill is
-        // shown by DaemonEvents after the recording actually starts.
+        // added keypress->capture latency.
         debug!(
-            "start-path pre-recording steps: model_kickoff={:?} tray={:?} settings={:?}",
-            kickoff_elapsed, tray_elapsed, plan_elapsed
+            "start-path pre-recording steps: model_kickoff={:?} tray={:?} settings+stream_plan={:?} overlay={:?}",
+            kickoff_elapsed,
+            tray_elapsed,
+            plan_elapsed,
+            overlay_started.elapsed()
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
-        let vad_policy = crate::grain_audio::capture_vad_policy(settings.vad_enabled, false); // [GRAIN]
-
-        let overlay_generation = crate::grain_overlay::show_capture(app, SessionMode::Batch);
         let mut recording_error: Option<anyhow::Error> = None;
         let mut readiness = None;
-        tm.start_stream(); // [GRAIN] Handy's live long-form policy; Flow has its own routed action.
         match rm.try_start_recording(&binding_id, vad_policy) {
             Ok(ready) => readiness = Some(ready),
             Err(error) => recording_error = Some(error),

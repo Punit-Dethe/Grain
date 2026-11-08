@@ -37,12 +37,6 @@ use tauri::{AppHandle, Manager, State};
 use crate::managers::model::ModelManager;
 use crate::settings::get_settings;
 
-// [GRAIN] `recommended` is intentionally a broad catalog badge. Onboarding
-// needs one editorial default per model family, so keep that narrower policy in
-// Grain-owned code instead of adding another feature to the Handy model types.
-const BEST_STANDARD_REPO_ID: &str = "handy-computer/parakeet-tdt-0.6b-v2-gguf";
-const BEST_ASR_REPO_ID: &str = "handy-computer/parakeet-unified-en-0.6b-gguf";
-
 /// Which screen the app should open on.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -68,51 +62,6 @@ pub struct OnboardingState {
     /// rather than because this is a first run. Lets the UI say "Grain lost
     /// microphone access" instead of "welcome".
     pub blocked_on_permissions: bool,
-}
-
-/// The single editorially "best" model in each onboarding family.
-///
-/// These are full registry IDs (repo + default quant filename), ready to pass
-/// to the existing download/select commands. Keeping the pair behind a command
-/// lets us update the defaults without teaching the frontend catalog internals.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
-pub struct OnboardingModelDefaults {
-    pub standard_model_id: String,
-    pub asr_model_id: String,
-}
-
-fn belongs_to_repo(model_id: &str, repo_id: &str) -> bool {
-    model_id
-        .strip_prefix(repo_id)
-        .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-/// Resolve the Grain-owned editorial defaults against the live catalog.
-#[tauri::command]
-#[specta::specta]
-pub fn get_onboarding_model_defaults(
-    model_manager: State<'_, Arc<ModelManager>>,
-) -> Result<OnboardingModelDefaults, String> {
-    let models = model_manager.get_available_models();
-
-    let standard_model_id = models
-        .iter()
-        .find(|model| {
-            !model.supports_streaming && belongs_to_repo(&model.id, BEST_STANDARD_REPO_ID)
-        })
-        .map(|model| model.id.clone())
-        .ok_or_else(|| "Grain's best Standard model is missing from the catalog".to_string())?;
-
-    let asr_model_id = models
-        .iter()
-        .find(|model| model.supports_streaming && belongs_to_repo(&model.id, BEST_ASR_REPO_ID))
-        .map(|model| model.id.clone())
-        .ok_or_else(|| "Grain's best ASR model is missing from the catalog".to_string())?;
-
-    Ok(OnboardingModelDefaults {
-        standard_model_id,
-        asr_model_id,
-    })
 }
 
 #[cfg(debug_assertions)]
@@ -247,28 +196,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn owned_default_script_policy_matches_native_output_policy() {
-        for tag in [
-            "en-US",
-            "zh",
-            "zh-Hans-HK",
-            "zh-Hant",
-            "zh-TW",
-            "zh-HK",
-            "zh-MO",
-            "yue",
-            "yue-TW",
-            "yue-Hans",
-        ] {
-            assert_eq!(
-                grain_core::settings::ChineseScript::for_locale(tag),
-                crate::chinese_script::chinese_script_for_locale(tag),
-                "{tag}",
-            );
-        }
-    }
-
-    #[test]
     fn downloaded_models_do_not_complete_an_unfinished_setup() {
         let state = onboarding_after_model_check(false, false);
         assert_eq!(state.step, OnboardingStep::Model);
@@ -307,17 +234,5 @@ mod tests {
             onboarding_step_after_permissions(false),
             OnboardingStep::Model
         );
-    }
-
-    #[test]
-    fn best_model_repo_matching_requires_a_registry_child() {
-        assert!(belongs_to_repo(
-            "handy-computer/parakeet-tdt-0.6b-v2-gguf/parakeet-tdt-0.6b-v2-Q8_0.gguf",
-            BEST_STANDARD_REPO_ID,
-        ));
-        assert!(!belongs_to_repo(
-            "handy-computer/parakeet-tdt-0.6b-v2-gguf-extra/model.gguf",
-            BEST_STANDARD_REPO_ID,
-        ));
     }
 }

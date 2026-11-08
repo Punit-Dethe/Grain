@@ -1,5 +1,35 @@
 # Divergence Map (Grain vs Handy)
 
+## Single-model dictation convergence (2026-11-06)
+
+The user explicitly replaces Grain's dual model/shortcut architecture. One
+`selected_model` and the `transcribe` shortcut now use Handy's shared action
+for both standard and streaming models. The action's capability query, VAD
+choice and `live_decode(ModelTraits, long_form_chunking)` decision follow Handy
+`82dfab9f`; native live/chunked/policy code and inference pins are unchanged.
+Removed: NativeAsrAction, streaming selection/list commands, selected_asr_model,
+AI start-mode setting, separate streaming binding, tray category filter, dual
+catalogue libraries and onboarding family/default machinery. Saved bindings
+are validated against the current default contract instead of a retirement list.
+
+Grain keeps Flow for exact reviewed TDT v2/v3 artifacts, shared capture admission,
+Prompt Record/AI finish, Paste Catch and presentation/event hooks. Live preview
+uses the capability snapshot chosen by the shared action; Flow and Agent stay
+compact. Streaming now uses the same WAV/history pipeline as Handy instead of
+the retired action's text-only history path. Existing safe history cleanup is
+retained for audio-less records from other callers.
+
+The catalogue UI is an explicit, user-authorized exception to the frontend
+freeze: isolated under `src/app/handy-models`, derived from the same Handy SHA,
+with scoped imports/theme integration. It replaces Grain's duplicated libraries;
+it does not introduce another registry/store/engine. Language preferences rank
+models only; no automatic recognition language/model switching is enabled.
+Package and generated JSON advance together to @handy-computer/models 0.2.3.
+The JSON exactly matches current Handy; the two-line difference versus the
+adopted merge base is upstream's language-ID quant metadata correction (Q8_0 to
+F16), not a new Grain inference policy. This does not enable language detection.
+See [execution and acceptance](DICTATION-CONVERGENCE-2026-11-06.md).
+
 ## Streaming history cleanup latency (2026-11-05)
 
 Grain's Native ASR saves text-only history with an empty audio filename. At the

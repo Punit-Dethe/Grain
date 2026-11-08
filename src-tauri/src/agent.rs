@@ -562,7 +562,7 @@ fn summon_inner(app: &AppHandle) {
             state.panel_expanded.store(false, Ordering::SeqCst);
         }
         // Publish ownership before presenting the cancellable voice input.
-        crate::grain_overlay::show_capture(&app, grain_core::SessionMode::Batch);
+        crate::grain_overlay::show_capture(&app, false);
         crate::pill_icon::emit_for_session(&app);
         crate::surface_watch::start(&app);
         crate::bridge::emit(
@@ -708,8 +708,8 @@ fn start_dictation(app: &AppHandle) -> Option<crate::managers::audio::RecordingR
             let _ = rm.preload_vad();
         });
     }
-    // Agent dictation is a batch-style capture: offline VAD profile (VAD is
-    // always on â€” grain-core settings have no `vad_enabled` toggle).
+    // Agent records one utterance with the selected dictation model and offline VAD.
+    // Its pill stays compact, independent of the model's streaming capability.
     match rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
         Ok(readiness) => Some(readiness),
         Err(e) => {
@@ -1717,7 +1717,7 @@ pub fn input_typing(app: &AppHandle, active: bool) {
         app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
         if let Some(readiness) = start_dictation(app) {
-            crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
+            crate::grain_overlay::show_capture(app, false);
             crate::pill_icon::emit_for_session(app);
             crate::surface_watch::start(app);
             crate::grain_capture::announce_ready(

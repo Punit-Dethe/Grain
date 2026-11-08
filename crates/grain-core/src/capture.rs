@@ -1,6 +1,6 @@
 //! [GRAIN] Capture-mode policy.
 //!
-//! Grain has two capture bindings — Dictation and Streaming — plus the AI key.
+//! Grain has one dictation binding, plus the optional AI key.
 //! Dictation selects Standard or Flow from the selected model. Flow is intentionally
 //! narrower: only the reviewed Parakeet TDT v2/v3 catalog artifacts can run it.
 //!
@@ -9,7 +9,7 @@
 //! call `shortcut_holds_hotkey`; the coordinator calls `action_id_for`.
 //! Both keyboard implementations share the same gates and capture routing.
 
-use crate::settings::{AppSettings, CAPTURE_MODE_IDS};
+use crate::settings::AppSettings;
 
 const REVIEWED_FLOW_QUANTIZATIONS: &[&str] = &["Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0", "F16", "F32"];
 
@@ -38,19 +38,11 @@ pub fn flow_is_eligible(settings: &AppSettings) -> bool {
     !settings.translate_to_english && is_reviewed_flow_model(&settings.selected_model)
 }
 
-/// Is `id` one of the two capture-starting bindings?
-pub fn is_capture_mode(id: &str) -> bool {
-    CAPTURE_MODE_IDS.contains(&id)
-}
-
 /// Only dictation actions consume a content/instruction audio split.
 pub fn supports_prompt_record(action_id: &str) -> bool {
     matches!(
         action_id,
-        "transcribe"
-            | "transcribe_with_post_process"
-            | "transcribe_realtime"
-            | "transcribe_native_asr"
+        "transcribe" | "transcribe_with_post_process" | "transcribe_realtime"
     )
 }
 
@@ -108,26 +100,12 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
     true
 }
 
-/// Which mode the AI shortcut starts when pressed from idle.
-///
-/// Falls back to Dictation if the stored value is not a binding we ship.
-pub fn ai_start_mode(settings: &AppSettings) -> &str {
-    if is_capture_mode(&settings.capture_ai_start_mode) {
-        &settings.capture_ai_start_mode
-    } else {
-        CAPTURE_MODE_IDS[0]
-    }
-}
-
-/// The capture action a trigger key actually runs.
-///
-/// The main key selects Flow for a reviewed model, otherwise Standard. The AI
-/// key borrows Dictation or Streaming. The session is
-/// still *staged* under the trigger key, so push-to-talk release matching and
-/// the tap-to-stop path keep working against the key the user is holding.
-pub fn action_id_for<'a>(settings: &'a AppSettings, binding_id: &'a str) -> &'a str {
+/// Resolve only Grain's Flow exception. Handy selects streaming versus batch
+/// from the selected model inside the shared dictation action. The AI key uses
+/// that same model; its processing override is retained by the coordinator.
+pub fn action_id_for<'a>(settings: &AppSettings, binding_id: &'a str) -> &'a str {
     let capture_id = if binding_id == "transcribe_send_to_ai" {
-        ai_start_mode(settings)
+        "transcribe"
     } else {
         binding_id
     };
@@ -163,7 +141,7 @@ pub fn ends_with_ai(settings: &AppSettings) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::get_default_settings;
+    use crate::settings::{get_default_settings, CAPTURE_MODE_IDS};
 
     #[test]
     fn reviewed_flow_model_ids_are_exact() {
@@ -189,7 +167,6 @@ mod tests {
             "transcribe",
             "transcribe_with_post_process",
             "transcribe_realtime",
-            "transcribe_native_asr",
         ] {
             assert!(supports_prompt_record(id));
         }
@@ -218,7 +195,6 @@ mod tests {
         s.translate_to_english = true;
         assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
         assert!(shortcut_holds_hotkey(&s, "transcribe"));
-        assert!(shortcut_holds_hotkey(&s, "transcribe_native_asr"));
     }
 
     #[test]
@@ -239,32 +215,17 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_stored_ai_start_mode_falls_back_to_standard() {
-        // A settings file from a future or hand-edited build must not name a
-        // mode we do not ship as the AI start mode.
+    fn ai_and_dictation_share_the_selected_model() {
         let mut s = get_default_settings();
-        s.capture_ai_start_mode = "transcribe_teleport".to_string();
-        assert_eq!(ai_start_mode(&s), "transcribe");
-    }
-
-    #[test]
-    fn streaming_selection_does_not_change_dictation_routing() {
-        let mut s = with_reviewed_flow_model(get_default_settings());
-        s.selected_asr_model = "unrelated-streaming-model".into();
-        assert_eq!(
-            action_id_for(&s, "transcribe_send_to_ai"),
-            "transcribe_realtime"
-        );
-        assert_eq!(
-            action_id_for(&s, "transcribe_native_asr"),
-            "transcribe_native_asr"
-        );
-        s.capture_ai_start_mode = "transcribe_native_asr".into();
-        assert_eq!(
-            action_id_for(&s, "transcribe_send_to_ai"),
-            "transcribe_native_asr"
-        );
-        assert_eq!(action_id_for(&s, "transcribe"), "transcribe_realtime");
+        for model in [
+            "handy-computer/parakeet-unified-en-0.6b-gguf/model.gguf",
+            "openai/whisper/ggml-base.bin",
+            "local/custom-model.gguf",
+        ] {
+            s.selected_model = model.into();
+            assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
+            assert_eq!(action_id_for(&s, "transcribe_send_to_ai"), "transcribe");
+        }
         assert_eq!(action_id_for(&s, "summon_agent"), "summon_agent");
     }
 
@@ -297,7 +258,7 @@ mod tests {
         s.post_process_enabled = false;
         s.agent_enabled = false;
 
-        // Feature toggles do not affect the two capture bindings.
+        // Feature toggles do not affect the dictation binding.
         for id in CAPTURE_MODE_IDS {
             assert!(shortcut_holds_hotkey(&s, id));
         }

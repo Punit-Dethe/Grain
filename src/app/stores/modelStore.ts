@@ -9,7 +9,7 @@ import {
 } from "@/bindings";
 import { toast } from "sonner";
 
-type DownloadProgress = ModelDownloadProgress;
+export type DownloadProgress = ModelDownloadProgress;
 
 interface DownloadStats {
   startTime: number;
@@ -28,6 +28,8 @@ interface ModelsStore {
   downloadProgress: Record<string, DownloadProgress>;
   downloadStats: Record<string, DownloadStats>;
   loading: boolean;
+  isRescanning: boolean;
+  rescanLocalModels: () => Promise<void>;
   /** Whether the local ASR model is currently resident in RAM (event-driven). */
   isModelLoaded: boolean;
   /** The model the transcription manager currently has (or last had) resident —
@@ -72,6 +74,7 @@ export const useModelStore = create<ModelsStore>()(
     downloadProgress: {},
     downloadStats: {},
     loading: true,
+    isRescanning: false,
     isModelLoaded: false,
     loadedModelId: null,
     error: null,
@@ -122,6 +125,21 @@ export const useModelStore = create<ModelsStore>()(
         set({ error: `Failed to load models: ${err}` });
       } finally {
         set({ loading: false });
+      }
+    },
+
+    rescanLocalModels: async () => {
+      if (get().isRescanning) return;
+      set({ isRescanning: true });
+      try {
+        const result = await commands.rescanLocalModels();
+        if (result.status !== "ok") set({ error: result.error });
+        await get().loadModels();
+        await get().loadCurrentModel();
+      } catch (err) {
+        set({ error: `Failed to rescan models: ${err}` });
+      } finally {
+        set({ isRescanning: false });
       }
     },
 

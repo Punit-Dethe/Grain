@@ -164,13 +164,6 @@ const SETTING_DEFS: SettingDef[] = [
       !s?.capture_always_ai && s?.shortcut_activation !== "push_to_talk",
   },
   {
-    id: "ai-start-mode",
-    titleKey: "ui2.capture.ai.startMode.title",
-    section: "capture",
-    keywords: ["ai start mode"],
-    enabled: (s) => !s?.capture_always_ai,
-  },
-  {
     id: "ai-dictation",
     titleKey: "settings.general.shortcut.bindings.transcribe_send_to_ai.name",
     section: "capture",
@@ -348,7 +341,7 @@ const SETTING_DEFS: SettingDef[] = [
   // transcription models -------------------------------------------------
   {
     id: "stt",
-    titleKey: "settings.speechToText.picker.title",
+    titleKey: "settings.models.title",
     section: "capture",
     keywords: ["model", "asr", "whisper", "parakeet", "transcription engine"],
   },

@@ -156,12 +156,6 @@ impl TranscriptionManager {
     pub(crate) fn discard_recording_live(&self, samples: usize) -> Result<()> {
         self.finalize_live(samples).map(|_| ())
     }
-
-    pub(crate) fn finalize_stream(&self) -> Result<Option<String>> {
-        self.finalize_live(0).map(|outcome| {
-            outcome.map(|outcome| finish_text(outcome, &get_settings(&self.app_handle)))
-        })
-    }
 }
 
 /// Releases a meeting attempt's resources in order: the resident role first,

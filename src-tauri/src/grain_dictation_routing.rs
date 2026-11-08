@@ -12,10 +12,7 @@ use crate::settings::get_settings;
 pub(crate) fn is_coordinated_binding(id: &str) -> bool {
     matches!(
         id,
-        "transcribe"
-            | "transcribe_with_post_process"
-            | "transcribe_send_to_ai"
-            | "transcribe_native_asr"
+        "transcribe" | "transcribe_with_post_process" | "transcribe_send_to_ai"
     )
 }
 
