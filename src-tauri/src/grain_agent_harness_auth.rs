@@ -289,7 +289,7 @@ pub async fn agent_harness_auth(
             let pack: grain_sdk::GrainPack =
                 serde_json::from_slice(&bytes).map_err(|_| "Invalid auth package")?;
             validate_pack(&pack, target)?;
-            crate::grain_commands::extension_import_pack(
+            crate::grain_commands::native::extension_import_pack(
                 app,
                 window,
                 path.to_string_lossy().into_owned(),
@@ -349,14 +349,14 @@ pub async fn agent_harness_auth(
                 .map_err(|_| "Fixture consent state unavailable")? = None;
             let reg = app.state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>();
             if reg.dev_path(id).is_some() {
-                crate::grain_commands::extension_unload_dev(
+                crate::grain_commands::native::extension_unload_dev(
                     app.clone(),
                     window.clone(),
                     id.into(),
                 )?;
             }
             if reg.installed_record(id).is_some() {
-                crate::grain_commands::extension_uninstall(app, window, id.into(), true).await?;
+                crate::grain_commands::native::extension_uninstall(app, window, id.into(), true).await?;
             }
             Ok(Value::Null)
         }
@@ -368,19 +368,19 @@ pub async fn agent_harness_auth(
             })?;
             let loaded = crate::dev_extensions::load_project(&root)?;
             validate_pack(&loaded.pack, target)?;
-            crate::grain_commands::load_unpacked_project(&app, &root)?;
+            crate::grain_commands::native::load_unpacked_project(&app, &root)?;
             Ok(Value::Null)
         }
         Operation::Unload => {
-            crate::grain_commands::extension_unload_dev(app, window, id.into())?;
+            crate::grain_commands::native::extension_unload_dev(app, window, id.into())?;
             Ok(Value::Null)
         }
         Operation::Enable => {
-            crate::grain_commands::extension_set_enabled(app, window, id.into(), true)?;
+            crate::grain_commands::native::extension_set_enabled(app, window, id.into(), true)?;
             Ok(Value::Null)
         }
         Operation::RemoveInstalled => {
-            crate::grain_commands::extension_uninstall(app, window, id.into(), false).await?;
+            crate::grain_commands::native::extension_uninstall(app, window, id.into(), false).await?;
             Ok(Value::Null)
         }
         Operation::SeedUnbound | Operation::SeedLegacy => {

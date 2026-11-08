@@ -552,7 +552,7 @@ pub(crate) async fn harness_legacy_account(app: &AppHandle, id_only: bool) -> Re
 }
 
 fn declaration(app: &AppHandle, extension_id: &str) -> Result<AuthenticationDecl, String> {
-    crate::grain_commands::load_pack(app, extension_id)?
+    crate::grain_commands::native::load_pack(app, extension_id)?
         .manifest
         .contributes
         .authentication
@@ -560,7 +560,7 @@ fn declaration(app: &AppHandle, extension_id: &str) -> Result<AuthenticationDecl
 }
 
 fn approved_declaration(app: &AppHandle, extension_id: &str) -> Result<AuthenticationDecl, String> {
-    let pack = crate::grain_commands::load_pack(app, extension_id)?;
+    let pack = crate::grain_commands::native::load_pack(app, extension_id)?;
     let registry = app
         .try_state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
@@ -915,7 +915,7 @@ pub(crate) async fn connection(
     app: &AppHandle,
     id: &str,
 ) -> Result<Option<AuthConnection>, String> {
-    let declaration = crate::grain_commands::load_pack(app, id)?
+    let declaration = crate::grain_commands::native::load_pack(app, id)?
         .manifest
         .contributes
         .authentication;

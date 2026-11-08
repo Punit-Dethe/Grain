@@ -505,7 +505,7 @@ pub async fn agent_harness_fixture(
             {
                 return Err("Harness only admits its permission-free native fixture".into());
             }
-            crate::grain_commands::load_unpacked_project(&app, &root)?;
+            crate::grain_commands::native::load_unpacked_project(&app, &root)?;
             if !matches!(operation, FixtureOperation::Load) {
                 return agent_harness_status(app, window);
             }
@@ -513,7 +513,7 @@ pub async fn agent_harness_fixture(
             let record = reg.record(FIXTURE_ID).ok_or("Fixture was not registered")?;
             let digest = grain_core::extensions::approval_fingerprint(&record, &loaded.pack)
                 .map_err(|e| e.to_string())?;
-            crate::grain_commands::extension_grant(
+            crate::grain_commands::native::extension_grant(
                 app.clone(),
                 window.clone(),
                 FIXTURE_ID.into(),
@@ -549,14 +549,14 @@ pub async fn agent_harness_fixture(
             {
                 return Err("Harness only imports its permission-free native fixture".into());
             }
-            crate::grain_commands::extension_import_pack(
+            crate::grain_commands::native::extension_import_pack(
                 app.clone(),
                 window.clone(),
                 path.to_string_lossy().into_owned(),
             )?;
         }
         FixtureOperation::RemoveInstalled => {
-            crate::grain_commands::extension_uninstall(
+            crate::grain_commands::native::extension_uninstall(
                 app.clone(),
                 window.clone(),
                 FIXTURE_ID.into(),
@@ -564,13 +564,13 @@ pub async fn agent_harness_fixture(
             )
             .await?;
         }
-        FixtureOperation::Unload => crate::grain_commands::extension_unload_dev(
+        FixtureOperation::Unload => crate::grain_commands::native::extension_unload_dev(
             app.clone(),
             window.clone(),
             FIXTURE_ID.into(),
         )?,
         FixtureOperation::Enable | FixtureOperation::Disable => {
-            crate::grain_commands::extension_set_enabled(
+            crate::grain_commands::native::extension_set_enabled(
                 app.clone(),
                 window.clone(),
                 FIXTURE_ID.into(),

@@ -41,15 +41,15 @@ export default defineConfig(async ({ mode }) => ({
     },
   },
 
-  // Entry points: the main settings window, plus the hidden extension-host
-  // supervisor page (SPEC §3.1) — a real route Tauri loads as its own webview.
-  // Grain presentation hosted by Handy's shared recording window.
+  // The legacy fixture supervisor is embedded only in the acceptance host.
   build: {
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
         recordingOverlay: resolve(__dirname, "recording-overlay.html"),
-        extensionHost: resolve(__dirname, "extension-host.html"),
+        ...(mode === "agent-harness"
+          ? { extensionHost: resolve(__dirname, "extension-host.html") }
+          : {}),
       },
     },
   },

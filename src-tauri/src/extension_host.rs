@@ -622,31 +622,6 @@ pub fn quarantine_invalid_packages(app: &AppHandle) {
     }
 }
 
-/// Re-read the installed declaration at execution time and return its approved
-/// action digest. This deliberately runs off the retrieval hot path and closes
-/// the on-disk edit/update race before a prepared call can execute.
-pub fn approved_action_digest(
-    app: &AppHandle,
-    extension_id: &str,
-    action_id: &str,
-) -> Option<String> {
-    let registry = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()?;
-    let record = registry.record(extension_id)?;
-    if !record.enabled {
-        return None;
-    }
-    let pack = load_manifest(app, extension_id)?;
-    let declared = &pack.manifest.contributes.actions;
-    if !declared.iter().any(|action| action.id == action_id) {
-        return None;
-    }
-    let digest = grain_core::extensions::actions_fingerprint(declared);
-    if record.actions_approved.as_deref() != Some(digest.as_str()) {
-        return None;
-    }
-    grain_core::extensions::native_call_fingerprint(&record, &pack.manifest).ok()
-}
-
 /// Supervisor → worker: create a Web Worker for this extension.
 #[derive(Clone, Serialize)]
 struct SpawnPayload {

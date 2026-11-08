@@ -181,6 +181,7 @@ fn provider_control(id: &str) -> std::sync::Arc<session::Control> {
         .clone()
 }
 
+#[cfg(any(feature = "agent-harness", test))]
 pub(crate) fn invalidate_development_sessions() {
     for item in CATALOG.iter().filter(|item| !is_preset(item)) {
         provider_control(item.id).invalidate();

@@ -13,12 +13,7 @@
 //! 3. **resume** — on approval the host revalidates the *exact* prepared call
 //!    (time-of-use, §12.7) and replays it; the model is never re-consulted.
 //!
-//! ## Providers
-//!
-//! Built-in providers execute in process; third-party providers execute through
-//! the extension worker (Phase 3b — the `"action"` worker protocol). Both return
-//! the same [`ActionOutcome`]. Third-party actions run through the isolated extension worker and
-//! return a strict, host-sanitised outcome (§8.1).
+//! Extension providers execute through MCP.
 
 use std::sync::Mutex;
 
@@ -281,24 +276,11 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
     }
 }
 
-/// The manifest digest currently in force for an extension, for time-of-use
-/// revalidation. Built-in providers are versioned with the app, so a constant is
-/// correct; third-party providers will read the installed pack digest (Phase 3b).
+/// Check that the MCP connection is still enabled. The transport verifies the
+/// loaded tool digest again before dispatch on the same short-lived service.
 fn current_manifest_digest(app: &AppHandle, prepared: &PreparedCall) -> Option<String> {
-    if prepared.extension_id.starts_with("mcp.") {
-        // The actual MCP tool-set digest is fetched and compared immediately
-        // before the call, on the same short-lived stateless service. Returning
-        // the prepared digest here preserves the generic confirmation contract
-        // without adding a separate network TOCTOU window.
-        crate::grain_mcp::is_enabled_extension(app, &prepared.extension_id)
-            .then(|| prepared.manifest_digest.clone())
-    } else {
-        crate::extension_host::approved_action_digest(
-            app,
-            &prepared.extension_id,
-            &prepared.action_id,
-        )
-    }
+    crate::grain_mcp::is_enabled_extension(app, &prepared.extension_id)
+        .then(|| prepared.manifest_digest.clone())
 }
 
 /// Revalidate even safe calls. A safe action skips user confirmation, not the
@@ -324,7 +306,10 @@ async fn execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
     if let Some(provider_id) = prepared.extension_id.strip_prefix("mcp.") {
         mcp_execute(app, provider_id, prepared).await
     } else {
-        third_party_execute(app, prepared).await
+        failed(
+            FailureClass::NotFound,
+            "Only MCP connections provide Agent tools.",
+        )
     }
 }
 
@@ -373,24 +358,7 @@ pub(crate) fn mcp_outcome(
     }
 }
 
-/// Execute a third-party action through the extension worker's `"action"` handler
-/// (Phase 3b, Rust half). Queue dispatch and received results determine certainty,
-/// just as for MCP; failure text cannot establish that a write never happened.
-async fn third_party_execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
-    native_outcome(
-        crate::extension_host::run_action(
-            app,
-            &prepared.extension_id,
-            &prepared.action_id,
-            &prepared.arguments,
-            prepared.idempotency_key.as_deref(),
-            &prepared.manifest_digest,
-        )
-        .await,
-        prepared,
-    )
-}
-
+#[cfg(test)]
 pub(crate) fn native_outcome(
     result: Result<Value, crate::extension_host::ActionCallError>,
     prepared: &PreparedCall,
@@ -420,6 +388,7 @@ pub(crate) fn native_outcome(
 /// `{ "ok": {title?, body?, details?} }`. The envelope is strict; provenance
 /// and write receipts are host-owned and worker error text never crosses the
 /// trust boundary.
+#[cfg(test)]
 fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome {
     let Some(root) = value.as_object() else {
         return native_result_unavailable("The extension returned an invalid action result.");
@@ -508,6 +477,7 @@ fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome 
     })
 }
 
+#[cfg(test)]
 fn native_result_unavailable(message: &str) -> ActionOutcome {
     grain_core::execution::ExecutionFailure::new(
         grain_core::execution::DispatchPhase::ResponseReceived,
@@ -517,11 +487,13 @@ fn native_result_unavailable(message: &str) -> ActionOutcome {
     .into_outcome()
 }
 
+#[cfg(test)]
 fn bounded_text(text: &str, max_bytes: usize) -> Option<String> {
     let clean = grain_core::capability_agent::sanitize(text, max_bytes);
     (!clean.is_empty()).then_some(clean)
 }
 
+#[cfg(test)]
 fn worker_failure_message(class: FailureClass) -> &'static str {
     match class {
         FailureClass::Auth => "Connect or reauthorize the account, then try again.",
@@ -534,6 +506,7 @@ fn worker_failure_message(class: FailureClass) -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn map_failure_class(raw: &str) -> FailureClass {
     match raw {
         "auth" => FailureClass::Auth,

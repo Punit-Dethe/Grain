@@ -668,7 +668,7 @@ pub async fn dispatch(
                 let raw_url = param_nonempty_str(&params, "url")?;
                 let (url, _) = net_url_and_capability(&raw_url)?;
                 let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-                let decl = crate::grain_commands::load_pack(app, &identity.id)
+                let decl = crate::grain_commands::native::load_pack(app, &identity.id)
                     .map_err(internal_error)?
                     .manifest
                     .contributes

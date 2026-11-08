@@ -744,119 +744,6 @@ async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * The Overview tab's data: every extension, enabled and disabled alike.
- */
-async extensionsOverview() : Promise<Result<ExtensionCard[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extensions_overview") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Flip a tool extension on/off. Core Agent, Snippets and context settings use
- * their own commands and cannot be enabled through the extension registry.
- */
-async extensionSetEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_set_enabled", { id, enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Developer mode is a distinct, explicit product setting. Reporting loaded
- * projects separately keeps the Overview card model focused on effective
- * extensions while still making every local path visible to the author.
- */
-async extensionDeveloperStatus() : Promise<Result<ExtensionDeveloperStatus, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_developer_status") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Toggle developer mode from the in-app settings surface. Turning it off is
- * also the cleanup boundary: all local projects are unloaded, workers and
- * surfaces die, and any parked installed versions are restored.
- */
-async extensionSetDeveloperMode(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_set_developer_mode", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Human-only load-unpacked entry point. The frontend cannot provide a path:
- * the backend always opens a native folder picker after confirming developer
- * mode, so links, downloads, and extensions cannot trigger a load.
- */
-async extensionLoadUnpacked() : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_load_unpacked") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async extensionUnloadDev(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_unload_dev", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Approve the reviewed tool permissions, declarations and account configuration,
- * then enable the extension in the same checked registry mutation.
- *
- * Grants are clamped to what the manifest actually requests, so neither a
- * compromised frontend nor a stale sheet can widen an extension's reach beyond
- * what the user was shown.
- *
- * Approve the exact package/registry identity shown by the permission sheet
- * and enable it in one checked mutation. A changed review needs a fresh sheet.
- */
-async extensionGrant(id: string, permissions: string[], approvalDigest: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_grant", { id, permissions, approvalDigest }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async extensionAuthConnection(id: string) : Promise<Result<AuthConnection | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connection", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async extensionAuthConnect(id: string) : Promise<Result<AuthConnection, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_auth_connect", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async extensionAuthDisconnect(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_auth_disconnect", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async mcpProviderStatus() : Promise<Result<McpProviderStatus[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_provider_status") };
@@ -988,32 +875,6 @@ async mcpConnectionSetClientCredentials(id: string, expectedRevision: string, cl
 async mcpConnectionClearClientCredentials(id: string, expectedRevision: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connection_clear_client_credentials", { id, expectedRevision }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
- * the extensions dir, registers it DISABLED — enabling is the user's explicit
- * second step in Overview, where toggle order is assigned.
- */
-async extensionImportPack(path: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_import_pack", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Uninstall a tool package and remove its scoped storage/authentication.
- * `purge` also clears derived artwork. Published immutable artifacts are never
- * deleted here: a concurrent installation may already be staging those bytes.
- */
-async extensionUninstall(id: string, purge: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("extension_uninstall", { id, purge }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1802,26 +1663,6 @@ updateDownloadProgress: "update-download-progress"
 /** user-defined types **/
 
 /**
- * [GRAIN] One declared action, as the approval sheet and the extension card
- * need it (`docs/Extensions V1/PLAN.md` §5).
- *
- * Note what is **absent**: the utterance list. The consent question is "what
- * can this do", not "what words does it listen for" — a list of phrasings is
- * review and `doctor` material, and putting it on a sheet trains people to
- * scroll past the part that matters. What the user decides on is the title and
- * whether it will ask before acting.
- */
-export type ActionInfo = { id: string;
-/**
- * One plain line, written for the user.
- */
-title: string;
-/**
- * Whether performing this reads the resolved action back first. The single
- * most important thing on the row.
- */
-confirms: boolean }
-/**
  * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
  * clipboard automatically as they arrive. `First` (default) mirrors the
  * original behavior — only the first reply of a session is auto-copied.
@@ -2051,15 +1892,6 @@ agent_input_type_to_expand?: boolean;
  */
 agent_panel_position?: AgentPanelPosition }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
-export type AuthConnection = { provider_name: string; authorization_host: string; token_host: string; scopes: string[]; api_hosts: string[];
-/**
- * `connected` | `needs_reauthorization` | `expired` | `disconnected` | `unavailable`
- */
-state: string; granted_scopes: string[];
-/**
- * Unix seconds, sent as a string to avoid JS integer loss.
- */
-expires_at: string | null }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
@@ -2169,46 +2001,6 @@ name: string;
  * URL reader resolved it. `None` otherwise.
  */
 url_host: string | null }
-export type DeveloperExtension = { id: string; path: string }
-/**
- * One row of the Extensions Overview tab. Built-ins delegate their enabled
- * state to core settings flags (manifest-first, PLAN.md D4); installed packs
- * read the registry.
- */
-export type ExtensionCard = { id: string; name: string; description: string;
-/**
- * Grain-derived 128² PNG for settings. Never the resident 512² master.
- */
-icon: string | null; version: string;
-/**
- * "pack" | "scripted" | "native"
- */
-tier: string;
-/**
- * "core" | "community" | "dev". Dev is permanent while loaded and is
- * never allowed to masquerade as verified.
- */
-trust: string;
-/**
- * A separately installed copy with this id is parked beneath the active
- * load-unpacked project.
- */
-overrides_installed: boolean; overridden_version: string | null; enabled: boolean;
-/**
- * Toggle-order position (SPEC §4.4); u64::MAX = never toggled (sorts last).
- * Sent as string — u64 doesn't survive JS numbers.
- */
-toggle_seq: string; repository: string | null;
-/**
- * Manifest-declared capabilities displayed during fixture approval.
- */
-capabilities: string[];
-/**
- * [GRAIN] The tools this extension gives the Agent, so the card can show
- * them again after the approval sheet closes.
- */
-actions: ActionInfo[] }
-export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation

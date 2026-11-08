@@ -10,6 +10,7 @@
 //! (audio/model/transcription/history) migrate onto `AppContext` here over the
 //! decoupling phase; until then this crate stands alone and tested.
 
+mod atomic_file;
 pub mod context;
 pub mod extensions;
 // Provisional remote descriptors and host-owned identity, without a transport.

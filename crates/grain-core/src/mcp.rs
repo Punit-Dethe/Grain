@@ -3,11 +3,11 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use grain_sdk::manifest::network_capability_host;
 use grain_sdk::mcp::{
     McpAuthentication, McpDescriptor, McpHeaders, McpPublicOAuthClient, McpTransport,
     RemoteMcpConnection, MCP_CONNECTION_MAX_BYTES, MCP_DESCRIPTOR_MAX_BYTES, MCP_DESCRIPTOR_SCHEMA,
 };
+use grain_sdk::network::is_canonical_host;
 use grain_sdk::{validate_extension_id, validate_extension_version};
 use serde::Serialize;
 
@@ -247,7 +247,7 @@ pub(crate) fn canonical_endpoint(raw: &str) -> Result<String, ContractError> {
         .map(|(_, rest)| rest.split('/').next().unwrap_or(rest));
     if url.scheme() != "https"
         || authority.is_none_or(|part| part.is_empty())
-        || network_capability_host(&format!("net:{host}")).is_none()
+        || !is_canonical_host(host)
         || !host.contains('.')
         || host.ends_with('.')
         || [".localhost", ".local", ".internal", ".home.arpa"]

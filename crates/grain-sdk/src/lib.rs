@@ -23,16 +23,19 @@ pub mod compatibility;
 pub mod error;
 pub mod event;
 mod fixture_trust;
+mod identity;
 pub mod manifest;
 pub mod mcp;
+pub mod network;
 pub mod protocol;
 
 pub use authoring::ExtensionProjectManifest;
 pub use error::{HostError, HostErrorCode};
 pub use event::{DaemonEvent, OverlayPosition, ResolvedTheme, SessionMode, PILL_ICON_PX};
 pub use fixture_trust::Trust;
+pub use identity::{validate_extension_id, validate_extension_version};
 pub use manifest::{
-    png_dimensions, validate_extension_id, validate_extension_version, AuthenticationDecl,
+    png_dimensions, AuthenticationDecl,
     AuthenticationType, Contributes, ExtensionManifest, GrainPack, PackPayloads, RedirectMethod,
     Tier, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, PACK_ENTRY_MAX_BYTES,
     PACK_MAX_BYTES,

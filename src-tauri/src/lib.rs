@@ -39,15 +39,21 @@ mod commands;
 mod context_bias; // [GRAIN] budgeted whisper decoder-prefix hotwords
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod context_screen; // [GRAIN] foreground-window image capture for the Agent's opt-in screen image
+#[cfg(any(feature = "agent-harness", test))]
 mod dev_extensions; // [GRAIN] validated load-unpacked project reader
 #[path = "handy/engine_supervisor/mod.rs"]
 pub mod engine_supervisor;
+#[cfg(any(feature = "agent-harness", test))]
 mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)
+#[cfg(any(feature = "agent-harness", test))]
 mod events_server; // [GRAIN] authenticated loopback WebSocket for native workers and developer control
+#[cfg(any(feature = "agent-harness", test))]
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+#[cfg(any(feature = "agent-harness", test))]
 mod extension_icons; // [GRAIN] verified master icon -> installed extension card icon
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
+#[cfg(any(feature = "agent-harness", test))]
 mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
 mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
@@ -78,6 +84,7 @@ mod grain_update; // [GRAIN] in-app update check/install over the signed release
 mod grain_window_geometry; // [GRAIN] scale-aware main-window sizing within the desktop work area
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
+#[cfg(any(feature = "agent-harness", test))]
 mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/input.rs"]
 mod input;
@@ -477,7 +484,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // Native fixture workers own a loopback bridge. Ordinary MCP sessions
     // connect on demand and need neither a local listener nor a worker reaper.
-    if cfg!(feature = "agent-harness") {
+    #[cfg(feature = "agent-harness")]
+    {
         if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
             events_server::start(app_handle.clone());
             extension_host::start(app_handle.clone(), ctx.inner().clone());
@@ -960,9 +968,25 @@ pub fn run(cli_args: CliArgs) {
             grain_agent_harness_auth::agent_harness_auth,
             grain_agent_harness_mcp::agent_harness_mcp,
             grain_agent_harness_mcp::agent_harness_configured_consent,
+            grain_commands::native::extensions_overview,
+            grain_commands::native::extension_set_enabled,
+            grain_commands::native::extension_developer_status,
+            grain_commands::native::extension_set_developer_mode,
+            grain_commands::native::extension_load_unpacked,
+            grain_commands::native::extension_unload_dev,
+            grain_commands::native::extension_grant,
+            grain_commands::native::extension_import_pack,
+            grain_commands::native::extension_uninstall,
+            grain_auth::extension_auth_connection,
+            grain_auth::extension_auth_connect,
+            grain_auth::extension_auth_disconnect,
         ];
         move |invoke: tauri::ipc::Invoke| {
-            if invoke.message.command().starts_with("agent_harness_") {
+            let command = invoke.message.command();
+            if command.starts_with("agent_harness_")
+                || command.starts_with("extension_")
+                || command == "extensions_overview"
+            {
                 harness_handler(invoke)
             } else {
                 invoke_handler(invoke)
@@ -1155,7 +1179,8 @@ pub fn run(cli_args: CliArgs) {
                 let data_dir = crate::portable::app_data_dir(&app.handle())
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 app.manage(grain_core::AppContext::new(resource_dir, data_dir.clone()));
-                if cfg!(feature = "agent-harness") {
+                #[cfg(feature = "agent-harness")]
+                {
                     match grain_core::extensions::ExtensionsRegistry::load(&data_dir) {
                         Ok(reg) => {
                             app.manage(std::sync::Arc::new(reg));
@@ -1327,10 +1352,11 @@ pub fn run(cli_args: CliArgs) {
                     api.prevent_exit();
                 }
             }
+            #[cfg(feature = "agent-harness")]
             if let tauri::RunEvent::Exit = &event {
                 if let Some(ctx) = app
                     .try_state::<Arc<grain_core::AppContext>>()
-                    .filter(|_| cfg!(feature = "agent-harness") && !headless_mode)
+                    .filter(|_| !headless_mode)
                 {
                     events_server::disable_dev_control(&ctx.data_dir);
                 }
@@ -1425,16 +1451,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,
             shortcut::change_append_trailing_space_setting,
-            grain_commands::extensions_overview,
-            grain_commands::extension_set_enabled,
-            grain_commands::extension_developer_status,
-            grain_commands::extension_set_developer_mode,
-            grain_commands::extension_load_unpacked,
-            grain_commands::extension_unload_dev,
-            grain_commands::extension_grant,
-            grain_auth::extension_auth_connection,
-            grain_auth::extension_auth_connect,
-            grain_auth::extension_auth_disconnect,
             grain_mcp::mcp_provider_status,
             grain_mcp::mcp_set_client_credentials,
             grain_mcp::mcp_set_provider_enabled,
@@ -1452,8 +1468,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::connections::mcp_connection_disconnect,
             grain_mcp::connections::mcp_connection_set_client_credentials,
             grain_mcp::connections::mcp_connection_clear_client_credentials,
-            grain_commands::extension_import_pack,
-            grain_commands::extension_uninstall,
             shortcut::change_lazy_stream_close_setting,
             // [GRAIN] change_vad_enabled_setting intentionally not registered;
             // upstream #1738 filler-word toggle is.

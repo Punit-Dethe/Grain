@@ -378,7 +378,7 @@ impl ConnectionRegistry {
         if candidate == state.records {
             return Ok(result);
         }
-        crate::extensions::atomic_write(&self.path, &bytes)
+        crate::atomic_file::atomic_write(&self.path, &bytes)
             .map_err(|_| RegistryError::Filesystem)?;
         state.disk_digest = digest(Some(&bytes));
         state.records = candidate;
