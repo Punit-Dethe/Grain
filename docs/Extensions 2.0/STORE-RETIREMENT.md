@@ -292,3 +292,12 @@ Repeat with Notion and a known page in a test workspace. Ask Agent to fetch
 the page from its URL and return the first sentence. Record installer,
 browser, discovery, and Agent failures separately. The hosted connection
 tests are read-only.
+
+### 2026-11-09 — Windows test installer ready
+
+Run `42495825689` succeeded for `adf2b77c5`. The unsigned NSIS installer
+`Grain GitHub Test_0.0.10_x64-setup.exe` was downloaded from
+[artifact 13625655239](https://github.com/Punit-Dethe/Grain/actions/runs/42495825689/artifacts/13625655239).
+Installer SHA-256 is
+`8e47a38e57070d7c4efd5c237179280dc9e99e87d3101473268b2847fe47f324`.
+Packaged sign-in, discovery, and read results remain pending for both providers.
