@@ -1,12 +1,12 @@
 //! Debug-only, one-shot MCP acceptance through the existing headless app path.
 //! No webview, listener, audio stack, settings override or second Agent loop.
-use std::{io::Read, path::Path, sync::Arc, time::Instant};
+use std::{io::Read, path::Path, time::Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
-const ALPHA_ID: &str = "com.grain.extensions.alpha";
+const GITHUB_TEST_ID: &str = "com.grain.github.test";
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
 
 #[derive(Deserialize)]
@@ -36,27 +36,16 @@ fn read_request(path: &Path) -> Result<Request, String> {
 }
 
 pub(crate) fn check_identity(app: &AppHandle) -> Result<(), String> {
-    if app.config().identifier != ALPHA_ID {
-        return Err("Agent probe requires the tester alpha application identity".into());
+    if app.config().identifier != GITHUB_TEST_ID {
+        return Err("Agent probe requires the isolated GitHub test application identity".into());
     }
     Ok(())
 }
 
 async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
     check_identity(app)?;
-    let context = app.state::<Arc<grain_core::AppContext>>();
-    if !context.settings().extension_developer_mode {
-        return Err("Enable extension developer mode in the alpha before probing".into());
-    }
     // Only MCP state is needed. Native workers deliberately remain unavailable;
     // their real-app acceptance stays in the maintained harness.
-    app.manage(Arc::new(
-        grain_core::extensions::ExtensionsRegistry::load(&context.data_dir)
-            .map_err(|_| "Cannot load the extension registry")?,
-    ));
-    app.manage(Arc::new(crate::grain_store::StoreState::init(
-        &context.data_dir,
-    )));
     app.manage(
         reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
@@ -101,7 +90,7 @@ async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
         }
     };
     Ok(
-        json!({"schema":1,"profile":ALPHA_ID,"scope":"MCP/backend-only","elapsed_ms":started.elapsed().as_millis(),"result":result}),
+        json!({"schema":1,"profile":GITHUB_TEST_ID,"scope":"MCP/backend-only","elapsed_ms":started.elapsed().as_millis(),"result":result}),
     )
 }
 

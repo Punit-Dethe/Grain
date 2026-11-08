@@ -513,7 +513,7 @@ export function configuredAuthHandlers(ctx) {
           "label",
           "remove",
           "destination",
-          "developer-off",
+          "disconnect",
         ]) {
           await reset();
           let record = await add();
@@ -529,10 +529,7 @@ export function configuredAuthHandlers(ctx) {
                 record,
                 definition("Changed destination", CONFIGURED_ENDPOINT, "none"),
               );
-            if (transition === "developer-off")
-              await ctx.invoke("extension_set_developer_mode", {
-                enabled: false,
-              });
+            if (transition === "disconnect") await disconnect(record);
             const result = await flow.pending;
             assert.match(result.error ?? "", /account or access changed/);
             await assert.rejects(oauth().callback(flow.callback));

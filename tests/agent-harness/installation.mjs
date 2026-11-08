@@ -241,18 +241,6 @@ export function installationHandlers(ctx) {
         await greeting("api-preserved");
         await note("missing-api:refused-working-owner-preserved");
       },
-      async "native.cli-package-ownership"() {
-        const { packagedOwnership } = await import("./packaging.mjs");
-        evidence.push(
-          await packagedOwnership({
-            ...ctx,
-            cli: ctx.cli(),
-            allow,
-            note,
-            record: (step) => evidence.push(step),
-          }),
-        );
-      },
       async "native.consent-persistence"() {
         await imported("installed-one");
         const sheet = await consent();

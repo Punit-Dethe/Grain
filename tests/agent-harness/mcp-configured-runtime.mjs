@@ -261,7 +261,7 @@ export function configuredRuntimeHandlers(ctx) {
               record,
               "mcp_configured_read",
               mutation,
-              ["noop", "peer-remove"].includes(transition)
+              ["noop", "peer-remove", "developer-off"].includes(transition)
                 ? "mcpVerified"
                 : "mcpRefused",
             );
@@ -274,7 +274,7 @@ export function configuredRuntimeHandlers(ctx) {
           ["stateless", "json", "disable"],
           ["legacy", "json", "remove"],
           ["stateless", "sse", "label"],
-          ["legacy", "sse", "developer-off"],
+          ["legacy", "sse", "disable"],
         ]) {
           await reset();
           let record = await add();
@@ -300,10 +300,6 @@ export function configuredRuntimeHandlers(ctx) {
             if (transition === "remove") await remove(record);
             if (transition === "label")
               record = await replace(record, definition("After cancellation"));
-            if (transition === "developer-off")
-              await ctx.invoke("extension_set_developer_mode", {
-                enabled: false,
-              });
             await ctx.waitFor(
               "Configured cancelled Agent stops",
               async () => !(await ctx.status()).agent.active,

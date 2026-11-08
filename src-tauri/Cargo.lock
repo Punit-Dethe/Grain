@@ -2549,12 +2549,10 @@ name = "grain-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "grain-sdk",
  "http",
  "jsonschema",
  "log",
- "minisign-verify",
  "serde",
  "serde_json",
  "sha2",

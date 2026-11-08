@@ -3,8 +3,8 @@ name: "Build Test"
 on:
   workflow_dispatch:
     inputs:
-      github-extension-alpha:
-        description: "Build only the isolated Windows extension alpha with the registered GitHub client"
+      github-mcp-test:
+        description: "Build only the isolated Windows GitHub test with the registered GitHub client"
         type: boolean
         default: false
       windows-only:
@@ -14,7 +14,7 @@ on:
 
 jobs:
   build-test:
-    if: ${{ !inputs.github-extension-alpha && !inputs.windows-only }}
+    if: ${{ !inputs.github-mcp-test && !inputs.windows-only }}
     permissions:
       contents: write
     strategy:
@@ -56,7 +56,7 @@ jobs:
     secrets: inherit
 
   windows-beta:
-    if: ${{ !inputs.github-extension-alpha && inputs.windows-only }}
+    if: ${{ !inputs.github-mcp-test && inputs.windows-only }}
     permissions:
       contents: write
     uses: ./.github/workflows/build.yml
@@ -72,8 +72,8 @@ jobs:
       sign-binaries: true
     secrets: inherit
 
-  extension-alpha:
-    if: ${{ inputs.github-extension-alpha }}
+  github-test:
+    if: ${{ inputs.github-mcp-test }}
     permissions:
       contents: write
     uses: ./.github/workflows/build.yml
@@ -81,9 +81,9 @@ jobs:
       ref: ${{ github.sha }}
       platform: windows-latest
       target: x86_64-pc-windows-msvc
-      github-extension-alpha: true
+      github-mcp-test: true
       is-debug-build: false
-      asset-prefix: grain-extensions-alpha
+      asset-prefix: grain-github-test
       upload-artifacts: true
       sign-binaries: false
     secrets: inherit

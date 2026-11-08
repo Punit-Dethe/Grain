@@ -1,26 +1,11 @@
 # Grain Agent acceptance harness
 
-For ordinary extension work, start with the normal suites: `bun run test:unit`
-or selected Vitest files, the affected Rust tests, and registry/CLI tests when
-those crates change. On Windows run host tests from `src-tauri/` with the existing
-`scripts/run-rust-test.ps1` Cargo runner. Use this real-app harness only for an
-affected application-boundary checkpoint; do not expand it for ordinary policies
-or repeat previously accepted provider journeys on every change. The source-aware
-alpha/Developer Mode policy is covered by normal Rust tests and the user's grouped
-app check (Pass, 16 October); eventual packaged-alpha acceptance is still required.
-
-**16 October store checkpoint:** use `--suite store` and `--suite store-mcp`
-for current store acceptance. All six cases pass after adapting the existing
-fixtures to first-round selected schemas, automatic Agent execution and current
-detail tabs. Actual call IDs/results, independent dispatch/vault counts and
-ownership/revocation checks remain mandatory; the old pending-per-call-approval
-update step is retired. 80 runner self-tests pass. The same stamped host was
-reused; no new runner, scenario or installer. See current
-[progress](../../docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md) for exact runs,
-earlier adapter failures and the grouped user check, now reported Pass. Other historical
-forced-discovery/manual-approval suites, including `--suite all`, are not a
-current-policy acceptance gate; retire or relocate still-useful assertions during
-the final contributor cleanup rather than add product compatibility behavior.
+Start with the frontend unit tests and affected Rust tests. On Windows use
+the existing Cargo runner at `scripts/run-rust-test.ps1` for desktop library
+tests. Use the real-app harness for an application boundary that the normal
+tests cannot cover. The configured MCP suites are the current checkpoint for
+custom connections. The signed-store suites and author CLI were retired on
+8 November. Dated evidence below describes its own build and scope.
 
 **15 October final discovery checkpoint:** compact deferred names/exact recovery
 are the normal debug/release policy; the experiment variable is retired. Nine
@@ -45,7 +30,7 @@ controlled configured-model comparison remains pending in
 [the lexical-first plan](../../docs/Extensions%202.0/FAST-TOOL-EXECUTION-PLAN.md).
 No new harness suite or testing engine was added for this work.
 
-### Terminal-only MCP probe (development alpha)
+### Terminal-only MCP probe (GitHub test profile)
 
 **15 October mixed-provider acceptance:** seven real Harbor journeys passed with
 GitHub and Notion enabled, including combined reads and disposable writes/fresh
@@ -62,8 +47,8 @@ The debug app recognizes `GRAIN_AGENT_PROBE_FILE` as a one-shot request file.
 This reuses its headless setup and production MCP/Agent functions. It creates no
 browser, microphone, native worker server or testing service. Release builds and
 the separate `agent-harness` binary do not contain this entry point. It refuses
-the ordinary app identity: use a debug build with the alpha configuration.
-Close the alpha first; the probe borrows its saved accounts/model without changing
+the ordinary app identity: use a debug build with the GitHub test configuration.
+Close the GitHub test app first; the probe borrows its saved accounts/model without changing
 provider selection. Keep request/output files in ignored `.runs/` evidence; never
 commit account-bound catalogue snapshots or credentials.
 Validate the JSON report/error and trace, not only the parent GUI process exit
@@ -79,7 +64,7 @@ $taskOldConfig = $env:TAURI_CONFIG
 try {
   $env:LOCALAPPDATA = $null
   $env:TEMP = $null
-  $env:TAURI_CONFIG = Get-Content tauri.extensions-alpha.conf.json -Raw
+  $env:TAURI_CONFIG = Get-Content tauri.github-test.conf.json -Raw
   cargo build --bin handy
 } finally {
   $env:LOCALAPPDATA = $taskOldLocal
@@ -159,7 +144,7 @@ $env:GRAIN_LEXICAL_REPORT = 'C:\absolute\owned-run\retrieval.json'
 cargo --config 'target.x86_64-pc-windows-msvc.runner=["powershell.exe","-NoProfile","-File","C:/absolute/repo/scripts/run-rust-test.ps1"]' test --lib exported_catalogue_required_sets_under_schema_budget -- --ignored
 ```
 
-## Installed GitHub alpha checkpoint (13 October)
+## Installed GitHub MCP checkpoint
 
 **14 October corrected checkpoint:** after the external 9router schema repair,
 issue #2 was created with exact title/body (`github-alpha-hU7Agp`), then updated
@@ -195,41 +180,25 @@ node tests/agent-harness/github-alpha.mjs --preflight
 node tests/agent-harness/github-alpha.mjs --catalogue
 node tests/agent-harness/github-alpha.mjs --read
 node tests/agent-harness/github-alpha.mjs --workflow
-# Only for an explicitly authorized real package-update checkpoint:
-node tests/agent-harness/github-alpha.mjs --workflow --update-version=0.1.1
 node --test tests/agent-harness/github-alpha.test.mjs
 ```
 
-Close the installed **Grain Extensions Alpha** first. It must already have
-Agent enabled, its model configured, extension Developer Mode enabled, and
-the verified GitHub extension installed, enabled and signed in. Disable other
-extension tools for this provider-specific batch. GitHub CLI needs independent
-read access to `Punit-Dethe/grain-github-alpha-test/README.md` for verification.
+Build the isolated Windows app using the Build Test workflow's
+github-mcp-test option. In Grain GitHub Test, enable Agent, select its model,
+connect GitHub from Browse extensions and disable other connections. Close
+the app before running the script. The GitHub CLI needs independent read
+access to Punit-Dethe/grain-github-alpha-test/README.md for the read check.
 
 This focused script starts the actual installed alpha, attaches to its owned
 WebView2 through loopback CDP and invokes production Tauri Agent commands. It
 does not use Computer Use, screenshots, simulated clicks, fixtures or a model
 relay. `--read` approves only the test repository's README getter, verifies the
 returned content independently, restarts the owned app, then repeats the read.
-Without the explicit update option, preflight/catalogue/read perform no writes. Existing account
-credentials remain in Grain; no profile copying or token extraction is used.
-`--catalogue` invokes the real host's SDK discovery and records supported public
-tool names/count/digest without executing any tool. The current installed binary
-returned 49 default-catalogue tools in `github-alpha-yTL7At`, cleanup Pass. This
-does not prove those tools can execute or certify the new all-toolset source
-change before it is built into an installed alpha.
-
-The trace-capable `7d7b96f2` build later discovers 100 supported tools and passes
-read/restart/read with two discovery schemas then three including the getter.
-It predates package-owned headers. The explicit update option uses the real
-signed Store update command before Agent work; it requires an actual version
-change, retained connection/account, revised lease and GitHub's public toolset
-option. Updates deliberately disable tools; the checkpoint verifies that state,
-then explicitly enables the new revision. It does not inject JSON, copy
-credentials or authorize a provider write.
-If it has already updated the package, do not repeat the update option; run the
-separate desired check. Consolidate this checkpoint with normal store acceptance
-when the standard runner supports installed alphas; do not grow another runner.
+Preflight and catalogue discovery are read-only. The catalogue check records
+supported tool names, a count and a digest without executing tools. The README
+check verifies the result through the independent GitHub CLI and repeats the
+read after restarting the owned app. Existing test account credentials stay in
+the isolated profile.
 
 `--workflow` is an explicitly authorized write checkpoint on the disposable
 `Punit-Dethe/grain-github-alpha-test` repository: one marked issue, update/close,
@@ -300,13 +269,9 @@ shortcut/dictation and live GitHub approval remain separate acceptance.
 
 ```powershell
 powershell.exe -NoProfile -File tests/agent-harness/build.ps1
-node tests/agent-harness/run.mjs --suite mcp-store-checkpoint
-node tests/agent-harness/run.mjs --suite store-mcp
 # Expected exit 1 at the owner receipt assertion, with cleanup Pass:
 node tests/agent-harness/run.mjs --scenario mcp.configured-execution --fault wrong-configured-owner
 ```
-
-Develop with focused component tests; real-app runs belong at feature checkpoints. New store cases were necessary because native-package store cases cannot exercise the MCP commands; protocol/account matrices are reused rather than duplicated. The existing lock helper accepts only `extensions.json`, `mcp-connections.json` or `grain.settings.json` under the verified isolated root. `-McpConfigured` inventory/cleanup includes only the two fixed store IDs when a validated store marker exists, with the exact run/service suffix; it never reads credential blobs. Keep runner/source inputs fixed through teardown. E2's remote connection model is accepted; E3 SDK/CLI is next, with store UI/publishing and public release still separate.
 
 **E2f configured registered clients:** [Scope, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-CLIENT-REGISTRATION-AUDIT.md). The two new client cases cover host/revision-owned public/confidential setup, secret rotation, logout/reset, independent same-endpoint accounts, discovery-failure preservation and pending/active cancellation. `mcp-configured-auth` now selects five cases; `mcp-connection-checkpoint` selects **36 distinct verdicts** (eleven configured, 23 catalogue, two smoke) with original deadlines. Inventory **105 IDs / 90 self-contained / 80 Node tests**. Run backend/build checks before actual hosts, actual scopes serially, and freeze source/runner inputs through cleanup. Keep these cases and exact fault admission as regression infrastructure; generated profiles/TLS/logs/inspectors remain disposable evidence. The finite issuer/wire evidence bounds are **2,560 / 4,608**; capacity/terminal-error tests remain and production limits are unchanged. The audit records failed/incomplete scopes separately; implementation alone does not accept check 65.
 
@@ -516,9 +481,6 @@ npm run test:agent -- --suite mcp-linear-contracts --linear-sign-in
 # No account: fixed public nested text read before/after restart.
 npm run test:agent -- --suite mcp-hf-live
 
-# Signed local store, real Store page, offline and interrupted downloads.
-npm run test:agent -- --suite store
-
 # Existing registry state, invalid startup and real failed saves.
 npm run test:agent -- --suite registry-recovery
 
@@ -698,32 +660,7 @@ This withholds the actual restart. Expect the new-host-session assertion to fail
 
 The user has completed the ordinary-app import/consent batch. For reproduction, `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/prepare-installation.ps1` prints a permission-free package with one confirmed tool; the audit retains the three procedures. This disposable manual package intentionally lacks a submission icon; it is not a CLI/store packaging certificate.
 
-```powershell
-npm run test:agent -- --scenario native.cli-package-ownership --fault stale-package
-```
-
-This deliberately imports the original package instead of the compiled replacement. Expect the old greeting to fail the replacement-result assertion, exit 1 and cleanup Pass. The fault is accepted only for this fixed scenario; it adds no automatic product/tool retries.
-
-The production-logic runner filters the normal backend library tests into `agent`, `native`, `execution`, `mcp` and `auth` groups, plus the core registry tests in `registry`, imported-update boundaries in `imported`, developer-project validation in `developer` and signed-store boundaries in `store`. `all` includes all nine. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
-
-### Signed-store scenarios
-
-| ID                        | What is asserted                                                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `store.close-offline`     | Ten actual Store loading/route-close/reopen cycles cancel held refresh HTTP responses and drop the resident index. The real Install button installs a verified package disabled, real consent and Agent greeting work across restart, cached offline browsing shows its notice and disables Update, and a direct backend install is also refused. The installed greeting remains usable.                |
-| `store.pending-mutations` | During held real artifact downloads, production disable and remove operations supersede the pending update. Disabled/removed choices survive actual restart. Both schedules repeat under a developer override; the parked installed record is preserved on disable and removed without breaking the active developer. Explicit subsequent installation/consent returns the new greeting across restart. |
-| `store.integrity-close`   | A same-length corrupt artifact fails its hash check; closing cancels a held artifact request; an invalid catalogue signature becomes offline and admits no artifact fetch. Corrected signed bytes install and produce the actual approved greeting.                                                                                                                                                     |
-
-The runner starts an owned ephemeral loopback HTTP fixture only when a store scenario is selected. Its fixed public test seed signs modern minisign `ED` messages using Blake2b-512 prehash and a signed trusted comment. The separate debug host uses the matching **test publishing anchor only inside its validated isolated profile**. Normal publishing roots, mirrors and release initialization are unchanged. Cached index loading still passes through the production signature verifier and rollback-floor logic. No arbitrary endpoint/key or ordinary account is admitted. Model/store fixture ports cannot target the ordinary event listener on 7124 or collide with owned event/model listeners.
-
-This certifies signed fixture installation and ownership through the production verifier/installer, not a published production extension or production root rotation. The fixture returns no roots-chain/revocation document. Accounts, OS vault recovery, root rotation, live publishing, power loss and physical file-picker/mouse behavior remain separate. The [focused store audit](../../docs/Extensions%202.0/NATIVE-STORE-AUDIT.md) records acceptance and exact build/run evidence.
-
-```powershell
-npm run test:agent:logic -- --group store
-npm run test:agent -- --scenario store.close-offline --fault unclosed-store
-```
-
-The deliberate fault withholds navigation away from the real loading Store page. Expect the cancelled-response assertion to fail, exit 1 and cleanup Pass, including release of the owned fixture listener and held socket. It is accepted only for this scenario and never counts as a passing product run. No ordinary-app microphone or external sign-in step is needed for these fixed permission-free store cases.
+The production-logic runner filters the normal backend library tests into `agent`, `native`, `execution`, `mcp` and `auth` groups, plus the core registry tests in `registry`, imported-update boundaries in `imported`, developer-project validation in `developer`. `all` includes all eight. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
 
 ## Verify the harness detects a real failure
 

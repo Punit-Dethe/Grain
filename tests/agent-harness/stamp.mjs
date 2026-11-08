@@ -9,7 +9,6 @@ import { promisify } from "node:util";
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
 export const stampPath = join(here, ".build/host.json");
-export const cliStampPath = join(here, ".build/cli.json");
 
 export async function hashFile(path) {
   const hash = createHash("sha256");
@@ -35,13 +34,19 @@ export async function sourceFingerprint() {
   await visit(join(repo, "src-tauri/capabilities"));
   await visit(join(repo, "src-tauri/resources"));
   await visit(join(repo, "public"));
-  await visit(join(repo, "crates/grain-core/seed"));
   for (const entry of await readdir(join(repo, "crates"), {
     withFileTypes: true,
   })) {
     if (!entry.isDirectory()) continue;
+    const manifest = join(repo, "crates", entry.name, "Cargo.toml");
+    try {
+      await access(manifest);
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
     await visit(join(repo, "crates", entry.name, "src"));
-    paths.push(join(repo, "crates", entry.name, "Cargo.toml"));
+    paths.push(manifest);
   }
   paths.push(
     ...[
@@ -128,26 +133,12 @@ export async function verifyBuild(binary) {
   return stamp;
 }
 
-export async function verifyCli() {
-  const stamp = JSON.parse(await readFile(cliStampPath, "utf8"));
-  if (stamp.schema !== 1 || stamp.kind !== "grain-ext-cli")
-    throw new Error("Invalid CLI build stamp");
-  if ((await hashFile(stamp.binary)) !== stamp.binarySha256)
-    throw new Error("CLI executable does not match its build stamp");
-  if ((await sourceFingerprint()) !== stamp.sourceFingerprint)
-    throw new Error(
-      "Sources changed since the CLI build; rebuild before testing",
-    );
-  return stamp;
-}
-
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  const cli = process.argv[2] === "--cli";
-  const binaryArg = process.argv[cli ? 3 : 2];
-  const expectedFingerprint = process.argv[cli ? 4 : 3];
+  const binaryArg = process.argv[2];
+  const expectedFingerprint = process.argv[3];
   if (!binaryArg)
     throw new Error("stamp.mjs requires the built executable path");
   const binary = resolve(binaryArg);
@@ -159,13 +150,11 @@ if (
   ).stdout.trim();
   await mkdir(dirname(stampPath), { recursive: true });
   await writeFile(
-    cli ? cliStampPath : stampPath,
+    stampPath,
     JSON.stringify(
       {
         schema: 1,
-        ...(cli
-          ? { kind: "grain-ext-cli" }
-          : { applicationId: "com.grain.agent-harness" }),
+        applicationId: "com.grain.agent-harness",
         binary,
         binarySha256: await hashFile(binary),
         sourceFingerprint: fingerprint,
@@ -176,5 +165,5 @@ if (
       2,
     ),
   );
-  console.log(`Build identity: ${cli ? cliStampPath : stampPath}`);
+  console.log(`Build identity: ${stampPath}`);
 }

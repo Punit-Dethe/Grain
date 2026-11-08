@@ -1,10 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Grain Extensions Alpha",
-  "identifier": "com.grain.extensions.alpha",
-  "build": {
-    "beforeBuildCommand": "bun run build --mode extensions-alpha"
-  },
+  "productName": "Grain GitHub Test",
+  "identifier": "com.grain.github.test",
   "bundle": {
     "createUpdaterArtifacts": false
   },

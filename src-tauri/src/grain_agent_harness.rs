@@ -23,8 +23,6 @@ struct Marker {
     run_id: String,
     model_port: u16,
     #[serde(default)]
-    store_port: Option<u16>,
-    #[serde(default)]
     auth_port: Option<u16>,
     #[serde(default)]
     mcp_port: Option<u16>,
@@ -74,12 +72,12 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
         || (marker.mcp_live_huggingface
             && (marker.mcp_live_deepwiki || marker.mcp_live_linear || marker.mcp_auth
                 || marker.mcp_port.is_some() || marker.mcp_peer_port.is_some()
-                || marker.auth_port.is_some() || marker.store_port.is_some()))
+                || marker.auth_port.is_some()))
         || (marker.mcp_linear_consent && !marker.mcp_live_linear)
         || (marker.mcp_live_linear
             && (marker.mcp_live_deepwiki || marker.mcp_auth || marker.mcp_port.is_some()
                 || marker.mcp_peer_port.is_some() || marker.auth_port.is_some()
-                || marker.store_port.is_some()))
+               ))
         || (marker.mcp_live_deepwiki && marker.mcp_port.is_some())
         || (marker.mcp_auth && (marker.mcp_port.is_none() || marker.mcp_live_deepwiki))
         || (marker.mcp_peer_port.is_some() && !marker.mcp_auth)
@@ -88,21 +86,17 @@ fn read_marker(root: &Path) -> Result<Marker, String> {
         || marker.model_port == 0
         || marker.model_port == crate::events_server::EVENTS_PORT
         || marker.model_port == 7124 // Ordinary Grain event listener.
-        || marker.store_port.is_some_and(|port| {
-            port == 0 || port == marker.model_port || port == 7124
-                || port == crate::events_server::EVENTS_PORT
-        })
         || marker.auth_port.is_some_and(|port| {
-            port == 0 || port == marker.model_port || Some(port) == marker.store_port
+            port == 0 || port == marker.model_port
                 || port == 7124 || port == crate::events_server::EVENTS_PORT
         })
         || marker.mcp_port.is_some_and(|port| {
-            port == 0 || port == marker.model_port || Some(port) == marker.store_port
+            port == 0 || port == marker.model_port
                 || Some(port) == marker.auth_port || port == 7124
                 || port == crate::events_server::EVENTS_PORT
         })
         || marker.mcp_peer_port.is_some_and(|port| {
-            port == 0 || port == marker.model_port || Some(port) == marker.store_port
+            port == 0 || port == marker.model_port
                 || Some(port) == marker.auth_port || Some(port) == marker.mcp_port
                 || port == 7124 || port == crate::events_server::EVENTS_PORT
         })
@@ -199,22 +193,6 @@ pub(super) fn mcp_peer_config() -> Result<(PathBuf, u16), String> {
         .ok_or("MCP peer fixture is not enabled")?;
     Ok((value.root.clone(), port))
 }
-
-/// Fixed, public test key only. No production root or signing key is replaced.
-pub(crate) fn store_base(data: &Path) -> Option<String> {
-    assert_eq!(
-        data,
-        config().data,
-        "Store fixture requires the owned profile"
-    );
-    config()
-        .marker
-        .store_port
-        .map(|port| format!("http://127.0.0.1:{port}/"))
-}
-
-pub(crate) const STORE_PUBLISHING_KEY: &str =
-    "RWRncmFpbi1oMeKKiXB1MzK9cv70E+awsu8bSq3aeqLBQfIzcSpodrNR";
 
 pub fn vault_service(service: &str) -> String {
     format!("{service}.agent-harness.{}", config().marker.run_id)
@@ -466,8 +444,6 @@ pub fn agent_harness_status(app: AppHandle, window: WebviewWindow) -> Result<Val
         "fixtureApproved": record.as_ref().is_some_and(|record| record.actions_approved.is_some()),
         "fixtureVersion": record.as_ref().map(|record| &record.installed_version),
         "fixtureTrust": record.as_ref().map(|record| record.trust),
-        "store": app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>()
-            .map(|state| state.harness_snapshot()),
         "events": *EVENTS.lock().unwrap(),
     }))
 }
@@ -779,23 +755,16 @@ mod tests {
             std::fs::write(
                 &marker,
                 format!(
-                    r#"{{"schema":1,"runId":"{}","modelPort":9000,"storePort":{port}}}"#,
-                    uuid::Uuid::new_v4()
+                    r#"{{"schema":1,"runId":"{}","modelPort":9000,"authPort":{port}}}"#,
+                    uuid::Uuid::new_v4(),
                 ),
             )
             .unwrap();
             assert!(read_marker(root.path()).is_err());
         }
-        for port in [0, 9000, 9001, 7124, crate::events_server::EVENTS_PORT] {
+        for port in [0, 9000, 9002, 7124, crate::events_server::EVENTS_PORT] {
             std::fs::write(&marker, format!(
-                r#"{{"schema":1,"runId":"{}","modelPort":9000,"storePort":9001,"authPort":{port}}}"#,
-                uuid::Uuid::new_v4(),
-            )).unwrap();
-            assert!(read_marker(root.path()).is_err());
-        }
-        for port in [0, 9000, 9001, 9002, 7124, crate::events_server::EVENTS_PORT] {
-            std::fs::write(&marker, format!(
-                r#"{{"schema":1,"runId":"{}","modelPort":9000,"storePort":9001,"authPort":9002,"mcpPort":{port}}}"#,
+                r#"{{"schema":1,"runId":"{}","modelPort":9000,"authPort":9002,"mcpPort":{port}}}"#,
                 uuid::Uuid::new_v4(),
             )).unwrap();
             assert!(read_marker(root.path()).is_err());
@@ -831,7 +800,6 @@ mod tests {
             ("mcpPort", serde_json::json!(9001)),
             ("mcpPeerPort", serde_json::json!(9002)),
             ("authPort", serde_json::json!(9003)),
-            ("storePort", serde_json::json!(9004)),
         ] {
             let mut mixed = marker.clone();
             mixed[key] = value;
@@ -885,7 +853,7 @@ mod tests {
             (true, 7124, false),
             (true, crate::events_server::EVENTS_PORT, false),
         ] {
-            std::fs::write(root.path().join(".grain-agent-harness.json"), serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"storePort":9001,"authPort":9002,"mcpPort":9003,"mcpAuth":auth,"mcpPeerPort":port})).unwrap()).unwrap();
+            std::fs::write(root.path().join(".grain-agent-harness.json"), serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"authPort":9002,"mcpPort":9003,"mcpAuth":auth,"mcpPeerPort":port})).unwrap()).unwrap();
             assert_eq!(read_marker(root.path()).is_ok(), valid);
         }
     }
@@ -921,7 +889,6 @@ mod tests {
             ("mcpPort", serde_json::json!(9001)),
             ("mcpPeerPort", serde_json::json!(9002)),
             ("authPort", serde_json::json!(9003)),
-            ("storePort", serde_json::json!(9004)),
         ] {
             let mut mixed = marker.clone();
             mixed[key] = value;

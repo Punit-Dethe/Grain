@@ -25,7 +25,6 @@ pub mod settings;
 // [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
 pub mod trust;
 // Bounded, atomic local storage of the signed store metadata; no service.
-pub mod store_cache;
 // [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.
 pub mod install;
 // [GRAIN] The ASR-text substrate (normalise/tokens/same_word/fuzzy_keys) shared

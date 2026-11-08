@@ -14,7 +14,7 @@ export async function withRegistryLock(
   fileName = "extensions.json",
 ) {
   assert.ok(
-    ["extensions.json", "mcp-connections.json", "grain.settings.json"].includes(
+    ["extensions.json", "mcp-custom-connections.json", "grain.settings.json"].includes(
       fileName,
     ),
   );

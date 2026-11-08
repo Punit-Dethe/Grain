@@ -734,8 +734,7 @@ pub struct ExtensionCard {
     /// Sent as string — u64 doesn't survive JS numbers.
     pub toggle_seq: String,
     pub repository: Option<String>,
-    /// Manifest-declared capabilities. The installed UI needs these even for
-    /// local/imported packs which have no signed-store catalogue entry.
+    /// Manifest-declared capabilities displayed during fixture approval.
     pub capabilities: Vec<String>,
     /// [GRAIN] The tools this extension gives the Agent, so the card can show
     /// them again after the approval sheet closes.
@@ -801,6 +800,9 @@ impl ActionInfo {
 #[tauri::command]
 #[specta::specta]
 pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String> {
+    if !cfg!(feature = "agent-harness") {
+        return Ok(Vec::new());
+    }
     use grain_core::extensions as ext;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
@@ -857,10 +859,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             icon: crate::extension_icons::ui_icon(&app, &rec.id),
             version: rec.installed_version.clone(),
             tier: tier.to_string(),
-            // Load-unpacked is always shown as `dev`; otherwise the rung comes
-            // from the record's real trust (set only by a verified store
-            // install, DISTRIBUTION-PLAN §3.2). A locally-imported pack is
-            // untrusted, shown as `community`.
             trust: if rec.dev.is_some() {
                 "dev".to_string()
             } else {
@@ -940,22 +938,6 @@ pub fn extension_set_enabled(
             let record = reg
                 .record(pack_id)
                 .ok_or("extension is no longer installed")?;
-            // [GRAIN] Phase 5A (DISTRIBUTION-PLAN §3.1, §5.3): a revoked
-            // extension cannot run again, enforced from the cached revocation
-            // list BEFORE a worker is ever spawned — so it holds even if the
-            // machine has been offline since the revocation was published.
-            if enabled {
-                if let Some(store) =
-                    app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>()
-                {
-                    let version = &record.installed_version;
-                    if let Some(grain_sdk::RevocationState::Revoked) =
-                        store.revocation_state(pack_id, &version)
-                    {
-                        return Err(serde_json::json!({ "revoked": pack_id }).to_string());
-                    }
-                }
-            }
             if !enabled {
                 let persisted = reg
                     .set_enabled(pack_id, false)
@@ -1631,10 +1613,7 @@ pub fn extension_import_pack(
                 .as_ref()
                 .and_then(|r| r.authentication_session.clone()),
             dev: None,
-            // A manually imported local file is UNTRUSTED, always — even if a
-            // store-verified record for this id existed. Trust comes only from the
-            // signed index (DISTRIBUTION-PLAN §3.2); inheriting it here would let a
-            // local pack impersonate a verified one.
+            // A local import uses the untrusted fixture profile.
             trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
         },
         revision,
@@ -1683,13 +1662,6 @@ pub fn extension_grant(
         .ok_or_else(|| format!("'{id}' is not installed"))?;
     let pack = load_pack(&app, &id)?;
     let rec = reviewed_grant_record(rec, &pack, permissions, &approval_digest)?;
-    if let Some(store) = app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>() {
-        if store.revocation_state(&id, &rec.installed_version)
-            == Some(grain_sdk::RevocationState::Revoked)
-        {
-            return Err(serde_json::json!({"revoked": id}).to_string());
-        }
-    }
     let prior_generation = rec.execution_generation;
     let approved = reg.approve_and_enable_if_current(rec, revision);
     if reg

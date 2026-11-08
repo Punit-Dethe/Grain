@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$Root, [ValidateSet('extensions.json', 'mcp-connections.json', 'grain.settings.json')][string]$FileName = 'extensions.json')
+param([Parameter(Mandatory = $true)][string]$Root, [ValidateSet('extensions.json', 'mcp-custom-connections.json', 'grain.settings.json')][string]$FileName = 'extensions.json')
 $ErrorActionPreference = 'Stop'
 $ownedRoot = [System.IO.Path]::GetFullPath($Root)
 $rootItem = Get-Item -LiteralPath $ownedRoot

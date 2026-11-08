@@ -8,13 +8,12 @@ pub(super) struct Client<'a> {
 }
 
 pub(super) fn github<'a>(
-    extension_id: Option<&str>,
+    provider_id: &str,
     endpoint: &str,
     client_id: Option<&'a str>,
     client_secret: Option<&'a str>,
 ) -> Option<Client<'a>> {
-    if extension_id != Some("com.grain.github") || endpoint != "https://api.githubcopilot.com/mcp/"
-    {
+    if provider_id != "github" || endpoint != "https://api.githubcopilot.com/mcp/" {
         return None;
     }
     let id = client_id?;
@@ -49,16 +48,8 @@ mod tests {
     #[test]
     fn credentials_are_restricted_to_the_supported_extension_and_exact_resource() {
         let resolve = |id, endpoint| github(id, endpoint, Some("Iv1.test"), Some("test-secret"));
-        assert!(resolve(
-            Some("com.grain.github"),
-            "https://api.githubcopilot.com/mcp/"
-        )
-        .is_some());
-        for id in [
-            None,
-            Some("com.example.github"),
-            Some("com.grain.github.extra"),
-        ] {
+        assert!(resolve("github", "https://api.githubcopilot.com/mcp/").is_some());
+        for id in ["", "com.example.github", "github.extra"] {
             assert!(resolve(id, "https://api.githubcopilot.com/mcp/").is_none());
         }
         for endpoint in [
@@ -68,7 +59,7 @@ mod tests {
             "https://api.githubcopilot.com.evil.example/mcp/",
             "http://api.githubcopilot.com/mcp/",
         ] {
-            assert!(resolve(Some("com.grain.github"), endpoint).is_none());
+            assert!(resolve("github", endpoint).is_none());
         }
     }
 
@@ -83,23 +74,17 @@ mod tests {
             (Some("client\n"), Some("secret")),
             (Some("client"), Some(" secret")),
         ] {
-            assert!(github(
-                Some("com.grain.github"),
-                "https://api.githubcopilot.com/mcp/",
-                id,
-                secret
-            )
-            .is_none());
+            assert!(github("github", "https://api.githubcopilot.com/mcp/", id, secret).is_none());
         }
         assert!(github(
-            Some("com.grain.github"),
+            "github",
             "https://api.githubcopilot.com/mcp/",
             Some(&"x".repeat(513)),
             Some("secret")
         )
         .is_none());
         assert!(github(
-            Some("com.grain.github"),
+            "github",
             "https://api.githubcopilot.com/mcp/",
             Some("client"),
             Some(&"x".repeat(4097))

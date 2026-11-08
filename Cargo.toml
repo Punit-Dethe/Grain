@@ -10,8 +10,6 @@
 resolver = "2"
 members = [
     "crates/grain-core",
-    "crates/grain-ext-cli",
-    "crates/grain-extension-checks",
     "crates/grain-sdk",
     "crates/grain-tdt",
 ]

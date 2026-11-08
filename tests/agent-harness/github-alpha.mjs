@@ -76,23 +76,19 @@ export function approvedGitHubRead(confirm) {
   );
 }
 
-export async function runInstalledGitHub(mode, updateVersion) {
+export async function runInstalledGitHub(mode) {
   assert.ok(
     ["--preflight", "--catalogue", "--read", "--workflow"].includes(mode),
     "Use --preflight, --catalogue, --read or --workflow",
   );
-  assert.ok(
-    updateVersion === undefined || /^\d+\.\d+\.\d+$/.test(updateVersion),
-    "An explicit store update requires a release version",
-  );
   const here = dirname(fileURLToPath(import.meta.url));
   const root = await mkdtemp(join(here, ".runs/github-alpha-"));
   const binary = await realpath(
-    join(process.env.LOCALAPPDATA, "Grain Extensions Alpha", "handy.exe"),
+    join(process.env.LOCALAPPDATA, "Grain GitHub Test", "handy.exe"),
   );
   const report = {
     runId: randomUUID(),
-    evidenceClass: "installed-alpha/real-agent-ipc/live-github",
+    evidenceClass: "installed-github-test/real-agent-ipc/live-github",
     commit: "installed-binary",
     binarySha256: await hashFile(binary),
     runnerSha256: await hashFile(fileURLToPath(import.meta.url)),
@@ -181,7 +177,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
     );
     if (Number(active.stdout.trim()) !== 0)
       throw new Blocked(
-        "Close the installed extension alpha before running this check",
+        "Close the installed GitHub test app before running this check",
       );
     const listener = createServer();
     await new Promise((done) => listener.listen(0, "127.0.0.1", done));
@@ -227,7 +223,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
           return page;
       }
     });
-    assert.equal(await invoke("plugin:app|name"), "Grain Extensions Alpha");
+    assert.equal(await invoke("plugin:app|name"), "Grain GitHub Test");
   };
   const stop = async () => {
     if (!child) return;
@@ -305,72 +301,41 @@ export async function runInstalledGitHub(mode, updateVersion) {
       throw error;
     }
   };
-  let connection;
   const preflight = async () => {
     const settings = await main.evaluate(async () => {
       const value = await window.__TAURI_INTERNALS__.invoke("get_app_settings");
       return {
         agentEnabled: value.agent_enabled,
-        developerMode: value.extension_developer_mode,
         modelSelected:
           !!value.post_process_models?.[value.post_process_provider_id],
         model: value.post_process_models?.[value.post_process_provider_id],
       };
     });
+    if (!settings.agentEnabled || !settings.modelSelected)
+      throw new Blocked("Enable Agent and select its model in the test build.");
+    const presets = await invoke("mcp_provider_status");
+    const github = presets.find((item) => item.id === "github");
     if (
-      !settings.agentEnabled ||
-      !settings.developerMode ||
-      !settings.modelSelected
+      github?.endpoint !== "https://api.githubcopilot.com/mcp/" ||
+      !github.connected ||
+      !github.enabled
     )
       throw new Blocked(
-        "Enable Agent, select its model and enable extension Developer Mode in the alpha",
+        "Connect and enable the GitHub preset in Browse extensions.",
       );
-    const connections = await invoke("mcp_connections_list");
-    const catalogueIds = (await invoke("mcp_provider_status")).map(
-      (item) => item.id,
-    );
-    const enabledCatalogueIds = await main.evaluate(async (ids) => {
-      const settings =
-        await window.__TAURI_INTERNALS__.invoke("get_app_settings");
-      return settings.mcp_enabled_providers.filter((id) => ids.includes(id));
-    }, catalogueIds);
-    if (enabledCatalogueIds.length)
-      throw new Blocked(
-        "Disable developer-catalogue MCP entries before an installed-extension check",
-      );
-    const matches = connections.filter(
-      (row) =>
-        row.source === "store" &&
-        row.extensionId === "com.grain.github" &&
-        row.url === "https://api.githubcopilot.com/mcp/",
-    );
-    if (matches.length !== 1)
-      throw new Blocked("Install the verified GitHub extension in the alpha");
-    connection = matches[0];
-    const status = await invoke("mcp_connection_status", {
-      id: connection.id,
-      expectedRevision: connection.revision,
-    });
-    if (!status.connected || !status.enabled)
-      throw new Blocked(
-        "Sign in and enable the installed GitHub extension in Grain",
-      );
-    // Keep unrelated tools out of this provider-specific acceptance batch.
-    const enabled = connections.filter((row) => row.state === "enabled");
-    const native = await invoke("extensions_overview");
+    const custom = await invoke("mcp_connections_list");
     if (
-      enabled.some((row) => row.id !== connection.id) ||
-      native.some((card) => card.enabled && card.trust !== "core")
+      custom.some((row) => row.state === "enabled") ||
+      presets.some((row) => row.id !== "github" && row.enabled)
     )
       throw new Blocked(
-        "Disable other extension tools for this focused GitHub check",
+        "Disable other connections for this focused GitHub check.",
       );
     return {
       ...settings,
-      connected: status.connected,
-      enabled: status.enabled,
-      accountState: status.state,
-      enabledCatalogueCount: enabledCatalogueIds.length,
+      connected: github.connected,
+      enabled: github.enabled,
+      accountState: github.state,
     };
   };
   const read = async (expected) => {
@@ -380,7 +345,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
         messages: [
           {
             role: "user",
-            content: `Use only the installed GitHub extension's get_file_contents tool with owner=Punit-Dethe, repo=grain-github-alpha-test and path=README.md on its default branch. The repository is already known: do not search repositories or fetch account information. Return the complete README verbatim. Do not create or modify anything. Do not use other extensions. If access is denied or the file cannot be read, report that error and stop.`,
+            content: `Use only the GitHub connection's get_file_contents tool with owner=Punit-Dethe, repo=grain-github-alpha-test and path=README.md on its default branch. The repository is already known: do not search repositories or fetch account information. Return the complete README verbatim. Do not create or modify anything. Do not use other extensions. If access is denied or the file cannot be read, report that error and stop.`,
           },
         ],
         context: null,
@@ -476,7 +441,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
     return {
       approvedReads: approvals,
       readmeVerified: true,
-      connectionRevision: connection.revision,
+      providerId: "github",
       trace: await trace(),
     };
   };
@@ -495,7 +460,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
         messages: [
           {
             role: "user",
-            content: `${prompt} The repository is already known. Do not search repositories or fetch account information. Use only the installed GitHub extension. Perform this operation once; do not repeat it if the result is uncertain. After the requested action, summarize its result and stop.`,
+            content: `${prompt} The repository is already known. Do not search repositories or fetch account information. Use only the GitHub connection. Perform this operation once; do not repeat it if the result is uncertain. After the requested action, summarize its result and stop.`,
           },
         ],
         context: null,
@@ -582,63 +547,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
   try {
     await mkdir(join(root, "webview"));
     await launch();
-    await check("github.installed-preflight", preflight);
-    if (updateVersion) {
-      await check("github.package-update", async () => {
-        const previous = connection;
-        assert.notEqual(
-          previous.version,
-          updateVersion,
-          "Require an actual update",
-        );
-        try {
-          await invoke("store_browse", {}, 120000);
-          await invoke(
-            "store_mcp_update",
-            {
-              connectionId: previous.id,
-              expectedRevision: previous.revision,
-              version: updateVersion,
-            },
-            120000,
-          );
-        } finally {
-          await invoke("store_close");
-        }
-        const updated = (await invoke("mcp_connections_list")).find(
-          (row) => row.id === previous.id,
-        );
-        assert.ok(updated, "Update must retain the connection");
-        assert.equal(updated.version, updateVersion);
-        assert.notEqual(updated.revision, previous.revision);
-        const account = await invoke("mcp_connection_status", {
-          id: updated.id,
-          expectedRevision: updated.revision,
-        });
-        assert.equal(account.connected, true, "Update must retain sign-in");
-        assert.equal(
-          account.enabled,
-          false,
-          "Update requires explicit enablement",
-        );
-        await invoke("mcp_connection_set_enabled", {
-          id: updated.id,
-          expectedRevision: updated.revision,
-          enabled: true,
-        });
-        const status = await preflight();
-        assert.equal(connection.id, previous.id);
-        assert.equal(connection.version, updateVersion);
-        assert.notEqual(connection.revision, previous.revision);
-        assert.equal(connection.headers["x-mcp-toolsets"], "all");
-        return {
-          ...status,
-          previousVersion: previous.version,
-          version: connection.version,
-          disabledBeforeExplicitEnablement: true,
-        };
-      });
-    }
+    await check("github.preset-preflight", preflight);
     if (mode === "--workflow" || mode === "--read") {
       previousLogLevel = await main.evaluate(
         async () =>
@@ -842,17 +751,17 @@ export async function runInstalledGitHub(mode, updateVersion) {
         const discovered = await invoke(
           "mcp_test_provider",
           {
-            id: `configured-${connection.id}`,
+            id: "github",
           },
           120000,
         );
-        assert.equal(discovered.provider_id, `configured-${connection.id}`);
+        assert.equal(discovered.provider_id, "github");
         assert.equal(discovered.tool_count, discovered.tools.length);
         assert.ok(discovered.tool_count > 0);
         assert.ok(discovered.tools.includes("get_file_contents"));
         assert.ok(discovered.tools.includes("issue_write"));
         const evidence = {
-          connectionRevision: connection.revision,
+          providerId: "github",
           count: discovered.tool_count,
           tools: discovered.tools,
           digest: discovered.tool_set_digest,
@@ -911,7 +820,7 @@ export async function runInstalledGitHub(mode, updateVersion) {
       report.cleanup.status = "Fail";
       process.exitCode = 1;
     }
-    // Account tokens and the ordinary alpha profile are deliberately retained.
+    // Account tokens and the isolated GitHub test profile are deliberately retained.
     await writeReport(root, report);
     console.log(`Report: ${join(root, "evidence/report.md")}`);
   }
@@ -921,10 +830,6 @@ if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  const update = process.argv[3]?.match(/^--update-version=(\d+\.\d+\.\d+)$/);
-  assert.ok(
-    process.argv.length <= 4 && (!process.argv[3] || update),
-    "Unexpected arguments",
-  );
-  await runInstalledGitHub(process.argv[2], update?.[1]);
+  assert.ok(process.argv.length === 3, "Pass one mode.");
+  await runInstalledGitHub(process.argv[2]);
 }

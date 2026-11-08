@@ -21,7 +21,6 @@ const groups = {
   execution: "action_exec::tests::",
   mcp: "grain_mcp::",
   auth: "grain_auth::",
-  store: "grain_store::tests::",
 };
 let group = "all",
   output = join(here, ".runs");

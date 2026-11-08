@@ -298,13 +298,6 @@ export const scenarios = [
       "Malformed/future registry startup preserves the file, reports unavailable operations, then a restored isolated profile recovers",
   },
   {
-    id: "native.cli-package-ownership",
-    suite: "native-installation",
-    checks: [28, 39, 53],
-    description:
-      "Real CLI build/doctor/pack, same-version replacement, old flat/version files, developer A/B and restored installed bytes across restart; accounts excluded",
-  },
-  {
     id: "native.registry-preservation",
     suite: "registry-recovery",
     checks: [49],
@@ -317,27 +310,6 @@ export const scenarios = [
     checks: [49],
     description:
       "Real Windows publication locks refuse enable durably and disable live with honest save failure, then explicit recovery survives restart",
-  },
-  {
-    id: "store.close-offline",
-    suite: "store",
-    checks: [18],
-    description:
-      "Ten held-refresh close/reopen cycles, signed install/consent/Agent call, restart and cached offline installation refusal",
-  },
-  {
-    id: "store.pending-mutations",
-    suite: "store",
-    checks: [36],
-    description:
-      "Disable/removal supersede a held signed update; explicit fresh installation and actual Agent results recover across restart",
-  },
-  {
-    id: "store.integrity-close",
-    suite: "store",
-    checks: [],
-    description:
-      "Invalid catalog signature, corrupt artifact hash and store-close cancellation refuse publication, then actual tools recover",
   },
 ];
 
@@ -440,28 +412,6 @@ scenarios.push(
   },
 );
 
-scenarios.push(
-  ...[
-    [
-      "management",
-      "Signed descriptor acquisition, exact updates, real publication failures, approval invalidation, removal races and restart",
-    ],
-    [
-      "accounts",
-      "Actual store SDK OAuth and scoped vault, client/grant retirement on auth/destination changes, failed settings save and recovery",
-    ],
-    [
-      "revocation",
-      "Signed revocation cancels a running read and pending consent despite settings failure; cached refusal and configured independence",
-    ],
-  ].map(([id, description]) => ({
-    id: `store.mcp-${id}`,
-    suite: "store-mcp",
-    checks: [],
-    description,
-  })),
-);
-
 // A contract-only checkpoint: individual scenarios retain their own verdicts,
 // wire oracles and cleanup. Transport/deadline changes need broader suites.
 export const EXTENSION_CONTRACT_CHECKPOINT = [
@@ -469,10 +419,8 @@ export const EXTENSION_CONTRACT_CHECKPOINT = [
   "native.api-compatibility",
   "native.typed-contract",
   "native.legacy-quarantine",
-  "native.cli-package-ownership",
   "native.owner-restoration",
   "native.auth-fixture",
-  "store.integrity-close",
   "mcp.transport-contract",
   "mcp.auth-provider-independence",
   "native.cold-warm",
@@ -480,16 +428,6 @@ export const EXTENSION_CONTRACT_CHECKPOINT = [
 ];
 
 export function selectScenarios(suite) {
-  if (suite === "mcp-store-checkpoint")
-    return [
-      "store-mcp",
-      "mcp-configured",
-      "mcp-configured-runtime",
-      "mcp-configured-auth",
-      "smoke",
-    ].flatMap(selectScenarios);
-  if (suite === "store-mcp")
-    return scenarios.filter((scenario) => scenario.suite === "store-mcp");
   if (suite === "mcp-connection-checkpoint")
     return [
       "mcp-configured",
@@ -562,7 +500,6 @@ export function selectScenarios(suite) {
       "mcp-auth",
       "native-installation",
       "registry-recovery",
-      "store",
       "all",
     ].includes(suite)
   )
@@ -833,7 +770,7 @@ for (const [id, description] of [
   ],
   [
     "approval-ownership",
-    "Exact configured instance/revision approvals refuse edits, disable/remove/developer-off; unchanged saves and peer removal preserve the approved owner",
+    "Exact configured approvals refuse edits, disable and removal; unchanged saves, peer removal and developer-mode changes preserve the approved owner",
   ],
   [
     "active-cancellation",

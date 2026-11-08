@@ -14,7 +14,7 @@ const definition = (
 export function configuredMcpHandlers(ctx) {
   const path = assertWithin(
     ctx.root,
-    join(ctx.root, "data/mcp-connections.json"),
+    join(ctx.root, "data/mcp-custom-connections.json"),
   );
   const list = () => ctx.invoke("mcp_connections_list");
   const add = (definitionJson = definition()) =>
@@ -95,7 +95,6 @@ export function configuredMcpHandlers(ctx) {
             }),
           });
           const [record] = await list();
-          assert.equal(record.source, "configured");
           assert.equal(record.state, "inactive");
           await focused(
             panel.getByRole("button", { name: "Add MCP", exact: true }),
@@ -186,14 +185,13 @@ export function configuredMcpHandlers(ctx) {
             assert.equal(view.state, "inactive");
             assert.deepEqual(Object.keys(view).sort(), [
               "authentication",
-              "extensionId",
+              "headers",
               "id",
               "name",
+              "oauthClient",
               "revision",
-              "source",
               "state",
               "url",
-              "version",
             ]);
           }
           const saved = await disk();
@@ -409,7 +407,9 @@ export function configuredMcpHandlers(ctx) {
         );
         await stage("non-main-window-refuses-all-commands", async () => {
           await ctx.fixture("load");
-          const page = await ctx.request();
+          await ctx.closePanel();
+          await ctx.invoke("agent_harness_submit", { instruction: "hello" });
+          const page = await ctx.panel();
           try {
             for (const [command, args] of calls)
               await assert.rejects(

@@ -73,7 +73,6 @@ mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of up
 // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
 // every `crate::settings::` path working.
 mod grain_settings;
-mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
 mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
 mod grain_window_geometry; // [GRAIN] scale-aware main-window sizing within the desktop work area
@@ -175,7 +174,7 @@ pub static WEBVIEW_LOG_STREAMING: AtomicBool = AtomicBool::new(false);
 pub fn refresh_webview_log_streaming(app: &AppHandle) {
     let current = settings::get_settings(app);
     WEBVIEW_LOG_STREAMING.store(
-        current.debug_mode || current.extension_developer_mode,
+        current.debug_mode || (cfg!(feature = "agent-harness") && current.extension_developer_mode),
         Ordering::Relaxed,
     );
 }
@@ -476,18 +475,19 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // confirmed missed paste and the moment the clipboard is handed back.
     app_handle.manage(paste_catch::PasteCatchState::default());
 
-    // [GRAIN] Worker/developer requests use the authenticated loopback socket;
-    // recording and Agent UI events stay on the internal WebView bridge.
-    if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
-        events_server::start(app_handle.clone());
-        // [GRAIN] extension worker lifecycle: activation dispatch + idle reaper.
-        extension_host::start(app_handle.clone(), ctx.inner().clone());
-        if get_settings(app_handle).extension_developer_mode {
-            if let Err(error) = events_server::enable_dev_control(&ctx.data_dir) {
-                log::error!("[GRAIN] failed to expose developer control token: {error}");
+    // Native fixture workers own a loopback bridge. Ordinary MCP sessions
+    // connect on demand and need neither a local listener nor a worker reaper.
+    if cfg!(feature = "agent-harness") {
+        if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
+            events_server::start(app_handle.clone());
+            extension_host::start(app_handle.clone(), ctx.inner().clone());
+            if get_settings(app_handle).extension_developer_mode {
+                if let Err(error) = events_server::enable_dev_control(&ctx.data_dir) {
+                    log::error!("[GRAIN] failed to expose developer control token: {error}");
+                }
+            } else {
+                events_server::disable_dev_control(&ctx.data_dir);
             }
-        } else {
-            events_server::disable_dev_control(&ctx.data_dir);
         }
     }
     // Note: Shortcuts are NOT initialized here.
@@ -1155,24 +1155,16 @@ pub fn run(cli_args: CliArgs) {
                 let data_dir = crate::portable::app_data_dir(&app.handle())
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 app.manage(grain_core::AppContext::new(resource_dir, data_dir.clone()));
-                match grain_core::extensions::ExtensionsRegistry::load(&data_dir) {
-                    Ok(reg) => {
-                        app.manage(std::sync::Arc::new(reg));
+                if cfg!(feature = "agent-harness") {
+                    match grain_core::extensions::ExtensionsRegistry::load(&data_dir) {
+                        Ok(reg) => {
+                            app.manage(std::sync::Arc::new(reg));
+                        }
+                        Err(e) => log::error!("[GRAIN] fixture registry failed to load: {e}"),
                     }
-                    Err(e) => log::error!("[GRAIN] extensions registry failed to load: {e}"),
+                    extension_host::quarantine_invalid_extensions(&app.handle())
+                        .map_err(std::io::Error::other)?;
                 }
-                // [GRAIN] Phase 5A: the store client — loads verified roots +
-                // revocations from cache-or-seed (small, resident); the parsed
-                // index stays out of memory until the store is opened.
-                #[cfg(not(feature = "agent-harness"))]
-                let store = grain_store::StoreState::init(&data_dir);
-                #[cfg(feature = "agent-harness")]
-                let store = grain_store::StoreState::init_harness(&data_dir);
-                app.manage(std::sync::Arc::new(store));
-                // [GRAIN] Quarantine incompatible installed extensions now that
-                // AppContext + the registry are managed.
-                extension_host::quarantine_invalid_extensions(&app.handle())
-                    .map_err(std::io::Error::other)?;
             }
 
             #[cfg(feature = "agent-harness")]
@@ -1197,7 +1189,8 @@ pub fn run(cli_args: CliArgs) {
             // is toggled, so a user who already had it enabled opens the viewer to
             // an empty panel.
             WEBVIEW_LOG_STREAMING.store(
-                settings.debug_mode || settings.extension_developer_mode,
+                settings.debug_mode
+                    || (cfg!(feature = "agent-harness") && settings.extension_developer_mode),
                 Ordering::Relaxed,
             );
             let app_handle = app.handle().clone();
@@ -1337,7 +1330,7 @@ pub fn run(cli_args: CliArgs) {
             if let tauri::RunEvent::Exit = &event {
                 if let Some(ctx) = app
                     .try_state::<Arc<grain_core::AppContext>>()
-                    .filter(|_| !headless_mode)
+                    .filter(|_| cfg!(feature = "agent-harness") && !headless_mode)
                 {
                     events_server::disable_dev_control(&ctx.data_dir);
                 }
@@ -1433,14 +1426,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_mute_while_recording_setting,
             shortcut::change_append_trailing_space_setting,
             grain_commands::extensions_overview,
-            grain_store::store_browse,
-            grain_store::store_close,
-            grain_store::store_media,
-            grain_store::store_description,
-            grain_store::store_entry,
-            grain_store::store_covers,
-            grain_store::store_install,
-            grain_store::store_revocation_banners,
             grain_commands::extension_set_enabled,
             grain_commands::extension_developer_status,
             grain_commands::extension_set_developer_mode,
@@ -1458,8 +1443,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::mcp_test_provider,
             grain_mcp::connections::mcp_connections_list,
             grain_mcp::connections::mcp_connection_import,
-            grain_store::store_mcp_install,
-            grain_store::store_mcp_update,
             grain_mcp::connections::mcp_connection_replace,
             grain_mcp::connections::mcp_connection_remove,
             grain_mcp::connections::mcp_connection_set_enabled,

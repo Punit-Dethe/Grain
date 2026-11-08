@@ -1,15 +1,13 @@
 // Real native-account acceptance; only the fixed, isolated fixture is mutable.
 import assert from "node:assert/strict";
-import { mkdir, writeFile, copyFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   authPackage,
   AUTH_FIXTURE_ID,
   PRIVATE_MARKER,
 } from "./auth-fixture.mjs";
 import { assertWithin } from "./support.mjs";
-import { cliCommand } from "./packaging.mjs";
 import { developerReload } from "./developer.mjs";
 
 export function accountOwnershipHandlers(ctx) {
@@ -240,38 +238,12 @@ export function accountOwnershipHandlers(ctx) {
           : owner,
     });
     const { entry_source, ...manifest } = pack.manifest;
-    manifest.icon = "icon.png";
-    await mkdir(join(root, "src"), { recursive: true });
-    await copyFile(
-      join(ctx.repo, "src-tauri/icons/icon.png"),
-      join(root, "icon.png"),
-    );
+    await mkdir(join(root, "dist"), { recursive: true });
     await writeFile(
       join(root, "manifest.json"),
       JSON.stringify({ ...manifest, entry: "dist/main.js" }),
     );
-    await writeFile(join(root, "src/main.js"), entry_source);
-    await writeFile(
-      join(root, "package.json"),
-      JSON.stringify({ private: true, scripts: { build: "node build.mjs" } }),
-    );
-    const esbuild = pathToFileURL(
-      join(ctx.repo, "node_modules/esbuild/lib/main.js"),
-    ).href;
-    await writeFile(
-      join(root, "build.mjs"),
-      `import {build} from ${JSON.stringify(esbuild)}; await build({entryPoints:['src/main.js'],bundle:true,format:'iife',platform:'browser',target:'es2020',outfile:'dist/main.js',logLevel:'silent'});`,
-    );
-    const output = assertWithin(
-      ctx.root,
-      join(ctx.root, `${folder}.grainpack`),
-    );
-    for (const args of [["pack", "--output", output], ["doctor"]])
-      evidence.push({
-        stage: "auth-cli",
-        owner,
-        ...(await cliCommand(ctx.cli().binary, args, root, ctx.waitFor)),
-      });
+    await writeFile(join(root, "dist/main.js"), entry_source);
   }
   return {
     controls: {

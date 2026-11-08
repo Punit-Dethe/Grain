@@ -69,3 +69,37 @@ For the next session, start with step 3 above. The remaining coupling is in
 `grain_store.rs`, `grain_mcp_connections.rs`, the Rust store fixtures and
 `tests/agent-harness/`. Replace the fixtures before deleting their runtime
 support so OAuth, revision ownership and tool execution still get exercised.
+
+
+### 2026-11-08 — Store runtime and author tooling removal
+
+- Removed catalogue IPC, hosted catalogue requests, the signed cache, embedded
+  roots and revocations, signed package acquisition, the publisher format and
+  the author CLI. Normal app startup skips the legacy native registry, worker
+  reaper and loopback developer bridge. The isolated acceptance harness still
+  builds local native fixtures to exercise runtime permissions and ownership.
+- GitHub and Notion still use provider-hosted MCP endpoints. Preset metadata
+  ships in the app and uses the same runtime as user-configured remote MCPs.
+  GitHub's build-supplied OAuth identity remains restricted to the bundled
+  provider and exact resource. The isolated Windows build is now Grain GitHub
+  Test. The acceptance script checks the bundled GitHub preset directly.
+- Custom connections use `mcp-custom-connections.json`. The old file may mix
+  store and custom rows, so Grain starts a fresh registry and leaves old files
+  on disk. Re-add custom servers that were configured on earlier builds.
+- The harness stamp initially failed because it fingerprinted the deleted
+  signing seeds and assumed every directory in `crates/` had a manifest.
+  It now fingerprints active crates and skips leftover directories without a
+  manifest.
+- Verification includes the production frontend build, 94 frontend tests,
+  78 runner and GitHub checks, 231 core and SDK tests, 83 desktop MCP tests,
+  and normal and harness desktop compilation.
+- The real app passed all three configured MCP cases covering ownership,
+  access controls and storage, with isolated cleanup
+  (`tests/agent-harness/.runs/run-HH19eB/evidence/report.md`). The first
+  attempts exposed outdated store fields and a wait for a manual Agent
+  approval. The access check now uses the real Agent panel with the
+  existing direct tool-selection oracle.
+
+The external publisher repository is a separate operational cleanup. The next
+product checkpoint is packaged GitHub and Notion sign-in and a tool read,
+including GitHub with a non-owner account.

@@ -64,7 +64,7 @@ export function nextReply(
   body,
   fault,
   workflowMode = "normal",
-  storeCheckpoint = false,
+  registryCheckpoint = false,
 ) {
   // OpenAI-compatible clients omit `tools` on the final, budget-exhausted
   // round. Preserve that real wire shape; no definitions are offered.
@@ -85,7 +85,8 @@ export function nextReply(
   if (instruction.endsWith("model_wait"))
     return { content: "Harness delayed model reply", delayMs: 15000 };
   const requested = instruction.slice("Harness request: ".length);
-  if (storeCheckpoint && requested === "hello") return storeNativeReply(body);
+  if (registryCheckpoint && requested === "hello")
+    return registryNativeReply(body);
   if (
     [
       "native_staged",
@@ -141,21 +142,6 @@ export function nextReply(
       "No exact configured account directory owner",
     );
     const account = requested.endsWith("_a") ? "A" : "B";
-    if (storeCheckpoint) {
-      const provider = ids[account === "B" && ids.length > 1 ? 1 : 0];
-      assert.ok(
-        !JSON.stringify(body).includes(MCP_PRIVATE_MARKER),
-        "MCP credential reached model context",
-      );
-      return storeSelectedReply(
-        body,
-        provider,
-        "fixture_read",
-        "Harness MCP nested read",
-        MCP_INPUT,
-        (content) => mcpAccountResult(content, account, provider.slice(4)),
-      );
-    }
     return mcpAccountReply(
       body,
       account,
@@ -179,28 +165,6 @@ export function nextReply(
       ids.length > 0 && ids.length <= 32,
       "No exact configured directory owner",
     );
-    if (storeCheckpoint)
-      return {
-        ...storeSelectedReply(
-          body,
-          ids[0],
-          "fixture_read",
-          "Harness MCP nested read",
-          MCP_INPUT,
-          (content) =>
-            mcpResultReply(
-              content,
-              requested === "mcp_configured_unknown"
-                ? "mcp_unknown"
-                : "mcp_read",
-              ids[0],
-            ),
-        ),
-        configuredOwner:
-          fault === "wrong-configured-owner"
-            ? "mcp.configured-00000000000000000000000000000000"
-            : ids[0],
-      };
     return {
       ...mcpReply(
         body,
@@ -597,8 +561,8 @@ function mcpResultReply(content, requested, extensionId) {
 
 // Store acceptance checks installation/ownership, not a fixed discovery-round
 // count. Observe the actual selected schema and correlated action result.
-function storeNativeReply(body) {
-  return storeSelectedReply(
+function registryNativeReply(body) {
+  return registrySelectedReply(
     body,
     FIXTURE_ID,
     "hello",
@@ -611,7 +575,14 @@ function storeNativeReply(body) {
   );
 }
 
-function storeSelectedReply(body, extensionId, toolId, title, input, verify) {
+function registrySelectedReply(
+  body,
+  extensionId,
+  toolId,
+  title,
+  input,
+  verify,
+) {
   const offered = body.tools.map((tool) => tool.function);
   const calls = body.messages.flatMap((message) => message.tool_calls ?? []);
   const actions = calls.filter((call) =>
@@ -626,14 +597,14 @@ function storeSelectedReply(body, extensionId, toolId, title, input, verify) {
     assert.equal(
       results.length,
       1,
-      "Missing/duplicate actual store action result",
+      "Missing/duplicate actual registry action result",
     );
     return verify(results[0].content);
   }
   const matching = offered.filter(
     (tool) => tool.name.startsWith("act__") && tool.description.includes(title),
   );
-  assert.ok(matching.length <= 1, "Ambiguous store greeting schema");
+  assert.ok(matching.length <= 1, "Ambiguous registry greeting schema");
   if (matching.length && toolId === "fixture_read")
     assert.equal(matching[0].parameters?.properties?.query?.type, "object");
   const results = body.messages.filter((message) => message.role === "tool");
@@ -669,7 +640,7 @@ function storeSelectedReply(body, extensionId, toolId, title, input, verify) {
 export async function startModel({
   fault,
   liveConfig,
-  storeCheckpoint = false,
+  registryCheckpoint = false,
 } = {}) {
   let workflowMode = "normal";
   const journal = [];
@@ -695,7 +666,7 @@ export async function startModel({
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const reply = live
         ? await live.reply(body, response)
-        : nextReply(body, fault, workflowMode, storeCheckpoint);
+        : nextReply(body, fault, workflowMode, registryCheckpoint);
       const entry = {
         sequence: journal.length + 1,
         offered: (body.tools ?? []).map((tool) => tool.function.name),

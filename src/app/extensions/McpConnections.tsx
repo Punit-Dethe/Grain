@@ -7,9 +7,6 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { createPortal } from "react-dom";
-import { Trash2 } from "lucide-react";
-import { Switch } from "@/components/ui/Switch";
 import {
   commands,
   type ConnectionView,
@@ -26,23 +23,7 @@ type AccountStatus = Pick<
 type Row = Connection & { account?: AccountStatus; statusError?: string };
 const owner = (row: Connection) => [row.id, row.revision] as const;
 
-export function McpConnections({
-  query,
-  source = "configured",
-  connectionId,
-  onChange,
-  onRemoved,
-  actionsContainer,
-  onRequestRemoval,
-}: {
-  query: string;
-  source?: "configured" | "store";
-  connectionId?: string;
-  onChange?: () => Promise<void>;
-  onRemoved?: () => void;
-  actionsContainer?: HTMLElement | null;
-  onRequestRemoval?: () => void;
-}) {
+export function McpConnections({ query }: { query: string }) {
   const titleId = useId();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,26 +67,21 @@ export function McpConnections({
     const serial = ++request.current;
     const records = unwrapResult(await commands.mcpConnectionsList());
     const next = await Promise.all(
-      records
-        .filter(
-          (row) =>
-            row.source === source && (!connectionId || row.id === connectionId),
-        )
-        .map(async (row): Promise<Row> => {
-          try {
-            return {
-              ...row,
-              account: unwrapResult(
-                await commands.mcpConnectionStatus(...owner(row)),
-              ),
-            };
-          } catch (reason) {
-            return { ...row, statusError: String(reason) };
-          }
-        }),
+      records.map(async (row): Promise<Row> => {
+        try {
+          return {
+            ...row,
+            account: unwrapResult(
+              await commands.mcpConnectionStatus(...owner(row)),
+            ),
+          };
+        } catch (reason) {
+          return { ...row, statusError: String(reason) };
+        }
+      }),
     );
     if (live.current && serial === request.current) setRows(next);
-  }, [source, connectionId]);
+  }, []);
 
   useEffect(() => {
     live.current = true;
@@ -139,10 +115,6 @@ export function McpConnections({
           (reason) =>
             live.current && setError((current) => current ?? String(reason)),
         );
-        if (live.current)
-          await onChange?.().catch(
-            (reason) => live.current && setError(String(reason)),
-          );
         if (live.current) setBusy(null);
       }
       active.current = false;
@@ -245,46 +217,15 @@ export function McpConnections({
   const matching = rows.filter((row) =>
     `${row.name} ${row.url}`.toLowerCase().includes(query.toLowerCase().trim()),
   );
-  const uninstallControl = (row: Row) => {
-    const button = (
-      <button
-        className={`button ${source === "store" ? "danger" : "ghost"}`}
-        type="button"
-        disabled={busy !== null}
-        onClick={(event) => {
-          returnFocus.current = event.currentTarget;
-          onRequestRemoval?.();
-          setRemoving(row.id);
-        }}
-      >
-        {source === "store" && <Trash2 size={14} />}
-        {source === "store" ? "Uninstall" : "Remove"}
-      </button>
-    );
-    return source === "store"
-      ? actionsContainer
-        ? createPortal(button, actionsContainer, row.id)
-        : null
-      : button;
-  };
   return (
-    <section
-      className={`mcp-connections${source === "store" ? " extension-account-settings" : ""}`}
-      aria-labelledby={titleId}
-    >
+    <section className="mcp-connections" aria-labelledby={titleId}>
       <header className="mcp-connections-heading">
         <div>
-          <h2 id={titleId}>
-            {source === "store" ? "Account & access" : "Your MCP connections"}
-          </h2>
-          <p>
-            {source === "configured" &&
-              "Connect a remote tool server directly. No extension package is needed."}
-          </p>
+          <h2 id={titleId}>Your MCP connections</h2>
+          <p>Connect a remote tool server directly.</p>
         </div>
         <div className="mcp-connection-actions">
           <button
-            ref={source === "store" ? addButton : undefined}
             type="button"
             className="button ghost"
             disabled={busy !== null || loading}
@@ -292,17 +233,15 @@ export function McpConnections({
           >
             Refresh
           </button>
-          {source === "configured" && (
-            <button
-              ref={addButton}
-              type="button"
-              className="button"
-              disabled={busy !== null}
-              onClick={(event) => openForm(null, event.currentTarget)}
-            >
-              Add MCP
-            </button>
-          )}
+          <button
+            ref={addButton}
+            type="button"
+            className="button"
+            disabled={busy !== null}
+            onClick={(event) => openForm(null, event.currentTarget)}
+          >
+            Add MCP
+          </button>
         </div>
       </header>
       {error && (
@@ -463,33 +402,19 @@ export function McpConnections({
         </form>
       )}
       {loading ? (
-        <p role="status">
-          {source === "store"
-            ? "Loading settings…"
-            : "Loading MCP connections…"}
-        </p>
+        <p role="status">Loading MCP connections…</p>
       ) : matching.length === 0 ? (
         <p>
           {rows.length
             ? "No MCP connections match your search."
-            : source === "store"
-              ? "This extension is no longer installed."
-              : "Add your first MCP to make its tools available to the Agent."}
+            : "Add your first MCP to make its tools available to the Agent."}
         </p>
       ) : (
         matching.map((row) => (
-          <article
-            className={`mcp-connection-row${source === "store" ? " extension-settings-group" : ""}`}
-            key={row.id}
-          >
+          <article className="mcp-connection-row" key={row.id}>
             <div className="mcp-connection-copy">
-              {source === "store" && <h3>Account</h3>}
-              {source === "configured" && (
-                <>
-                  <h3>{row.name}</h3>
-                  <p className="mcp-connection-url">{row.url}</p>
-                </>
-              )}
+              <h3>{row.name}</h3>
+              <p className="mcp-connection-url">{row.url}</p>
               <p>
                 {row.statusError ??
                   (row.authentication === "none"
@@ -501,16 +426,12 @@ export function McpConnections({
                         : row.account?.state === "disconnected"
                           ? "Sign in to connect your account"
                           : row.account?.state.replace(/_/g, " "))}{" "}
-                {source === "configured" && (
-                  <>
-                    &middot;{" "}
-                    {row.account?.enabled
-                      ? "Enabled"
-                      : row.account
-                        ? "Disabled"
-                        : "Status unavailable"}
-                  </>
-                )}
+                &middot;{" "}
+                {row.account?.enabled
+                  ? "Enabled"
+                  : row.account
+                    ? "Disabled"
+                    : "Status unavailable"}
               </p>
             </div>
             <div className="mcp-connection-actions">
@@ -537,8 +458,7 @@ export function McpConnections({
                         : "Sign in & enable"}
                     </button>
                   )}
-                  {source === "configured" &&
-                    row.account &&
+                  {row.account &&
                     (row.authentication === "none" ||
                       row.account.connected) && (
                       <button
@@ -575,52 +495,33 @@ export function McpConnections({
                       Sign out
                     </button>
                   )}
-                  {source === "configured" && (
-                    <button
-                      className="button ghost"
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={(event) => openForm(row, event.currentTarget)}
-                    >
-                      Edit
-                    </button>
-                  )}
-                  {source === "configured" && uninstallControl(row)}
+                  <button
+                    className="button ghost"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={(event) => openForm(row, event.currentTarget)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    className="button ghost"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={(event) => {
+                      returnFocus.current = event.currentTarget;
+                      setRemoving(row.id);
+                    }}
+                  >
+                    Remove
+                  </button>
                 </>
               )}
             </div>
-            {source === "store" && (
-              <>
-                {uninstallControl(row)}
-                <div className="extension-setting-row">
-                  <div>
-                    <h3>Enabled</h3>
-                    <p>Make this extension’s tools available to the Agent.</p>
-                  </div>
-                  <Switch
-                    checked={row.account?.enabled ?? false}
-                    disabled={
-                      busy !== null ||
-                      !row.account ||
-                      (row.authentication === "oauth" && !row.account.connected)
-                    }
-                    ariaLabel={`${row.account?.enabled ? "Disable" : "Enable"} ${row.name}`}
-                    onChange={(enabled) =>
-                      void run(row.id, () =>
-                        commands
-                          .mcpConnectionSetEnabled(...owner(row), enabled)
-                          .then(unwrapResult),
-                      )
-                    }
-                  />
-                </div>
-              </>
-            )}
             {removing === row.id && (
               <div className="mcp-connection-confirm">
                 <p>
-                  {source === "store" ? "Uninstall" : "Remove"} {row.name}? Its
-                  tools will be disabled and its saved account cleared.
+                  Remove {row.name}? Its tools will be disabled and its saved
+                  account cleared.
                 </p>
                 <div className="mcp-connection-actions">
                   <button
@@ -634,14 +535,10 @@ export function McpConnections({
                           await commands.mcpConnectionRemove(...owner(row)),
                         );
                         if (live.current) setRemoving(null);
-                        if (onRemoved) await onChange?.();
-                        if (live.current) onRemoved?.();
                       })
                     }
                   >
-                    {source === "store"
-                      ? "Uninstall extension"
-                      : "Remove connection"}
+                    Remove connection
                   </button>
                   <button
                     type="button"
@@ -649,7 +546,7 @@ export function McpConnections({
                     disabled={busy !== null}
                     onClick={() => setRemoving(null)}
                   >
-                    {source === "store" ? "Keep extension" : "Keep connection"}
+                    Keep connection
                   </button>
                 </div>
               </div>
@@ -657,9 +554,7 @@ export function McpConnections({
             {row.authentication === "oauth" && (
               <details className="mcp-client-settings">
                 <summary>
-                  {source === "store"
-                    ? "Advanced connection settings"
-                    : "OAuth app credentials"}{" "}
+                  OAuth app credentials{" "}
                   {row.account?.client_id_configured
                     ? "(configured)"
                     : "(optional)"}
@@ -668,9 +563,6 @@ export function McpConnections({
                   Only needed if this server requires your own OAuth app.
                   Secrets go to the system vault.
                 </p>
-                {source === "store" && (
-                  <p className="mcp-connection-url">Server: {row.url}</p>
-                )}
                 <p className="mcp-connection-url">
                   Register redirect URI:{" "}
                   <code>http://127.0.0.1:31938/mcp/oauth/callback</code>

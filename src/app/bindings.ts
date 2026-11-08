@@ -756,109 +756,6 @@ async extensionsOverview() : Promise<Result<ExtensionCard[], string>> {
 }
 },
 /**
- * Open the store: refresh from the network (piggybacking the update check),
- * verify, and return the catalogue. Falls back to the offline cache/seed.
- */
-async storeBrowse() : Promise<Result<StoreView, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_browse") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Close the Extensions store UI: drop the parsed index so idle footprint
- * returns to just the small roots and revocations.
- */
-async storeClose() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_close") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * A listing image as a hash-checked data URL. Square icons use PNG;
- * wide covers/previews use WebP or GIF and load only where displayed.
- */
-async storeMedia(sha256: string, kind: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_media", { sha256, kind }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * An extension's DESCRIPTION Markdown, bound to the signed listing hash and size.
- */
-async storeDescription(sha256: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_description", { sha256 }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * One extension's catalogue metadata (description, installs, DESCRIPTION + media
- * refs) from the CACHED signed index — no network, and the parsed index is
- * dropped immediately, so an installed extension's detail page can show the
- * same header as the store without keeping the catalogue resident.
- * `None` when the id is not in the catalogue (e.g. a locally imported pack).
- */
-async storeEntry(id: string) : Promise<Result<StoreEntry | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_entry", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Square listing icon references for a set of ids, from one CACHED index parse.
- *
- * The installed list shows each extension's picture, and asking `store_entry`
- * per row would re-read and re-verify the whole catalogue once per extension.
- * This reads it once, keeps only `(id, icon)`, and drops the rest — the list
- * gets its images without the catalogue ever staying resident. Ids that are not
- * in the catalogue, or have no square icon, are absent from the result.
- */
-async storeCovers(ids: string[]) : Promise<Result<StoreCover[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_covers", { ids }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Install (or update to) a specific verified `(id, version)`. In-app click
- * only — a link may open the store but never trigger this.
- */
-async storeInstall(id: string, version: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_install", { id, version }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Banners for installed extensions that have been revoked or deprecated —
- * enforced from the resident (cached) revocation list, so it holds offline.
- */
-async storeRevocationBanners() : Promise<Result<RevocationBanner[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_revocation_banners") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Flip a tool extension on/off. Core Agent, Snippets and context settings use
  * their own commands and cannot be enabled through the extension registry.
  */
@@ -1019,30 +916,6 @@ async mcpConnectionsList() : Promise<Result<ConnectionView[], string>> {
 async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connection_import", { definitionJson }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Signed-store acquisition in development and the dedicated extensions alpha.
- * Custom server configuration retains its separate development-only gate.
- */
-async storeMcpInstall(id: string, version: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_mcp_install", { id, version }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Exact-revision verified update. It uses the same download/verification and
- * final ownership gate as acquisition, never user-supplied descriptor JSON.
- */
-async storeMcpUpdate(connectionId: string, expectedRevision: string, version: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("store_mcp_update", { connectionId, expectedRevision, version }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2188,7 +2061,7 @@ export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
  * revisions (JavaScript numbers cannot represent all supported revisions).
  */
-export type ConnectionView = { id: string; source: string; extensionId: string | null; version: string | null; revision: string; name: string; url: string; authentication: string; headers: Partial<{ [key in string]: string }>; oauthClient: McpPublicOAuthClient | null; state: string }
+export type ConnectionView = { id: string; revision: string; name: string; url: string; authentication: string; headers: Partial<{ [key in string]: string }>; oauthClient: McpPublicOAuthClient | null; state: string }
 /**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
  *
@@ -2319,8 +2192,7 @@ overrides_installed: boolean; overridden_version: string | null; enabled: boolea
  */
 toggle_seq: string; repository: string | null;
 /**
- * Manifest-declared capabilities. The installed UI needs these even for
- * local/imported packs which have no signed-store catalogue entry.
+ * Manifest-declared capabilities displayed during fixture approval.
  */
 capabilities: string[];
 /**
@@ -2594,77 +2466,6 @@ export type ShowOverlay = string
  */
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
-/**
- * One installed extension's square listing icon reference (existing API name).
- */
-export type StoreCover = { id: string; sha256: string; kind: string }
-/**
- * One card's data for the store UI (a specta-friendly projection of
- * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
- */
-export type StoreEntry = { id: string; kind: string; name: string; version: string;
-/**
- * Same-kind releases preceding this one in the signed publication order.
- */
-previous_versions: string[]; tier: string; trust: string; capabilities: string[];
-/**
- * One-line summary shown under the name on the card.
- */
-description: string;
-/**
- * Source repository (GitHub), for the "view on GitHub" link.
- */
-repo: string; size: string; author: string; reviewed_at: string; reviewed_commit: string;
-/**
- * Repository popularity captured by the signed publish pipeline. The
- * desktop client never contacts GitHub to populate detail pages.
- */
-stars: number;
-/**
- * Popularity signal shown on the card and detail page. Read straight from
- * the signed index — the client never counts or queries per card.
- */
-installs: number;
-/**
- * User-facing DESCRIPTION document hash.
- */
-listing_document: string;
-/**
- * Square listing icon, independently addressed from the wide gallery.
- */
-icon: StoreMedia | null;
-/**
- * Wide gallery: first image is the store-card cover, further previews lazy.
- */
-media: StoreMedia[];
-/**
- * What kind of thing this is, for the store's filter row.
- */
-categories: string[];
-/**
- * Revocation state for this exact version, if any: "revoked" | "deprecated".
- */
-revocation: string | null }
-/**
- * One icon/gallery image ref crossed to the store UI (mirror of `MediaRef`).
- */
-export type StoreMedia = { sha256: string;
-/**
- * `png` (icon) | `webp` | `gif` (gallery).
- */
-kind: string }
-/**
- * Catalogue state projected into the Extensions store and detail UI.
- */
-export type StoreView = {
-/**
- * "fresh" | "offline" | "needs-newer-client".
- */
-status: string;
-/**
- * Whether new installs are allowed (false when offline/expired).
- */
-can_install: boolean; entries: StoreEntry[] }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */

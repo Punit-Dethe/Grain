@@ -20,21 +20,17 @@
 
 pub mod authoring;
 pub mod compatibility;
-pub mod distribution;
 pub mod error;
 pub mod event;
+mod fixture_trust;
 pub mod manifest;
 pub mod mcp;
 pub mod protocol;
-pub mod submission;
 
-pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
-pub use distribution::{
-    is_category, Index, IndexEntry, MediaRef, RevocationEntry, RevocationState, Revocations, Roots,
-    Trust, CATEGORIES, DISTRIBUTION_SPEC, EXPIRY_CLOCK_SKEW_SECS,
-};
+pub use authoring::ExtensionProjectManifest;
 pub use error::{HostError, HostErrorCode};
 pub use event::{DaemonEvent, OverlayPosition, ResolvedTheme, SessionMode, PILL_ICON_PX};
+pub use fixture_trust::Trust;
 pub use manifest::{
     png_dimensions, validate_extension_id, validate_extension_version, AuthenticationDecl,
     AuthenticationType, Contributes, ExtensionManifest, GrainPack, PackPayloads, RedirectMethod,

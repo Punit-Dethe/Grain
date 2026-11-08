@@ -232,7 +232,7 @@ impl RuntimeProvider {
             Self::Configured(owner, _) => owner.enabled(app),
             Self::Catalog(item) => {
                 let settings = crate::settings::get_settings(app);
-                (is_preset(item) || access_allowed(app, settings.extension_developer_mode, false))
+                (is_preset(item) || development_access(settings.extension_developer_mode))
                     && settings
                         .mcp_enabled_providers
                         .iter()
@@ -919,11 +919,7 @@ pub(crate) fn require_configured_consent_fixture(app: &AppHandle, id: &str) -> R
 }
 
 pub(crate) fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
-    if access_allowed(
-        app,
-        crate::settings::get_settings(app).extension_developer_mode,
-        false,
-    ) {
+    if development_access(crate::settings::get_settings(app).extension_developer_mode) {
         Ok(())
     } else {
         Err(
@@ -933,34 +929,13 @@ pub(crate) fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
     }
 }
 
-fn access_policy(development_build: bool, alpha: bool, developer_mode: bool, store: bool) -> bool {
-    if store {
-        development_build || alpha
-    } else {
-        development_build && developer_mode
-    }
-}
-
-fn access_allowed(app: &AppHandle, developer_mode: bool, store: bool) -> bool {
-    access_policy(
-        cfg!(debug_assertions),
-        app.config().identifier == "com.grain.extensions.alpha",
-        developer_mode,
-        store,
-    )
-}
-
-pub(crate) fn require_store_access(app: &AppHandle) -> Result<(), String> {
-    if cfg!(feature = "agent-harness") && access_allowed(app, false, true) {
-        Ok(())
-    } else {
-        Err("Store extensions are not available in this build.".into())
-    }
+fn development_access(developer_mode: bool) -> bool {
+    cfg!(debug_assertions) && developer_mode
 }
 
 fn require_provider_access(app: &AppHandle, item: &Provider<'_>) -> Result<(), String> {
     match item.ownership {
-        Some(owner) => owner.require_access(app),
+        Some(_) => Ok(()),
         None if is_preset(item) => Ok(()),
         None => require_developer_mode(app),
     }
@@ -1020,12 +995,11 @@ fn builtin_client(app: &AppHandle, item: &Provider<'_>) -> Option<builtin::Clien
     {
         return None;
     }
+    if item.ownership.is_some() {
+        return None;
+    }
     builtin::github(
-        if is_preset(item) && item.id == "github" {
-            Some("com.grain.github")
-        } else {
-            item.ownership?.store_extension_id()
-        },
+        item.id,
         item.endpoint,
         option_env!("GRAIN_GITHUB_OAUTH_CLIENT_ID"),
         option_env!("GRAIN_GITHUB_OAUTH_CLIENT_SECRET"),
@@ -1761,10 +1735,8 @@ async fn connect_oauth(
         }
         ctx.update_settings(|settings| {
             let available = match item.ownership {
-                Some(owner) => !owner.is_store() || require_store_access(app).is_ok(),
-                None => {
-                    is_preset(item) || access_allowed(app, settings.extension_developer_mode, false)
-                }
+                Some(_) => true,
+                None => is_preset(item) || development_access(settings.extension_developer_mode),
             };
             if !available {
                 return;
@@ -2917,25 +2889,6 @@ pub(crate) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn store_alpha_access_does_not_unlock_custom_mcp_or_ordinary_releases() {
-        for developer_mode in [false, true] {
-            assert!(access_policy(false, true, developer_mode, true));
-            assert!(!access_policy(false, true, developer_mode, false));
-            assert!(!access_policy(false, false, developer_mode, true));
-            assert!(!access_policy(false, false, developer_mode, false));
-            assert!(access_policy(true, false, developer_mode, true));
-            assert_eq!(
-                access_policy(true, false, developer_mode, false),
-                developer_mode
-            );
-        }
-        // The backend uses the dedicated Tauri identity, not a frontend label.
-        let alpha: serde_json::Value =
-            serde_json::from_str(include_str!("../tauri.extensions-alpha.conf.json")).unwrap();
-        assert_eq!(alpha["identifier"], "com.grain.extensions.alpha");
-    }
 
     #[test]
     fn bundled_presets_keep_the_expected_oauth_and_github_toolsets() {

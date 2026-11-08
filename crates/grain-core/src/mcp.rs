@@ -47,56 +47,6 @@ impl std::error::Error for ContractError {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedDescriptor(McpDescriptor);
 
-/// Hash/identity admission of an MCP artifact selected from the host's verified
-/// catalogue. The caller must verify signature, freshness and revocation first.
-/// This value does not grant credentials, trust badges or execution approval.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StoreDescriptor {
-    descriptor: ValidatedDescriptor,
-    artifact: String,
-    sha256: String,
-}
-
-impl StoreDescriptor {
-    pub fn admit(
-        entry: &grain_sdk::distribution::IndexEntry,
-        bytes: &[u8],
-    ) -> Result<Self, String> {
-        entry.validate_mcp_installable()?;
-        if bytes.len() as u64 != entry.size {
-            return Err("MCP artifact size does not match the signed catalogue.".into());
-        }
-        crate::trust::verify_artifact(bytes, &entry.sha256)
-            .map_err(|_| "MCP artifact hash does not match the signed catalogue.")?;
-        let descriptor = ValidatedDescriptor::parse(bytes).map_err(|error| error.to_string())?;
-        let metadata = descriptor.descriptor();
-        if metadata.id != entry.id
-            || metadata.version != entry.version
-            || metadata.name != entry.name
-            || metadata.description != entry.description
-        {
-            return Err("MCP descriptor does not match the signed catalogue identity.".into());
-        }
-        Ok(Self {
-            descriptor,
-            artifact: std::str::from_utf8(bytes)
-                .map_err(|_| "MCP artifact is not UTF-8.")?
-                .into(),
-            sha256: entry.sha256.clone(),
-        })
-    }
-
-    pub fn descriptor(&self) -> &ValidatedDescriptor {
-        &self.descriptor
-    }
-    pub fn artifact(&self) -> &str {
-        &self.artifact
-    }
-    pub fn sha256(&self) -> &str {
-        &self.sha256
-    }
-}
-
 impl ValidatedDescriptor {
     pub fn parse(bytes: &[u8]) -> Result<Self, ContractError> {
         if bytes.len() > MCP_DESCRIPTOR_MAX_BYTES {
@@ -329,15 +279,8 @@ pub(crate) fn canonical_endpoint(raw: &str) -> Result<String, ContractError> {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ConnectionSource {
-    DevelopmentCatalog {
-        provider_id: String,
-    },
+    DevelopmentCatalog { provider_id: String },
     Configured,
-    Store {
-        extension_id: String,
-        version: String,
-        artifact_sha256: String,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -373,21 +316,6 @@ impl ConnectionIdentity {
                 }
             }
             ConnectionSource::Configured => {}
-            ConnectionSource::Store {
-                extension_id,
-                version,
-                artifact_sha256,
-            } => {
-                if validate_extension_id(extension_id).is_err()
-                    || validate_extension_version(version).is_err()
-                    || artifact_sha256.len() != 64
-                    || !artifact_sha256
-                        .bytes()
-                        .all(|ch| ch.is_ascii_digit() || (b'a'..=b'f').contains(&ch))
-                {
-                    return Err(ContractError::InvalidIdentity);
-                }
-            }
         }
         Ok(Self {
             connection_id: connection_id.into(),
@@ -413,10 +341,6 @@ impl ConnectionIdentity {
             ConnectionSource::DevelopmentCatalog { provider_id } => Cow::Borrowed(provider_id),
             ConnectionSource::Configured => Cow::Owned(format!(
                 "mcp:v1:configured:{}:{}",
-                self.connection_id, self.account_id
-            )),
-            ConnectionSource::Store { extension_id, .. } => Cow::Owned(format!(
-                "mcp:v1:store:{extension_id}:{}:{}",
                 self.connection_id, self.account_id
             )),
         }
@@ -448,14 +372,6 @@ mod tests {
     fn admit(value: &Value) -> Result<ValidatedDescriptor, ContractError> {
         ValidatedDescriptor::parse(&serde_json::to_vec(value).unwrap())
     }
-    fn store(version: &str, hash: &str) -> ConnectionSource {
-        ConnectionSource::Store {
-            extension_id: "com.example.calendar".into(),
-            version: version.into(),
-            artifact_sha256: hash.into(),
-        }
-    }
-
     #[test]
     fn descriptor_roundtrip_is_metadata_only_and_auth_is_explicit() {
         let accepted = admit(&wire()).unwrap();
@@ -858,22 +774,13 @@ mod tests {
             configured("linear", "work"),
             configured("work", "linear"),
             ConnectionIdentity::catalog("linear").unwrap(),
-            ConnectionIdentity::new("linear", "linear", store("1.0.0", &"a".repeat(64))).unwrap(),
         ] {
             assert_ne!(base.vault_account(), other.vault_account());
         }
-        let a = ConnectionIdentity::new("linear", "work", store("1.0.0", &"a".repeat(64))).unwrap();
-        let b = ConnectionIdentity::new("linear", "work", store("2.0.0", &"b".repeat(64))).unwrap();
-        assert_eq!(a.vault_account(), b.vault_account()); // Host must invalidate changed provenance; no implicit account migration.
-        assert_ne!(a.source(), b.source());
-        assert_eq!(
-            a.vault_account(),
-            "mcp:v1:store:com.example.calendar:linear:work"
-        );
     }
 
     #[test]
-    fn identity_delimiters_bounds_and_store_provenance_are_validated() {
+    fn identity_delimiters_and_bounds_are_validated() {
         for invalid in [
             "",
             "Linear",
@@ -894,21 +801,5 @@ mod tests {
             );
         }
         assert!(ConnectionIdentity::catalog(&"a".repeat(64)).is_ok());
-        for source in [
-            store("1.0.0", &"a".repeat(63)),
-            store("1.0.0", &"A".repeat(64)),
-            store("1.0.0", &"g".repeat(64)),
-            store("../version", &"a".repeat(64)),
-            ConnectionSource::Store {
-                extension_id: "BAD:id".into(),
-                version: "1.0.0".into(),
-                artifact_sha256: "a".repeat(64),
-            },
-        ] {
-            assert_eq!(
-                ConnectionIdentity::new("linear", "work", source),
-                Err(ContractError::InvalidIdentity)
-            );
-        }
     }
 }
