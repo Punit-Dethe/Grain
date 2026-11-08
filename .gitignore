@@ -75,10 +75,7 @@ src-tauri/.cargo/
 *.updater.key.password
 grain.updater.key*
 
-# [GRAIN] Phase 5A extension-registry SECRET keys — never commit. Only the
-# PUBLIC keys (pinned in grain-core) and the signed seed docs are tracked. The
-# `.key` files here are the development root/publishing secrets; the production
-# ones move to encrypted removable media as the final migration step.
+# Keep private keys out of source control, including files from retired tooling.
 registry-keys/
 production-keys/
 *.key
@@ -108,9 +105,7 @@ docs/*
 /tests/agent-harness/.build/
 /tests/agent-harness/.runs/
 
-# [GRAIN] Phase 5B: the extension registry is a SEPARATE git repo living as a
-# sibling subdirectory (owner decision, 2026-07-24) — one directory tree for
-# cross-referencing, its own git for clean separation. Never tracked here.
+# Keep separately cloned publisher checkouts out of this repository.
 grain-extensions/
 # transcribe.cpp source fork: independent repository, co-located for development.
 /native/transcribe.cpp/

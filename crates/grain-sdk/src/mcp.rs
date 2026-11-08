@@ -1,4 +1,4 @@
-//! Provisional author-owned remote MCP metadata. Host identities, credentials,
+//! Remote MCP connection metadata. Host identities, credentials,
 //! trust, enablement, runtime sessions and tool schemas do not belong here.
 
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 /// Public provider configuration, never account credentials or protocol state.
 pub type McpHeaders = BTreeMap<String, String>;
 
-/// Publisher-owned public registration. Grain discovers endpoints and keeps
+/// Public OAuth client registration. Grain discovers endpoints and keeps
 /// account tokens; this never supplies a client secret or callback override.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -41,10 +41,6 @@ fn deserialize_headers<'de, D: serde::Deserializer<'de>>(
     deserializer.deserialize_map(Headers)
 }
 
-pub const MCP_DESCRIPTOR_API_REQUIREMENT: &str = "^1.0";
-pub const MCP_DESCRIPTOR_SCHEMA: u8 = 1;
-pub const MCP_DESCRIPTOR_MAX_BYTES: usize = 8 * 1024;
-
 /// Direct connection input: no extension package, host identity or credentials.
 /// Parsing/endpoint admission belongs to Grain, not to this wire declaration.
 pub const MCP_CONNECTION_MAX_BYTES: usize = 4 * 1024;
@@ -67,36 +63,6 @@ pub struct RemoteMcpConnection {
         skip_serializing_if = "Option::is_none"
     )]
     pub oauth_client: Option<McpPublicOAuthClient>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct McpDescriptor {
-    pub schema: u8,
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub version: String,
-    pub grain_api: String,
-    pub transport: McpTransport,
-    pub authentication: McpAuthentication,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub oauth_client: Option<McpPublicOAuthClient>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", deny_unknown_fields)]
-pub enum McpTransport {
-    #[serde(rename = "streamable-http")]
-    StreamableHttp {
-        url: String,
-        #[serde(
-            default,
-            deserialize_with = "deserialize_headers",
-            skip_serializing_if = "BTreeMap::is_empty"
-        )]
-        headers: McpHeaders,
-    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

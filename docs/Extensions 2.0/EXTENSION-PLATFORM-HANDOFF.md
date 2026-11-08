@@ -1,8 +1,8 @@
 # Extension platform: current understanding and integration handoff
 
-**Updated: 14 October 2026.** Follow the active
-[platform stabilization order](PLATFORM-STABILIZATION.md) before starting more
-provider-specific testing or Notion. Main integration is implemented on
+**Historical checkpoint from 14 October 2026.** Follow the
+[store retirement log](STORE-RETIREMENT.md) for the current MCP connection
+plan. Main integration at this checkpoint was implemented on
 `extensions/main-integration-20261010`; see the
 [integration checkpoint](MAIN-INTEGRATION-CHECKPOINT.md) for reconciled boundaries,
 automated results and the remaining installed-alpha acceptance.

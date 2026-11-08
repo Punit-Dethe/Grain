@@ -10,7 +10,6 @@ import tsParser from "@typescript-eslint/parser";
 // be effort spent on code with a known expiry. The rule exists to stop the NEW
 // tree from inheriting the habit.
 const LEGACY_RAW_INVOKE = [
-  "src/app/components/settings/experimentations/DeveloperSection.tsx",
   "src/app/components/settings/experimentations/AgentSection.tsx",
 ];
 
@@ -20,8 +19,7 @@ const LEGACY_RAW_INVOKE = [
 // and reachable as `events.modelStateChanged.listen(...)`.
 //
 // Shrink-only, and mostly retired by deletion rather than conversion. Not all
-// of these are legacy: `LiveLogViewer` listens to `log://log`, and the
-// extension plumbing uses private channels. Exact paths
+// of these are legacy: `LiveLogViewer` listens to `log://log`. Exact paths
 // only, no directory globs: a glob would silently re-exempt files added later.
 const LEGACY_RAW_LISTEN = [
   "src/App.tsx",
@@ -31,13 +29,8 @@ const LEGACY_RAW_LISTEN = [
   "src/app/stores/settingsStore.ts",
 ];
 
-// Permanent exemptions, not legacy: isolated Vite entries with deliberately
-// tiny command/event boundaries. `commands` and
-// `events` live in the same module, so importing either retains all ~204 command
-// wrappers; that is a real cost to pay on a page that makes a handful of calls.
 // `bindings.ts` is the generated file the rules point everyone at.
-const STANDALONE_ENTRIES = ["src/app/extension-host.ts"];
-const GENERATED = [...STANDALONE_ENTRIES, "src/app/bindings.ts"];
+const GENERATED = ["src/app/bindings.ts"];
 
 const NO_RAW_INVOKE = {
   name: "@tauri-apps/api/core",

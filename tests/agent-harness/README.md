@@ -5,8 +5,8 @@ the existing Cargo runner at `scripts/run-rust-test.ps1` for desktop library
 tests. Use the real-app harness for an application boundary that the normal
 tests cannot cover. The configured MCP suites are the current checkpoint for
 custom connections. The signed store, native package fixtures and worker
-transport were retired on 8 November. Dated evidence below describes older
-builds and includes historical commands.
+transport were retired on 8 November. See the [retirement log](../../docs/Extensions%202.0/STORE-RETIREMENT.md)
+for implementation checkpoints and links to historical evidence.
 
 Build with `pwsh -NoProfile -File tests/agent-harness/build.ps1`. Use
 `node tests/agent-harness/run.mjs --list` for the current scenario inventory.
@@ -15,28 +15,43 @@ The `smoke`, `mcp-agent-workflows`, `mcp-configured`, and
 fixtures need Python with `cryptography` on `PATH`. Older MCP model fixtures
 that still wait for manual approval require adaptation to automatic dispatch.
 
-**15 October final discovery checkpoint:** compact deferred names/exact recovery
-are the normal debug/release policy; the experiment variable is retired. Nine
-final real-Agent journeys pass with configured Harbor, GitHub and Notion, plus
-the focused source audit/tests. The existing evaluator reports initial required
-sets separately from oracle-chosen exact recovery; this is availability proof,
-not LLM accuracy. Initial ranked/eager caps stay 24/32 KiB, later task cap 64 KiB.
-Four disposable Python staging adapters are removed after review; ignored run
-reports/requests remain evidence, not another test framework. No new manual batch.
-See current [progress](../../docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md).
+## Quick start on Windows
 
-**14 October lexical-tool checkpoint:** the new Agent prepares first-round action
-schemas and offers combined `search_tools` recovery with `queries` and optional
-`extension_id`. It no longer offers/dispatches `load_extension`. Scripted model
-procedures in `model.mjs`, `workflow.mjs`, `mcp-live.mjs`, `mcp-hf-live.mjs`, and the
-old GitHub two-tool trace assertion encode the former search/load policy. They
-are **not current acceptance evidence** until adapted/retired at the comparison
-checkpoint. Do not add a compatibility path to make those fixtures pass.
-Use focused core/backend tests for source changes. A terminal Notion read passed;
-actual-catalogue complete-set coverage remains below the adoption gate, and the
-controlled configured-model comparison remains pending in
-[the lexical-first plan](../../docs/Extensions%202.0/FAST-TOOL-EXECUTION-PLAN.md).
-No new harness suite or testing engine was added for this work.
+Use the normal Grain build toolchain, Node 22+, PowerShell, WebView2 and the
+Windows SDK. Install the workspace dependencies before building. Owned TLS
+fixtures require Python with `cryptography`.
+
+```powershell
+pwsh -NoProfile -File tests/agent-harness/build.ps1
+node tests/agent-harness/run.mjs --list
+node tests/agent-harness/run.mjs --suite smoke
+node tests/agent-harness/run.mjs --suite mcp-agent-workflows
+node tests/agent-harness/run.mjs --suite mcp-configured
+node tests/agent-harness/run.mjs --suite mcp-configured-runtime
+node tests/agent-harness/run.mjs --suite mcp-configured-auth
+node tests/agent-harness/production-tests.mjs --group mcp
+node --test tests/agent-harness/runner.test.mjs
+```
+
+The builder stamps the executable and source. Rebuild after source changes.
+The runner refuses an ordinary `handy.exe` or a binary that differs from the
+stamp. The production logic runner accepts `agent`, `execution`, `mcp`, and
+`all`. These results cover library behavior. The runtime suites exercise the
+real Tauri app.
+
+The harness uses its own identifier, profile and scoped MCP vault entries.
+It disables ordinary global shortcuts and avoids microphone or account access
+in self-contained runs. Use an idle Windows desktop when testing the actual
+Agent window. On Windows, close the app using the debug target before building
+if it holds a runtime DLL open.
+
+Each run creates a unique folder under `.runs/` or the parent passed via
+`--output`. The runner cleans up owned processes, scratch data and credentials
+and retains the report, bounded logs and failure evidence. Keep live-account
+reports out of Git. Exit codes are 0 for passing scenarios and cleanup, 1 for
+failure, and 2 for a blocked prerequisite. A failure leaves later scenarios
+unrun. Use the [interruption inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory)
+before cleaning up an interrupted run.
 
 ### Terminal-only MCP probe (GitHub test profile)
 
@@ -95,8 +110,7 @@ of non-execution; never retry a possible write automatically. `catalog` exports
 supported schemas and the exact production lexical projection, plus coverage;
 it does not prove that every provider capability was admitted. `agent` returns
 the actual reply and logs offered schemas/call rounds through normal diagnostics.
-This exercises **MCP/backend** behavior; frontend display, speech and native worker
-acceptance remain separate. Retire this probe if a maintained direct CLI later
+This exercises **MCP/backend** behavior; frontend display and speech acceptance remain separate. Retire this probe if a maintained direct CLI later
 provides the same coverage; disposable request/analysis files are not new suites.
 
 **15 October adopted recovery policy:** normal debug/release Agent requests now
@@ -154,33 +168,6 @@ cargo --config 'target.x86_64-pc-windows-msvc.runner=["powershell.exe","-NoProfi
 
 ## Installed GitHub MCP checkpoint
 
-**14 October corrected checkpoint:** after the external 9router schema repair,
-issue #2 was created with exact title/body (`github-alpha-hU7Agp`), then updated
-and closed with one approved write (`github-alpha-M3F0FS`). The latter also creates
-`grain-check-feb200ee`; `github-alpha-IHmv7r` writes exact plain-text file contents
-on that branch, independently verified with main unchanged. The initial issue
-list was stale, so its immediate verification remains Fail; later independent
-reads confirm the creation. The file guard expected REST base64 rather than the
-current MCP tool's literal text; the corrected checkpoint passes. Failed reports
-remain intact, and no completed write was replayed.
-
-Only a bounded 15-second independent read poll, action-attempt metadata and the
-correct literal-content guard remain. Temporary continuation switches are already
-removed; the exact used script is retained solely as ignored evidence at
-`.runs/github-alpha-IHmv7r/evidence/runner.used.mjs` (SHA matches that report).
-Retire it with the run files after review. Tiered exposure/selection is directly
-recorded in `M3F0FS`: two discovery tools initially, then four for issue work or
-three for branch work. The successful file continuation captured no trace, so its
-separate exposure verdict remains Blocked; that is not evidence of an old binary.
-No new provider runner or maintenance engine is introduced.
-
-**14 October work order:** shared platform stabilization comes first; see
-[the active plan](../../docs/Extensions%202.0/PLATFORM-STABILIZATION.md). Do not
-run another provider/write batch automatically. The temporary `--files` mode
-used for independent branch/file diagnostics is removed; preserve its report.
-Failure diagnostics contain types/counts and fixed keyword markers, not raw
-model replies, arguments, provider payloads or credentials.
-
 Run from the repository root on Windows:
 
 ```powershell
@@ -197,7 +184,7 @@ connect GitHub from Browse extensions and disable other connections. Close
 the app before running the script. The GitHub CLI needs independent read
 access to Punit-Dethe/grain-github-alpha-test/README.md for the read check.
 
-This focused script starts the actual installed alpha, attaches to its owned
+This focused script starts the installed Grain GitHub Test app, attaches to its owned
 WebView2 through loopback CDP and invokes production Tauri Agent commands. It
 does not use Computer Use, screenshots, simulated clicks, fixtures or a model
 relay. `--read` approves only the test repository's README getter, verifies the
@@ -214,7 +201,7 @@ one marked branch and a synthetic file. Exact argument/title guards refuse other
 actions and repeated writes. Independent CLI reads verify each effect and main's
 unchanged commit. Test objects are retained in the report for inspection; failed
 or uncertain work must not be replayed automatically. No account connect or
-disconnect is automated by this mode. Its final exposure check needs an alpha
+disconnect is automated by this mode. Its final exposure check requires a test build
 with `agent-tool-trace` diagnostics; an older binary may pass effects while that
 distinct check remains Blocked. New log entries contain tool identities/counts
 only; the original log level is restored even when the batch fails.
@@ -223,326 +210,10 @@ Reports record the installed binary hash and per-stage verdicts under ignored
 `.runs/github-alpha-*/evidence/`; subsequent runs also stamp this script. Only
 the spawned host is stopped, with cleanup reported independently. Disposable
 WebView directories and evidence can be removed after review; process cleanup
-does not claim file deletion. Retain this small installed-alpha checkpoint
-until the standard runner can target installed alphas directly, then consolidate
+does not claim file deletion. Retain this small installed-app checkpoint
+until the standard runner can target installed apps directly, then consolidate
 it there rather than building another testing framework. This verifies the real
 Agent/MCP command path, not physical shortcuts or visual interaction.
-
-After the user updated GitHub App repository access, `github-alpha-iuyNiW`
-passed preflight, private README read, persisted account after restart and a
-second verified read, with cleanup Pass. Earlier 404 and guard-refusal runs
-remain failed evidence. `github-alpha-F01z0v` independently verified issue #1
-creation, then update/close Fail; the issue remained open with its original body.
-The independent `github-alpha-OwevZN` run verified branch creation, then refused
-a proposed second branch action during the file check. File creation Fail, not
-Pass. Both runs cleaned up and restored logging. Actual full-toolset exposure,
-the update failure's root cause and disconnect/reconnect remain separate from
-these results. Never automatically replay failed writes.
-
-**App-main integration (10 October):** see the
-[integration checkpoint](../../docs/Extensions%202.0/MAIN-INTEGRATION-CHECKPOINT.md).
-The existing `extension-contract`, `agent-workflow`, `mcp-configured` and
-`store-mcp` suites passed 24/24 with owned cleanup. Fresh-checkout stamping uses
-the tracked Bun lock (optional local npm lock), includes recording HTML and
-embedded seeds, and creates its output directory. Main's removed settings are
-not restored in fixture setup. No scenario/peer/runner was added. Ignored build
-outputs, profiles and reports are disposable evidence; installed-alpha
-shortcut/dictation and live GitHub approval remain separate acceptance.
-
-**App store freshness checkpoint (8 October):** [Scoped audit](../../docs/Extensions%202.0/EXTENSION-STORE-FRESHNESS-AUDIT.md) records 294 core / 76 maintainer / 11 normal backend store tests and both existing real-app store suites (6/6), with owned cleanup. The first native attempt correctly refused its fixture's missing revocation response; only `store-fixture.mjs` changed to serve a fresh signed empty list, then both suites pass. No new runner/scenario/bridge or visual replica. Inventory **108 / 93 / 81** unchanged; 78 runner self-tests were executed separately. Reuse `--suite store` and `--suite store-mcp` after the stamped build. Ignored `logic-8B7WSG`, failed `run-f1KdxL`, accepted `run-xdYnHT` and `run-HHVnfk` retain disposable evidence; retention is not file-deletion Pass. Cache crash-atomicity and live publication remain open; no new human batch.
-
-**E4e hosting handoff (6 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-HOSTING-BUNDLE-AUDIT.md) records **21 Windows / 22 Linux Rust / 39 actual CLI verdicts per platform**. Product maintainer CLI/component tests changed; no Agent runner/scenario/bridge/model/desktop source. Inventory **108 / 93 / 81** unchanged. `.runs/e4e-hosting-bundle-01/` and `-linux-01/` retain disposable nonsecret scripts/reports/snapshots; 39 Windows PID references are independently clean and no acceptance keys/accounts/listeners remain. Retention is not deletion Pass. Keep focused product tests and retire the branch-only wrapper when supported maintainer CI owns them. No new manual batch or hosting activation.
-
-**E4d history/export checkpoint (6 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-SERVING-HISTORY-EXPORT-AUDIT.md) records **15 affected Windows Rust / 25 CLI verdicts** and pinned Linux verification. No runner/scenario/model/desktop source changed; inventory **108 / 93 / 81** unchanged. `.runs/e4d-history-export-01/` and downloaded Linux evidence are disposable nonsecret retained reports/scripts/snapshots. Twenty-five recorded Windows CLI PIDs have no remaining owned process; no acceptance account/listener/key remains. Retention is not deletion Pass. Extend existing component/CLI CI; retire the branch-only wrapper after supported maintainer CI takes over. No new manual batch or production activation.
-
-**E4c local serving checkpoint (6 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-SERVING-PROMOTION-AUDIT.md) records **36 Windows Rust**, final **10 affected repeats / 16 CLI verdicts**, and actual Linux **11 Rust / 16 CLI verdicts**. Product serving commands changed; no harness runner/scenario/desktop batch added. Inventory **108 / 93 / 81** unchanged. `.runs/e4c-serving-01/`, `-02/` and `-linux-01/` are disposable retained nonsecret evidence; no remaining owned Windows CLI across 32 PID references and no acceptance keys/accounts/listeners. Retained files are not deletion Pass. Branch-only Linux wrapper has a retirement condition; keep product tests. Hosted/protected release and historical publication identity remain Pending; no user batch.
-
-**E4b3 remote source/review checkpoint (6 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-SOURCE-REVIEW-BUILD-AUDIT.md) uses **26 focused Rust / 20 actual CLI verdicts** plus actual native/MCP source-build CI. No harness runner/scenario/bridge/desktop batch added; inventory **108 / 93 / 81** unchanged. `.runs/e4b3-source-build-01/` retains disposable nonsecret source/node_modules/downloaded tools/bundles/reports, including nonaccepted attempts. No keys generated or remaining owned runtime; retained files are not file-cleanup Pass. Registry fixture branches/tags/submissions/checkpoint wrapper have explicit retirement conditions; reusable source CI is product infrastructure. Positive protected human approval remains Pending; no manual batch or release claim.
-
-**E4b3 actual CI checkpoint (6 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-CI-PROVENANCE-AUDIT.md) records **24 affected Rust / 13 CLI verdicts**, genuine both-kind positive signing and eight identity refusals with owned cleanup. No harness source/scenario or desktop batch; inventory **108 / 93 / 81** unchanged. `.runs/e4b3-real-provenance-01/` and local CI fixture smoke output are disposable retained evidence; test keys are removed. The separate registry CI fixture producer is temporary and has a retirement ledger. Protected production human review/release governance remains Pending; no user batch.
-
-**E4b3 maintainer signing boundary (5 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-REVIEWED-SIGNING-AUDIT.md) records **149 Rust / 18 CLI commands (14 expected signing refusals)**, real component signatures and owned-process cleanup. Positive trusted registry CI/review signing remains Pending. No harness source/scenario or desktop batch added; inventory **108 / 93 / 81** unchanged. `.runs/e4b3-signing-local*` one-off scripts/logs/fixtures are disposable retained evidence, with final `-04` recording current executable bytes and removed fixture keys. Existing exceptions/no-user-batch status remain.
-
-**E4b2 catalogue checkpoint (5 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-CATALOGUE-LISTING-AUDIT.md) records **184 Rust / 81 Node / 6 executable / 6 real-app store** expected verdicts. Existing fixture/handlers now check signed DESCRIPTION reads and corrupted-body refusal; no new scenario/framework. Both desktop scopes and 15 host/CLI PID references independently clean. Reuse `--suite store` and `--suite store-mcp`; ignored `.runs/e4b2-*` artifacts/logs are disposable retained evidence. Inventory **108 / 93 / 81** and existing exceptions unchanged; no user batch.
-
-**E4b1 receiving slice (5 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-PUBLISHING-HANDOFF-AUDIT.md) covers local prepared-bundle verification with **139 Rust / 12 actual executable expected verdicts**. No new harness source/scenario or desktop rerun; inventory **108 / 93 / 81** unchanged. Ignored marked nonsecret `.runs/e4b-receive-*` fixtures/logs are disposable retained evidence, with all recorded command children exited. Next catalogue/host checkpoint reuses existing signed-store cases; no new human batch.
-
-**E4a maintainer-only boundary (5 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-PUBLISHING-PREPARATION-AUDIT.md) covers shared packaging and unsigned two-kind source/artifact/listing preparation with **133 locked Rust tests** and actual CLI/registry executable checks. No harness source/scenarios added and no unaffected desktop batch repeated. Keep component tests during development; run the existing signed-store cases at E4's catalogue/host checkpoint. Ignored `.runs/e4a-*` one-off scripts/logs/marked nonsecret fixtures are disposable evidence, not a new runner or production dependency. Inventory **108 / 93 / 81**, prior exceptions and no-human-batch status remain unchanged.
-
-**E3b author-tool checkpoint (5 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-SUBMISSION-LISTING-AUDIT.md) accepts structured native/MCP submissions and bounded DESCRIPTION/media validation. Focused **126 Rust / 81 Node**, generated contracts and actual CLI/registry round-trips cover the new pure authoring boundary; existing `extension-contract` **12/12**, `store-mcp` **3/3** and fresh `store.mcp-management` **1/1** pass on the final real host. No harness source or scenarios were added; independent desktop cleanup passes. Keep existing suites and use component tests during development. Ignored logs/reports/author fixtures are disposable nonsecret evidence; `.runs/e3b-source-20261005` remains explicitly retained without credentials or running resources after optional cleanup was policy-blocked. Inventory **108 / 93 / 81** unchanged. E3 provisional authoring complete; E4 publication is next. No new human batch or release claim.
-
-**E3a authoring checkpoint (5 October):** [Audit/evidence](../../docs/Extensions%202.0/EXTENSION-AUTHORING-CLI-AUDIT.md). `store.mcp-management` now runs the actual stamped CLI `init --mcp-url`, `doctor` and `pack`; exact resulting bytes enter the signed fixture and actual host acquisition/read/restart. It reuses `cliCommand` and the existing case, records command PIDs/artifact hash, and disposes its owned `mcp-author` folder. No scenario/framework was added. Native generated-type/bundle checks, `extension-contract` 12/12, `store-mcp` 3/3 and fresh authored-store repeat pass. Commands remain the existing build, author-contract and suites below; use `node tests/agent-harness/author-contract.mjs` for generated native types. Inventory **108 / 93 / 81** unchanged. Public MCP submission/listing and SDK freeze remain provisional; no human batch.
-
-**E2i store MCP checkpoint (5 October):** [Implementation, audit and evidence](../../docs/Extensions%202.0/STORE-MCP-ACQUISITION-AUDIT.md#e2i-real-app-activation-checkpoint-and-block-audit). `store-mcp` runs three real-app cases for signed acquisition/update/removal, SDK account retirement and signed/cached revocation. `mcp-store-checkpoint` combines them with eleven configured and two smoke cases, preserving **16 separate verdicts**; final affected repeat adds version/deprecation/connect checks. All peers/model inputs reuse maintained infrastructure; no browser-only replica or new engine. Store consent is controlled, not live-provider/browser certification. Ordinary profiles/accounts are untouched. Keep code below as regression infrastructure; `.runs/` data/TLS/logs/inspectors are disposable evidence. Inventory **108 / 93 / 81**.
-
-```powershell
-powershell.exe -NoProfile -File tests/agent-harness/build.ps1
-# Expected exit 1 at the owner receipt assertion, with cleanup Pass:
-node tests/agent-harness/run.mjs --scenario mcp.configured-execution --fault wrong-configured-owner
-```
-
-**E2f configured registered clients:** [Scope, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-CLIENT-REGISTRATION-AUDIT.md). The two new client cases cover host/revision-owned public/confidential setup, secret rotation, logout/reset, independent same-endpoint accounts, discovery-failure preservation and pending/active cancellation. `mcp-configured-auth` now selects five cases; `mcp-connection-checkpoint` selects **36 distinct verdicts** (eleven configured, 23 catalogue, two smoke) with original deadlines. Inventory **105 IDs / 90 self-contained / 80 Node tests**. Run backend/build checks before actual hosts, actual scopes serially, and freeze source/runner inputs through cleanup. Keep these cases and exact fault admission as regression infrastructure; generated profiles/TLS/logs/inspectors remain disposable evidence. The finite issuer/wire evidence bounds are **2,560 / 4,608**; capacity/terminal-error tests remain and production limits are unchanged. The audit records failed/incomplete scopes separately; implementation alone does not accept check 65.
-
-```powershell
-node tests/agent-harness/run.mjs --suite mcp-connection-checkpoint
-# Expected exit 1 at old-grant retention assertion, cleanup Pass:
-node tests/agent-harness/run.mjs --scenario mcp.configured-auth-client-rotation --fault skip-configured-client-rotation
-node tests/agent-harness/run.mjs --suite mcp-configured-auth
-```
-
-Forward **65 accepted** after the **36/36** broad checkpoint, final-runner **5/5** repeat, detected rotation fault and independent nine-scope cleanup inspection. The audit records exact source/runner identities, harness-only corrections and failed/incomplete evidence. Configured JSON remains credential-free. Client setup/reset is host-managed; ordinary accounts are untouched. Public client metadata still needs official hosting; verified store acquisition remains later E2 work. No manual sign-in is needed for this owned issuer. Earlier dated entries below retain their historical scope.
-
-**E2e configured OAuth checkpoint:** [Scope, audit and retained evidence](../../docs/Extensions%202.0/CUSTOM-MCP-OAUTH-AUDIT.md). `mcp-configured-auth` runs three actual-app SDK DCR/vault cases: independent same-endpoint accounts and retirement, pending sign-in cancellation, and actual expiry/refresh plus active disconnect/removal. No user account or browser approval is needed for this owned issuer. `mcp-connection-checkpoint` now retains **34 distinct verdicts** (nine configured, 23 catalogue, two smoke), with unchanged production deadlines. Inventory **103 IDs / 88 self-contained / 79 Node self-tests**. Custom preregistration, permanent public client metadata and store acquisition remain separate work. Earlier checkpoint entries are historical scopes.
-
-```powershell
-node tests/agent-harness/run.mjs --suite mcp-connection-checkpoint
-# Expected exit 1 after one real wrong-account response, cleanup Pass:
-node tests/agent-harness/run.mjs --scenario mcp.configured-auth-ownership --fault wrong-configured-auth-account
-node tests/agent-harness/run.mjs --suite mcp-configured-auth
-```
-
-Build and backend checks before actual application tests; run scopes serially and keep runner/source inputs fixed until cleanup completes. Retain the new finite instructions, assertions and exact run/account cleanup as regression infrastructure. The owned issuer retires disposable registrations only at a zero-inventory scenario boundary; it refuses while grants or consent remain. Wire evidence has a finite 4,608-entry cap for this checkpoint; production limits are unchanged. Generated profiles/TLS/logs/inspectors remain disposable evidence. Interrupted `run-54t29c` has **no acceptance credit**: automatic approval review blocked deletion of three temporary directories, but exact scoped credentials were cleared and owned processes/listeners are absent. Do not bypass that restriction; see the audit for all retained failures and cleanup exceptions.
-
-**E2d configured runtime checkpoint:** [Implementation, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-RUNTIME-AUDIT.md). `mcp-configured-runtime` runs three real-app anonymous-server cases: exact enable/restart and modern/legacy JSON/SSE execution, pending approval ownership, and held-call mutation/cancellation/recovery. OAuth stays inactive; no user credentials or browser sign-in are needed. `mcp-connection-checkpoint` runs all six configured cases, all 23 catalogue transport/OAuth cases and both smoke cases in one host, retaining **31 individual verdicts** and original deadlines. Keep all runner/source inputs fixed until teardown; even a help edit invalidates the run identity. Documentation is outside the runner fingerprint. Inventory **100 IDs / 85 self-contained / 78 Node self-tests**. Existing broader suite/release triggers remain.
-
-```powershell
-node tests/agent-harness/production-tests.mjs --group mcp
-cargo test --locked -p grain-core mcp_connections::
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
-node tests/agent-harness/run.mjs --suite mcp-connection-checkpoint
-# Expected exit 1 at owner receipt assertion, cleanup Pass:
-node tests/agent-harness/run.mjs --scenario mcp.configured-execution --fault wrong-configured-owner
-node tests/agent-harness/run.mjs --suite mcp-configured-runtime
-```
-
-Compile and run backend checks before actual-app tests; finish owned cleanup before another build. Keep the configured cases, finite instructions, negative oracle and selector as regression infrastructure. Generated profiles/TLS keys/logs/read-only inspectors in `.runs/` are disposable evidence. No second runtime or alternate UI was added. Next configured OAuth requires exact vault ownership and retired-account disposal before activation. Older checkpoints below record their original scopes.
-
-**Custom MCP management checkpoint:** [Implementation, audit and scope](../../docs/Extensions%202.0/CUSTOM-MCP-HOST-MANAGEMENT-AUDIT.md). `mcp-configured` runs three separate real-app cases in one stamped host: inactive imports and exact stale/concurrent ownership; Developer Mode/actual Agent-window restrictions and strict nonsecret JSON; external/corrupt-file refusal, repair/restart, large string revisions and 32-record bounds. These are metadata checks, not custom authentication/tool-call certification. No account or manual browser step is required. The negative fault skips owned deletion and must exit 1 at its exact stage. Keep these maintained cases; generated profiles, logs and read-only inspectors are disposable evidence.
-
-```powershell
-node tests/agent-harness/production-tests.mjs --group mcp
-cargo test --locked -p grain-core mcp_connections::
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
-node tests/agent-harness/run.mjs --suite mcp-configured
-node tests/agent-harness/run.mjs --scenario mcp.configured-storage --fault missing-configured-cleanup
-```
-
-Compile/backend checks before real-app runs; shared Windows DLLs must not be rebuilt while a harness host is open. Runtime/auth/transport changes still require their broader suites and genuine deadline checks.
-
-**E2 destination checkpoint:** [Implementation, source audit and exact acceptance scope](../../docs/Extensions%202.0/MCP-DESTINATION-BOUNDARY-AUDIT.md). The new `mcp.destination-boundary` case uses the maintained owned HTTPS issuer and real host: three out-of-scope metadata destinations and an oversized response refuse before saved registration/secret changes or consent/token exchange; valid preregistered sign-in and fresh/restart approved reads recover. Existing registered bindings are compared to their starting inventory, not deleted to force zero. The deliberately valid-metadata fault must fail the expected-refusal oracle and independently clean the resulting scoped registration. It never bypasses production policy. No browser-only UI or new server is added.
-
-```powershell
-node tests/agent-harness/production-tests.mjs --group mcp
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
-node tests/agent-harness/run.mjs --suite mcp-foundation
-node tests/agent-harness/run.mjs --scenario mcp.destination-boundary --fault missing-mcp-destination-refusal
-node tests/agent-harness/run.mjs --suite mcp-live
-```
-
-Run application scenarios serially. `mcp-foundation` now contains **23** attributable cases (nine transport, fourteen OAuth/destination); real 45/90-second deadlines remain. `mcp-live` is an opt-in fixed anonymous public read, excluded from `all`; it checks the actual production DNS/TLS client without human credentials. Normal backend tests own local sockets and use a test-only HTTP client, while destination tests exercise public address checks and zero accepted listener connections. Cargo build/Clippy scripts stage DLLs in the shared target directory, so finish application cleanup before starting them. Keep these scenarios and fixed peer modes for configured-runtime regression; ignored finished evidence is disposable. Current inventory **94 IDs / 79 self-contained / 75 self-tests**. No custom connection import/UI path or E2 completion is certified by this checkpoint.
-
-**E2a direct-connection library tests:** [Production boundary, audit and evidence](../../docs/Extensions%202.0/CUSTOM-MCP-CONNECTION-REGISTRY-AUDIT.md). Run `cargo test --locked -p grain-core mcp_connections::` for strict metadata, identity/account isolation, stale edits/restart, corrupt state, actual locks/publication rollback and concurrent writers. All thirteen Windows cases pass. This is a production library/real-filesystem test; no custom MCP import/runtime route or credentials are exercised yet. Reuse `extension-contract` for affected baseline application regression and the existing owned MCP fixtures for the upcoming runtime/auth integration. No scenario, mock application or testing service was added; inventory stays **93 IDs / 78 self-contained / 74 self-tests**. E2 remains in progress; no manual test is needed for this unit.
-
-**E1c compatibility and development checkpoints:** [Contract, audit, evidence and suite triggers](../../docs/Extensions%202.0/EXTENSION-COMPATIBILITY-CONFIGURATION-AUDIT.md). Develop a bounded block with fast affected checks, build once, then run attributable real-app tests serially. For contract-only edits:
-
-```powershell
-cargo test --locked --workspace
-node --test tests/agent-harness/runner.test.mjs tests/agent-harness/client-metadata.test.mjs
-node tests/agent-harness/production-tests.mjs --group developer
-node tests/agent-harness/production-tests.mjs --group store
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
-node tests/agent-harness/author-contract.mjs
-node tests/agent-harness/run.mjs --suite extension-contract
-# After source audit, fresh affected acceptance:
-node tests/agent-harness/run.mjs --scenario native.api-compatibility
-# Expected Fail/exit 1: Missing expected rejection; cleanup must Pass:
-node tests/agent-harness/run.mjs --scenario native.api-compatibility --fault unsupported-api-as-current
-```
-
-The checkpoint selects twelve cases covering public native results, API compatibility, typed inputs, migration, CLI packages/owner restoration, native auth, signed-store integrity/close, MCP transport/account independence and Agent smoke/denial. The compatibility case refuses unsupported installed/developer profiles without displacing the working owner, then executes an omitted-profile legacy package. A negative control supplies a supported profile where rejection is required. Each case retains its own observations/verdict; failure stops the batch. Full existing suites remain required for changed auth/permission/transport/deadline/shared-executor boundaries and E8 release coverage. Real timeout tests are unchanged, never shortened or replaced by this subset. Preserve fixture reset, source/build fingerprints, owned cleanup and independent credential/process inventory. No accounts or ordinary application profile are borrowed.
-
-Final E1c checkpoint **12/12 Pass**, fresh repeat Pass, fault detected and independent cleanup Pass. Current inventory **93 IDs / 78 self-contained / 74 Node self-tests**, including four native-foundation cases. Baseline **52 Pass / 1 Deferred (12)**; forward **54/55/57/58/59 Pass**, full **56 Pending**. E1 provisional contract complete; E2–E8 remain. Keep maintained scenario/selector/fault tests; `.runs/` logs, generated author projects and read-only inspection scripts are disposable evidence. Physical retirement remains on hold. Older dated entries below are historical.
-
-**E1b descriptor/host identity checks:** [Contract, audit and runtime evidence](../../docs/Extensions%202.0/MCP-DESCRIPTOR-IDENTITY-AUDIT.md). This is pure metadata admission and the existing catalog bridge, not custom MCP import or a second harness. Use:
-
-```powershell
-cargo test --locked -p grain-core mcp::
-node tests/agent-harness/production-tests.mjs --group mcp
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
-node tests/agent-harness/run.mjs --suite mcp-foundation
-node tests/agent-harness/run.mjs --scenario mcp.auth-provider-independence
-# Expected Fail/exit 1 at wrong-account oracle; cleanup must Pass:
-node tests/agent-harness/run.mjs --scenario mcp.auth-provider-independence --fault wrong-mcp-peer-account
-```
-
-The pure Rust matrices reject unknown/duplicate/secret/host-owned fields, unsupported profiles, oversized metadata, unsafe endpoint forms and identity collisions. They create no client, account, listener or background service. The real-app suite independently checks the existing SDK/account/lifecycle paths; public-looking URL syntax alone never proves DNS/network admission. New configured/store identity namespaces are not yet wired to runtime/storage/import. Existing catalog grant, client-secret and registration keys stay unchanged. Keep the source tests; ignored logs, reports and read-only inspectors are disposable evidence. Inventory remains **92 IDs / 77 self-contained / 73 Node self-tests**; no new executable scenario or manual account assignment was needed.
-
-**E1a public author contract accepted:** [Contract, audit and limitations](../../docs/Extensions%202.0/NATIVE-AUTHOR-CONTRACT-AUDIT.md). Build first, then run serially:
-
-```powershell
-node tests/agent-harness/author-contract.mjs
-node tests/agent-harness/run.mjs --suite native-foundation
-```
-
-The first command verifies the stamped CLI, generates an owned project, compiles its unmodified example and supported API/15 negative cases, proves the compiler refuses an unguarded negative, and checks the generated hello bundle. It uses installed TypeScript/esbuild without a network install; reports and generated projects remain under `.runs/author-*`. This is non-visual contract evidence, never a substitute application. The second command runs three real Grain cases: seven named result/context modes, typed arguments/stale approval, and migration/restarts. The new result case preserves exact dispatch/pending-call and honest unsupported-result checks. The existing reply-failure oracle also detects deliberate error-to-success corruption. No account approval or new human batch is required. E1 is partially complete; custom MCP runtime/import remains E2 work under the identity boundary above.
-
-**Client metadata integration verified; production activation pending:** [Focused audit](../../docs/Extensions%202.0/MCP-CLIENT-METADATA-AUDIT.md) records the final thirteen-case auth batch, fresh metadata repeat, strict fault, fixed-port regression repair and scope limits. The maintained `mcp.auth-client-metadata` uses actual SDK/Tauri/vault/Agent reads and an owned HTTPS document resolved by the controlled issuer. It proves metadata selection with/without DCR, fallback/explicit credentials, separate wrong-ID/redirect/503 refusal, callback conflict/cancel and restart reads. It does not certify public hosting: the user confirms no official Grain website and production identity remains absent. Build once, run serially:
-
-```powershell
-node tests/agent-harness/run.mjs --suite mcp-auth
-node tests/agent-harness/run.mjs --scenario mcp.auth-client-metadata
-# Expected Fail/exit 1 at wrong mechanism, cleanup Pass:
-node tests/agent-harness/run.mjs --scenario mcp.auth-client-metadata --fault missing-mcp-cimd
-```
-
-The future public document uses the exact backend callback inventory and no secret. `scripts/check-mcp-client-metadata.mjs HTTPS_URL --file DOCUMENT.json` verifies a local artifact; `HTTPS_URL --live` verifies the direct public response. Do not use either checker result as a real-provider login or full forward-56 acceptance. The controlled document and strict fixture failures are maintained tests; ignored inspectors/reports are disposable. The three old policy-blocked scratch roots remain untouched.
-
-**Authentication recovery/status verified:** [Focused audit](../../docs/Extensions%202.0/MCP-AUTH-STATUS-AUDIT.md) records the final twelve-case auth regression, fresh real-app recovery repeat, strict negative oracle and shared Agent/smoke checks. New `mcp.auth-temporary-recovery` separately tests real expired refresh under 503/malformed/dropped replies in modern/legacy and valid-grant metadata recovery. The retained account and real developer Test/status/sign-in controls are checked. No provider login is needed. Keep exact failure/count/cleanup assertions and fixture grant retirement after verified logout; it does not certify production orphan reconciliation. Build once, then run serially:
-
-```powershell
-node tests/agent-harness/run.mjs --suite mcp-auth
-node tests/agent-harness/run.mjs --scenario mcp.auth-temporary-recovery
-# Expected Fail/exit 1 at Missing expected rejection, cleanup Pass:
-node tests/agent-harness/run.mjs --scenario mcp.auth-temporary-recovery --fault missing-mcp-refresh-failure
-```
-
-**Configured-client issuer protection verified:** [Focused audit](../../docs/Extensions%202.0/MCP-REGISTRATION-ISSUER-AUDIT.md) covers actual cross-issuer disclosure reproduction and the fix. `mcp.auth-issuer-binding` reuses two owned HTTPS peers and the real SDK/settings/vault path; only its explicit marker admits the second exact consent origin. Registration ownership survives logout/restart, changed issuers are refused before consent/secret use, explicit re-save enables the new issuer, and failed discovery preserves the existing account. All eleven `mcp-auth` cases and the fresh repeat pass; the deliberate missing-rotation fault fails as intended. MCP teardown independently removes/asserts zero grants, client secrets and new registration records, including public clients. No ordinary credentials or provider writes are involved. See the commands and retention rules below.
-
-After building the stamped host, run the focused case or its combined regression serially:
-
-```powershell
-node tests/agent-harness/run.mjs --scenario mcp.auth-issuer-binding
-node tests/agent-harness/run.mjs --suite mcp-auth
-# Expected Fail/exit 1 and cleanup Pass; never a positive acceptance run:
-node tests/agent-harness/run.mjs --scenario mcp.auth-issuer-binding --fault missing-mcp-issuer-rotation
-```
-
-**Native OAuth reuse verified:** [B5b audit](../../docs/Extensions%202.0/NATIVE-OAUTH-REUSE-AUDIT.md) records exact `oauth2` 5.0.0 adoption with existing account/vault/cancellation guards. Run the unchanged `native-auth`, `mcp-auth` and `agent-workflow` suites against the stamped build. All final cases pass; the partial-consent fault fails as expected. The native peer treats state as an opaque long URL-safe nonce, retaining independent PKCE/receipt/ownership assertions. No IDs, clocks or retention rules are removed. `run-uZZ7J8` is an interrupted, nonaccepted run with separately cleaned credentials and policy-blocked scratch/TLS deletion; its limitation is retained in the audit and harness inventory.
-
-**Current inventory, 3 October:** 92 distinct scenario IDs, 77 self-contained `all` cases, 73 harness self-tests; three `native-foundation`, 13 `mcp-auth` and 22 `mcp-foundation` cases. Original baseline **52 Pass / 1 Deferred / 0 active Pending**, additional forward **54/55/57 Pass**, full **56 Pending for permanent hosting/provider acceptance**. The user defers live expiry/refresh check 12; it is not passed. E1a is accepted; E1b identity/configuration is next. Obsolete-code removal stays on hold. The [author contract audit](../../docs/Extensions%202.0/NATIVE-AUTHOR-CONTRACT-AUDIT.md) and [client metadata audit](../../docs/Extensions%202.0/MCP-CLIENT-METADATA-AUDIT.md) record scope and gates; older dated counts retain historical evidence.
-
-**SDK regression accepted:** exact `rmcp` 3.5.0 passes two complete `mcp-foundation` runs, affected shared workflows/smoke, public-provider/Linear no-consent checks and the existing fault oracle. Scenario definitions/IDs, clocks and retention rules are unchanged. Official tools pass; the existing standalone initialization fixture remains Blocked. [Final evidence and reproducible commands](../../docs/Extensions%202.0/MCP-AUTH-LIFECYCLE-REUSE-AUDIT.md#final-evidence-and-scoped-acceptance). Native OAuth/issuer recovery/metadata integration will extend this maintained harness only as their next focused units require.
-
-`mcp-linear-contracts` requires `--linear-sign-in`, an interactive terminal and one owner-approved READ-ONLY browser consent. It calls no account tool, inspects actual production-supported contracts, repeats discovery after restart, then disconnects and removes its scoped grant/profile. Unlike the counts-only sign-in suite, this report intentionally retains bounded tool/property names, primitive structural shapes, schema digests and nesting flags. Prose, defaults, enums, const/private literals and raw schemas remain omitted; the projection is explicitly **not an executable schema**. The inspected catalog had 38 supported reads and no nested object parameters.
-
-`mcp-hf-live` uses fixed anonymous `https://huggingface.co/mcp`, selects only `hf_fs` and requires actual approval for one nested `cat` operation on the public `google-bert/bert-base-uncased/README.md`, limited to 2,048 bytes of file content. It verifies actual document/result bytes and repeats after a real host restart. The transport refuses other commands, URIs, batches, tools or credentials. Both suites are excluded from `all`; the local model scripts decisions and does not certify live-model judgment.
-
-```powershell
-node tests/agent-harness/run.mjs --suite mcp-hf-live
-# Expected Fail/exit 1 with cleanup Pass and the missing-evidence assertion:
-node tests/agent-harness/run.mjs --scenario mcp.hf-nested-read --fault missing-live-evidence
-```
-
-The finite Linear expiry preparation/resume/abort interface is deferred and does not exist yet. Completed runs delete their grants, so their expiry timestamps cannot be reused as refresh evidence. B5a's exact SDK upgrade has passed its affected suites; next reuse/extend those suites for the separately implemented native OAuth and authentication ownership/recovery units. Keep existing identities, clocks and oracles unchanged. No new manual batch is assigned.
-
-This is a persistent **Agent** harness. Its first real-application suite covers native tools and lifecycle. It runs Grain's actual Rust/Tauri host, actual Agent React panel, real WebView2 extension workers, selective tool discovery, host confirmation and continuation. It connects Playwright to those owned WebViews; it never launches a browser replica or replaces Tauri APIs.
-
-The local scripted model implements the normal OpenAI-compatible HTTP interface. It reliably requests search → selected schema load → one action → result, without a paid model or an external account. It checks that the initial frame contains no action schemas and exactly one requested action is offered after loading. This proves Agent mechanics with controlled decisions, not a live model's judgment.
-
-## Quick start on Windows
-
-Prerequisites: the repository's normal native build toolchain and dependencies, Node 22+ with WebSocket support, a 64-bit Windows desktop/PowerShell session, installed WebView2, and the Windows SDK `mt.exe` for backend library tests. Run `npm install` using the project's normal dependency instructions if `node_modules` is absent. No extra browser download, provider API key or OAuth sign-in is required.
-
-From the repository root in PowerShell:
-
-```powershell
-# Build the separate debug-only host and its embedded application assets.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/build.ps1
-
-# List scenarios, then run the short smoke suite.
-npm run test:agent -- --list
-npm run test:agent -- --suite smoke
-
-# All native lifecycle/Agent cases, including smoke.
-npm run test:agent -- --suite lifecycle
-
-# Native deadlines, reply errors, input refusal and result/wire budgets.
-npm run test:agent -- --suite native-failures
-npm run test:agent -- --suite native-installation
-
-# Legacy upgrade/restart preservation and typed native tool contracts.
-npm run test:agent -- --suite native-foundation
-
-# Native OAuth, scoped Windows vault, approved A/B reads and restart.
-# This suite additionally requires Python with cryptography installed.
-npm run test:agent -- --suite native-auth
-
-# Actual SDK MCP OAuth, scoped vault and callback/account ownership.
-npm run test:agent -- --suite mcp-auth
-
-# Both controlled MCP adapters in one real app; retain real 45/90s deadlines.
-npm run test:agent -- --suite mcp-foundation
-
-# Opt-in actual Linear SDK/DCR consent preflight; no browser/sign-in/tools.
-npm run test:agent -- --suite mcp-linear-preflight
-
-# Browser/grant controls without opening a browser or signing in.
-npm run test:agent -- --suite mcp-linear-guards
-
-# Human-assisted Linear consent; run only when the account owner is present.
-# Requires an interactive terminal. No credentials are typed in this terminal.
-npm run test:agent -- --suite mcp-linear-sign-in --linear-sign-in
-
-# One human sign-in; supported shapes/restart only, no account tools.
-npm run test:agent -- --suite mcp-linear-contracts --linear-sign-in
-
-# No account: fixed public nested text read before/after restart.
-npm run test:agent -- --suite mcp-hf-live
-
-# Existing registry state, invalid startup and real failed saves.
-npm run test:agent -- --suite registry-recovery
-
-# Real production idle timing; allow about five minutes.
-npm run test:agent -- --suite idle
-
-# Target one scenario after a change.
-npm run test:agent -- --scenario native.hot-reload
-
-# Production-logic tests, separately classified from real-app evidence.
-npm run test:agent:logic -- --group all
-npm run test:agent:logic -- --group mcp
-npm run test:agent:logic -- --group registry
-npm run test:agent:logic -- --group execution
-
-# Test the harness's own assertions/reporting.
-npm run test:agent:harness
-```
-
-The builder prints the executable path. By default the runtime runner finds it through Cargo metadata. `--binary C:\path\grain-agent-harness.exe` selects another copy of the exact stamped binary; ordinary `handy.exe` is refused. Rebuild after changing application sources. The runner checks the executable hash and source fingerprint against `.build/host.json` before launching. A build's Git commit and the run's current dirty files are recorded independently.
-
-Builds and backend compilation should finish before runtime suites start. On Windows, a running executable can lock native DLLs in the shared Cargo target directory; this was observed when compiling another test configuration while the harness was open. If a build reports `os error 32`, close the application using that debug target and rerun the build. Installed Grain instances using other directories can remain open. The runtime runner does not rebuild automatically or terminate ordinary application processes.
-
-Grain's ordinary app may remain open: the harness has its own identifier/profile and event port. Run only one runtime harness at a time because its loopback event port is **17124**. If occupied, the run reports Blocked. The normal app continues to use **7124**. Harness windows appear and take focus during the suite; use an idle desktop or dedicated Windows CI desktop for uninterrupted runs.
-
-Definitions remain in this folder. Each run creates `.runs/run-*` with disposable `data/` and `fixture/` directories. At completion those scratch directories are removed and `evidence/report.json`, `report.md`, a bounded redacted `host.log`, and any failure screenshot remain. `--output C:\path\reports` changes the parent; every run still gets a unique child. Build/run artifacts are ignored by Git. Do not commit them: future live-account evidence may contain private details despite redaction.
-
-Runtime reports also identify the Node/WebView adapter version and an independent hash of runner/fixture definitions. Changing those definitions during a run invalidates its result. Changes to documentation alone do not require an application rebuild or invalidate a run.
-
-## Scenarios and precise coverage
-
-| ID                         | What is asserted                                                                                                                                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `native.cold-warm`         | No action schema initially; selected action only; no dispatch before approval; one accepted result; subsequent call reuses the worker.                                                            |
-| `agent.decline`            | Clicking Cancel releases approval without native dispatch; a fresh request still works.                                                                                                           |
-| `agent.typed-approval`     | Typing `yes` into the actual follow-up field resumes the held call once.                                                                                                                          |
-| `agent.stale-approval`     | Changed source reloaded through the production developer socket invalidates the old displayed approval; a fresh approval calls the new code.                                                      |
-| `agent.escape-slow`        | Native Windows Escape with the owned Agent focused closes it during a slow call, suppresses late success/replay and allows a fresh call.                                                          |
-| `agent.reopen-escape`      | Ten close/reopen pairs preserve native Escape and discard pending approvals without dispatch; a final fresh greeting works.                                                                       |
-| `agent.close-pending`      | The real panel close button clears pending approval without execution.                                                                                                                            |
-| `agent.close-model`        | Closing during a delayed HTTP model reply releases the Agent run and cancels that provider request.                                                                                               |
-| `agent.close-slow`         | Closing during a dispatched slow tool retires its worker; no accepted late success or automatic second dispatch; fresh call recovers.                                                             |
-| `native.ten-replacements`  | Ten unload/load/greeting cycles get distinct worker identities and return workers/tokens to the initial baseline.                                                                                 |
-| `native.disable-slow`      | Disable/re-enable interrupts the old slow call without later cleanup destroying its replacement.                                                                                                  |
-| `native.hot-reload`        | Two idle reloads, an in-flight reload, and a disabled reload use the actual authenticated developer WebSocket; new source results appear and disabled state is preserved.                         |
-| `native.real-idle`         | The production 120-second idle threshold and 30-second reaper retire the worker; a new call recovers; a slow call started around 110 seconds survives.                                            |
-| `native.reply-failures`    | Declared/thrown errors, conflicting result envelopes and an actual lost socket reply have distinct host classifications; private error text stays hidden, and fresh calls recover without replay. |
-| `native.readiness-failure` | A real worker closes before authenticating; startup fails without dispatch, worker/token/supervisor retire, and corrected source works on a fresh request.                                        |
-| `native.source-drift`      | Warm source changes with an unanswered approval, without reload; obsolete approval is refused and the first fresh approved call uses the new worker/source.                                       |
-| `native.absolute-deadline` | A real 25-second handler fails around the production 20-second absolute budget, measured from host invocation and approval; late success/replay is suppressed and recovery survives old cleanup.  |
-| `native.result-budgets`    | Replies exceeding the 64 KiB decoded budget and 512 KiB raw wire budget fail at distinct boundaries; workers/tokens/supervisors retire, then fresh native calls recover.                          |
-| `native.invalid-input`     | Unknown keys, missing required values, wrong types, oversized arguments and malformed JSON fail before approval/startup; private rejected parameter keys stay hidden.                             |
-
-`smoke` contains two cases; `lifecycle` includes smoke and the original remaining non-idle cases. `native-failures` contains six cases; `native-installation` six; `native-foundation` two; `native-auth` eight, with four in `native-auth-schedules`; `store` three; `registry-recovery` three. `mcp` contains nine controlled transport cases; `mcp-auth` thirteen SDK OAuth cases; `mcp-independence` selects its two-provider cases; `mcp-refresh` selects its two expiry/recovery cases; `mcp-foundation` selects all twenty-two in one host. `agent-workflow` contains six separately reported controlled workflow cases; `agent-interruption` contains eight. `all` includes 76 distinct self-contained cases; overlapping suite selections are not additive. Three official, two public-live, two Linear consent-preflight, one Linear control-guard, one human Linear sign-in, one Linear contract inspection, one public nested-read and four configured-model cases (`agent-live` and `agent-interruption-live`) require explicit selection and their external prerequisites, bringing the complete inventory to 91 IDs. `idle` runs only the long timing case. Each scenario establishes and cleans up its own baseline. A failed scenario stops the batch; later scenarios are Not run instead of being assessed against a contaminated baseline.
 
 ### Linear consent preflight (opt-in, no account)
 
@@ -568,185 +239,6 @@ Only the fixed alias Connect receives a 310-second IPC observation, around the u
 The harness validates the grant **before every vault publication**, including refresh: exact issuer, read-only SDK-granted scopes, a nonempty bearer token and bounded client/timestamp/lifetime metadata. If the token response omits scope, the locked SDK's RFC 6749 requested-scope resolution is recorded explicitly; it is not reported as an explicit token-response scope. Unknown expiry remains `expiryKnown: false`, never an assumed lifetime. Reports contain only scope source, issued/expiry seconds, refresh availability and supported-tool counts. They omit authorization URLs, token/client values, tool names/descriptions, host logs, model/event bodies, snapshots and screenshots in human mode. Provider/error bodies are replaced by fixed stage diagnostics. Local scope cleanup remains independent of remote grant revocation; remove the test authorization from Linear's account settings if you also want remote revocation.
 
 This procedure prepares live acceptance; it does not by itself close 9/12/17. Actual browser/exchange/discovery behavior must be run with the account owner, reviewed and repeated. A credentials badge or a discovered tool count is insufficient to certify harmless Agent execution, nested compatibility or post-expiry refresh. Tool calls remain blocked until a separately reviewed fixed read allowance can be based on real authenticated schemas. Credentials/profile are deleted when the run completes, so no idle test host or grant is left for a later coding phase. The `oauth2` harness-only dependency only names the SDK's already-locked v5 token trait; it adds no new library version, client or OAuth implementation.
-
-### Native foundation (B1a)
-
-| ID                         | Actual application assertions                                                                                                                                                                                                                                                                                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `native.typed-contract`    | Seven text/number/entity and optional/null/zero cases round-trip through the actual worker and are verified by the scripted model. Each requires approval and one dispatch. Changing a valid declaration without reload refuses the old approval with zero dispatch; a fresh approved call works. Native declarations retain the four-parameter limit.                |
-| `native.legacy-quarantine` | An installed extension seeded with a retired `capture` grant is quarantined through actual startup. Restarts keep it disabled with no grants, preserve its artifact and user data, refuse re-enable and start no worker. A real Windows registry lock preserves the owner after failed uninstall; terminal installed/developer removal and fresh valid tools recover. |
-
-The [focused audit](../../docs/Extensions%202.0/NATIVE-FOUNDATION-AUDIT.md) records checks 2/22, the reproduced stale-quarantine repair, review and repeated evidence. Legacy profile fixtures are changed only between owned host lifetimes; the changed-declaration test edits only its owned manifest. This is not power-loss, ordinary-profile upgrade or authenticated-account certification. The permission-free fixture gate remains intact; authentication uses the separate fixture below.
-
-```powershell
-npm run test:agent -- --scenario native.typed-contract --fault stringified-number
-```
-
-It deliberately corrupts actual disposable output and must give Fail, exit 1 and cleanup Pass. The fault is accepted only with its named scenario. Typed verification is derived from real returned JSON; diagnostic journals retain a verification flag, not the argument/result payload.
-
-### Guarded native account fixture (B1b prerequisite)
-
-`native.auth-fixture` imports only `com.grain.harness.auth` from its owned package and uses the actual permission dialog. It runs production OAuth/PKCE, the loopback callback, token exchange, run-scoped Windows credential vault and host-authenticated network broker. The controlled HTTPS provider supplies accounts A/B. Actual returned JSON verifies an approved A read, stale approval refusal after switching to B, a fresh B read and B restoration after an owned restart. Disconnect must retire its worker; uninstall and end-of-run vault cleanup must return to baseline. The [focused audit](../../docs/Extensions%202.0/NATIVE-AUTH-FIXTURE-AUDIT.md) records the reproduced disconnect-worker repair and final evidence.
-
-This suite requires Python with `cryptography`; missing prerequisites report Blocked. The runner generates a short-lived certificate/key inside its disposable root. Trust is scoped to the fixture's exact localhost token/API endpoints; normal certificate/hostname validation stays enabled, and no OS trust store is changed. Only runs selecting the native account scenarios set `authPort`. Other suites explicitly verify that the auth control refuses access. The original permission-free loader still refuses authentication and nonempty permissions.
-
-```powershell
-npm run test:agent -- --scenario native.auth-fixture --fault wrong-account
-npm run test:agent -- --scenario native.auth-fixture --fault abandoned-auth
-```
-
-Both commands must report Fail, exit 1 and cleanup Pass. The first corrupts the actual API reply so the account oracle fails. The second deliberately abandons one real test credential; independent cleanup must report `nativeVaultCleanup.deleted: 1` and `remaining: 0`. Cleanup enumerates only metadata in the exact run service and fixed fixture key family; it never reads/prints credential blobs. Provider journals contain bounded account/stage/counter information, not tokens, authorization URLs or private payloads. TLS files and owned scratch state are removed after every run, including failures.
-
-The prerequisite alone credits **no numbered checks**. The subsequent [binding/owner audit](../../docs/Extensions%202.0/NATIVE-ACCOUNT-OWNERSHIP-AUDIT.md) accepts 41/45/53 using the two additional scenarios below. The later schedule and refresh audits below cover 42–44/50–51 separately. Controlled consent does not certify browser UX, live-provider compatibility or other OS vaults.
-
-| Scenario              | Precise real-app coverage                                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `native.auth-binding` | Expired unbound session and historical id-only vault grants refuse tool loading/read/refresh before and after restart. Explicit reconnect yields actual verified reads across restart. Four reviewed declaration changes (client/token endpoint/scopes/API hosts) refuse old approvals, require reconnect and use fresh correctly configured grants.                                                              |
-| `native.auth-owners`  | Actual Grain CLI pack/doctor for developer A/B, installed A versus developer B accounts, same-directory registration and production WebSocket reload, new-directory disconnect, stale approval refusal, restart and installed restoration. Parked uninstall independently deletes exactly one credential while the developer account remains usable. Actual returned JSON verifies both account and source owner. |
-
-```powershell
-npm run test:agent -- --scenario native.auth-binding --fault unchanged-auth-declaration
-npm run test:agent -- --scenario native.auth-owners --fault wrong-owner
-```
-
-These new faults must give Fail/exit 1/cleanup Pass. The first reimports an unchanged declaration and must fail the expected reconnect assertion. The second changes actual compiled developer output and must fail source-owner verification. Faults are limited to their named scenarios. The model accepts a missing action schema as a negative result only for the exact actual native account refusal; generic unavailable output is never accepted.
-
-Historical credential setup is fixed to the installed fixture in the explicitly enabled, idle harness; it never accepts or returns tokens/keys/namespace/path. It uses the actual run vault and expires the deliberately unbound grant so a mistakenly accepted refresh would be detectable. Finite declaration variants add only a fixed second public client/token path/read scope or matching localhost API/network permission. No arbitrary endpoint/client/scope or normal trust exception is allowed. Vault inventory reports only a bounded count in the exact run namespace, not keys or blobs.
-
-The accepted combined runs still needed final independent deletion of three discarded developer grants. Their old sessions are not available to the selected owner, but ordinary-app orphan reconciliation remains open in R3. End-of-run harness cleanup does not certify production crash/orphan recovery. The following B1c units retain separate audits and repeated acceptance.
-
-### Native sign-in/switch/expiry schedules (B1c partial)
-
-| ID                          | Actual application assertions                                                                                                                                                                                                            |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `native.auth-cancellation`  | Actual CLI developer project and WebSocket reload, disable and Disconnect at callback/held exchange boundaries; six production cancellations, exact vault counts, actual late callback refusal/reusable ports, fresh reads/restarts.     |
-| `native.auth-switch`        | Disconnect A/connect B refuses the old Agent approval without dispatch; fresh actual B read/restart succeeds.                                                                                                                            |
-| `native.auth-failed-switch` | Explicit pending-flow cancellation, provider denial and actual token HTTP failure preserve A/count across reads/restarts; subsequent successful B switch refuses stale A approval.                                                       |
-| `native.auth-expiry`        | Actual partial consent rejected without replacing A; real two-second grant without refresh requires reconnect before/after restart; actual expiry with refresh performs one exchange/read, zero new logins and no extra restart refresh. |
-
-The [focused audit](../../docs/Extensions%202.0/NATIVE-AUTH-SCHEDULE-AUDIT.md) accepts checks 42/43/50/51 only. The historical four-case audit does not credit check 44; its separate refresh/logout and two-provider procedure follows below. Live-provider/browser, orphan reconciliation and whole authentication certification remain open. No clock/production-timeout override or vault edit is used to accelerate these cases; observed barriers and actual short-lived provider grants retain the required assertions. `native.auth-cancellation` requires the stamped actual CLI, like the owner case.
-
-```powershell
-npm run test:agent -- --suite native-auth-schedules
-npm run test:agent -- --scenario native.auth-cancellation --fault uncancelled-login
-npm run test:agent -- --scenario native.auth-expiry --fault accepted-partial-consent
-```
-
-The subset uses the same real-app runner/cleanup and avoids repeating unrelated cases. Both faults must give Fail/exit 1 and cleanup Pass. The harness-only Cancel operation calls production cancellation for the fixed fixture and preserves the prior selected account; it exposes no arbitrary target or approval bypass. The unchanged-installed-reimport driver failure is retained; developer reload is exercised through the actual CLI/project/WebSocket path.
-
-### Native refresh/logout and provider independence (B1c final numbered unit)
-
-`native.auth-refresh-logout` covers check 44. It approves an actual expired-account tool call, holds the provider's real refresh response, disconnects and reconnects, and verifies no old read or replay occurs. Fresh B reads and restart identify the replacement account. A separate held production auth future is awaited after logout, proving late refresh completion refuses publication and leaves the actual run vault empty before reconnect.
-
-It then registers and reviews **two fixed native identities in the same host**: `com.grain.harness.auth` and `com.grain.harness.auth-peer`. They have distinct clients, scopes, authorization/token/API routes and actual grants. While the primary refresh remains held, the Agent searches, selectively loads, approves and reads the peer's actual B result. Both accounts survive restart without reauthentication; removing the primary preserves the peer's actual read and credential count.
-
-The Agent supports one active request. To create the concurrent primary refresh, a fixed debug-only `Refresh` control calls production `grain_auth::access_token` for the primary's current approved owner/generation and immediately drops its zeroizing result. IPC returns only null on success. It exposes no arbitrary ID/host/generation, token or tool execution; the peer read still uses normal Agent approval. This certifies auth-provider network independence, not simultaneous Agent requests. Fixed provider handoffs have separate finite slots. Event receipts identify each fixed extension. Peer TLS/API routing, exact package admission and metadata-only vault cleanup stay within the owned marker/profile.
-
-```powershell
-npm run test:agent -- --scenario native.auth-refresh-logout
-npm run test:agent -- --scenario native.auth-refresh-logout --fault released-refresh
-npm run test:agent -- --suite native-auth
-```
-
-The fault deliberately releases the primary response before the peer read; it must give Fail/exit 1 and cleanup Pass because independence was not observed under a held refresh. Assertions retain real expiry, barriers, result identity, dispatch counts and restarts; no production clock/timeout or credential bytes are modified. The [focused audit](../../docs/Extensions%202.0/NATIVE-AUTH-REFRESH-AUDIT.md) records reviewed verdicts, repeated evidence and exclusions. Live account/browser/other-OS acceptance, vault failure/crash reconciliation and retained input observations remain separate.
-
-Reports identify supporting numbered checks in the existing extension plan. These links do not certify the whole numbered procedure or rewrite its ledger automatically. After reviewing complete real-app procedure coverage and its focused audit, record an automated Pass explicitly with its evidence class. Human results remain separately identified. The harness still excludes microphone/native-pill observations, including the ordinary-app portion of check 34; the user has separately completed that [2C audit handoff](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md). The current ordinary-app handoff is in the installation audit.
-
-The first five installation cases cover real permission-dialog Cancel/Allow, cancelled/enabled/disabled state across actual restarts, stale reviews and call approvals, same-version imported bytes, developer A/B replacement and installed restoration, and preserved/refused invalid registries. The [first-unit audit](../../docs/Extensions%202.0/NATIVE-INSTALLATION-AUDIT.md) records their evidence and the user's accepted ordinary-app check 40. Native imported fixtures go through the actual SDK and guarded production import command; that setup bypasses the OS file picker, not the permission dialog or Agent approval.
-
-The sixth case, `native.cli-package-ownership`, builds maintained fixture projects through the real `grain-ext pack` command and runs `doctor`. Its fixed npm script uses the repository's existing esbuild; it installs no dependencies and starts no watcher. The builder also compiles/stamps `grain-ext.exe`; this case refuses a missing, changed or obsolete CLI stamp before launching the host. Reports bind the CLI binary, source, package and icon hashes. All other suites remain independent of that stamp.
-
-This case replaces a package without changing its id/version, checks actual distinct greetings, preserves an installed approval through a developer override/restoration and refuses it, then verifies developer A/B and installed ownership across restarts. Old flat and version-only package files are seeded only between owned host lifetimes and must neither shadow current bytes nor be deleted. See the [packaging audit](../../docs/Extensions%202.0/NATIVE-PACKAGING-AUDIT.md) for acceptance and exclusions. Signed-store schedules, OAuth/vault state, power-loss durability and nonempty extension-settings preservation are not certified by this permission-free fixture.
-
-Restart launches a new owned host only after the previous one exits with code zero and both its event/CDP endpoints close. Session-tagged host observations preserve evidence across process lifetimes with a 4096-event aggregate ceiling. The test-build onboarding resolver skips ASR setup only in the guarded isolated host, so these tests need no model download or microphone. Tests navigate the existing management route because embedded production assets hide its developer nav item. Normal onboarding/navigation and UI components are unchanged.
-
-```powershell
-npm run test:agent -- --scenario native.consent-persistence --fault skip-restart
-```
-
-This withholds the actual restart. Expect the new-host-session assertion to fail, exit 1 and cleanup Pass. It is accepted only for this scenario; no normal tool or scenario retries are added.
-
-The user has completed the ordinary-app import/consent batch. For reproduction, `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/prepare-installation.ps1` prints a permission-free package with one confirmed tool; the audit retains the three procedures. This disposable manual package intentionally lacks a submission icon; it is not a CLI/store packaging certificate.
-
-The production-logic runner filters the normal backend library tests into `agent`, `native`, `execution`, `mcp` and `auth` groups, plus the core registry tests in `registry`, imported-update boundaries in `imported`, developer-project validation in `developer`. `all` includes all eight. It requires a successful Cargo exit **and at least one actual passing test**; a zero-test filter fails. The registry group includes real Windows file-sharing locks: a short lock must recover without replaying serialization; a persistent lock must fail within the bounded retry policy, preserving saved state and unowned recovery files. These tests use production helpers/SDK and local fixtures, not complete real-application or live-account acceptance. The Windows manifest runner is configured as a Cargo argv array so repository paths containing spaces remain usable.
-
-## Verify the harness detects a real failure
-
-### Registry recovery scenarios
-
-**1 November retirement checkpoint:** these scenarios use the current first-round
-tool schemas and automatic Agent execution. Installation/action declaration
-consent, exact dispatch/result checks, restart ownership, quarantine and save
-failure assertions remain required. The registry checkpoint passes all three
-cases; the `lost-pointer` negative control fails as intended, with cleanup Pass.
-
-| ID                             | What is asserted                                                                                                                                                                                                                                                            |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `native.registry-refusal`      | Malformed, future-version, inconsistent-identity and oversized registry startup preserve the file, refuse extension operations, record a diagnostic and spawn no worker. Restored bytes recover actual greetings through real restarts.                                     |
-| `native.registry-preservation` | Installed/disabled records and a synthetic opaque account pointer survive restart. A stopped-host corrupt artifact triggers actual startup quarantine; restored bytes do not silently clear it. Explicit validated import and real consent/greeting recover across restart. |
-| `native.registry-save-failure` | Real Windows publication-sharing locks fail enable/disable saves. Enable rolls back; disable takes effect live but honestly remains unsaved. Actual restarts distinguish those outcomes. A successful explicit disable/re-enable recovers.                                  |
-
-The owned hidden `registry-lock.ps1` helper admits only the marked profile's fixed registry and refuses links. It permits read/write sharing and denies DELETE; it changes no file permissions/content. Its 30-second bound, parent-owned release/exit checks and cancellation cleanup are tested. The synthetic pointer has no vault entry and does not certify OAuth/account switching. This unit changes only test tooling; production application sources are unchanged. See the [focused registry audit](../../docs/Extensions%202.0/NATIVE-REGISTRY-AUDIT.md).
-
-```powershell
-npm run test:agent -- --scenario native.registry-preservation --fault lost-pointer
-```
-
-This deliberately removes the synthetic pointer only from the disposable stopped-host startup fixture. Expect pointer-preservation Fail, exit 1 and cleanup Pass. It is accepted only for this scenario and is not product Pass. `npm run test:agent:logic -- --group registry` separately covers production persistence helpers, including real Windows locks; it does not replace the real-application procedures above.
-
-```powershell
-npm run test:agent -- --scenario native.cold-warm --fault wrong-greeting
-```
-
-This deliberately changes only the disposable greeting fixture to return the wrong text. Expect **Fail**, process exit **1**, no subsequent scenario execution, and cleanup Pass. The same scenario without `--fault` should pass. Never count this intentional negative run as a passing product test.
-
-To check the native Escape oracle itself:
-
-```powershell
-npm run test:agent -- --scenario agent.reopen-escape --fault missing-escape
-```
-
-This withholds the OS key event from the real app. Expect the eight-second window-destruction assertion to fail, exit 1 and cleanup Pass. The scenario does not approve any tool before that failure. This fault is accepted only for the named scenario. Ordinary runtime failures still stop the batch; the runner does not retry them.
-
-To check the outcome oracle:
-
-```powershell
-npm run test:agent -- --scenario native.reply-failures --fault successful-error
-```
-
-This deliberately turns the disposable error tool into a success. Expect the host-classification assertion to fail, exit 1 and cleanup Pass. Only that named scenario admits this fault; normal tool calls are never retried.
-
-For the residual ordinary-app check, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/agent-harness/prepare-manual.ps1`. It prints a disposable, permission-free folder with only two declared tools. Load it through Developer in the ordinary app; the [accepted Block 2C procedure](../../docs/Extensions%202.0/NATIVE-FAILURE-AUDIT.md) retains the three observations for reproduction. The runner skips microphone/native pill, so a successful native recovery cannot certify that live input path.
-
-Exit codes: **0** = every selected scenario and cleanup passed; **1** = assertion, application or cleanup failed; **2** = a prerequisite blocked execution or selected scenarios were not run. Unsupported operating systems report Blocked rather than using a browser substitute.
-
-## Isolation and security boundary
-
-- Cargo feature `agent-harness` is off by default. The maintained builder opts into it only for the separately named `grain-agent-harness` target. The feature adds limited controls to the shared backend library; startup refuses the ordinary app identifier and requires `com.grain.agent-harness` plus the isolated marker/profile. Debug assertions are compulsory, so default release compilation rejects this feature.
-- Before Tauri starts, the host requires an absolute existing root containing a bounded versioned marker and valid run UUID. A Grain-owned portable-compatible module redirects application data, settings/secrets, model caches, history, logs and WebView caches into that run's `data/`. The Handy-derived portable module is unchanged.
-- Native/MCP credential service names receive a per-run harness suffix. No production credentials are copied. Ordinary fixtures create no OAuth credentials. The explicit `native-auth` fixtures write only their run-scoped native credentials and independently verifies vault cleanup; broader crash/recovery and live-account certification remain future work.
-- The harness skips the native pill supervisor, single-instance forwarding, autostart application and automatic updater checks. It clears default shortcut bindings and disables Agent context/screen capture/autocopy in its own profile. It uses no microphone, selection capture or external account. This bounds interference with the user's ordinary app and defines what the test excludes.
-- The test controls admit only fixed, permission-free harness fixture projects A/B and a fixed package under the run root. Installation cases register/import without granting; their actual permission sheets handle installed approval. They use production validation, registration, grant/enable/disable/unload operations. The fixture's installation approval is explicit test setup; **individual action approval still goes through the actual Agent UI and host executor**. There is no control to run an arbitrary action, provide an arbitrary path, read credentials, or approve a tool directly.
-- A separate debug-only auth control additionally requires the isolated main window/profile and explicit marker port. It fixes the package ID/path and one read tool, with finite permission/client/scope variants and exact owned HTTPS endpoints. Authorization handoff belongs to one pending flow and clears on completion/cancellation/drop. Its connect/disconnect/remove operations delegate production paths; actual permission and action review are never bypassed.
-- Developer reload uses the existing role-bound DevControl token and protocol. That token remains reload-only; it was not given extra powers. It is read only from the owned profile and is never included in the report.
-- The WebView2 debugging endpoint is loopback-only and confined to the child process. Playwright activates the real enabled DOM buttons through their production handlers to avoid coordinate races during native resize/entrance animation. This verifies functional activation, not physical mouse targeting or accessibility quality.
-- Escape is a native shortcut, so `native-input.ps1` sends one Windows key down/up pair after verifying the visible foreground `Grain Assist` window belongs to the owned host PID. Test startup owns the production HandyKeys manager with no ordinary accelerators registered and keeps explicit blank binding entries to prevent default fallbacks. The normal initialization command is checked for idempotence. It refuses native input if ownership/focus cannot be established. Keep the ordinary app's Agent closed to avoid competing transient shortcuts.
-- The Escape adapter refuses held Shift/Ctrl/Alt/Windows, Escape or left mouse input; it never releases user keys to force a test. `-ProbeOnly` reads modifier states without sending input. An idle/unlocked desktop is a prerequisite. If Windows denies focus, it can activate the owned Agent with one actual click on its empty header, only after checking that the header is unobstructed and its top-level window is the owned target. It rechecks owned PID/title and point/root ownership immediately before clicking and verifies foreground ownership before Escape. A temporary per-monitor DPI context and absolute virtual-desktop mouse coordinates keep the click location consistent; the helper restores its thread context afterward. The pointer remains on that header; no click is sent to another application's window. A partial down-only insertion attempts a matching synthetic release as cleanup and still fails. No key/call/scenario is replayed.
-- Each Escape attempt records bounded owned-focus booleans, held modifier codes, Escape state, accepted click/key counts and elapsed time. Failure diagnostics survive host-status failure. No foreign titles, PIDs, cursor coordinates or typed content are recorded. `SendInput` acceptance is not proof that Grain received the event; actual panel destruction, approval release and zero unwanted dispatch remain mandatory. Foreground/input failures stay recorded even if a later run passes.
-- `node tests/agent-harness/run.mjs --scenario agent.reopen-escape --focus-click` exercises one guarded native header click for each of the ten pairs and asserts two accepted click events. This is explicit test setup; it does not certify the application's normal foreground policy. The flag is refused for other scenarios. The separate `--fault missing-escape` still withholds Escape and must fail even with a visible usable panel.
-- Typed approval fills the real Follow up field and dispatches Enter to its production React key handler. Like button activation, this is a functional DOM test; it does not certify physical Enter delivery during native resize. Native Escape is tested separately at the OS boundary.
-- Test-only observations record invocation/startup, queue admission (`dispatched`), accepted replies (`completed`), host outcome classification (`outcome`) and retirement. A completed reply is not necessarily a successful action; the outcome assertion distinguishes errors and unusable envelopes. Worker identifiers are one-way token digests; raw tokens/arguments/results are absent. Queue admission is conservative dispatch evidence, not proof of the extension's external effects. The finite buffer must not overflow.
-- Each IPC operation and observation has a deadline. Cleanup requests app exit, falls back to the owned PID/tree if necessary, verifies listener/debug endpoint release, closes the model fixture and removes only owned scratch paths. Cleanup failures fail the run. Ctrl+C cancels the run and follows teardown; it must not be treated as a passing partial batch.
-
-## Add another Agent scenario
-
-1. Add a stable ID, suite, description and supporting-check links in `scenarios.mjs`. State precisely which paths are excluded.
-2. Add its handler in `run.mjs`. Reuse `request`, `greeting`, `slowStart`, `status`, the production developer socket and scoped fixture operations. Assert an independent observable outcome; do not assert only that the request returned without throwing.
-3. Keep fixtures harmless and versioned. If another adapter needs credentials or writes, introduce its isolated namespace and owned cleanup before automating it. Do not broaden the test controls to arbitrary application access.
-4. Add an intentional failure case or other test of the new oracle. Run from two clean profiles and inspect JSON evidence as well as the readable summary.
-5. Review the changed production paths and the harness's test assumptions. Update this README and the maintained plan/progress documents. Keep automation evidence distinct from human acceptance.
-
-Remaining suites can cover the blocked official initialization prerequisite and broader applicable authentication conformance, a native+MCP task, forced model misbehavior, human-assisted real MCP OAuth consent, live-model selection, actual summon/global shortcuts and microphone/pill behavior. The named official tool subset below is separately accepted; current controlled MCP tests do not certify these remaining paths.
 
 ## Pinned official conformance through Grain
 
@@ -790,7 +282,7 @@ node tests/agent-harness/run.mjs --scenario mcp.response-preview --fault short-m
 | `mcp.http-deadline`      | Four real 45-second approved-call timeouts; unknown result, one call, measured duration, response/session release, discarded late reply and fresh recovery.                                                                                                       |
 | `mcp.discovery-deadline` | Modern/SSE and legacy/JSON each finish two 35-second pages, then stop the third at the real 90-second absolute deadline; no tool dispatch, no retained delay timer/session and fresh recovery.                                                                    |
 
-There are 80 maintained scenario IDs: 71 self-contained real-app cases (including nine MCP transport, eight MCP OAuth, six Agent workflow and eight Agent interruption cases), three explicitly external official cases (one Blocked), two opt-in public live MCP cases and four opt-in genuine-model cases. There are 53 runner self-tests. Ordinary `all` selects only the 71 self-contained cases; official/live entries supply their explicit prerequisites separately. Run cases serially after native compilation finishes. Full MCP transport and Agent expiry waits use unchanged real clocks. Each failure records its exact stage, stops the batch and leaves later cases Not run. A nonzero prerequisite/reporting failure is not an accepted oracle check.
+Use `--list` for the current inventory. Official and live suites require their own prerequisites. Full MCP transport waits use the production clocks.
 
 ```powershell
 node tests/agent-harness/run.mjs --scenario mcp.catalog-budgets --fault accepted-mcp-catalog
@@ -798,7 +290,7 @@ node tests/agent-harness/run.mjs --scenario mcp.catalog-budgets --fault accepted
 
 The catalog fault supplies an ordinary complete catalog where rejection is required. Expect the first precise management refusal assertion to fail, zero tool calls and cleanup Pass. It is admitted only for that scenario.
 
-Reports now checkpoint completed cases before/after each scenario, preserving `activeScenario` and cleanup Not run until final teardown. A hard process loss can leave owned scratch/credentials behind; no partial report certifies cleanup or the full run. Follow the [hard-interruption inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) before explicit recovery. Native-auth scratch deletion alone cannot reconcile vault grants. The initial interrupted MCP run and policy-blocked cleanup are retained in the [catalog/deadline audit](../../docs/Extensions%202.0/MCP-CATALOG-DEADLINE-AUDIT.md).
+Reports now checkpoint completed cases before/after each scenario, preserving `activeScenario` and cleanup Not run until final teardown. A hard process loss can leave owned scratch/credentials behind; no partial report certifies cleanup or the full run. Follow the [hard-interruption inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) before explicit recovery. The initial interrupted MCP run and policy-blocked cleanup are retained in the [catalog/deadline audit](../../docs/Extensions%202.0/MCP-CATALOG-DEADLINE-AUDIT.md).
 
 [Catalog audit](../../docs/Extensions%202.0/MCP-CATALOG-TRANSPORT-AUDIT.md), [bounds/cancellation audit](../../docs/Extensions%202.0/MCP-BOUNDS-CANCELLATION-AUDIT.md), and [retention/cleanup inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) give evidence identities and exclusions. Controlled partial coverage never certifies live MCP OAuth, account persistence or official conformance. Retain fixtures as regression tests; delete owned profiles, keys, credentials, processes and response handles each run. Feature-gated test seams have documented retirement conditions.
 
@@ -869,54 +361,17 @@ All six faults must report Fail/exit 1 and cleanup Pass. Wrong-account changes t
 
 Only actual bearer lookup and exact returned nested JSON establish account evidence. The model oracle distinguishes exact Cancelled/not-dispatched refusal, exact dispatched account uncertainty and exact successful account/result; unrelated failures cannot certify any of them. The close case requires four cancelled wire calls and twelve actual successful reads across four real restarts. Shutdown requires eight cancelled receipts, eight stale confirmations with zero calls, and 24 successful fresh/restart A reads, with no new authorization exchanges. Evidence contains bounded account/stage/counter flags, never authorization URLs, codes, PKCE verifiers or tokens. The client case requires ten actual successful reads, four stale refusals with zero dispatch, five restarts, exact secret inventory/rotation and one actual unsupported-secret rejection with zero issued token. External browser UX, live OAuth/refresh and failed-switch preservation remain separate. The independence cases are documented above; the controlled expiry and refresh cases are documented below. See the [SDK/late-login audit](../../docs/Extensions%202.0/MCP-AUTH-FIXTURE-AUDIT.md), [authenticated cancellation audit](../../docs/Extensions%202.0/MCP-AUTH-CANCELLATION-AUDIT.md) and [shutdown audit](../../docs/Extensions%202.0/MCP-AUTH-SHUTDOWN-AUDIT.md) and the [client-configuration audit](../../docs/Extensions%202.0/MCP-CLIENT-CONFIGURATION-AUDIT.md) for exact boundaries.
 
-## Agent staged loading and read/write workflows
-
-Interruption acceptance extends these fixtures without a second runtime. Run `node tests/agent-harness/run.mjs --suite agent-interruption` for eight controlled cases, and explicitly opt in with `node tests/agent-harness/run.mjs --suite agent-interruption-live --live-configured` for two genuine-model cases. Each live case covers denial/independent unchanged verification and model unavailability after an actual approved write. Both live suites are excluded from `all`.
-
-The controlled batch independently covers native/MCP denial, pending/active-model Stop by the real close handler, actual receipt retention after HTTP 503, MCP ambiguous write response and one actual 120-second MCP approval expiry plus host restart. The expiry wait is not shortened and no persisted time is edited. A changed-argument retry is blocked before dispatch; permitted independent verification proceeds under a separate approval. MCP peer receipts prove actual object effects separately from model prose. The post-write outage is induced only at the owned model boundary; the user's proxy/settings stay available.
-
-Isolated negative commands `--scenario agent.workflow-denial-native --fault skip-workflow-denial` (or its MCP counterpart) and `--scenario agent.workflow-expiry --fault skip-workflow-expiry` must report expected Fail/exit 1 with cleanup Pass. The former intentionally approves the disposable write; the latter omits the wait and must detect the still-pending token immediately. Never use faults as positive acceptance. A lost receipt, false completion or extra dispatch also fails the independent reply oracle. Genuine hosted uncertainty remains unavailable/Blocked; forced response-loss timing belongs to the deterministic peer. See the [interruption audit](../../docs/Extensions%202.0/AGENT-WORKFLOW-INTERRUPTION-AUDIT.md) for exact cases, evidence and retained limitations.
-
-Run the maintained controlled batch after building the real host:
+## Agent read, write and interruption
 
 ```powershell
-node tests/agent-harness/run.mjs --suite agent-workflow
-```
-
-| ID                                             | Independent proof                                                                                                                                                                                                            |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent.staged-native` / `agent.staged-mcp`     | Two metadata pages, exact/no-match search, one selected read, a second tool added later, earlier schema preserved and original read reused.                                                                                  |
-| `agent.schema-budget`                          | Eight supported large schemas exceed the 32 KiB task budget; publication is atomic and the prior read remains callable. Individual field and eight-ID limits remain unchanged.                                               |
-| `agent.directory-coverage`                     | Actual startup with 101 owned installed extensions exposes 100 directory entries, states incomplete coverage and refuses the omitted owner without workers. Offline seed/restoration and owned profile cleanup are explicit. |
-| `agent.workflow-native` / `agent.workflow-mcp` | Approved read → exact disposable write → independent verification in one task. Actual batch tails are withheld; three consumed-token replays and a disabled owner's write never dispatch.                                    |
-
-Negative oracles must report Fail/exit 1 at the specific assertion, with cleanup Pass; they are not normal acceptance runs:
-
-```powershell
-node tests/agent-harness/run.mjs --scenario agent.staged-native --fault missing-staged-selection
-node tests/agent-harness/run.mjs --scenario agent.staged-mcp --fault missing-staged-selection
-node tests/agent-harness/run.mjs --scenario agent.workflow-native --fault wrong-workflow-receipt
+node tests/agent-harness/run.mjs --suite mcp-agent-workflows
 node tests/agent-harness/run.mjs --scenario agent.workflow-mcp --fault wrong-workflow-receipt
 ```
 
-The selection fault requests the first schema again instead of the second, so the next real offered schema set fails. The receipt fault corrupts the actual worker/peer write count; a generic success cannot pass. Both adapters keep their independent dispatch counters. A guarded debug capture retrieves only the current confirmation token into runner memory for production-command replay; it neither executes nor bypasses confirmation, and no token is written to status/model/evidence.
-
-After the user chooses the ordinary configured model, run the two genuine-model cases explicitly:
-
-```powershell
-node tests/agent-harness/run.mjs --suite agent-live --live-configured
-```
-
-Use `--scenario agent.live-native-workflow --live-configured` or its MCP counterpart to isolate a failure. This opt-in reads only the selected model registration from the normal `%APPDATA%/com.grain.app` profile. Only the selected key is retained for outgoing model headers; no secret/history/account data is copied into the isolated application, test marker, model prompt or report. Smart rotation, absent configuration and unsupported endpoint admission are blocked prerequisites; this mode does not search other/portable profiles. HTTPS uses ordinary certificate validation; HTTP is admitted only for a configured loopback proxy. These tests consume the configured model's normal quota.
-
-The real model receives a fixed disposable-object task through Grain's real Agent/model boundary and chooses the calls itself. The trace checks metadata before schemas, incremental 0/1/2/3 exposure, unchanged earlier definitions, exact returned object/write count and a single approved write. Reports preserve bounded action/schema/receipt metadata, no raw model prompts or credentials, and identify the configured model evidence class. Batch emission is recorded as observed; deterministic batch-withholding remains covered by the controlled cases.
-
-Both ordinary and interruption live workflows permit one invalid-argument
-correction only after the host refuses dispatch. That refusal is recorded as an
-attempt, never a receipt; action order, exact dispatch/write counts and independent
-verification remain required. A second refusal or generic provider failure fails.
-
-The live adapter has 1 MiB request/response limits, a 120-second upstream request deadline matching Grain's existing model-request limit in `src-tauri/src/agent.rs` and `grain_llm_client.rs`, no redirect or idle-pool reuse and owned socket/timer/frontend cancellation. The previous test-only 60-second cap could truncate a production-valid response. Genuine-model stage waits allow four such turns (search/load/call and one refused-argument correction); controlled waits, production budgets, approvals and receipt/action limits are unchanged. Closing it drops credential references, not a JavaScript zeroization guarantee. Both `agent-live` cases are excluded from `all`; the live flag is refused in ordinary suites. Genuine runs do not replace SDK OAuth/account testing or check 48's denial/expiry/Stop/failure observations. See the [focused audit](../../docs/Extensions%202.0/AGENT-WORKFLOW-AUDIT.md) and the retention inventory before removing debug-only observation/relay hooks.
+The controlled cases verify read, exact write and independent verification.
+They also cover closing before or after a write, retaining a successful
+receipt across model failure, and refusing replay after an unknown result.
+The receipt fault should fail the independent oracle and pass cleanup.
 
 ## Controlled MCP expiry and refresh recovery
 
@@ -927,6 +382,6 @@ npm run test:agent -- --scenario mcp.auth-refresh-recovery --fault wrong-mcp-ref
 
 The positive suite uses two separately reported cases in one real host. Recovery issues a real two-second grant, restarts, waits issuer expiry and performs an actually approved A read through SDK refresh. The rotated replacement lasts 40 seconds, above the SDK's 30-second proactive buffer; another real restart/full expiry proves generation 2 uses the persisted replacement. A long-lived replacement survives a third restart and read without another refresh or browser login. Refusal separately verifies no refresh token and actual `invalid_grant`: zero tool dispatch/new login, exact current host failure, then explicit reconnect to B and approved fresh/restart reads. No clock or stored credential is edited; only the external owned issuer defines its short test lifetimes.
 
-The fault changes the actual refreshed bearer account and must exit 1 with cleanup Pass. The issuer and acceptance oracles have client/resource/rotation/account and privacy negative tests. The complete runner has 57 self-tests. See the [focused refresh audit](../../docs/Extensions%202.0/MCP-REFRESH-RECOVERY-AUDIT.md) for final report identities, retained candidate/oracle repair and the current generic reconnect-error finding.
+The fault changes the actual refreshed bearer account and must exit 1 with cleanup Pass. The issuer and acceptance oracles have client/resource/rotation/account and privacy negative tests. See the [focused refresh audit](../../docs/Extensions%202.0/MCP-REFRESH-RECOVERY-AUDIT.md) for final report identities, retained candidate/oracle repair and the current generic reconnect-error finding.
 
 These controlled cases do not accept live check 12. Explicit isolated Linear consent, actual issued lifetime and restart have since passed through the opt-in human suites; genuine expiry/refresh remains pending. Linear has no nested object inputs in the inspected supported catalog; the separate anonymous Hugging Face suite supplies that prerequisite. No ordinary credentials are copied and these local fixture commands must not target an ordinary account. See the [current audit](../../docs/Extensions%202.0/MCP-NESTED-LIVE-READ-AUDIT.md).

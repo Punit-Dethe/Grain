@@ -1,11 +1,11 @@
 # Extension store retirement
 
-Grain is moving to a bundled set of remote MCP presets and user-configured
+Grain uses a bundled set of remote MCP presets and user-configured
 remote MCP connections. Grain ships endpoint and authentication configuration.
 GitHub and Notion host their own servers. Adding a preset requires a Grain
 change and a release. Custom remote MCPs can be added directly in the app.
 
-## Execution order
+## Original execution order
 
 1. Switch Browse to the bundled GitHub and Notion presets. Expose the existing
    custom connection form in regular builds. Reuse the existing OAuth, vault,
@@ -361,3 +361,18 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   saved. The isolated Windows installer uses the existing CI registration.
 - Passed 83 MCP tests, five GitHub harness tests, TypeScript, and scoped
   ESLint. Browser authorization and a live tool read remain manual checks.
+
+### 2026-11-09 — Post-merge retirement audit
+
+- Removed the last signed store fixture files, package descriptor and
+  version validation, unused routed-action events, and deleted-host lint
+  exemptions. Presets now use the same definition validation as custom
+  remote MCPs. Provider endpoints, OAuth checks and vault identities remain
+  covered by the catalogue and connection tests.
+- Updated the author entry point and harness instructions to use the
+  current MCP connection commands and suites. Dated audit evidence remains
+  in the linked reports. The external publisher is a separate operation.
+- Passed 682 desktop tests, 152 core and SDK tests, 62 harness tests,
+  TypeScript, scoped ESLint, and a check of documented suite names
+  against the runner. Packaged browser consent and a live tool read
+  remain separate checks.

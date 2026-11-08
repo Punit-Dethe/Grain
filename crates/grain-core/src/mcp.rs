@@ -1,122 +1,35 @@
-//! Pure MCP descriptor admission and host-owned identity. No client, DNS,
+//! Pure MCP connection admission and host-owned identity. No client, DNS,
 //! persistence, credential or approval is created by parsing metadata.
 use std::borrow::Cow;
 use std::fmt;
 
-use grain_sdk::mcp::{
-    McpAuthentication, McpDescriptor, McpHeaders, McpPublicOAuthClient, McpTransport,
-    RemoteMcpConnection, MCP_CONNECTION_MAX_BYTES, MCP_DESCRIPTOR_MAX_BYTES, MCP_DESCRIPTOR_SCHEMA,
-};
+use grain_sdk::mcp::{McpAuthentication, McpHeaders, McpPublicOAuthClient, RemoteMcpConnection};
 use grain_sdk::network::is_canonical_host;
-use grain_sdk::{validate_extension_id, validate_extension_version};
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractError {
-    TooLarge,
     InvalidJson,
-    UnsupportedSchema,
-    UnsupportedApi,
     InvalidMetadata,
     InvalidEndpoint,
     InvalidIdentity,
     InvalidHeaders,
-    ConnectionTooLarge,
     InvalidOAuthClient,
 }
 
 impl fmt::Display for ContractError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.write_str(match self {
-            Self::TooLarge => "MCP descriptor exceeds its 8 KiB limit.",
-            Self::InvalidJson => "MCP descriptor must use the supported JSON fields and types.",
-            Self::UnsupportedSchema => "MCP descriptor schema is unsupported.",
-            Self::UnsupportedApi => "MCP descriptor requires an unsupported Grain API profile.",
-            Self::InvalidMetadata => "MCP descriptor identity, version or display metadata is invalid.",
+            Self::InvalidJson => "MCP connection must use the supported JSON fields and types.",
+            Self::InvalidMetadata => "MCP connection display metadata is invalid.",
             Self::InvalidEndpoint => "MCP endpoint must be HTTPS on a DNS host without local names, embedded credentials, query or fragment.",
             Self::InvalidIdentity => "MCP connection/account/source identity is invalid.",
             Self::InvalidHeaders => "MCP headers must be bounded public provider options; authentication, routing and protocol headers belong to Grain.",
-            Self::ConnectionTooLarge => "MCP connection metadata exceeds its 4 KiB limit.",
             Self::InvalidOAuthClient => "MCP public OAuth clients require OAuth, a public client ID and an exact HTTPS issuer; secrets and endpoint overrides are not supported.",
         })
     }
 }
 impl std::error::Error for ContractError {}
-
-/// Only validation can create this value; callers cannot mutate the endpoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ValidatedDescriptor(McpDescriptor);
-
-impl ValidatedDescriptor {
-    pub fn parse(bytes: &[u8]) -> Result<Self, ContractError> {
-        if bytes.len() > MCP_DESCRIPTOR_MAX_BYTES {
-            return Err(ContractError::TooLarge);
-        }
-        let wire = serde_json::from_slice(bytes).map_err(|_| ContractError::InvalidJson)?;
-        Self::validate(wire)
-    }
-
-    pub fn validate(mut descriptor: McpDescriptor) -> Result<Self, ContractError> {
-        if descriptor.schema != MCP_DESCRIPTOR_SCHEMA {
-            return Err(ContractError::UnsupportedSchema);
-        }
-        // Explicit provisional profile, not a guessed semver range evaluator.
-        if descriptor.grain_api != grain_sdk::mcp::MCP_DESCRIPTOR_API_REQUIREMENT {
-            return Err(ContractError::UnsupportedApi);
-        }
-        if validate_extension_id(&descriptor.id).is_err()
-            || validate_extension_version(&descriptor.version).is_err()
-            || !display_text(&descriptor.name, 120)
-            || !display_text(&descriptor.description, 2048)
-        {
-            return Err(ContractError::InvalidMetadata);
-        }
-        let McpTransport::StreamableHttp { url, headers } = &mut descriptor.transport;
-        *url = canonical_endpoint(url)?;
-        validate_headers(headers)?;
-        validate_oauth_client(descriptor.authentication, descriptor.oauth_client.as_ref())?;
-        if serde_json::to_vec(&descriptor)
-            .map_err(|_| ContractError::InvalidJson)?
-            .len()
-            > MCP_DESCRIPTOR_MAX_BYTES
-        {
-            return Err(ContractError::TooLarge);
-        }
-        let accepted = Self(descriptor);
-        if serde_json::to_vec(&accepted.connection())
-            .map_err(|_| ContractError::InvalidJson)?
-            .len()
-            > MCP_CONNECTION_MAX_BYTES
-        {
-            return Err(ContractError::ConnectionTooLarge);
-        }
-        Ok(accepted)
-    }
-
-    pub fn descriptor(&self) -> &McpDescriptor {
-        &self.0
-    }
-
-    pub fn endpoint(&self) -> &str {
-        let McpTransport::StreamableHttp { url, .. } = &self.0.transport;
-        url
-    }
-
-    pub fn headers(&self) -> &McpHeaders {
-        let McpTransport::StreamableHttp { headers, .. } = &self.0.transport;
-        headers
-    }
-
-    pub fn connection(&self) -> RemoteMcpConnection {
-        RemoteMcpConnection {
-            name: self.0.name.clone(),
-            url: self.endpoint().into(),
-            authentication: self.0.authentication,
-            headers: self.headers().clone(),
-            oauth_client: self.0.oauth_client.clone(),
-        }
-    }
-}
 
 pub fn validate_oauth_client(
     authentication: McpAuthentication,
@@ -275,7 +188,7 @@ pub(crate) fn canonical_endpoint(raw: &str) -> Result<String, ContractError> {
 }
 
 /// Constructed by trusted host acquisition code, never deserialized from an
-/// author descriptor. A source label is provenance, not proof of verification.
+/// connection input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum ConnectionSource {
@@ -360,42 +273,29 @@ fn scope_id(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grain_sdk::mcp::McpAuthentication;
+    use crate::mcp_connections::{ConnectionDefinition, RegistryError};
     use serde_json::{json, Value};
 
     fn wire() -> Value {
-        json!({"schema":1,"id":"com.example.calendar","name":"Calendar",
-            "description":"Read calendar events.","version":"1.0.0","grainApi":"^1.0",
-            "transport":{"type":"streamable-http","url":"https://mcp.example.com/mcp"},
+        json!({"name":"Calendar","url":"https://mcp.example.com/mcp",
             "authentication":{"type":"oauth"}})
     }
-    fn admit(value: &Value) -> Result<ValidatedDescriptor, ContractError> {
-        ValidatedDescriptor::parse(&serde_json::to_vec(value).unwrap())
-    }
-    #[test]
-    fn descriptor_roundtrip_is_metadata_only_and_auth_is_explicit() {
-        let accepted = admit(&wire()).unwrap();
-        assert_eq!(serde_json::to_value(accepted.descriptor()).unwrap(), wire());
-        assert_eq!(accepted.endpoint(), "https://mcp.example.com/mcp");
-        let mut value = wire();
-        value["authentication"]["type"] = json!("none");
-        assert_eq!(
-            admit(&value).unwrap().descriptor().authentication,
-            McpAuthentication::None {}
-        );
+
+    fn admit(value: &Value) -> Result<ConnectionDefinition, RegistryError> {
+        ConnectionDefinition::parse(&serde_json::to_vec(value).unwrap())
     }
 
     #[test]
     fn public_oauth_client_is_exact_issuer_metadata_not_secret_configuration() {
         let mut value = wire();
         value["oauthClient"] =
-            json!({"clientId":"publisher-client", "issuer":"https://issuer.example/tenant/"});
+            json!({"clientId":"public-client", "issuer":"https://issuer.example/tenant/"});
         let accepted = admit(&value).unwrap();
         assert_eq!(
-            accepted.connection().oauth_client.as_ref().unwrap().issuer,
+            accepted.definition().oauth_client.as_ref().unwrap().issuer,
             "https://issuer.example/tenant/"
         );
-        assert_eq!(serde_json::to_value(accepted.descriptor()).unwrap(), value);
+        assert_eq!(serde_json::to_value(accepted.definition()).unwrap(), value);
         for field in [
             "clientSecret",
             "redirectUri",
@@ -405,12 +305,20 @@ mod tests {
         ] {
             let mut bad = value.clone();
             bad["oauthClient"][field] = json!("forbidden");
-            assert_eq!(admit(&bad), Err(ContractError::InvalidJson));
+            assert_eq!(
+                admit(&bad),
+                Err(RegistryError::InvalidInput(ContractError::InvalidJson))
+            );
         }
         for id in ["", " padded", "line\nline", "hidden\u{202e}text"] {
             let mut bad = value.clone();
             bad["oauthClient"]["clientId"] = json!(id);
-            assert_eq!(admit(&bad), Err(ContractError::InvalidOAuthClient));
+            assert_eq!(
+                admit(&bad),
+                Err(RegistryError::InvalidInput(
+                    ContractError::InvalidOAuthClient
+                ))
+            );
         }
         for issuer in [
             "http://issuer.example",
@@ -420,20 +328,29 @@ mod tests {
         ] {
             let mut bad = value.clone();
             bad["oauthClient"]["issuer"] = json!(issuer);
-            assert_eq!(admit(&bad), Err(ContractError::InvalidOAuthClient));
+            assert_eq!(
+                admit(&bad),
+                Err(RegistryError::InvalidInput(
+                    ContractError::InvalidOAuthClient
+                ))
+            );
         }
         value["authentication"]["type"] = json!("none");
-        assert_eq!(admit(&value), Err(ContractError::InvalidOAuthClient));
+        assert_eq!(
+            admit(&value),
+            Err(RegistryError::InvalidInput(
+                ContractError::InvalidOAuthClient
+            ))
+        );
     }
 
     #[test]
     fn public_headers_are_bounded_and_cannot_override_host_controls() {
         let mut value = wire();
-        value["transport"]["headers"] =
-            json!({"x-mcp-toolsets":"all", "notion-version":"2025-09-03"});
+        value["headers"] = json!({"x-mcp-toolsets":"all", "notion-version":"2025-09-03"});
         let accepted = admit(&value).unwrap();
-        assert_eq!(accepted.headers()["x-mcp-toolsets"], "all");
-        assert_eq!(serde_json::to_value(accepted.descriptor()).unwrap(), value);
+        assert_eq!(accepted.definition().headers["x-mcp-toolsets"], "all");
+        assert_eq!(serde_json::to_value(accepted.definition()).unwrap(), value);
         for name in [
             "Authorization",
             "authorization",
@@ -456,199 +373,67 @@ mod tests {
             "x-access-token",
             "bad name",
         ] {
-            value["transport"]["headers"] = json!({name:"private"});
-            assert_eq!(admit(&value), Err(ContractError::InvalidHeaders), "{name}");
+            value["headers"] = json!({name:"private"});
+            assert_eq!(
+                admit(&value),
+                Err(RegistryError::InvalidInput(ContractError::InvalidHeaders)),
+                "{name}"
+            );
         }
         for bad in ["", " padded", "line\r\ninjected: yes", "\t", "\u{7f}", "é"] {
-            value["transport"]["headers"] = json!({"x-option":bad});
-            assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
+            value["headers"] = json!({"x-option":bad});
+            assert_eq!(
+                admit(&value),
+                Err(RegistryError::InvalidInput(ContractError::InvalidHeaders))
+            );
         }
-        value["transport"]["headers"] = json!({"x-option":"x".repeat(513)});
-        assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
-        value["transport"]["headers"] = serde_json::to_value(
+        value["headers"] = json!({"x-option":"x".repeat(513)});
+        assert_eq!(
+            admit(&value),
+            Err(RegistryError::InvalidInput(ContractError::InvalidHeaders))
+        );
+        value["headers"] = serde_json::to_value(
             (0..17)
                 .map(|n| (format!("x-option-{n}"), "value".to_owned()))
                 .collect::<McpHeaders>(),
         )
         .unwrap();
-        assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
-        value["transport"]["headers"] = serde_json::to_value(
+        assert_eq!(
+            admit(&value),
+            Err(RegistryError::InvalidInput(ContractError::InvalidHeaders))
+        );
+        value["headers"] = serde_json::to_value(
             (0..5)
                 .map(|n| (format!("x-option-{n}"), "x".repeat(512)))
                 .collect::<McpHeaders>(),
         )
         .unwrap();
-        assert_eq!(admit(&value), Err(ContractError::InvalidHeaders));
+        assert_eq!(
+            admit(&value),
+            Err(RegistryError::InvalidInput(ContractError::InvalidHeaders))
+        );
     }
 
     #[test]
-    fn header_json_rejects_duplicates_and_store_projection_overflow() {
+    fn connection_json_rejects_duplicate_headers_and_oversize() {
         let mut value = wire();
-        value["transport"]["headers"] = json!({"x-option":"one"});
+        value["headers"] = json!({"x-option":"one"});
         let raw = serde_json::to_string(&value).unwrap().replace(
             "\"x-option\":\"one\"",
             "\"x-option\":\"one\",\"x-option\":\"two\"",
         );
         assert_eq!(
-            ValidatedDescriptor::parse(raw.as_bytes()),
-            Err(ContractError::InvalidJson)
+            ConnectionDefinition::parse(raw.as_bytes()),
+            Err(RegistryError::InvalidInput(ContractError::InvalidJson))
         );
-        value["transport"]["url"] = json!(format!("https://mcp.example.com/{}", "p".repeat(1900)));
-        value["transport"]["headers"] = serde_json::to_value(
+        value["url"] = json!(format!("https://mcp.example.com/{}", "p".repeat(1900)));
+        value["headers"] = serde_json::to_value(
             (0..4)
                 .map(|n| (format!("x-opt-{n}"), "\"".repeat(500)))
                 .collect::<McpHeaders>(),
         )
         .unwrap();
-        assert!(serde_json::to_vec(&value).unwrap().len() < MCP_DESCRIPTOR_MAX_BYTES);
-        assert_eq!(admit(&value), Err(ContractError::ConnectionTooLarge));
-    }
-
-    #[test]
-    fn author_fields_cannot_supply_host_ownership_or_secrets() {
-        for field in [
-            "source",
-            "trusted",
-            "enabled",
-            "connectionId",
-            "accountId",
-            "headers",
-            "clientId",
-            "clientSecret",
-            "tokens",
-            "tools",
-            "command",
-            "args",
-            "env",
-            "capabilities",
-            "settings",
-            "prompts",
-            "spaces",
-            "main",
-            "signature",
-        ] {
-            let mut value = wire();
-            value[field] = json!("forged-secret");
-            assert_eq!(
-                admit(&value),
-                Err(ContractError::InvalidJson),
-                "root {field}"
-            );
-        }
-        for object in ["transport", "authentication"] {
-            for field in [
-                "headers",
-                "clientId",
-                "clientSecret",
-                "issuer",
-                "source",
-                "enabled",
-                "env",
-                "urlOverride",
-            ] {
-                let mut value = wire();
-                value[object][field] = json!("forged-secret");
-                assert_eq!(
-                    admit(&value),
-                    Err(ContractError::InvalidJson),
-                    "{object}.{field}"
-                );
-            }
-        }
-        let mut value = wire();
-        value["authentication"] = json!({"type":"none","headers":{}});
-        assert_eq!(admit(&value), Err(ContractError::InvalidJson));
-    }
-
-    #[test]
-    fn missing_duplicate_future_and_wrong_type_fields_are_refused() {
-        for field in wire().as_object().unwrap().keys() {
-            let mut value = wire();
-            value.as_object_mut().unwrap().remove(field);
-            assert_eq!(
-                admit(&value),
-                Err(ContractError::InvalidJson),
-                "missing {field}"
-            );
-            let mut value = wire();
-            value[field] = json!(false);
-            assert_eq!(
-                admit(&value),
-                Err(ContractError::InvalidJson),
-                "type {field}"
-            );
-        }
-        let raw = serde_json::to_string(&wire()).unwrap();
-        let duplicate = format!("{{\"schema\":1,{}", &raw[1..]);
-        assert_eq!(
-            ValidatedDescriptor::parse(duplicate.as_bytes()),
-            Err(ContractError::InvalidJson)
-        );
-        for duplicate in [
-            raw.replace("\"type\":\"oauth\"", "\"type\":\"oauth\",\"type\":\"none\""),
-            raw.replace("\"url\":", "\"url\":\"https://other.example/mcp\",\"url\":"),
-        ] {
-            assert_eq!(
-                ValidatedDescriptor::parse(duplicate.as_bytes()),
-                Err(ContractError::InvalidJson)
-            );
-        }
-        let mut value = wire();
-        value["schema"] = json!(2);
-        assert_eq!(admit(&value), Err(ContractError::UnsupportedSchema));
-        for api in ["1.0", "*", "^2.0", "^1.0 ", ">=1.0"] {
-            let mut value = wire();
-            value["grainApi"] = json!(api);
-            assert_eq!(admit(&value), Err(ContractError::UnsupportedApi));
-        }
-        for transport in ["stdio", "sse", "native"] {
-            let mut value = wire();
-            value["transport"]["type"] = json!(transport);
-            assert_eq!(admit(&value), Err(ContractError::InvalidJson));
-        }
-        let mut value = wire();
-        value["authentication"]["type"] = json!("automatic");
-        assert_eq!(admit(&value), Err(ContractError::InvalidJson));
-    }
-
-    #[test]
-    fn input_and_display_limits_apply_without_echoing_rejected_values() {
-        assert_eq!(
-            ValidatedDescriptor::parse(&vec![b' '; MCP_DESCRIPTOR_MAX_BYTES + 1]),
-            Err(ContractError::TooLarge)
-        );
-        let raw = serde_json::to_vec(&wire()).unwrap();
-        let mut exact = raw.clone();
-        exact.resize(MCP_DESCRIPTOR_MAX_BYTES, b' ');
-        assert!(ValidatedDescriptor::parse(&exact).is_ok());
-        exact.push(b' ');
-        assert_eq!(
-            ValidatedDescriptor::parse(&exact),
-            Err(ContractError::TooLarge)
-        );
-        for (field, value) in [
-            ("name", "".into()),
-            ("name", " Calendar".into()),
-            ("name", "x".repeat(121)),
-            ("description", "x".repeat(2049)),
-            ("description", "line\nline".into()),
-            ("description", "secret\u{202e}text".into()),
-            ("id", "Example.Calendar".into()),
-            ("version", "../1.0".into()),
-        ] {
-            let mut descriptor = wire();
-            descriptor[field] = json!(value);
-            let error = admit(&descriptor).unwrap_err();
-            assert_eq!(error, ContractError::InvalidMetadata);
-            assert!(!error.to_string().contains(&value) || value.is_empty());
-        }
-        let mut descriptor = wire();
-        descriptor["name"] = json!("é".repeat(61));
-        assert_eq!(admit(&descriptor), Err(ContractError::InvalidMetadata));
-        let mut descriptor = wire();
-        descriptor["name"] = json!("x".repeat(120));
-        descriptor["description"] = json!("x".repeat(2048));
-        assert!(admit(&descriptor).is_ok());
+        assert_eq!(admit(&value), Err(RegistryError::Limit));
     }
 
     #[test]
@@ -723,13 +508,13 @@ mod tests {
             Err(ContractError::InvalidEndpoint)
         );
         // URL percent encoding expands Unicode paths; the normalized value
-        // must retain the same bound so an accepted descriptor round-trips.
+        // must retain the same bound so an accepted connection round-trips.
         assert_eq!(
             canonical_endpoint(&format!("https://mcp.example.com/{}", "é".repeat(500))),
             Err(ContractError::InvalidEndpoint)
         );
         let mut value = wire();
-        value["transport"]["url"] = json!("https://user:secret@mcp.example.com");
+        value["url"] = json!("https://user:secret@mcp.example.com");
         assert!(!admit(&value).unwrap_err().to_string().contains("secret"));
     }
 

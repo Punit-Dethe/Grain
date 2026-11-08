@@ -1,8 +1,8 @@
 //! The typed event stream the headless core broadcasts to every subscriber
-//! (the pill, the settings window, the local server's `/events`).
+//! (including the pill presentation bridge).
 //!
 //! Replaces Handy's ~15 raw untyped `app.emit("...")` strings with one typed
-//! enum carried over a `tokio::sync::broadcast` channel — multiple subscribers,
+//! enum carried on the internal `tokio::sync::broadcast` channel — multiple subscribers,
 //! and no Tauri dependency.
 
 use serde::{Deserialize, Serialize};
@@ -49,8 +49,7 @@ pub enum SessionMode {
     Batch,
 }
 
-/// One event broadcast by the daemon. `Clone` so every subscriber gets a copy;
-/// `Serialize`/`Deserialize` so it can cross the local WebSocket to the pill.
+/// One event broadcast by the desktop core.
 #[derive(Clone, Debug, Serialize, Deserialize, specta::Type)]
 pub enum DaemonEvent {
     // -- Recording lifecycle --
@@ -114,32 +113,6 @@ pub enum DaemonEvent {
     /// Per-bucket audio energy driving the Aura Core dots (replaces `mic-level`).
     AudioLevel {
         levels: Vec<f32>,
-    },
-    /// [GRAIN] A routed action needs the user to decide
-    /// (`docs/Action Routing/PLAN.md` §7). The pill reveals a capsule listing
-    /// the numbered options; digits pick, Escape cancels, and it releases on
-    /// its own after a moment.
-    ///
-    /// `heard` is what the recogniser produced, shown verbatim. It is the whole
-    /// reason a chooser is not a dead end: when the wrong options appear, the
-    /// answer is almost always visible in that line.
-    ActionChoice {
-        /// `action`, `provider`, `entity`, or `confirm` — the four things this
-        /// one capsule is used for.
-        kind: String,
-        heard: String,
-        /// One line per option, already ordered. Never more than a handful:
-        /// past that there is no honest question to ask.
-        options: Vec<String>,
-    },
-    /// [GRAIN] The choice was answered, cancelled, or timed out — hide the
-    /// capsule. Emitted exactly once per [`DaemonEvent::ActionChoice`].
-    ActionChoiceClosed,
-    /// [GRAIN] What became of a routed action, for the pill's brief
-    /// confirmation. `ok` false means it did not run.
-    ActionResult {
-        ok: bool,
-        message: String,
     },
     /// [GRAIN] Quick Agent: a reply was just auto-pasted at the cursor. The pill
     /// briefly reveals with an "ASK FOLLOW-UP · <shortcut>" affordance; clicking

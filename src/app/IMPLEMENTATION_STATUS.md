@@ -18,8 +18,5 @@
 | About      | Own tab: language, version, locations, acknowledgments | Complete          | Working             | Re-skins the real About surface; parity gap closed.       |
 | Tools      | Dictionary and automatic dictionary                    | Complete          | Working             | Real validation, persistence, and update states retained. |
 | Tools      | Snippets, Context, and Agent                           | Complete          | Working             | Real feature switches, editors, controls, and anchors.    |
-| Tools      | Contextual extension recommendations                   | Complete          | Working             | Uses the live bounded store catalogue and install flow.   |
-| Extensions | Installed collection, routing, enable and uninstall    | Complete          | Working             | Permission approval and slot takeover semantics retained. |
-| Extensions | Store search, filters, install/update and status       | Complete          | Working             | Uses the verified catalogue and honest offline state.     |
-| Extensions | Preview drawer, media carousel, README, permissions    | Complete          | Working             | Media and README load lazily and are dropped on close.    |
-| Extensions | Import pack and developer tools                        | Complete          | Working             | Uses native import and existing developer-mode tooling.   |
+| Extensions | Browse extensions                                      | Complete          | Working             | Shows bundled GitHub and Notion MCP presets.              |
+| Extensions | My connections                                         | Complete          | Working             | Adds and manages custom remote MCP connections.            |

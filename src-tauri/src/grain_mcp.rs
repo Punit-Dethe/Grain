@@ -293,9 +293,10 @@ fn requires_account(item: &Provider<'_>) -> bool {
 }
 
 fn provider_endpoint<'a>(item: &'a Provider<'_>) -> Result<std::borrow::Cow<'a, str>, String> {
-    // Common author metadata admission, without retaining clients or identities.
+    // Presets and custom connections share endpoint and OAuth admission.
     // Owned harness URL overrides still pass their separate marker/HTTPS guards.
-    item.descriptor().map_err(|error| error.to_string())?;
+    item.connection_definition()
+        .map_err(|error| error.to_string())?;
     #[cfg(feature = "agent-harness")]
     if let Some(endpoint) =
         crate::grain_agent_harness_mcp::configured_endpoint(item.id, item.endpoint)?
@@ -334,23 +335,17 @@ impl Provider<'_> {
         }
     }
 
-    fn descriptor(
+    fn connection_definition(
         &self,
-    ) -> Result<grain_core::mcp::ValidatedDescriptor, grain_core::mcp::ContractError> {
-        use grain_sdk::mcp::{
-            McpAuthentication, McpDescriptor, McpTransport, MCP_DESCRIPTOR_SCHEMA,
-        };
-        grain_core::mcp::ValidatedDescriptor::validate(McpDescriptor {
-            schema: MCP_DESCRIPTOR_SCHEMA,
-            id: format!("mcp.{}", self.id),
+    ) -> Result<
+        grain_core::mcp_connections::ConnectionDefinition,
+        grain_core::mcp_connections::RegistryError,
+    > {
+        use grain_sdk::mcp::{McpAuthentication, RemoteMcpConnection};
+        grain_core::mcp_connections::ConnectionDefinition::validate(RemoteMcpConnection {
             name: self.name.into(),
-            description: self.description.into(),
-            version: "1.0.0".into(),
-            grain_api: grain_sdk::mcp::MCP_DESCRIPTOR_API_REQUIREMENT.into(),
-            transport: McpTransport::StreamableHttp {
-                url: self.endpoint.into(),
-                headers: self.headers(),
-            },
+            url: self.endpoint.into(),
+            headers: self.headers(),
             authentication: if requires_account(self) {
                 McpAuthentication::OAuth {}
             } else {
@@ -2931,15 +2926,14 @@ mod tests {
     }
 
     #[test]
-    fn catalog_descriptors_preserve_endpoints_auth_and_deployed_vault_keys() {
+    fn catalog_connections_preserve_endpoints_auth_and_deployed_vault_keys() {
         use grain_sdk::mcp::McpAuthentication;
         let mut keys = std::collections::BTreeSet::new();
         for item in CATALOG {
-            let descriptor = item.descriptor().unwrap();
-            assert_eq!(descriptor.endpoint(), item.endpoint);
-            assert_eq!(descriptor.descriptor().id, format!("mcp.{}", item.id));
+            let connection = item.connection_definition().unwrap();
+            assert_eq!(connection.definition().url, item.endpoint);
             assert_eq!(
-                descriptor.descriptor().authentication,
+                connection.definition().authentication,
                 if requires_account(item) {
                     McpAuthentication::OAuth {}
                 } else {
@@ -2948,11 +2942,6 @@ mod tests {
             );
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
-            let bytes = serde_json::to_vec(descriptor.descriptor()).unwrap();
-            assert_eq!(
-                grain_core::mcp::ValidatedDescriptor::parse(&bytes).unwrap(),
-                descriptor
-            );
         }
         assert_eq!(production_catalog().count(), 6);
     }
