@@ -1,87 +1,25 @@
-/* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type MouseEvent,
-} from "react";
-import { open } from "@tauri-apps/plugin-dialog";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Code2,
-  Settings2,
-  PackageOpen,
-  ShieldCheck,
-  Trash2,
-  Upload,
-  X,
-} from "lucide-react";
-import {
-  commands,
-  type ConnectionView,
-  type ExtensionCard,
-  type ExtensionDeveloperStatus,
-  type StoreEntry,
-  type StoreMedia,
-  type StoreView,
-  type McpProviderStatus,
-} from "@/bindings";
-import { MediaArtwork, StoreCard } from "../extensions/StoreCard";
-import { McpConnections } from "../extensions/McpConnections";
-import { installedExtensionItems } from "../extensions/installedExtensions";
-import { Markdown } from "@/components/markdown/Markdown";
-import "@/components/markdown/markdown.css";
-import { DeveloperSection } from "@/components/settings/experimentations/DeveloperSection";
+/* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Extensions surface. */
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronLeft, ShieldCheck, Trash2 } from "lucide-react";
+import { commands, type ExtensionCard } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
 import { useSettings } from "@/hooks/useSettings";
-import {
-  hashForRoute,
-  customMcpManagementVisible,
-  type ExtensionViewId,
-} from "../navigation";
+import { McpConnections } from "../extensions/McpConnections";
+import { McpPresets } from "../extensions/McpPresets";
 import { ExtensionApprovalDetails } from "../extensions/ExtensionApprovalDetails";
+import { hashForRoute, type ExtensionViewId } from "../navigation";
 import {
   capabilityLabel,
   filterExtensions,
-  nextMediaIndex,
   parseApprovalRequest,
   sortExtensionCards,
-  storeInstallAction,
   unwrapResult,
   type ApprovalRequest,
 } from "../extensions/extensionRuntime";
 
-interface InstalledController {
-  cards: ExtensionCard[];
-  connections: ConnectionView[];
-  accounts: Record<string, McpProviderStatus>;
-  listings: Record<string, StoreEntry>;
-  covers: Record<string, StoreMedia>;
-  loading: boolean;
-  error: string | null;
-  busy: string | null;
-  refresh: () => Promise<void>;
-  toggle: (card: ExtensionCard) => Promise<void>;
-  toggleConnection: (
-    connection: ConnectionView,
-    enabled: boolean,
-  ) => Promise<void>;
-  uninstall: (card: ExtensionCard) => Promise<boolean>;
-  permissionDialog: React.ReactNode;
-}
-
-function useInstalledExtensions(): InstalledController {
+function useInstalledExtensions() {
   const { refreshSettings } = useSettings();
   const [cards, setCards] = useState<ExtensionCard[]>([]);
-  const [connections, setConnections] = useState<ConnectionView[]>([]);
-  const [accounts, setAccounts] = useState<Record<string, McpProviderStatus>>(
-    {},
-  );
-  const [listings, setListings] = useState<Record<string, StoreEntry>>({});
-  const [covers, setCovers] = useState<Record<string, StoreMedia>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -90,63 +28,8 @@ function useInstalledExtensions(): InstalledController {
   >(null);
 
   const refresh = useCallback(async () => {
-    const [overview, remote] = await Promise.all([
-      commands.extensionsOverview().then(unwrapResult),
-      commands
-        .mcpConnectionsList()
-        .then(unwrapResult)
-        .catch(() => []),
-    ]);
-    const nextCards = sortExtensionCards(overview);
-    const nextConnections = remote.filter((row) => row.source === "store");
-    const ids = [
-      ...new Set([
-        ...nextCards.map((card) => card.id),
-        ...nextConnections.flatMap((row) =>
-          row.extensionId ? [row.extensionId] : [],
-        ),
-      ]),
-    ];
-    const [nextCovers, nextAccounts, nextListings] = await Promise.all([
-      ids.length
-        ? commands
-            .storeCovers(ids)
-            .then(unwrapResult)
-            .catch(() => [])
-        : [],
-      Promise.all(
-        nextConnections.map(async (row) => {
-          const status = await commands
-            .mcpConnectionStatus(row.id, row.revision)
-            .then(unwrapResult)
-            .catch(() => null);
-          return status ? [[row.id, status] as const] : [];
-        }),
-      ),
-      Promise.all(
-        nextConnections.map(async (row) => {
-          const entry = row.extensionId
-            ? await commands
-                .storeEntry(row.extensionId)
-                .then(unwrapResult)
-                .catch(() => null)
-            : null;
-          return entry ? [[entry.id, entry] as const] : [];
-        }),
-      ),
-    ]);
-    setCards(nextCards);
-    setConnections(nextConnections);
-    setAccounts(Object.fromEntries(nextAccounts.flat()));
-    setListings(Object.fromEntries(nextListings.flat()));
-    setCovers(
-      Object.fromEntries(
-        nextCovers.map((cover) => [
-          cover.id,
-          { sha256: cover.sha256, kind: cover.kind },
-        ]),
-      ),
-    );
+    const overview = unwrapResult(await commands.extensionsOverview());
+    setCards(sortExtensionCards(overview));
     setError(null);
     await refreshSettings();
   }, [refreshSettings]);
@@ -212,25 +95,6 @@ function useInstalledExtensions(): InstalledController {
     [refresh],
   );
 
-  const toggleConnection = useCallback(
-    async (row: ConnectionView, enabled: boolean) => {
-      if (busy) return;
-      setBusy(row.id);
-      setError(null);
-      try {
-        unwrapResult(
-          await commands.mcpConnectionSetEnabled(row.id, row.revision, enabled),
-        );
-        await refresh();
-      } catch (reason) {
-        setError(String(reason));
-      } finally {
-        setBusy(null);
-      }
-    },
-    [busy, refresh],
-  );
-
   const approve = useCallback(async () => {
     if (!pending) return;
     const { card, permissions, approvalDigest } = pending;
@@ -288,879 +152,14 @@ function useInstalledExtensions(): InstalledController {
 
   return {
     cards,
-    connections,
-    accounts,
-    listings,
-    covers,
     loading,
     error,
     busy,
     refresh,
     toggle,
-    toggleConnection,
     uninstall,
     permissionDialog,
   };
-}
-
-type DetailSelection =
-  | { source: "installed"; card: ExtensionCard }
-  | { source: "connection"; connection: ConnectionView }
-  | { source: "store"; entry: StoreEntry };
-
-interface StoreController {
-  view: StoreView | null;
-  installing: string | null;
-  error: string | null;
-  install: (entry: StoreEntry) => Promise<void>;
-}
-
-type StoreEntryWithOptionalStars = StoreEntry & { stars?: number };
-
-function formatStoreCount(value: number | undefined): string {
-  return typeof value === "number" ? value.toLocaleString() : "Not available";
-}
-
-function formatStoreSize(value: string | undefined): string {
-  if (!value) return "Not available";
-  const bytes = Number(value);
-  if (!Number.isFinite(bytes) || bytes < 0) return value;
-  if (bytes < 1024) return bytes.toLocaleString() + " B";
-  const units = ["KB", "MB", "GB"];
-  let amount = bytes / 1024;
-  let unit = units[0];
-  for (let index = 1; index < units.length && amount >= 1024; index += 1) {
-    amount /= 1024;
-    unit = units[index];
-  }
-  return (
-    amount.toLocaleString(undefined, { maximumFractionDigits: 1 }) + " " + unit
-  );
-}
-
-function formatReview(entry: StoreEntry | null): string {
-  if (!entry?.reviewed_at && !entry?.reviewed_commit) return "Not available";
-  const parts: string[] = [];
-  if (entry.reviewed_at) {
-    const date = new Date(entry.reviewed_at);
-    parts.push(
-      Number.isNaN(date.getTime())
-        ? entry.reviewed_at
-        : new Intl.DateTimeFormat(undefined, {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-          }).format(date),
-    );
-  }
-  if (entry.reviewed_commit) parts.push(entry.reviewed_commit.slice(0, 8));
-  return parts.join(" · ");
-}
-
-function trustDetails(trust: string | undefined): {
-  label: string;
-  meaning: string;
-  tone: string;
-} {
-  if (trust === "verified" || trust === "core") {
-    return {
-      label: "Verified",
-      meaning:
-        "Grain reviewed this version against its signed source before publishing it.",
-      tone: "verified",
-    };
-  }
-  if (trust === "experimental") {
-    return {
-      label: "Experimental",
-      meaning:
-        "Grain reviewed this version, but its APIs or behavior may still change.",
-      tone: "experimental",
-    };
-  }
-  if (trust === "dev") {
-    return {
-      label: "Local development",
-      meaning:
-        "This code was loaded locally in Developer mode and has not been reviewed by Grain.",
-      tone: "dev",
-    };
-  }
-  return {
-    label: "Unverified",
-    meaning: "Grain does not have verification information for this extension.",
-    tone: "unknown",
-  };
-}
-
-function ExtensionDetail({
-  selection,
-  controller,
-  onBack,
-  onInstall,
-  installing,
-  canInstall,
-  installError,
-}: {
-  selection: DetailSelection;
-  controller: InstalledController;
-  onBack: () => void;
-  onInstall: (entry: StoreEntry) => Promise<void>;
-  installing: string | null;
-  canInstall: boolean;
-  installError: string | null;
-}) {
-  const [catalogueEntry, setCatalogueEntry] = useState<StoreEntry | null>(
-    selection.source === "store" ? selection.entry : null,
-  );
-  const [mediaIndex, setMediaIndex] = useState(0);
-  const [listingDocument, setListingDocument] = useState<string | null>(null);
-  const [listingDocumentLoading, setListingDocumentLoading] = useState(false);
-  const [view, setView] = useState<"overview" | "settings">("overview");
-  const backButtonRef = useRef<HTMLButtonElement>(null);
-  const [connectionActions, setConnectionActions] =
-    useState<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => backButtonRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [selection]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onBack();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onBack]);
-
-  useEffect(() => {
-    let alive = true;
-    setMediaIndex(0);
-    setListingDocument(null);
-    setView("overview");
-    if (selection.source !== "store") {
-      setCatalogueEntry(null);
-      void commands
-        .storeEntry(
-          selection.source === "installed"
-            ? selection.card.id
-            : (selection.connection.extensionId ?? ""),
-        )
-        .then(unwrapResult)
-        .then((entry) => alive && setCatalogueEntry(entry))
-        .catch(() => alive && setCatalogueEntry(null));
-    } else {
-      setCatalogueEntry(selection.entry);
-    }
-    return () => {
-      alive = false;
-      setCatalogueEntry(null);
-      setListingDocument(null);
-    };
-  }, [selection]);
-
-  const selectedCard = selection.source === "installed" ? selection.card : null;
-  const selectionId =
-    selection.source === "installed"
-      ? selection.card.id
-      : selection.source === "connection"
-        ? selection.connection.extensionId
-        : selection.entry.id;
-  const isConnection =
-    selection.source === "connection" ||
-    (selection.source === "store" && selection.entry.kind === "mcp");
-  const card = isConnection
-    ? null
-    : (controller.cards.find((candidate) => candidate.id === selectionId) ??
-      selectedCard);
-  const entry =
-    selection.source === "store"
-      ? selection.entry
-      : catalogueEntry?.id === selectionId
-        ? catalogueEntry
-        : null;
-  const name =
-    card?.name ??
-    entry?.name ??
-    (selection.source === "connection"
-      ? selection.connection.name
-      : "Extension");
-  const description = card?.description ?? entry?.description ?? "";
-  const media = entry?.media ?? [];
-  const activeMediaIndex = Math.min(mediaIndex, Math.max(0, media.length - 1));
-  const listingIcon =
-    entry?.icon ?? (selectionId ? controller.covers[selectionId] : undefined);
-  const capabilities = entry?.capabilities ?? card?.capabilities ?? [];
-  const installedMcp = isConnection
-    ? controller.connections.find((row) =>
-        selection.source === "connection"
-          ? row.id === selection.connection.id
-          : row.extensionId === selectionId,
-      )
-    : undefined;
-  const installedVersion = isConnection
-    ? installedMcp?.version
-    : controller.cards.find(
-        (candidate) => candidate.id === (card?.id ?? entry?.id),
-      )?.version;
-  const installAction = entry
-    ? storeInstallAction(entry, installedVersion)
-    : null;
-  const current = installAction === "Installed";
-  const trust = trustDetails(entry?.trust ?? card?.trust);
-  const stars = (entry as StoreEntryWithOptionalStars | null)?.stars;
-
-  // This component only mounts after selection, so browse never fetches DESCRIPTION
-  // data and cleanup drops it again when the user leaves the detail page.
-  const listingDocumentHash = entry?.listing_document;
-  useEffect(() => {
-    setListingDocument(null);
-    if (!listingDocumentHash) {
-      setListingDocumentLoading(false);
-      return;
-    }
-    let live = true;
-    setListingDocumentLoading(true);
-    commands
-      .storeDescription(listingDocumentHash)
-      .then((result) => {
-        if (live) setListingDocument(unwrapResult(result));
-      })
-      .catch(() => {
-        if (live) setListingDocument("");
-      })
-      .finally(() => {
-        if (live) setListingDocumentLoading(false);
-      });
-    return () => {
-      live = false;
-    };
-  }, [listingDocumentHash]);
-
-  return (
-    <article
-      className="extension-detail"
-      aria-labelledby="extension-detail-title"
-    >
-      <div className="extension-detail-toolbar">
-        <button
-          ref={backButtonRef}
-          className="extension-detail-back-button"
-          type="button"
-          onClick={onBack}
-        >
-          <ChevronLeft size={15} aria-hidden="true" />
-          Back to extensions
-        </button>
-      </div>
-
-      <div className="extension-detail-content">
-        {media.length > 0 && (
-          <section
-            className="extension-detail-gallery"
-            aria-label={`${name} previews`}
-          >
-            <div className="extension-detail-gallery-viewport">
-              <MediaArtwork
-                media={media[activeMediaIndex]}
-                name={name}
-                alt={`${name} preview ${activeMediaIndex + 1} of ${media.length}`}
-                className="extension-detail-preview"
-              />
-              {media.length > 1 && (
-                <>
-                  <button
-                    className="media-arrow media-arrow-left"
-                    type="button"
-                    aria-label="Previous preview"
-                    onClick={() =>
-                      setMediaIndex(
-                        nextMediaIndex(activeMediaIndex, media.length, -1),
-                      )
-                    }
-                  >
-                    <ChevronLeft size={18} aria-hidden="true" />
-                  </button>
-                  <button
-                    className="media-arrow media-arrow-right"
-                    type="button"
-                    aria-label="Next preview"
-                    onClick={() =>
-                      setMediaIndex(
-                        nextMediaIndex(activeMediaIndex, media.length, 1),
-                      )
-                    }
-                  >
-                    <ChevronRight size={18} aria-hidden="true" />
-                  </button>
-                </>
-              )}
-            </div>
-            {media.length > 1 && (
-              <div className="extension-gallery-navigation">
-                <div
-                  className="extension-gallery-selectors"
-                  role="group"
-                  aria-label="Choose a preview"
-                >
-                  {media.map((image, index) => (
-                    <button
-                      key={`${image.sha256}-${index}`}
-                      type="button"
-                      aria-label={`Show preview ${index + 1} of ${media.length}`}
-                      aria-pressed={activeMediaIndex === index}
-                      onClick={() => setMediaIndex(index)}
-                    >
-                      {index + 1}
-                    </button>
-                  ))}
-                </div>
-                <span className="extension-gallery-position" role="status">
-                  {activeMediaIndex + 1} / {media.length}
-                </span>
-              </div>
-            )}
-          </section>
-        )}
-        <header className="extension-detail-intro">
-          <div className="extension-detail-identity">
-            <MediaArtwork
-              media={listingIcon ?? undefined}
-              icon={card?.icon}
-              name={name}
-              alt={`${name} icon`}
-              placeholder
-              className="extension-detail-icon"
-            />
-            <div className="extension-detail-heading">
-              <h1 id="extension-detail-title">{name}</h1>
-              <p>{description || "No description is available."}</p>
-            </div>
-          </div>
-          <div className="extension-detail-actions">
-            {installedVersion && (
-              <span className="extension-detail-installed">Installed</span>
-            )}
-            {entry && selection.source === "store" && !current && (
-              <button
-                className="button primary"
-                type="button"
-                disabled={
-                  installing !== null ||
-                  installAction === "No update available" ||
-                  entry.revocation === "revoked" ||
-                  !canInstall
-                }
-                onClick={() => void onInstall(entry)}
-              >
-                {installing === entry.id ? "Installing…" : installAction}
-              </button>
-            )}
-            <div
-              className="extension-uninstall-slot"
-              ref={setConnectionActions}
-            />
-            {card?.trust !== "dev" && card && (
-              <button
-                className="button danger"
-                type="button"
-                disabled={controller.busy === card.id}
-                onClick={() =>
-                  void controller.uninstall(card).then((removed) => {
-                    if (removed) onBack();
-                  })
-                }
-              >
-                <Trash2 size={14} aria-hidden="true" />
-                Uninstall
-              </button>
-            )}
-          </div>
-        </header>
-
-        <nav className="extension-detail-nav" aria-label="Extension details">
-          <button
-            type="button"
-            aria-pressed={view === "overview"}
-            aria-controls="extension-overview-panel"
-            onClick={() => setView("overview")}
-          >
-            Overview
-          </button>
-          <button
-            type="button"
-            aria-pressed={view === "settings"}
-            aria-controls="extension-settings-panel"
-            onClick={() => setView("settings")}
-          >
-            Settings
-          </button>
-        </nav>
-
-        {controller.error && (
-          <div className="extension-inline-error" role="alert">
-            {controller.error}
-          </div>
-        )}
-        {installError && (
-          <div className="extension-inline-error" role="alert">
-            {installError}
-          </div>
-        )}
-
-        <div
-          id="extension-overview-panel"
-          className="extension-detail-panel extension-detail-overview"
-          hidden={view !== "overview"}
-        >
-          <section
-            className="extension-detail-readme-section"
-            aria-label={`${name} description`}
-          >
-            <div className="extension-detail-readme">
-              {listingDocumentLoading ? (
-                <div className="extension-detail-muted" role="status">
-                  Loading description…
-                </div>
-              ) : listingDocument ? (
-                <Markdown markdown={listingDocument} softBreaks />
-              ) : (
-                <div className="extension-detail-muted">
-                  A description document is not available for this extension.
-                </div>
-              )}
-            </div>
-          </section>
-          <aside
-            className="extension-detail-facts"
-            aria-label="Extension information"
-          >
-            <section
-              className="extension-facts"
-              aria-labelledby="extension-information-title"
-            >
-              <h2 id="extension-information-title">Details</h2>
-              <dl>
-                <div>
-                  <dt>Creator</dt>
-                  <dd>{entry?.author || "Not available"}</dd>
-                </div>
-                <div>
-                  <dt>Version</dt>
-                  <dd>
-                    {installedVersion ??
-                      card?.version ??
-                      entry?.version ??
-                      "Not available"}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Installations</dt>
-                  <dd>{formatStoreCount(entry?.installs)}</dd>
-                </div>
-                <div>
-                  <dt>Repository stars</dt>
-                  <dd>{formatStoreCount(stars)}</dd>
-                </div>
-                <div>
-                  <dt>Package size</dt>
-                  <dd>{formatStoreSize(entry?.size)}</dd>
-                </div>
-                <div>
-                  <dt>Reviewed</dt>
-                  <dd>{formatReview(entry)}</dd>
-                </div>
-              </dl>
-            </section>
-            <section
-              className="extension-trust"
-              data-tone={trust.tone}
-              aria-label="Extension trust"
-            >
-              <div>
-                <ShieldCheck size={16} aria-hidden="true" />
-                <strong>{trust.label}</strong>
-              </div>
-              <p>{trust.meaning}</p>
-            </section>
-            <section
-              className="extension-permissions-pane"
-              aria-labelledby="extension-permissions-title"
-            >
-              <div className="extension-permissions-heading">
-                <h2 id="extension-permissions-title">Declared permissions</h2>
-                <span>{capabilities.length}</span>
-              </div>
-              <div className="permission-list">
-                {capabilities.length ? (
-                  capabilities.map((capability) => (
-                    <div className="permission-row" key={capability}>
-                      <ShieldCheck size={15} aria-hidden="true" />
-                      <span>{capabilityLabel(capability)}</span>
-                      <strong>Required</strong>
-                    </div>
-                  ))
-                ) : (
-                  <p className="extension-detail-note">
-                    {entry || card
-                      ? "This extension declares no runtime permissions."
-                      : "Permission details are unavailable. Your account controls remain available in Settings."}
-                  </p>
-                )}
-              </div>
-            </section>
-          </aside>
-        </div>
-
-        {/* Keep account settings mounted: hiding a view must not cancel sign-in. */}
-        <div
-          id="extension-settings-panel"
-          className="extension-detail-panel extension-detail-settings"
-          hidden={view !== "settings"}
-        >
-          {installedMcp && (
-            <McpConnections
-              source="store"
-              query=""
-              connectionId={installedMcp.id}
-              onChange={controller.refresh}
-              onRemoved={onBack}
-              actionsContainer={connectionActions}
-              onRequestRemoval={() => setView("settings")}
-            />
-          )}
-          {card && (
-            <section
-              className="mcp-connections"
-              aria-labelledby="extension-settings-title"
-            >
-              <header className="mcp-connections-heading">
-                <h2 id="extension-settings-title">Preferences</h2>
-              </header>
-              <div className="extension-setting-row">
-                <div>
-                  <h3>Enabled</h3>
-                  <p>Make this extension’s tools available to the Agent.</p>
-                </div>
-                <Switch
-                  checked={card.enabled}
-                  disabled={controller.busy !== null}
-                  ariaLabel={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
-                  onChange={() => void controller.toggle(card)}
-                />
-              </div>
-            </section>
-          )}
-          {!card && !installedMcp && (
-            <p className="extension-detail-note">
-              Install this extension to configure its settings.
-            </p>
-          )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function InstalledList({
-  controller,
-  query,
-  onPreview,
-  onBrowseStore,
-}: {
-  controller: InstalledController;
-  query: string;
-  onPreview: (selection: DetailSelection) => void;
-  onBrowseStore: () => void;
-}) {
-  const entries = filterExtensions(
-    installedExtensionItems(
-      controller.cards,
-      controller.connections,
-      controller.accounts,
-      controller.listings,
-    ),
-    query,
-  );
-  if (controller.loading)
-    return (
-      <div className="extension-state" role="status">
-        Loading installed extensions…
-      </div>
-    );
-  if (!entries.length && query)
-    return (
-      <div className="extension-state">
-        No installed extensions match your search.
-      </div>
-    );
-  if (!entries.length)
-    return (
-      <div className="extension-state extension-empty-state">
-        <span className="extension-empty-symbol" aria-hidden="true">
-          <PackageOpen size={22} />
-        </span>
-        <strong>No extensions installed yet</strong>
-        <p>Browse focused additions and install only what you need.</p>
-        <button className="button" type="button" onClick={onBrowseStore}>
-          Browse Store
-        </button>
-      </div>
-    );
-
-  return (
-    <div className="installed-extension-list">
-      {entries.map((item) => {
-        const openCard = () => {
-          if (item.card) onPreview({ source: "installed", card: item.card });
-          else if (item.connection)
-            onPreview({ source: "connection", connection: item.connection });
-        };
-        const toggle = () => {
-          if (item.card) void controller.toggle(item.card);
-          else if (item.connection) {
-            const account = controller.accounts[item.connection.id];
-            if (
-              !account ||
-              (item.connection.authentication === "oauth" && !account.connected)
-            )
-              openCard();
-            else
-              void controller.toggleConnection(
-                item.connection,
-                !account.enabled,
-              );
-          }
-        };
-        return (
-          <article
-            className={`extension-card installed-extension-card${item.enabled ? "" : " extension-disabled"}`}
-            key={item.connection?.id ?? item.id}
-            tabIndex={0}
-            role="button"
-            aria-label={`Open ${item.name}`}
-            onClick={() => void openCard()}
-            onKeyDown={(event) => {
-              if (event.target !== event.currentTarget) return;
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                void openCard();
-              }
-            }}
-          >
-            <MediaArtwork
-              media={controller.covers[item.id]}
-              icon={item.card?.icon}
-              name={item.name}
-              alt={`${item.name} icon`}
-              placeholder
-              className="extension-artwork"
-            />
-            <div className="installed-extension-copy">
-              <div className="installed-extension-heading">
-                <strong>{item.name}</strong>
-                {item.card?.trust === "dev" && <span>Dev</span>}
-              </div>
-              <p>{item.description}</p>
-              {item.status !== "Enabled" && item.status !== "Disabled" && (
-                <span className="installed-extension-state">{item.status}</span>
-              )}
-            </div>
-            <div className="installed-extension-actions">
-              <button
-                className="icon-button extension-preview-button"
-                type="button"
-                title={`Settings for ${item.name}`}
-                aria-label={`Settings for ${item.name}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  openCard();
-                }}
-              >
-                <Settings2 size={16} />
-              </button>
-              <button
-                className={`toggle${item.enabled ? " on" : ""}`}
-                type="button"
-                role="switch"
-                aria-checked={item.enabled}
-                aria-label={`${item.enabled ? "Disable" : "Enable"} ${item.name}`}
-                disabled={controller.busy !== null}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggle();
-                }}
-              >
-                <span />
-              </button>
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function StoreGrid({
-  query,
-  controller,
-  onPreview,
-  onStoreChange,
-}: {
-  query: string;
-  controller: InstalledController;
-  onPreview: (selection: DetailSelection) => void;
-  onStoreChange: (state: StoreController) => void;
-}) {
-  const [view, setView] = useState<StoreView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [category, setCategory] = useState("all");
-  const [installing, setInstalling] = useState<string | null>(null);
-  const installActive = useRef(false);
-  const live = useRef(false);
-  const refreshInstalled = controller.refresh;
-
-  const load = useCallback(async () => {
-    setView(unwrapResult(await commands.storeBrowse()));
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    live.current = true;
-    void load()
-      .catch((reason) => alive && setError(String(reason)))
-      .finally(() => alive && setLoading(false));
-    return () => {
-      alive = false;
-      live.current = false;
-      setView(null);
-      void commands.storeClose();
-    };
-  }, [load]);
-
-  const install = useCallback(
-    async (entry: StoreEntry) => {
-      if (installActive.current) return;
-      installActive.current = true;
-      setInstalling(entry.id);
-      setError(null);
-      try {
-        const existing = controller.connections.find(
-          (row) => row.extensionId === entry.id,
-        );
-        unwrapResult(
-          await (entry.kind === "mcp"
-            ? existing
-              ? commands.storeMcpUpdate(
-                  existing.id,
-                  existing.revision,
-                  entry.version,
-                )
-              : commands.storeMcpInstall(entry.id, entry.version)
-            : commands.storeInstall(entry.id, entry.version)),
-        );
-        await Promise.all([load(), refreshInstalled()]);
-        if (live.current) onPreview({ source: "store", entry });
-      } catch (reason) {
-        setError(String(reason));
-      } finally {
-        installActive.current = false;
-        setInstalling(null);
-      }
-    },
-    [load, refreshInstalled, controller.connections, onPreview],
-  );
-
-  useEffect(() => {
-    onStoreChange({ view, installing, error, install });
-  }, [install, installing, error, onStoreChange, view]);
-
-  const installed = useMemo(
-    () =>
-      new Map([
-        ...controller.cards.map((card) => [card.id, card.version] as const),
-        ...controller.connections.map(
-          (row) => [row.extensionId!, row.version!] as const,
-        ),
-      ]),
-    [controller.cards, controller.connections],
-  );
-  const categories = useMemo(
-    () =>
-      [
-        ...new Set((view?.entries ?? []).flatMap((entry) => entry.categories)),
-      ].sort(),
-    [view?.entries],
-  );
-  const entries = filterExtensions(view?.entries ?? [], query).filter(
-    (entry) => category === "all" || entry.categories.includes(category),
-  );
-
-  if (loading)
-    return (
-      <div className="extension-state" role="status">
-        Loading the extension store…
-      </div>
-    );
-
-  return (
-    <>
-      {view && view.status !== "fresh" && (
-        <div className="extension-store-notice">
-          {view.status === "needs-newer-client"
-            ? "This store requires a newer version of Grain."
-            : "Offline — showing the last verified catalogue. Installs are paused."}
-        </div>
-      )}
-      {error && (
-        <div className="extension-inline-error" role="alert">
-          {error}
-        </div>
-      )}
-      <div className="store-intro polished-store-intro">
-        <div>
-          <strong>Extension store</strong>
-          <span>Discover focused additions for Grain.</span>
-        </div>
-        <select
-          className="select"
-          value={category}
-          onChange={(event) => setCategory(event.target.value)}
-          aria-label="Filter extension category"
-        >
-          <option value="all">All extensions</option>
-          {categories.map((item) => (
-            <option value={item} key={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-      </div>
-      {!entries.length ? (
-        <div className="extension-state">
-          No store extensions match these filters.
-        </div>
-      ) : (
-        <div className="polished-store-grid">
-          {entries.map((entry) => (
-            <StoreCard
-              key={`${entry.id}@${entry.version}`}
-              entry={entry}
-              installedVersion={installed.get(entry.id)}
-              busy={installing === entry.id}
-              canInstall={Boolean(view?.can_install) && installing === null}
-              onInstall={(target) => void install(target)}
-              onPreview={(target) =>
-                onPreview({ source: "store", entry: target })
-              }
-            />
-          ))}
-        </div>
-      )}
-    </>
-  );
 }
 
 export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
@@ -1169,119 +168,30 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
     const raw = window.location.hash.split("?", 2)[1] ?? "";
     return new URLSearchParams(raw).get("q") ?? "";
   });
-  const [detail, setDetail] = useState<DetailSelection | null>(null);
-  const detailOriginRef = useRef<HTMLElement | null>(null);
-  const installedTabRef = useRef<HTMLButtonElement>(null);
-  const [developer, setDeveloper] = useState<ExtensionDeveloperStatus | null>(
-    null,
-  );
-  const [developerOpen, setDeveloperOpen] = useState(false);
-  const [developerBusy, setDeveloperBusy] = useState(false);
-  const [importBusy, setImportBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [storeState, setStoreState] = useState<StoreController>({
-    view: null,
-    installing: null,
-    error: null,
-    install: async () => {},
-  });
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const origin = useRef<HTMLButtonElement | null>(null);
+  const back = useRef<HTMLButtonElement>(null);
+  const detail = controller.cards.find((card) => card.id === detailId);
+  const browse = view === "browse";
+
+  const close = useCallback(() => {
+    setDetailId(null);
+    requestAnimationFrame(() => origin.current?.focus());
+  }, []);
 
   useEffect(() => {
-    setDetail(null);
-    detailOriginRef.current = null;
-    setStoreState({
-      view: null,
-      installing: null,
-      error: null,
-      install: async () => {},
-    });
+    setDetailId(null);
   }, [view]);
 
   useEffect(() => {
-    let alive = true;
-    void commands
-      .extensionDeveloperStatus()
-      .then(unwrapResult)
-      .then((status) => alive && setDeveloper(status))
-      .catch(() => alive && setDeveloper(null));
-    return () => {
-      alive = false;
+    if (!detailId) return;
+    back.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
     };
-  }, []);
-
-  const openDeveloper = async () => {
-    setDeveloperBusy(true);
-    setNotice(null);
-    try {
-      if (!developer?.enabled) {
-        unwrapResult(await commands.extensionSetDeveloperMode(true));
-        setDeveloper((current) => ({
-          enabled: true,
-          loaded: current?.loaded ?? [],
-        }));
-      }
-      setDeveloperOpen(true);
-      await controller.refresh();
-    } catch (reason) {
-      setNotice(String(reason));
-    } finally {
-      setDeveloperBusy(false);
-    }
-  };
-
-  const disableDeveloper = async () => {
-    setDeveloperBusy(true);
-    try {
-      unwrapResult(await commands.extensionSetDeveloperMode(false));
-      setDeveloper({ enabled: false, loaded: [] });
-      setDeveloperOpen(false);
-      await controller.refresh();
-    } catch (reason) {
-      setNotice(String(reason));
-    } finally {
-      setDeveloperBusy(false);
-    }
-  };
-
-  const importPack = async () => {
-    setImportBusy(true);
-    setNotice(null);
-    try {
-      const selected = await open({
-        title: "Import Grain extension pack",
-        multiple: false,
-        directory: false,
-        filters: [{ name: "Grain extension pack", extensions: ["grainpack"] }],
-      });
-      if (!selected || Array.isArray(selected)) return;
-      const id = unwrapResult(await commands.extensionImportPack(selected));
-      setNotice(`Imported ${id}. Review its permissions before enabling it.`);
-      await controller.refresh();
-    } catch (reason) {
-      setNotice(String(reason));
-    } finally {
-      setImportBusy(false);
-    }
-  };
-
-  const onStoreChange = useCallback(
-    (next: StoreController) => setStoreState(next),
-    [],
-  );
-  const openDetail = useCallback((selection: DetailSelection) => {
-    const active = document.activeElement;
-    detailOriginRef.current = active instanceof HTMLElement ? active : null;
-    setDetail(selection);
-  }, []);
-  const closeDetail = useCallback(() => {
-    const origin = detailOriginRef.current;
-    detailOriginRef.current = null;
-    setDetail(null);
-    requestAnimationFrame(() => {
-      if (origin?.isConnected) origin.focus();
-      else installedTabRef.current?.focus();
-    });
-  }, []);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [close, detailId]);
 
   return (
     <section
@@ -1289,164 +199,158 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
       data-page-panel="extensions"
     >
       <div className="page-wrap extensions-page-wrap">
-        {detail && (
-          <ExtensionDetail
-            selection={detail}
-            controller={controller}
-            onBack={closeDetail}
-            onInstall={storeState.install}
-            installing={storeState.installing}
-            installError={storeState.error}
-            canInstall={Boolean(storeState.view?.can_install)}
-          />
+        {controller.error && (
+          <div className="extension-inline-error" role="alert">
+            {controller.error}
+          </div>
         )}
-        <div className="extensions-browse-view" hidden={detail !== null}>
+        {detail && (
+          <article
+            className="extension-detail"
+            aria-labelledby="extension-detail-title"
+          >
+            <div className="extension-detail-toolbar">
+              <button
+                ref={back}
+                className="extension-detail-back-button"
+                type="button"
+                onClick={close}
+              >
+                <ChevronLeft size={15} aria-hidden="true" /> Back to extensions
+              </button>
+            </div>
+            <div className="extension-detail-content">
+              <header className="extension-detail-intro">
+                <div className="extension-detail-heading">
+                  <h1 id="extension-detail-title">{detail.name}</h1>
+                  <p>{detail.description}</p>
+                </div>
+                {detail.trust !== "dev" && (
+                  <button
+                    className="button danger"
+                    type="button"
+                    disabled={controller.busy !== null}
+                    onClick={() =>
+                      void controller.uninstall(detail).then((removed) => {
+                        if (removed) close();
+                      })
+                    }
+                  >
+                    <Trash2 size={14} aria-hidden="true" /> Uninstall
+                  </button>
+                )}
+              </header>
+              <section
+                className="mcp-connections"
+                aria-label="Extension settings"
+              >
+                <div className="extension-setting-row">
+                  <div>
+                    <h3>Enabled</h3>
+                    <p>Make this extension’s tools available to the Agent.</p>
+                  </div>
+                  <Switch
+                    checked={detail.enabled}
+                    disabled={controller.busy !== null}
+                    ariaLabel={`${detail.enabled ? "Disable" : "Enable"} ${detail.name}`}
+                    onChange={() => void controller.toggle(detail)}
+                  />
+                </div>
+                <h3>Declared permissions</h3>
+                {detail.capabilities.length ? (
+                  <ul>
+                    {detail.capabilities.map((capability) => (
+                      <li key={capability}>{capabilityLabel(capability)}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>This extension declares no runtime permissions.</p>
+                )}
+              </section>
+            </div>
+          </article>
+        )}
+        <div className="extensions-browse-view" hidden={Boolean(detail)}>
           <div className="page-header">
             <div className="extensions-page-heading">
-              <div className="eyebrow">Capability management</div>
               <h1>Extensions</h1>
               <p className="page-subtitle">
-                Add tools to the Agent with extensions. Connect your own MCP
-                server alongside your installed extensions.
+                Connect a supported app or add your own remote MCP server.
               </p>
             </div>
-            <div className="header-actions">
-              <button
-                className="button"
-                type="button"
-                disabled={importBusy}
-                onClick={() => void importPack()}
-              >
-                <Upload size={15} />
-                {importBusy ? "Importing…" : "Import pack"}
-              </button>
-              <button
-                className={`button${developer?.enabled ? " developer-on" : ""}`}
-                type="button"
-                disabled={developerBusy}
-                aria-pressed={developer?.enabled ?? false}
-                onClick={() => void openDeveloper()}
-              >
-                <Code2 size={15} />
-                Developer
-              </button>
-            </div>
           </div>
-
-          {notice && <div className="extension-store-notice">{notice}</div>}
-          {controller.error && (
-            <div className="extension-inline-error">{controller.error}</div>
-          )}
-
           <div className="extension-toolbar">
             <div className="segmented" aria-label="Extension collection">
-              <button
-                ref={installedTabRef}
-                className={view === "installed" ? "active" : ""}
-                type="button"
-                onClick={() => {
-                  window.location.hash = hashForRoute({
-                    page: "extensions",
-                    view: "installed",
-                  }).slice(1);
-                }}
-              >
-                Installed{" "}
-                <span>
-                  {controller.cards.length + controller.connections.length}
-                </span>
-              </button>
-              <button
-                className={view === "store" ? "active" : ""}
-                type="button"
-                onClick={() => {
-                  window.location.hash = hashForRoute({
-                    page: "extensions",
-                    view: "store",
-                  }).slice(1);
-                }}
-              >
-                Store
-              </button>
+              {(["installed", "browse"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  className={view === tab ? "active" : ""}
+                  type="button"
+                  onClick={() => {
+                    window.location.hash = hashForRoute({
+                      page: "extensions",
+                      view: tab,
+                    });
+                  }}
+                >
+                  {tab === "installed" ? "My connections" : "Browse extensions"}
+                </button>
+              ))}
             </div>
             <label className="search-field">
               <svg className="icon sm" aria-hidden="true">
                 <use href="#i-search" />
               </svg>
               <input
+                aria-label="Search extensions"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={`Search ${view === "installed" ? "installed" : "store"} extensions`}
+                placeholder="Search extensions"
               />
             </label>
           </div>
-
-          {view === "installed" ? (
+          <McpPresets query={query} browse={browse} />
+          {!browse && (
             <>
-              <InstalledList
-                controller={controller}
-                query={query}
-                onPreview={openDetail}
-                onBrowseStore={() => {
-                  window.location.hash = hashForRoute({
-                    page: "extensions",
-                    view: "store",
-                  }).slice(1);
-                }}
-              />
-              {customMcpManagementVisible(
-                import.meta.env.MODE,
-                import.meta.env.DEV,
-              ) &&
-                developer?.enabled &&
-                detail === null && <McpConnections query={query} />}
+              <McpConnections query={query} />
+              {controller.loading && (
+                <div role="status">Loading installed extensions…</div>
+              )}
+              <div className="installed-extension-list">
+                {filterExtensions(controller.cards, query).map((card) => (
+                  <article
+                    key={card.id}
+                    className="extension-card installed-extension-card"
+                  >
+                    <div className="installed-extension-copy">
+                      <strong>{card.name}</strong>
+                      <p>{card.description}</p>
+                    </div>
+                    <div className="installed-extension-actions">
+                      <button
+                        className="button"
+                        type="button"
+                        onClick={(event) => {
+                          origin.current = event.currentTarget;
+                          setDetailId(card.id);
+                        }}
+                      >
+                        Settings
+                      </button>
+                      <Switch
+                        checked={card.enabled}
+                        disabled={controller.busy !== null}
+                        ariaLabel={`${card.enabled ? "Disable" : "Enable"} ${card.name}`}
+                        onChange={() => void controller.toggle(card)}
+                      />
+                    </div>
+                  </article>
+                ))}
+              </div>
             </>
-          ) : (
-            <StoreGrid
-              query={query}
-              controller={controller}
-              onPreview={openDetail}
-              onStoreChange={onStoreChange}
-            />
           )}
         </div>
       </div>
-
-      {developerOpen && (
-        <div
-          className="developer-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Extension developer tools"
-        >
-          <div className="developer-drawer-head">
-            <div>
-              <div className="eyebrow">Local extension tools</div>
-              <h2>Developer</h2>
-            </div>
-            <button
-              className="icon-button"
-              type="button"
-              aria-label="Close developer tools"
-              onClick={() => setDeveloperOpen(false)}
-            >
-              <X size={17} />
-            </button>
-          </div>
-          <div className="developer-drawer-scroll">
-            <DeveloperSection onExtensionsChanged={controller.refresh} />
-          </div>
-          <button
-            className="button danger"
-            type="button"
-            disabled={developerBusy}
-            onClick={() => void disableDeveloper()}
-          >
-            Turn off developer mode
-          </button>
-        </div>
-      )}
-
       {controller.permissionDialog}
     </section>
   );

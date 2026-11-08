@@ -49,4 +49,5 @@ jobs:
       build-args: ${{ matrix.args }}
       upload-artifacts: true
       sign-binaries: true
+      github-extension-auth: true
     secrets: inherit

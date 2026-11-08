@@ -1250,6 +1250,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 fn store_state(app: &AppHandle) -> Result<Arc<StoreState>, String> {
+    crate::grain_mcp::require_store_access(app)?;
     app.try_state::<Arc<StoreState>>()
         .map(|s| s.inner().clone())
         .ok_or_else(|| "store unavailable".to_string())

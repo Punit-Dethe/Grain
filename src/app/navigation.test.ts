@@ -3,17 +3,9 @@ import {
   hashForRoute,
   routeFromHash,
   routeUsesCompactGlobalRail,
-  customMcpManagementVisible,
 } from "./navigation";
 
 describe("UI 2.0 hash navigation", () => {
-  it("keeps custom MCP management out of alpha and ordinary releases even while extensions are visible", () => {
-    expect(customMcpManagementVisible("production", false)).toBe(false);
-    expect(customMcpManagementVisible("extensions-alpha", false)).toBe(false);
-    expect(customMcpManagementVisible("agent-harness", false)).toBe(true);
-    expect(customMcpManagementVisible("development", true)).toBe(true);
-    expect(customMcpManagementVisible("unrecognized", false)).toBe(false);
-  });
   it("opens merged transcription settings from the former models route", () => {
     expect(routeFromHash("#/settings/speech-to-text")).toEqual({
       page: "settings",
@@ -60,7 +52,7 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash("#/agent/?focus=shortcut")).toEqual(route);
   });
 
-  it.each(["installed", "store"] as const)(
+  it.each(["installed", "browse"] as const)(
     "round-trips the %s extension view",
     (view) => {
       const route = { page: "extensions", view } as const;

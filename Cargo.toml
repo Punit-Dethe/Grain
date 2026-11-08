@@ -8,7 +8,13 @@
 # patch/profile sections are migrated up here. Until then it builds standalone.
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = [
+    "crates/grain-core",
+    "crates/grain-ext-cli",
+    "crates/grain-extension-checks",
+    "crates/grain-sdk",
+    "crates/grain-tdt",
+]
 exclude = ["src-tauri"]
 
 [workspace.package]
@@ -23,9 +29,3 @@ anyhow = "1"
 
 [profile.dev]
 incremental = true
-
-# Real encrypted maintainer keys must keep their full scrypt work factor in
-# development/tests. Optimize that existing dependency, never weaken its KDF.
-# This workspace excludes the app; its separate profiles remain unchanged.
-[profile.dev.package.scrypt]
-opt-level = 3

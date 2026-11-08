@@ -113,7 +113,7 @@ impl RuntimeOwner {
 
     pub(super) fn enabled(&self, app: &AppHandle) -> bool {
         let settings = crate::settings::get_settings(app);
-        super::access_allowed(app, settings.extension_developer_mode, self.is_store())
+        self.require_access(app).is_ok()
             && settings.mcp_enabled_providers.contains(&self.enable_key())
             && self.current()
     }
@@ -220,14 +220,6 @@ impl State {
             owner.control.invalidate();
         }
         Ok(())
-    }
-
-    pub(super) fn invalidate_development(&self) {
-        if let Ok(controls) = self.controls.lock() {
-            for owner in controls.values().filter(|owner| !owner.is_store()) {
-                owner.control.invalidate();
-            }
-        }
     }
 
     pub(crate) fn registry(&self, app: &AppHandle) -> Result<Arc<ConnectionRegistry>, String> {
@@ -423,7 +415,7 @@ fn record_allowed(app: &AppHandle, record: &ConnectionRecord) -> bool {
 fn require_record_access(app: &AppHandle, record: &ConnectionRecord) -> Result<(), String> {
     match record.identity().source() {
         grain_core::mcp::ConnectionSource::Store { .. } => super::require_store_access(app),
-        _ => super::require_developer_mode(app),
+        _ => Ok(()),
     }
 }
 
@@ -492,7 +484,7 @@ pub async fn mcp_connection_set_client_credentials(
     client_id: String,
     client_secret: String,
 ) -> Result<(), String> {
-    guard(&app, &window)?;
+    guard(&window)?;
     let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
     super::set_client_credentials_flow(
         &app,
@@ -511,7 +503,7 @@ pub async fn mcp_connection_clear_client_credentials(
     id: String,
     expected_revision: String,
 ) -> Result<(), String> {
-    guard(&app, &window)?;
+    guard(&window)?;
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
@@ -581,7 +573,7 @@ pub async fn mcp_connection_connect(
     id: String,
     expected_revision: String,
 ) -> Result<(), String> {
-    guard(&app, &window)?;
+    guard(&window)?;
     let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
     if !owner.current() {
         return Err("This MCP connection is revoked or no longer available.".into());
@@ -602,7 +594,7 @@ pub async fn mcp_connection_status(
     id: String,
     expected_revision: String,
 ) -> Result<super::McpProviderStatus, String> {
-    guard(&app, &window)?;
+    guard(&window)?;
     let (owner, ticket) = expected_owner(&app, &id, &expected_revision)?;
     let item = owner.spec();
     let required = super::requires_account(&item);
@@ -667,7 +659,7 @@ pub async fn mcp_connection_disconnect(
     expected_revision: String,
 ) -> Result<(), String> {
     use rmcp::transport::auth::CredentialStore;
-    guard(&app, &window)?;
+    guard(&window)?;
     let (owner, _) = expected_owner(&app, &id, &expected_revision)?;
     if !super::requires_account(&owner.spec()) {
         return Err("This anonymous server has no account to disconnect.".into());
@@ -719,9 +711,8 @@ pub(crate) fn expected_lease(
     Ok(lease)
 }
 
-fn guard(app: &AppHandle, window: &WebviewWindow) -> Result<(), String> {
-    crate::grain_commands::require_main_window(window)?;
-    super::require_store_access(app)
+fn guard(window: &WebviewWindow) -> Result<(), String> {
+    crate::grain_commands::require_main_window(window)
 }
 
 async fn storage<T: Send + 'static>(
@@ -730,8 +721,6 @@ async fn storage<T: Send + 'static>(
 ) -> Result<T, String> {
     // Registry disk I/O and its bounded publication retry never block the UI.
     tokio::task::spawn_blocking(move || {
-        // Recheck after scheduling; individual records retain their source gate.
-        super::require_store_access(&app)?;
         let state = app
             .try_state::<State>()
             .ok_or("MCP connection storage is unavailable.")?;
@@ -740,7 +729,6 @@ async fn storage<T: Send + 'static>(
             .operation
             .lock()
             .map_err(|_| RegistryError::InvalidState.to_string())?;
-        super::require_store_access(&app)?;
         let registry = state.registry(&app)?;
         operation(&state, &registry)
     })
@@ -754,7 +742,7 @@ pub async fn mcp_connections_list(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<Vec<ConnectionView>, String> {
-    guard(&app, &window)?;
+    guard(&window)?;
     let view_app = app.clone();
     storage(app, move |_, registry| {
         registry
@@ -778,13 +766,10 @@ pub async fn mcp_connection_import(
     window: WebviewWindow,
     definition_json: String,
 ) -> Result<ConnectionView, String> {
-    guard(&app, &window)?;
-    super::require_developer_mode(&app)?;
+    guard(&window)?;
     let definition = ConnectionDefinition::parse(definition_json.as_bytes())
         .map_err(|error| error.to_string())?;
-    let view_app = app.clone();
     storage(app, move |_, registry| {
-        super::require_developer_mode(&view_app)?;
         registry
             .insert(definition)
             .map(Into::into)
@@ -802,13 +787,11 @@ pub async fn mcp_connection_replace(
     expected_revision: String,
     definition_json: String,
 ) -> Result<ConnectionView, String> {
-    guard(&app, &window)?;
-    super::require_developer_mode(&app)?;
+    guard(&window)?;
     let definition = ConnectionDefinition::parse(definition_json.as_bytes())
         .map_err(|error| error.to_string())?;
     let view_app = app.clone();
     storage(app, move |state, registry| {
-        super::require_developer_mode(&view_app)?;
         let lease = expected_lease(registry, &id, &expected_revision)?;
         if matches!(
             lease.record().identity().source(),
@@ -868,7 +851,7 @@ pub async fn mcp_connection_remove(
     id: String,
     expected_revision: String,
 ) -> Result<(), String> {
-    guard(&app, &window)?;
+    guard(&window)?;
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
@@ -900,7 +883,7 @@ pub async fn mcp_connection_set_enabled(
     expected_revision: String,
     enabled: bool,
 ) -> Result<(), String> {
-    guard(&app, &window)?;
+    guard(&window)?;
     let context = app
         .try_state::<Arc<grain_core::AppContext>>()
         .ok_or("Application context is unavailable.")?
@@ -932,13 +915,7 @@ pub async fn mcp_connection_set_enabled(
                 // Only exact account ownership can enable this destination. Neither
                 // raw record IDs nor old account keys can activate an edited URL.
                 settings.mcp_enabled_providers.retain(|value| value != &key);
-                if enabled
-                    && super::access_allowed(
-                        &view_app,
-                        settings.extension_developer_mode,
-                        owner.is_store(),
-                    )
-                {
+                if enabled {
                     settings.mcp_enabled_providers.push(key);
                     settings.mcp_enabled_providers.sort();
                     settings.mcp_enabled_providers.dedup();
@@ -998,7 +975,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn disabling_developer_mode_only_invalidates_custom_accounts() {
+    fn custom_connections_cannot_claim_store_provenance() {
         let data = tempfile::tempdir().unwrap();
         let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
         let store = registry.insert_store(store_descriptor()).unwrap();
@@ -1019,12 +996,6 @@ mod tests {
             !owners[1].is_store(),
             "Display metadata cannot grant store provenance"
         );
-        let store_ticket = owners[0].ticket();
-        let custom_ticket = owners[1].ticket();
-        state.invalidate_development();
-        assert!(store_ticket.commit(|| ()).is_ok());
-        assert!(custom_ticket.commit(|| ()).is_err());
-        // Store consent survives the developer switch, not actual removal.
         let lease = registry.lease(store.identity().connection_id()).unwrap();
         registry.remove(&lease).unwrap();
         assert!(!owners[0].current());

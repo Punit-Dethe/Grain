@@ -55,6 +55,7 @@ fn package_options_are_explicit_and_cannot_replace_auth_or_protocol() {
 #[derive(Clone)]
 enum Behavior {
     CatalogPages(Vec<Vec<Value>>),
+    CatalogPagesSse(Vec<Vec<Value>>),
     Complete(Value),
     CompleteSse(Value),
     CompleteLegacy(Value),
@@ -189,7 +190,7 @@ impl Fixture {
                     Some("tools/list") => {
                         let page = counters.1.fetch_add(1, Ordering::SeqCst);
                         match &behavior {
-                            Behavior::CatalogPages(pages) => {
+                            Behavior::CatalogPages(pages) | Behavior::CatalogPagesSse(pages) => {
                                 let page = request["params"]["cursor"]
                                     .as_str()
                                     .and_then(|cursor| cursor.strip_prefix("page-"))
@@ -254,8 +255,10 @@ impl Fixture {
                             | Behavior::CompleteSse(result)
                             | Behavior::CompleteLegacy(result) => result.clone(),
                             Behavior::CompleteLegacyHttpRejection(result) => result.clone(),
-                            Behavior::CatalogPages(_) => json!({"resultType": "complete",
-                                "content": [{"type": "text", "text": "one supported call"}]}),
+                            Behavior::CatalogPages(_) | Behavior::CatalogPagesSse(_) => {
+                                json!({"resultType": "complete",
+                                "content": [{"type": "text", "text": "one supported call"}]})
+                            }
                             _ => panic!("pagination failures must never dispatch a tool"),
                         }
                     }
@@ -270,7 +273,10 @@ impl Fixture {
                     json!({ "jsonrpc": "2.0", "id": request["id"], "result": response })
                 }
                 .to_string();
-                let (kind, body) = if matches!(behavior, Behavior::CompleteSse(_)) {
+                let (kind, body) = if matches!(
+                    behavior,
+                    Behavior::CompleteSse(_) | Behavior::CatalogPagesSse(_)
+                ) {
                     (
                         "text/event-stream",
                         format!("event: message\ndata: {body}\n\n"),
@@ -544,6 +550,38 @@ async fn aggregate_wire_bytes_stop_empty_catalog_padding_before_page_limit() {
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
     assert!(close_service(service).await);
     fixture.stop().await;
+}
+
+#[tokio::test]
+async fn catalogues_above_512_kib_have_the_same_json_and_sse_budget() {
+    let tools: Vec<_> = (0..96)
+        .map(|index| {
+            let mut tool = tool_json();
+            tool["name"] = json!(format!("catalogue_tool_{index}"));
+            tool["description"] = json!("provider documentation ".repeat(300));
+            tool
+        })
+        .collect();
+    let bytes = serde_json::to_vec(&tools).unwrap().len();
+    assert!(bytes > 512 * 1024 && bytes < MAX_CATALOG_BYTES);
+    for behavior in [
+        Behavior::CatalogPages(vec![tools.clone()]),
+        Behavior::CatalogPagesSse(vec![tools.clone()]),
+    ] {
+        let fixture = Fixture::start(behavior).await;
+        let service = fixture.service(McpHttpClient::local_test_client()).await;
+        let discovered = discover_on_service(
+            &service,
+            tokio::time::Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+        assert_eq!(discovered.len(), tools.len());
+        assert_eq!(discovered.last().unwrap().name, "catalogue_tool_95");
+        assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+        assert!(close_service(service).await);
+        fixture.stop().await;
+    }
 }
 
 #[tokio::test]

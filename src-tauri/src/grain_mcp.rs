@@ -1,4 +1,4 @@
-//! Signed-store MCP extensions and development-only custom/hosted providers.
+//! Bundled presets and custom remote MCP connections.
 //!
 //! This deliberately implements only short-lived MCP clients over catalog-owned
 //! HTTPS endpoints. It prefers the stateless discovery lifecycle and can perform
@@ -123,7 +123,10 @@ async fn bind_callback(fixed: bool) -> Result<TcpListener, String> {
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(300);
 const CALLBACK_MAX_BYTES: usize = 16 * 1024;
 const MAX_TOOL_COUNT: usize = 128;
-const MAX_SSE_EVENT_BYTES: usize = 512 * 1024;
+// Tool catalogues can arrive as a single SSE event or JSON. Apply the same
+// bounded catalogue budget to both representations; GitHub's all-toolset
+// catalogue exceeds the previous 512 KiB SSE-only limit.
+const MAX_SSE_EVENT_BYTES: usize = MAX_CATALOG_BYTES;
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(90);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_DISCOVERY_PAGES: usize = 32;
@@ -177,12 +180,9 @@ fn provider_control(id: &str) -> std::sync::Arc<session::Control> {
         .clone()
 }
 
-pub(crate) fn invalidate_development_sessions(app: &AppHandle) {
-    for item in CATALOG {
+pub(crate) fn invalidate_development_sessions() {
+    for item in CATALOG.iter().filter(|item| !is_preset(item)) {
         provider_control(item.id).invalidate();
-    }
-    if let Some(state) = app.try_state::<connections::State>() {
-        state.invalidate_development();
     }
 }
 
@@ -198,6 +198,10 @@ struct Provider<'a> {
 }
 
 type CatalogProvider = Provider<'static>;
+
+fn is_preset(item: &Provider<'_>) -> bool {
+    item.ownership.is_none() && matches!(item.id, "github" | "notion")
+}
 
 enum RuntimeProvider {
     Catalog(&'static CatalogProvider),
@@ -228,7 +232,7 @@ impl RuntimeProvider {
             Self::Configured(owner, _) => owner.enabled(app),
             Self::Catalog(item) => {
                 let settings = crate::settings::get_settings(app);
-                access_allowed(app, settings.extension_developer_mode, false)
+                (is_preset(item) || access_allowed(app, settings.extension_developer_mode, false))
                     && settings
                         .mcp_enabled_providers
                         .iter()
@@ -319,9 +323,13 @@ impl Provider<'_> {
         self.ownership.and_then(|owner| owner.oauth_client())
     }
     fn headers(&self) -> grain_sdk::mcp::McpHeaders {
-        self.ownership
-            .map(|owner| owner.headers().clone())
-            .unwrap_or_default()
+        if let Some(owner) = self.ownership {
+            owner.headers().clone()
+        } else if self.id == "github" {
+            [("x-mcp-toolsets".into(), "all".into())].into()
+        } else {
+            Default::default()
+        }
     }
 
     fn descriptor(
@@ -918,7 +926,10 @@ pub(crate) fn require_developer_mode(app: &AppHandle) -> Result<(), String> {
     ) {
         Ok(())
     } else {
-        Err("Custom MCPs and development providers require a development build and Extension Developer Mode".into())
+        Err(
+            "Development MCP providers require a development build and Extension Developer Mode"
+                .into(),
+        )
     }
 }
 
@@ -940,7 +951,7 @@ fn access_allowed(app: &AppHandle, developer_mode: bool, store: bool) -> bool {
 }
 
 pub(crate) fn require_store_access(app: &AppHandle) -> Result<(), String> {
-    if access_allowed(app, false, true) {
+    if cfg!(feature = "agent-harness") && access_allowed(app, false, true) {
         Ok(())
     } else {
         Err("Store extensions are not available in this build.".into())
@@ -950,6 +961,7 @@ pub(crate) fn require_store_access(app: &AppHandle) -> Result<(), String> {
 fn require_provider_access(app: &AppHandle, item: &Provider<'_>) -> Result<(), String> {
     match item.ownership {
         Some(owner) => owner.require_access(app),
+        None if is_preset(item) => Ok(()),
         None => require_developer_mode(app),
     }
 }
@@ -1009,7 +1021,11 @@ fn builtin_client(app: &AppHandle, item: &Provider<'_>) -> Option<builtin::Clien
         return None;
     }
     builtin::github(
-        item.ownership?.store_extension_id(),
+        if is_preset(item) && item.id == "github" {
+            Some("com.grain.github")
+        } else {
+            item.ownership?.store_extension_id()
+        },
         item.endpoint,
         option_env!("GRAIN_GITHUB_OAUTH_CLIENT_ID"),
         option_env!("GRAIN_GITHUB_OAUTH_CLIENT_SECRET"),
@@ -1109,7 +1125,6 @@ pub async fn mcp_provider_status(
     window: WebviewWindow,
 ) -> Result<Vec<McpProviderStatus>, String> {
     crate::grain_commands::require_main_window(&window)?;
-    require_developer_mode(&app)?;
     let settings = crate::settings::get_settings(&app);
     let enabled: HashSet<&str> = settings
         .mcp_enabled_providers
@@ -1118,13 +1133,10 @@ pub async fn mcp_provider_status(
         .collect();
     let mut statuses = Vec::with_capacity(CATALOG.len());
     for item in CATALOG {
-        if provider(item.id).is_err() {
+        if require_provider_access(&app, item).is_err() || provider(item.id).is_err() {
             continue;
         }
-        let client_id_configured = settings
-            .mcp_oauth_client_ids
-            .get(item.id)
-            .is_some_and(|value| !value.trim().is_empty());
+        let client_id_configured = provider_client_id(&app, item).is_some();
         let account_required = requires_account(item);
         let stored = if account_required {
             stored_connected(item.id).await
@@ -1316,8 +1328,8 @@ pub async fn mcp_set_provider_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    require_developer_mode(&app)?;
     let item = provider(&id)?;
+    require_provider_access(&app, item)?;
     let ticket = provider_control(&id).invalidate();
     let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
         .await
@@ -1559,8 +1571,8 @@ pub async fn mcp_connect_provider(
     id: String,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    require_developer_mode(&app)?;
     let item = provider(&id)?;
+    require_provider_access(&app, item)?;
     connect_flow(&app, &window, RuntimeProvider::Catalog(item)).await
 }
 
@@ -1748,11 +1760,13 @@ async fn connect_oauth(
             return Err(session::CANCELLED.to_string());
         }
         ctx.update_settings(|settings| {
-            if !access_allowed(
-                app,
-                settings.extension_developer_mode,
-                item.ownership.is_some_and(|owner| owner.is_store()),
-            ) {
+            let available = match item.ownership {
+                Some(owner) => !owner.is_store() || require_store_access(app).is_ok(),
+                None => {
+                    is_preset(item) || access_allowed(app, settings.extension_developer_mode, false)
+                }
+            };
+            if !available {
                 return;
             }
             settings
@@ -1775,8 +1789,9 @@ pub async fn mcp_disconnect_provider(
     id: String,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    require_developer_mode(&app)?;
-    if !requires_account(provider(&id)?) {
+    let item = provider(&id)?;
+    require_provider_access(&app, item)?;
+    if !requires_account(item) {
         return Err("Disable the unauthenticated MCP fixture; it has no account".into());
     }
     let ticket = provider_control(&id).invalidate();
@@ -2213,7 +2228,20 @@ async fn discover_on_service(
         )
         .await
         .map_err(|_| "MCP discovery timed out; the catalog is incomplete.")?
-        .map_err(|_| "MCP catalog request failed; the catalog is incomplete.")?;
+        .map_err(|error| {
+            // SDK/provider error strings may contain credentials or response data.
+            let kind = match &error {
+                rmcp::ServiceError::McpError(_) => "rpc",
+                rmcp::ServiceError::TransportSend(_) => "transport_send",
+                rmcp::ServiceError::TransportClosed => "transport_closed",
+                rmcp::ServiceError::UnexpectedResponse => "unexpected_response",
+                rmcp::ServiceError::Timeout { .. } => "timeout",
+                rmcp::ServiceError::Cancelled { .. } => "cancelled",
+                _ => "other",
+            };
+            log::warn!("[GRAIN] MCP catalogue request failed: kind={kind}");
+            "MCP catalog request failed; the catalog is incomplete."
+        })?;
         catalog_count = catalog_count.saturating_add(page.tools.len());
         if catalog_count > MAX_TOOL_COUNT {
             return Err(format!(
@@ -2859,14 +2887,17 @@ pub async fn mcp_test_provider(
 pub(crate) fn directory(
     app: &AppHandle,
 ) -> Vec<grain_core::capability_index::ExtensionDirectoryEntry> {
-    let development = require_developer_mode(app).is_ok();
     let enabled: HashSet<String> = crate::settings::get_settings(app)
         .mcp_enabled_providers
         .into_iter()
         .collect();
     let mut entries: Vec<_> = CATALOG
         .iter()
-        .filter(|item| development && enabled.contains(item.id) && provider(item.id).is_ok())
+        .filter(|item| {
+            enabled.contains(item.id)
+                && require_provider_access(app, item).is_ok()
+                && provider(item.id).is_ok()
+        })
         .map(
             |item| grain_core::capability_index::ExtensionDirectoryEntry {
                 extension_id: format!("mcp.{}", item.id),
@@ -2904,6 +2935,19 @@ mod tests {
         let alpha: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.extensions-alpha.conf.json")).unwrap();
         assert_eq!(alpha["identifier"], "com.grain.extensions.alpha");
+    }
+
+    #[test]
+    fn bundled_presets_keep_the_expected_oauth_and_github_toolsets() {
+        let mut presets = CATALOG.iter().filter(|item| is_preset(item));
+        let notion = presets.next().unwrap();
+        let github = presets.next().unwrap();
+        assert!(presets.next().is_none());
+        assert_eq!(notion.id, "notion");
+        assert!(notion.registration == Registration::Dynamic);
+        assert_eq!(github.id, "github");
+        assert!(github.registration == Registration::PreRegistered);
+        assert_eq!(github.headers()["x-mcp-toolsets"], "all");
     }
 
     #[test]

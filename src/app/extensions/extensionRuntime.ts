@@ -1,18 +1,6 @@
-import type { ActionInfo, ExtensionCard, Result, StoreEntry } from "@/bindings";
+import type { ActionInfo, ExtensionCard, Result } from "@/bindings";
 
 const NEVER_TOGGLED = "18446744073709551615";
-
-/** Use the host's signed publication history; version text is not an ordering. */
-export function storeInstallAction(
-  entry: Pick<StoreEntry, "version" | "previous_versions">,
-  installedVersion?: string | null,
-): "Install" | "Installed" | "Update" | "No update available" {
-  if (installedVersion == null) return "Install";
-  if (installedVersion === entry.version) return "Installed";
-  return entry.previous_versions.includes(installedVersion)
-    ? "Update"
-    : "No update available";
-}
 
 const CAPABILITY_LABELS: Record<string, string> = {
   storage: "Store its own data on this device",
@@ -134,13 +122,4 @@ export function filterExtensions<
       .toLocaleLowerCase()
       .includes(needle),
   );
-}
-
-export function nextMediaIndex(
-  current: number,
-  count: number,
-  direction: -1 | 1,
-): number {
-  if (count <= 1) return 0;
-  return (current + direction + count) % count;
 }

@@ -6,72 +6,20 @@ const reviewError = (body: string): string =>
     approvalDigest: "a".repeat(64),
     reviewedName: "Test tools",
   });
-import type { StoreEntry } from "@/bindings";
-import {
-  filterExtensions,
-  nextMediaIndex,
-  parseApprovalRequest,
-  storeInstallAction,
-} from "./extensionRuntime";
-
-const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
-  id: "example.pack",
-  kind: "native",
-  name: "Example Pack",
-  version: "1.0.0",
-  tier: "scripted",
-  trust: "verified",
-  previous_versions: [],
-  capabilities: [],
-  description: "An example extension",
-  repo: "",
-  size: "1 MB",
-  author: "Grain Labs",
-  reviewed_at: "",
-  reviewed_commit: "",
-  stars: 0,
-  installs: 0,
-  listing_document: "",
-  icon: null,
-  media: [],
-  categories: [],
-  revocation: null,
-  ...overrides,
-});
-
-describe("store update actions", () => {
-  it("uses signed predecessors for both extension kinds, not version text", () => {
-    for (const kind of ["native", "mcp"]) {
-      const listing = entry({
-        kind,
-        version: "1.0.0",
-        previous_versions: ["2.0.0"],
-      });
-      expect(storeInstallAction(listing)).toBe("Install");
-      expect(storeInstallAction(listing, "1.0.0")).toBe("Installed");
-      expect(storeInstallAction(listing, "2.0.0")).toBe("Update");
-      expect(storeInstallAction(listing, "0.9.0")).toBe("No update available");
-      expect(
-        storeInstallAction({ ...listing, previous_versions: [] }, "2.0.0"),
-      ).toBe("No update available");
-    }
-  });
-});
+import { filterExtensions, parseApprovalRequest } from "./extensionRuntime";
 
 describe("extension collection helpers", () => {
   it("searches names, ids, and descriptions directly", () => {
     const entries = [
-      entry({ id: "voice.actions", name: "Voice Actions" }),
-      entry({ id: "app.modes", name: "App Modes" }),
+      {
+        id: "voice.actions",
+        name: "Voice Actions",
+        description: "Voice controls",
+      },
+      { id: "app.modes", name: "App Modes", description: "App profiles" },
     ];
     expect(filterExtensions(entries, "voice")).toEqual([entries[0]]);
     expect(filterExtensions(entries, "app.modes")).toEqual([entries[1]]);
-  });
-
-  it("wraps media carousel movement", () => {
-    expect(nextMediaIndex(0, 3, -1)).toBe(2);
-    expect(nextMediaIndex(2, 3, 1)).toBe(0);
-    expect(nextMediaIndex(4, 0, 1)).toBe(0);
   });
 
   it("parses permission holds", () => {

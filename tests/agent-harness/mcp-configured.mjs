@@ -386,19 +386,27 @@ export function configuredMcpHandlers(ctx) {
             { id: saved.id, expectedRevision: saved.revision },
           ],
         ];
-        await stage("developer-mode-off-refuses-all-commands", async () => {
-          await ctx.invoke("extension_set_developer_mode", { enabled: false });
-          try {
-            for (const [command, args] of calls)
-              await assert.rejects(
-                ctx.invoke(command, args),
-                /require Extension Developer Mode/,
-              );
-            assert.equal(await readFile(path, "utf8"), before);
-          } finally {
-            await ctx.invoke("extension_set_developer_mode", { enabled: true });
-          }
-        });
+        await stage(
+          "custom-connections-available-with-developer-mode-off",
+          async () => {
+            await ctx.invoke("extension_set_developer_mode", {
+              enabled: false,
+            });
+            try {
+              const records = await ctx.invoke("mcp_connections_list");
+              assert.ok(records.some((record) => record.id === saved.id));
+              await ctx.invoke("mcp_connection_status", {
+                id: saved.id,
+                expectedRevision: saved.revision,
+              });
+              assert.equal(await readFile(path, "utf8"), before);
+            } finally {
+              await ctx.invoke("extension_set_developer_mode", {
+                enabled: true,
+              });
+            }
+          },
+        );
         await stage("non-main-window-refuses-all-commands", async () => {
           await ctx.fixture("load");
           const page = await ctx.request();

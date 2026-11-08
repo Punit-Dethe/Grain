@@ -1361,7 +1361,7 @@ pub fn extension_set_developer_mode(
         .ok_or("extensions registry unavailable")?;
     let mut cleanup_error = None;
     if !enabled {
-        crate::grain_mcp::invalidate_development_sessions(&app);
+        crate::grain_mcp::invalidate_development_sessions();
         let ids: Vec<String> = reg.dev_records().into_iter().map(|(id, _)| id).collect();
         for id in ids {
             stop_extension_runtime(&id, "developer mode disabled");
@@ -1495,6 +1495,11 @@ pub async fn extension_load_unpacked(
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     require_main_window(&window)?;
+    if !cfg!(feature = "agent-harness") {
+        return Err(
+            "Local extension packages are only available in the acceptance harness.".into(),
+        );
+    }
     if !settings::get_settings(&app).extension_developer_mode {
         return Err("Developer mode is disabled".into());
     }
@@ -1550,6 +1555,11 @@ pub fn extension_import_pack(
 ) -> Result<String, String> {
     use grain_core::extensions as ext;
     require_main_window(&window)?;
+    if !cfg!(feature = "agent-harness") {
+        return Err(
+            "Local extension packages are only available in the acceptance harness.".into(),
+        );
+    }
     let raw = read_pack_input(std::path::Path::new(&path))?;
     let pack: grain_sdk::GrainPack =
         serde_json::from_slice(&raw).map_err(|e| format!("not a valid .grainpack: {e}"))?;
