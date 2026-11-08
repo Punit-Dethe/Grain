@@ -1810,10 +1810,10 @@ try {
   model = await startModel({
     fault: options.fault,
     liveConfig,
-    // Registry recovery and the settings access check use direct native tool selection.
+    // Registry recovery uses direct native tool selection.
     registryCheckpoint: selected.every(
       (scenario) =>
-        ["registry-recovery", "mcp-configured"].includes(scenario.suite) ||
+        scenario.suite === "registry-recovery" ||
         [
           "native.registry-refusal",
           "native.legacy-quarantine",

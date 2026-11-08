@@ -407,9 +407,10 @@ export function configuredMcpHandlers(ctx) {
           },
         );
         await stage("non-main-window-refuses-all-commands", async () => {
-          await ctx.fixture("load");
           await ctx.closePanel();
-          await ctx.invoke("agent_harness_submit", { instruction: "hello" });
+          await ctx.invoke("agent_harness_submit", {
+            instruction: "model_wait",
+          });
           const page = await ctx.panel();
           try {
             for (const [command, args] of calls)
@@ -424,7 +425,6 @@ export function configuredMcpHandlers(ctx) {
             assert.equal(await readFile(path, "utf8"), before);
           } finally {
             await ctx.closePanel();
-            await ctx.fixture("unload");
           }
         });
         await remove(saved);

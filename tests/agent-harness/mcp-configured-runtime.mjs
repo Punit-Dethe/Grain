@@ -67,22 +67,39 @@ export function configuredRuntimeHandlers(ctx) {
       revision: "one",
     });
   }
-  async function read(
-    record,
-    instruction = "mcp_configured_read",
-    mutation = null,
-    expected = "mcpVerified",
-  ) {
+  async function read(record, mutation = null, expected = "mcpVerified") {
     const before = calls(),
       start = ctx.model().journal.length;
-    const page = await ctx.request(instruction);
-    assert.equal(calls(), before, "Configured tool escaped approval");
-    if (mutation) await mutation();
-    await ctx.activate(page.locator(".agc-confirm-actions .agc-action-btn"));
-    await ctx.waitFor(
-      "Configured Agent completes",
-      async () => !(await ctx.status()).agent.active,
-    );
+    const model = ctx.model();
+    let mutated = false;
+    if (mutation)
+      model.beforeNextConfiguredCall(async () => {
+        assert.equal(calls(), before, "Configured tool ran before selection");
+        await mutation();
+        mutated = true;
+      });
+    try {
+      await ctx.invoke("agent_harness_submit", {
+        instruction: "mcp_configured_read",
+      });
+      const outcome = await ctx.waitFor(
+        "Configured Agent completes",
+        async () => {
+          const entries = model.journal.slice(start);
+          const error = entries.find((entry) => entry.state === "error");
+          return (
+            error ||
+            (entries.some((entry) => entry[expected]) &&
+              !(await ctx.status()).agent.active)
+          );
+        },
+      );
+      if (outcome.state === "error")
+        throw new Error(`Configured model rejected: ${outcome.error}`);
+    } finally {
+      model.beforeNextConfiguredCall(undefined);
+    }
+    assert.equal(mutated, Boolean(mutation));
     const receipts = ctx
       .model()
       .journal.slice(start)
@@ -100,7 +117,7 @@ export function configuredRuntimeHandlers(ctx) {
     assert.equal(
       calls(),
       before + (expected === "mcpRefused" ? 0 : 1),
-      "Configured call was absent, unapproved or replayed",
+      "Configured call was absent or replayed",
     );
     await ctx.waitFor(
       "Configured protocol session disposed",
@@ -150,13 +167,10 @@ export function configuredRuntimeHandlers(ctx) {
         });
         for (const lifecycle of ["stateless", "legacy"])
           for (const reply of ["json", "sse"]) {
-            await stage(
-              `${lifecycle}-${reply}-actual-approved-read`,
-              async () => {
-                ctx.provider().configure({ lifecycle, reply });
-                await read(record);
-              },
-            );
+            await stage(`${lifecycle}-${reply}-actual-read`, async () => {
+              ctx.provider().configure({ lifecycle, reply });
+              await read(record);
+            });
           }
         await stage("restart-and-host-enable-isolation", async () => {
           await restarted();
@@ -214,6 +228,20 @@ export function configuredRuntimeHandlers(ctx) {
         });
       },
       async "mcp.configured-approval-ownership"() {
+        await reset();
+        await stage(
+          "same-endpoint-connections-execute-independently",
+          async () => {
+            const [first, second] = [await add(), await add()].sort((a, b) =>
+              a.id.localeCompare(b.id),
+            );
+            await enable(first);
+            await enable(second);
+            await read(first);
+            await enable(first, false);
+            await read(second);
+          },
+        );
         for (const transition of [
           "noop",
           "peer-remove",
@@ -231,7 +259,7 @@ export function configuredRuntimeHandlers(ctx) {
           const [record, peer] = records;
           await enable(record);
           await enable(peer);
-          await stage(`pending-${transition}`, async () => {
+          await stage(`selected-before-dispatch-${transition}`, async () => {
             const mutation = async () => {
               if (transition === "noop") await replace(record, definition());
               if (transition === "peer-remove") await remove(peer);
@@ -259,7 +287,6 @@ export function configuredRuntimeHandlers(ctx) {
             };
             await read(
               record,
-              "mcp_configured_read",
               mutation,
               ["noop", "peer-remove", "developer-off"].includes(transition)
                 ? "mcpVerified"
@@ -283,11 +310,9 @@ export function configuredRuntimeHandlers(ctx) {
             ctx.provider().configure({ lifecycle, reply, result: "held" });
             const before = calls(),
               start = ctx.model().journal.length;
-            const page = await ctx.request("mcp_configured_unknown");
-            assert.equal(calls(), before);
-            await ctx.activate(
-              page.locator(".agc-confirm-actions .agc-action-btn"),
-            );
+            await ctx.invoke("agent_harness_submit", {
+              instruction: "mcp_configured_unknown",
+            });
             await ctx.waitFor(
               "Actual configured reply held",
               () => ctx.provider().heldCalls === 1,

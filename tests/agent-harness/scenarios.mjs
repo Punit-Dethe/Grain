@@ -770,7 +770,7 @@ for (const [id, description] of [
   ],
   [
     "approval-ownership",
-    "Exact configured approvals refuse edits, disable and removal; unchanged saves, peer removal and developer-mode changes preserve the approved owner",
+    "A selected configured tool refuses edits, disable and removal before dispatch; unchanged saves, peer removal and developer-mode changes preserve its owner",
   ],
   [
     "active-cancellation",

@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { MCP_INPUT, MCP_EXTENSION_ID } from "./mcp-fixture.mjs";
 import { liveReply } from "./mcp-live.mjs";
@@ -166,7 +166,7 @@ export function nextReply(
       "No exact configured directory owner",
     );
     return {
-      ...mcpReply(
+      ...configuredMcpReply(
         body,
         requested === "mcp_configured_unknown" ? "mcp_unknown" : "mcp_read",
         ids[0],
@@ -484,6 +484,56 @@ function mcpReply(body, requested, extensionId = MCP_EXTENSION_ID) {
   return mcpResultReply(results.at(-1).content, requested, extensionId);
 }
 
+function configuredMcpReply(body, requested, extensionId) {
+  const canonicalId = `${extensionId}:fixture_read`;
+  const prefix = canonicalId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 28);
+  const digest = createHash("sha256").update(canonicalId).digest("hex");
+  const toolName = `act__${prefix}__${digest.slice(0, 24)}`;
+  const calls = body.messages
+    .flatMap((message) => message.tool_calls ?? [])
+    .filter((call) => call.function.name === toolName);
+  assert.ok(calls.length <= 1, "Configured MCP call was replayed");
+  if (calls.length === 1) {
+    const results = body.messages.filter(
+      (message) =>
+        message.role === "tool" && message.tool_call_id === calls[0].id,
+    );
+    assert.equal(
+      results.length,
+      1,
+      "Expected one result for the selected MCP tool",
+    );
+    return mcpResultReply(results[0].content, requested, extensionId);
+  }
+  const selected = body.tools.find((tool) => tool.function.name === toolName);
+  if (selected) {
+    assert.equal(selected.function.parameters.properties.query.type, "object");
+  } else {
+    assert.ok(body.tools.some((tool) => tool.function.name === "search_tools"));
+    assert.ok(
+      !body.messages.some((message) => message.role === "tool"),
+      "Search did not expose the exact configured tool",
+    );
+  }
+  return {
+    configuredCall: Boolean(selected),
+    tool_calls: [
+      {
+        id: `harness_${randomUUID()}`,
+        type: "function",
+        function: {
+          name: selected ? toolName : "search_tools",
+          arguments: JSON.stringify(
+            selected
+              ? MCP_INPUT
+              : { extension_id: extensionId, query: "fixture_read" },
+          ),
+        },
+      },
+    ],
+  };
+}
+
 function mcpResultReply(content, requested, extensionId) {
   if (requested === "mcp_unknown") {
     if (extensionId.startsWith("mcp.configured-")) {
@@ -538,9 +588,10 @@ function mcpResultReply(content, requested, extensionId) {
       assert.ok(
         [
           "Failed (Cancelled): The extension action is no longer approved or available. Please ask again.",
+          "Failed (Cancelled): The extension action changed or expired before it could run.",
           "Failed (Cancelled): The action was not dispatched. MCP account or access changed. Ask again.",
         ].includes(content),
-        "Expected exact configured stale approval refusal",
+        "Expected exact configured stale call refusal",
       );
     }
     return { content: "Harness observed refused MCP call", mcpRefused: true };
@@ -643,6 +694,7 @@ export async function startModel({
   registryCheckpoint = false,
 } = {}) {
   let workflowMode = "normal";
+  let beforeConfiguredCall;
   const journal = [];
   const sockets = new Set();
   const timers = new Set();
@@ -667,6 +719,11 @@ export async function startModel({
       const reply = live
         ? await live.reply(body, response)
         : nextReply(body, fault, workflowMode, registryCheckpoint);
+      if (reply.configuredCall && beforeConfiguredCall) {
+        const mutate = beforeConfiguredCall;
+        beforeConfiguredCall = undefined;
+        await mutate();
+      }
       const entry = {
         sequence: journal.length + 1,
         offered: (body.tools ?? []).map((tool) => tool.function.name),
@@ -788,6 +845,9 @@ export async function startModel({
   return {
     port: server.address().port,
     journal,
+    beforeNextConfiguredCall(mutate) {
+      beforeConfiguredCall = mutate;
+    },
     configureWorkflow(mode) {
       assert.ok(
         [

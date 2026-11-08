@@ -1112,11 +1112,16 @@ test("configured metadata checkpoint keeps three distinct cases outside transpor
 
 test("configured runtime oracle binds the actual directory owner and refuses unrelated outcomes", () => {
   const id = "mcp.configured-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const toolName =
+    "act__mcp_configured-aaaaaaaaaaaaa__caaff18046082abc9ef30e02";
   const frame = body([
-    "search",
-    "load",
     "Failed (Cancelled): The action was not dispatched. MCP account or access changed. Ask again.",
   ]);
+  frame.messages.splice(1, 0, {
+    role: "assistant",
+    tool_calls: [{ id: "configured-call", function: { name: toolName } }],
+  });
+  frame.messages.at(-1).tool_call_id = "configured-call";
   frame.messages[0].content = "Harness request: mcp_configured_read";
   frame.messages.unshift({
     role: "system",
