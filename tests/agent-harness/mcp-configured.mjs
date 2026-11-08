@@ -369,6 +369,7 @@ export function configuredMcpHandlers(ctx) {
             "mcp_connection_set_enabled",
             { id: saved.id, expectedRevision: saved.revision, enabled: true },
           ],
+          ["mcp_cancel_sign_in", { id: "configured-" + saved.id }],
           ["mcp_connections_list", {}],
           ["mcp_connection_import", { definitionJson: definition() }],
           [

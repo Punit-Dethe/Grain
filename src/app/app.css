@@ -5132,134 +5132,7 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   background: rgba(201, 70, 70, 0.12);
 }
 
-.polished-store-intro {
-  margin-bottom: 14px;
-}
-
-.store-intro {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.store-intro strong,
-.store-intro span {
-  display: block;
-}
-
-.store-intro strong {
-  font-size: 12px;
-}
-.store-intro span {
-  margin-top: 2px;
-  color: var(--text-4);
-  font-size: 10px;
-}
-
-.polished-store-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.polished-store-card {
-  min-width: 0;
-  padding: 0;
-  display: block;
-  overflow: hidden;
-  border: 1px solid var(--hairline-soft);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.028);
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    transform 0.15s,
-    box-shadow 0.15s;
-}
-
-.polished-store-card:hover {
-  background: rgba(255, 255, 255, 0.044);
-  transform: translateY(-1px);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.12);
-}
-
-.store-artwork {
-  width: calc(100% - 12px);
-  margin: 6px 6px 0;
-  aspect-ratio: 16 / 9;
-  min-height: 144px;
-  border-radius: 8px;
-}
-
-/* Store card body — a stack, not a two-column split.
-   The old layout put the copy in a left column and the Install button in a
-   right one aligned to the bottom, which left dead space diagonally opposite
-   each: nothing beside the button, nothing under the title. Title and blurb
-   now use the full width, and the action sits on its own footer rule with the
-   metadata, so every row is full and the cards are the same height whatever
-   the name length. */
-.store-extension-body {
-  padding: 11px 13px 13px;
-  display: grid;
-  gap: 8px;
-}
-
-/* Name and action on one line: the title is the subject, the button answers
-   it, and putting them on the same baseline removes the empty quadrant the
-   old split-column layout left behind. */
-.store-extension-head {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.store-extension-head strong {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 15px;
-  font-weight: 630;
-  line-height: 1.25;
-  letter-spacing: -0.012em;
-}
-
-/* One line, always. A wrapping title used to shove the whole card around. */
-.store-extension-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Exactly two lines, so a long blurb cannot set the card's height. */
-.store-extension-blurb {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  margin: 0;
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: 11.5px;
-  line-height: 1.52;
-}
-
-/* Smaller than a page action — it sits beside a 15px title, not alone. */
-.store-install {
-  min-width: 0;
-  min-height: 0;
-  height: 24px;
-  flex: 0 0 auto;
-  padding: 0 10px;
-  justify-content: center;
-  font-size: 10.5px;
-}
-
 .extension-state,
-.extension-store-notice,
 .extension-inline-error {
   padding: 18px;
   border-radius: 10px;
@@ -5314,7 +5187,6 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   font-size: 11.5px;
 }
 
-.extension-store-notice,
 .extension-inline-error {
   margin-bottom: 14px;
   padding: 10px 12px;
@@ -5952,12 +5824,6 @@ html[data-theme="light"] .extension-detail .permission-row {
   box-shadow: none;
 }
 
-html[data-theme="light"] .polished-store-card {
-  border-color: rgba(26, 26, 26, 0.09);
-  background: #fcfcfb;
-  box-shadow: none;
-}
-
 html[data-theme="light"] .developer-drawer {
   background: rgba(252, 252, 251, 0.84);
 }
@@ -5972,9 +5838,6 @@ html[data-theme="light"] .extension-empty-state {
   }
   .tools-scroll {
     padding-inline: 32px;
-  }
-  .polished-store-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .extension-detail-overview {
     grid-template-columns: minmax(0, 1fr);
@@ -6000,9 +5863,6 @@ html[data-theme="light"] .extension-empty-state {
   }
   .installed-extension-list {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .polished-store-grid {
-    grid-template-columns: 1fr;
   }
   .extension-toolbar {
     align-items: stretch;

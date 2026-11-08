@@ -285,6 +285,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
                 <button
                   key={tab}
                   className={view === tab ? "active" : ""}
+                  aria-pressed={view === tab}
                   type="button"
                   onClick={() => {
                     window.location.hash = hashForRoute({

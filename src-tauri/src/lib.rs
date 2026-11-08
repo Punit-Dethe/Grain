@@ -1439,6 +1439,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::mcp_set_client_credentials,
             grain_mcp::mcp_set_provider_enabled,
             grain_mcp::mcp_connect_provider,
+            grain_mcp::mcp_cancel_sign_in,
             grain_mcp::mcp_disconnect_provider,
             grain_mcp::mcp_test_provider,
             grain_mcp::connections::mcp_connections_list,

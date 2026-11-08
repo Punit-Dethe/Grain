@@ -507,6 +507,28 @@ export function configuredAuthHandlers(ctx) {
         );
         await reset();
       },
+      async "mcp.configured-auth-cancel-reconnect"() {
+        await reset();
+        const record = await add();
+        await stage("cancel-reconnect-preserves-saved-account", async () => {
+          await connect(record);
+          const baseline = tokens().length;
+          const flow = await begin(record, "B");
+          const id = "configured-" + record.id;
+          await ctx.invoke("mcp_cancel_sign_in", { id });
+          assert.match((await flow.pending).error ?? "", /Sign-in cancelled/);
+          await assert.rejects(oauth().callback(flow.callback));
+          await ctx.invoke("mcp_cancel_sign_in", { id });
+          assert.equal(tokens().length, baseline);
+          assert.equal(await ctx.vaultCount(), 1);
+          const account = await state(record);
+          assert.equal(account.connected, true);
+          assert.equal(account.enabled, true);
+          const discovery = await ctx.invoke("mcp_test_provider", { id });
+          assert.ok(discovery.tools.includes("fixture_read"));
+        });
+        await reset();
+      },
       async "mcp.configured-auth-cancellation"() {
         for (const transition of [
           "disable",

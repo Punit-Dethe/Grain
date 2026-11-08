@@ -790,8 +790,12 @@ for (const [id, description] of [
     "Actual configured SDK DCR, two same-endpoint accounts, approved account reads/restart, stale commands/approvals and exact endpoint/auth/removal grant retirement",
   ],
   [
+    "cancel-reconnect",
+    "Cancelling a replacement sign-in preserves the existing grant, enablement and tool discovery",
+  ],
+  [
     "cancellation",
-    "Five actual pending configured OAuth flows cannot survive disable/label/removal/destination/developer-off; old callbacks refuse without exchange and fresh sign-in recovers",
+    "Five actual pending configured OAuth flows cannot survive disable/label/removal/destination/disconnect; old callbacks refuse without exchange and fresh sign-in recovers",
   ],
   [
     "refresh-cancellation",

@@ -103,3 +103,20 @@ support so OAuth, revision ownership and tool execution still get exercised.
 The external publisher repository is a separate operational cleanup. The next
 product checkpoint is packaged GitHub and Notion sign-in and a tool read,
 including GitHub with a non-owner account.
+
+### 2026-11-08 — Connection hardening
+
+- Cancel and page exit now stop the pending OAuth attempt without using the
+  disconnect command. GitHub and Notion presets have a Cancel sign-in button.
+  The user can retry if the preset list fails to load. Browser and provider
+  errors expose the failed OAuth stage without showing raw responses.
+- Removed orphaned store card and grid styles. The connection tabs expose
+  their selected state to assistive technology.
+- The real desktop harness verified that cancelling a replacement sign-in
+  preserves the prior enabled account, refuses the late callback without a
+  new token exchange, and still discovers tools. Run evidence is in
+  `tests/agent-harness/.runs/run-v4QQcR/evidence/report.md`. The three
+  custom-connection management cases passed in `run-tmJS1H`.
+- Frontend build, type check, scoped lint, 94 frontend tests, 78 runner and
+  GitHub checks, and 83 desktop MCP tests passed. Live packaged provider
+  sign-in and tool reads are still the next checkpoint.

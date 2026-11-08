@@ -2,7 +2,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
-import { filterExtensions, unwrapResult } from "./extensionRuntime";
+import {
+  filterExtensions,
+  signInCancelled,
+  unwrapResult,
+} from "./extensionRuntime";
 
 const presetIds = new Set(["github", "notion"]);
 
@@ -15,6 +19,8 @@ export function McpPresets({
 }) {
   const [rows, setRows] = useState<McpProviderStatus[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const operation = useRef(false);
@@ -34,14 +40,14 @@ export function McpPresets({
     return () => {
       mounted.current = false;
       if (pending.current)
-        void commands.mcpDisconnectProvider(pending.current).catch(() => {});
+        void commands.mcpCancelSignIn(pending.current).catch(() => {});
     };
   }, [refresh]);
 
-  const run = async (row: McpProviderStatus, action: () => Promise<void>) => {
+  const run = async (id: string, action: () => Promise<void>) => {
     if (operation.current) return;
     operation.current = true;
-    setBusy(row.id);
+    setBusy(id);
     setError(null);
     setMessage(null);
     try {
@@ -77,19 +83,33 @@ export function McpPresets({
   };
 
   const connect = (row: McpProviderStatus) =>
-    run(row, async () => {
+    run(row.id, async () => {
       pending.current = row.id;
+      setSigningIn(row.id);
       setMessage("Finish signing in in your browser…");
       try {
         unwrapResult(await commands.mcpConnectProvider(row.id));
       } catch (reason) {
         if (mounted.current) setMessage(null);
+        if (signInCancelled(reason)) return;
         throw reason;
       } finally {
         pending.current = null;
+        if (mounted.current) setSigningIn(null);
       }
       if (mounted.current) await test(row);
     });
+
+  const cancel = async (id: string) => {
+    setCancelling(true);
+    try {
+      unwrapResult(await commands.mcpCancelSignIn(id));
+    } catch (reason) {
+      if (mounted.current) setError(String(reason));
+    } finally {
+      if (mounted.current) setCancelling(false);
+    }
+  };
 
   const visible = filterExtensions(
     (rows ?? []).filter((row) => browse || row.connected),
@@ -107,9 +127,19 @@ export function McpPresets({
       </header>
       {message && <p role="status">{message}</p>}
       {error && (
-        <p className="extension-inline-error" role="alert">
+        <div className="extension-inline-error" role="alert">
           {error}
-        </p>
+          {!rows && (
+            <button
+              className="button"
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void run("refresh", async () => {})}
+            >
+              Retry
+            </button>
+          )}
+        </div>
       )}
       {!rows && !error && <p role="status">Loading connections…</p>}
       {rows && !visible.length && browse && (
@@ -132,7 +162,16 @@ export function McpPresets({
               )}
             </div>
             <div className="installed-extension-actions">
-              {row.connected ? (
+              {signingIn === row.id ? (
+                <button
+                  className="button"
+                  type="button"
+                  disabled={cancelling}
+                  onClick={() => void cancel(row.id)}
+                >
+                  Cancel sign-in
+                </button>
+              ) : row.connected ? (
                 <>
                   {row.state === "reconnect_required" && (
                     <button
@@ -152,7 +191,7 @@ export function McpPresets({
                       row.name,
                     ].join(" ")}
                     onChange={() =>
-                      void run(row, async () => {
+                      void run(row.id, async () => {
                         unwrapResult(
                           await commands.mcpSetProviderEnabled(
                             row.id,
@@ -166,7 +205,7 @@ export function McpPresets({
                     className="button"
                     type="button"
                     disabled={busy !== null || !row.enabled}
-                    onClick={() => void run(row, () => test(row))}
+                    onClick={() => void run(row.id, () => test(row))}
                   >
                     Check tools
                   </button>
@@ -175,7 +214,7 @@ export function McpPresets({
                     type="button"
                     disabled={busy !== null}
                     onClick={() =>
-                      void run(row, async () => {
+                      void run(row.id, async () => {
                         unwrapResult(
                           await commands.mcpDisconnectProvider(row.id),
                         );

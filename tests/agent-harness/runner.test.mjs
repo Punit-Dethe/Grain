@@ -1138,8 +1138,8 @@ test("configured runtime oracle binds the actual directory owner and refuses unr
     assert.ok(selectScenarios("all").includes(entry));
   }
   const checkpoint = selectScenarios("mcp-connection-checkpoint");
-  assert.equal(checkpoint.length, 36);
-  assert.equal(new Set(checkpoint.map((x) => x.id)).size, 36);
+  assert.equal(checkpoint.length, 37);
+  assert.equal(new Set(checkpoint.map((x) => x.id)).size, 37);
   assert.deepEqual(
     new Set(checkpoint),
     new Set([

@@ -8,6 +8,12 @@ const CAPABILITY_LABELS: Record<string, string> = {
 
 export type ToolSection = "dictionary" | "snippets" | "context" | "agent";
 
+export function signInCancelled(reason: unknown): boolean {
+  return (
+    (reason instanceof Error ? reason.message : reason) === "Sign-in cancelled."
+  );
+}
+
 export function unwrapResult<T, E>(result: Result<T, E>): T {
   if (result.status === "error") throw new Error(String(result.error));
   return result.data;

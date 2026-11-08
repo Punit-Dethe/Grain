@@ -12,7 +12,7 @@ import {
   type ConnectionView,
   type McpProviderStatus,
 } from "@/bindings";
-import { unwrapResult } from "./extensionRuntime";
+import { signInCancelled, unwrapResult } from "./extensionRuntime";
 import "./mcp-connections.css";
 
 type Connection = ConnectionView;
@@ -22,6 +22,8 @@ type AccountStatus = Pick<
 >;
 type Row = Connection & { account?: AccountStatus; statusError?: string };
 const owner = (row: Connection) => [row.id, row.revision] as const;
+const cancelSignIn = (row: Connection) =>
+  commands.mcpCancelSignIn("configured-" + row.id).then(unwrapResult);
 
 export function McpConnections({ query }: { query: string }) {
   const titleId = useId();
@@ -92,11 +94,7 @@ export function McpConnections({ query }: { query: string }) {
       live.current = false;
       request.current++;
       const pending = pendingSignIn.current;
-      if (pending)
-        void commands
-          .mcpConnectionDisconnect(...owner(pending))
-          .then(unwrapResult)
-          .catch(() => {});
+      if (pending) void cancelSignIn(pending).catch(() => {});
     };
   }, [refresh]);
 
@@ -127,6 +125,8 @@ export function McpConnections({ query }: { query: string }) {
       setConnecting(row.id);
       try {
         unwrapResult(await commands.mcpConnectionConnect(...owner(row)));
+      } catch (reason) {
+        if (!signInCancelled(reason)) throw reason;
       } finally {
         pendingSignIn.current = null;
         if (live.current) setConnecting(null);
@@ -138,7 +138,7 @@ export function McpConnections({ query }: { query: string }) {
     cancelActive.current = true;
     setCancelling(true);
     try {
-      unwrapResult(await commands.mcpConnectionDisconnect(...owner(row)));
+      await cancelSignIn(row);
     } catch (reason) {
       if (live.current) setError(String(reason));
     } finally {

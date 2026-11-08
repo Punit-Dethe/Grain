@@ -29,6 +29,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
 use zeroize::Zeroize;
 
 #[path = "grain_mcp_connections.rs"]
@@ -1519,7 +1520,9 @@ async fn await_callback(
     }
 }
 
-static CONNECTING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+const SIGN_IN_CANCELLED: &str = "Sign-in cancelled.";
+static CONNECTING: Mutex<BTreeMap<String, Option<oneshot::Sender<()>>>> =
+    Mutex::new(BTreeMap::new());
 
 struct ConnectGuard {
     id: String,
@@ -1531,7 +1534,7 @@ impl Drop for ConnectGuard {
         if let Some(ticket) = &self.ticket {
             ticket.invalidate_if_current();
         }
-        if let Ok(mut active) = CONNECTING.get_or_init(|| Mutex::new(HashSet::new())).lock() {
+        if let Ok(mut active) = CONNECTING.lock() {
             active.remove(&self.id);
         }
     }
@@ -1550,6 +1553,21 @@ pub async fn mcp_connect_provider(
     connect_flow(&app, &window, RuntimeProvider::Catalog(item)).await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub fn mcp_cancel_sign_in(window: WebviewWindow, id: String) -> Result<(), String> {
+    crate::grain_commands::require_main_window(&window)?;
+    let cancel = CONNECTING
+        .lock()
+        .map_err(|_| "MCP authentication lock unavailable")?
+        .get_mut(&id)
+        .and_then(Option::take);
+    if let Some(cancel) = cancel {
+        let _ = cancel.send(());
+    }
+    Ok(())
+}
+
 async fn connect_flow(
     app: &AppHandle,
     window: &WebviewWindow,
@@ -1561,14 +1579,15 @@ async fn connect_flow(
     if !requires_account(item) {
         return Err("The unauthenticated MCP fixture has no account to connect".into());
     }
+    let (cancel, cancelled) = oneshot::channel();
     {
         let mut active = CONNECTING
-            .get_or_init(|| Mutex::new(HashSet::new()))
             .lock()
             .map_err(|_| "MCP authentication lock unavailable")?;
-        if !active.insert(id.clone()) {
+        let std::collections::btree_map::Entry::Vacant(slot) = active.entry(id.clone()) else {
             return Err("this provider already has an authentication flow open".into());
-        }
+        };
+        slot.insert(Some(cancel));
     }
     let mut guard = ConnectGuard {
         id: id.clone(),
@@ -1586,9 +1605,11 @@ async fn connect_flow(
         }
     };
     let result = tokio::select! {
+        biased;
+        _ = cancelled => Err(SIGN_IN_CANCELLED.into()),
         result = tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        ticket.run(connect_oauth(app, item, &ticket)),
+            CONNECT_TIMEOUT,
+            ticket.run(connect_oauth(app, item, &ticket)),
         ) => result.map_err(|_| "authentication timed out after 5 minutes".to_string())
             .and_then(|result| result).and_then(|result| result),
         _ = window_closed => Err("authentication was cancelled because the app window closed".into()),
@@ -1617,7 +1638,7 @@ async fn connect_oauth(
     let http = provider_http(app, item)?;
     let mut manager = new_authorization_manager(http, item)
         .await
-        .map_err(|error| format!("OAuth setup failed: {error}"))?;
+        .map_err(|_| "OAuth setup failed.")?;
     let store = VaultCredentialStore::for_provider(item, ticket, &_operation);
     manager.set_credential_store(store.clone());
     let resolution = manager
@@ -1688,7 +1709,7 @@ async fn connect_oauth(
     // OAuthState::start_authorization would discover it again.
     let oauth = AuthorizationSession::new(manager, request)
         .await
-        .map_err(|(_, error)| format!("OAuth registration failed: {error}"))?;
+        .map_err(|_| "OAuth registration failed. Check the provider’s OAuth setup.")?;
     let authorization_url = oauth.get_authorization_url();
     let expected_state = reqwest_mcp::Url::parse(authorization_url)
         .ok()
@@ -1709,7 +1730,7 @@ async fn connect_oauth(
     if !captured {
         app.opener()
             .open_url(authorization_url, None::<&str>)
-            .map_err(|error| format!("could not open the sign-in page: {error}"))?;
+            .map_err(|_| "Could not open the sign-in page.")?;
     }
     let callback = await_callback(
         listener,
@@ -1721,7 +1742,7 @@ async fn connect_oauth(
     oauth
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.issuer.as_deref())
         .await
-        .map_err(|error| format!("OAuth callback failed: {error}"))?;
+        .map_err(|_| "OAuth callback failed. Try signing in again.")?;
     // A successful connection should be immediately useful. Requiring a second
     // Enable click left the provider invisible to the Agent and also disabled
     // the discovery check, which made a completed OAuth flow look broken.
