@@ -1,6 +1,33 @@
 // Included into Handy's manager module to access its existing loading and
 // worker state. Grain policy remains in this owned source file.
 impl TranscriptionManager {
+    pub(crate) fn grain_transcribe_with_model(
+        &self,
+        samples: Vec<f32>,
+        model: &str,
+    ) -> Result<String> {
+        let mark = self.engine.cancel_mark();
+        self.touch_activity();
+        // Wait for the warm-up before taking the lease it needs to finish.
+        let loading = self.is_loading.lock().unwrap();
+        drop(
+            self.loading_condvar
+                .wait_while(loading, |loading| *loading)
+                .unwrap(),
+        );
+
+        let lease = self
+            .grain_claim_foreground(crate::grain_transcription::Use::Batch)
+            .map_err(anyhow::Error::msg)?;
+        self.grain_ensure_model(model)?;
+        let outcome = self.transcribe_cpp(mark, self.loaded_batch_context()?, samples)?;
+        drop(lease);
+
+        let text = finish_text(outcome, &get_settings(&self.app_handle));
+        self.maybe_unload_immediately("Agent transcription");
+        Ok(text)
+    }
+
     pub(crate) fn grain_has_resident_model(&self) -> bool {
         self.engine.grain_has_resident_model()
     }
@@ -220,12 +247,12 @@ impl TranscriptionManager {
         let selected = get_settings(&self.app_handle).selected_model;
         crate::grain_capture::require_transcribable_model(&self.app_handle, &selected)
             .map_err(anyhow::Error::msg)?;
-        self.grain_ensure_background_model(&selected)?;
+        self.grain_ensure_model(&selected)?;
         // No asynchronous load can replace the model while this lease is held.
         self.loaded_batch_context().map(Some)
     }
 
-    fn grain_ensure_background_model(&self, model: &str) -> Result<()> {
+    fn grain_ensure_model(&self, model: &str) -> Result<()> {
         if self.get_current_model().as_deref() != Some(model)
             || !self.is_model_loaded()
             || self.reload_model_on_next_use.load(Ordering::Acquire)
@@ -247,7 +274,7 @@ impl TranscriptionManager {
         let Some(_lease) = self.grain_background_lease(control) else {
             return Ok(None);
         };
-        self.grain_ensure_background_model(model)?;
+        self.grain_ensure_model(model)?;
         let mark = self.engine.cancel_mark();
         self.run_batch(mark, pcm, options, model)
             .map(Some)

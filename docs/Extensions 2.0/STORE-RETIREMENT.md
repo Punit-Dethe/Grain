@@ -316,3 +316,12 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   and SDK tests, 683 desktop tests, UI parity, and the model catalogue and
   native fork checks. The installer above predates this merge. Packaged account
   and provider tests remain pending for the merged branch.
+
+### 2026-11-09 — Agent shortcut with a Streaming-only model selection
+
+- The shortcut reached Agent, which returned before showing the pill when
+  the Standard model slot was empty. Agent now uses the selected Streaming
+  model in that case and keeps the capture's model for submit. The existing
+  engine lease protects model selection through decoding.
+- The model-selection regression and desktop suite passed (684 tests).
+  Windows hotkey and microphone acceptance remain a manual check.

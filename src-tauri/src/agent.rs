@@ -47,7 +47,7 @@ use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
-    get_settings, AgentAutocopy, AgentPanelPosition, ShortcutBinding,
+    get_settings, AgentAutocopy, AgentPanelPosition, AppSettings, ShortcutBinding,
     APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 
@@ -402,6 +402,8 @@ pub struct AgentState {
     /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
+    /// The model chosen when the current voice capture started.
+    dictation_model: Mutex<Option<String>>,
     /// [GRAIN] True while the reply panel is in its EXPANDED conversation stage
     /// (it owns a follow-up text field). Dictation is routed INTO that field
     /// only when the panel is expanded AND focused â€” never over the compact
@@ -525,7 +527,8 @@ fn summon_inner(app: &AppHandle) {
         // Capturing the selection can take long enough for another shortcut to
         // start dictation. The audio manager decides ownership atomically; a
         // competing capture must not change Agent state or present its card.
-        let Some(readiness) = start_dictation(&app) else {
+        let state = app.state::<AgentState>();
+        let Some(readiness) = start_dictation(&app, &state) else {
             return;
         };
         // A fresh summon supersedes any lingering Quick-Agent offer.
@@ -687,21 +690,42 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Start the agent dictation (warm the local model/VAD exactly like the batch
-/// press path would, so the transcript is ready quickly on submit).
-fn start_dictation(app: &AppHandle) -> Option<crate::managers::audio::RecordingReadiness> {
+fn dictation_model(settings: &AppSettings) -> &str {
+    if settings.selected_model.is_empty() {
+        &settings.selected_asr_model
+    } else {
+        &settings.selected_model
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn agent_dictation_uses_streaming_selection_when_standard_is_empty() {
+    let mut settings = grain_core::settings::get_default_settings();
+    settings.selected_asr_model = "streaming".into();
+    assert_eq!(dictation_model(&settings), "streaming");
+
+    settings.selected_model = "standard".into();
+    assert_eq!(dictation_model(&settings), "standard");
+}
+
+/// Warm the selected model and VAD while the Agent records.
+fn start_dictation(
+    app: &AppHandle,
+    state: &AgentState,
+) -> Option<crate::managers::audio::RecordingReadiness> {
     let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     if rm.is_recording() {
         return None;
     }
-    let tm = app.state::<Arc<TranscriptionManager>>();
-    tm.initiate_model_load();
-    if let Err(error) =
-        crate::grain_capture::require_transcribable_model(app, &get_settings(app).selected_model)
-    {
+    let settings = get_settings(app);
+    let model = dictation_model(&settings);
+    if let Err(error) = crate::grain_capture::require_transcribable_model(app, model) {
         warn!("[GRAIN] agent: not starting dictation: {error}");
         return None;
     }
+    let tm = app.state::<Arc<TranscriptionManager>>();
+    tm.initiate_model_load_for(model.to_owned());
     {
         let rm = Arc::clone(&rm);
         std::thread::spawn(move || {
@@ -711,7 +735,10 @@ fn start_dictation(app: &AppHandle) -> Option<crate::managers::audio::RecordingR
     // Agent dictation is a batch-style capture: offline VAD profile (VAD is
     // always on â€” grain-core settings have no `vad_enabled` toggle).
     match rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
-        Ok(readiness) => Some(readiness),
+        Ok(readiness) => {
+            *state.dictation_model.lock().unwrap() = Some(model.to_owned());
+            Some(readiness)
+        }
         Err(e) => {
             if rm.is_recording() {
                 log::debug!("[GRAIN] agent: another capture claimed the recorder");
@@ -1594,6 +1621,7 @@ pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
         return; // stale double-submit (global Enter + window Enter, etc.)
     }
     // Typed text wins â€” abandon the voice capture and release the mic.
+    state.dictation_model.lock().unwrap().take();
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
 
     let text = text.trim().to_string();
@@ -1620,6 +1648,7 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
+    let model = state.dictation_model.lock().unwrap().take();
     crate::bridge::emit(app, DaemonEvent::AgentInputHide);
 
     let app = app.clone();
@@ -1641,15 +1670,16 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
             "[GRAIN] agent: transcribing dictation ({} samples)",
             samples.len()
         );
-        // Blocking this detached thread on the shared runtime is fine â€” it is
-        // not a runtime worker.
-        let text = match tauri::async_runtime::block_on(crate::grain_transcription::transcribe(
-            &app, samples,
-        )) {
+        let Some(model) = model else {
+            no_speech(&app, "No speech model was selected for this recording.");
+            return;
+        };
+        let tm = app.state::<Arc<TranscriptionManager>>();
+        let text = match tm.grain_transcribe_with_model(samples, &model) {
             Ok(t) => t.trim().to_string(),
             Err(e) => {
                 warn!("[GRAIN] agent: dictation transcription failed: {e}");
-                no_speech(&app, &e);
+                no_speech(&app, &e.to_string());
                 return;
             }
         };
@@ -1673,6 +1703,7 @@ pub fn input_cancel(app: &AppHandle) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
+    state.dictation_model.lock().unwrap().take();
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     crate::bridge::emit(app, DaemonEvent::AgentInputHide);
     input_cancel_cleanup(app);
@@ -1706,17 +1737,17 @@ fn input_cancel_cleanup(app: &AppHandle) {
 /// tabbed back to voice (`false` â†’ restart dictation).
 #[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
 pub fn input_typing(app: &AppHandle, active: bool) {
-    let live = app
-        .try_state::<AgentState>()
-        .map(|s| s.input_active.load(Ordering::SeqCst))
-        .unwrap_or(false);
-    if !live {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return;
+    };
+    if !state.input_active.load(Ordering::SeqCst) {
         return;
     }
     if active {
+        state.dictation_model.lock().unwrap().take();
         app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
-        if let Some(readiness) = start_dictation(app) {
+        if let Some(readiness) = start_dictation(app, &state) {
             crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
             crate::pill_icon::emit_for_session(app);
             crate::surface_watch::start(app);
