@@ -179,3 +179,31 @@ with exactly one wire dispatch and no replay.
   cases to verify dispatch and outcomes over MCP, then remove native Agent
   dispatch and its package fixtures. Packaged GitHub and Notion sign-in and
   tool reads remain open.
+
+### 2026-11-08 — Agent discovery and dispatch cut over to MCP
+
+Commit `c4a9d879b` removes native packages from the live Agent directory,
+schema lookup and dispatch. The native metadata index was removed with its
+last caller. The existing package quarantine still runs wherever the native
+registry remains. The Agent still validates MCP schemas and checks connection
+ownership and the loaded tool digest before executing calls.
+
+- `node tests/agent-harness/run.mjs --suite mcp-agent-workflows` passed all
+  four real-app cases with no native fixture loaded (`run-0HJeFe`). It covers
+  a complete read/write/verify turn, a lost write reply with blocked retry,
+  model failure after a completed write, and cancellation of pending model
+  tool calls on both sides of a write. The incorrect-receipt control failed
+  as expected (`run-W1J2uR`).
+- The rebuilt harness, 75 runner tests, the three configured runtime cases
+  (`run-7sXr4y`), and configured OAuth reconnect cancellation (`run-WvUhUc`)
+  passed. Those real-app runs reported successful cleanup.
+- The normal desktop `cargo check` passed. Direct Windows test startup hit
+  `STATUS_ENTRYPOINT_NOT_FOUND`. The maintained runner's isolated copy and
+  activation manifest ran the same binary successfully. All 83 MCP tests,
+  18 capability tests and the Agent no-replay test passed. One catalog
+  evaluation remains ignored because it requires external fixtures.
+- The remaining native host, registry, legacy confirmation code, and
+  native or approval-dependent harness scenarios still need removal.
+  Before deleting them, move the shared atomic writer and MCP endpoint
+  validator out of native modules. Use the focused suite above to verify the
+  cutover. Packaged GitHub and Notion sign-in and tool reads remain open.
