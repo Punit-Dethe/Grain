@@ -8,7 +8,7 @@ Grain consumes the safe Rust wrapper and native sys package from the [maintained
 
 The fork has upstream source layout, generated Rust FFI, and its existing safe wrapper. Cargo finds both packages inside the same Git checkout and compiles the native library through upstream CMake. Users install Grain's compiled application and bundled shared libraries/backend modules; no source checkout or runtime download is needed.
 
-Contract revision **5**, patch identity **`grain-flow-tdt`**, semantic ABI **`19ba4aa29b4b28e4`**. Native queries use static storage and work without `.git`. Rust validates version, contract identity/revision, runtime digest and 31 size/alignment pairs before model loading or backend setup; the result is cached once. Upstream ABI IDs 0–28 are preserved; PKFW is appended as ID 29; v2/v3 buffered TDT (PKBF) is ID 30. Missing exports fail in the OS loader; incompatible values produce an explicit compatibility error. This checks compatibility, not cryptographic authenticity.
+Contract revision **6**, patch identity **`grain-flow-tdt`**, semantic ABI **`54c13920a14bb4b6`**. Native queries use static storage and work without `.git`. Rust validates version, contract identity/revision, runtime digest and 31 size/alignment pairs before model loading or backend setup; the result is cached once. Upstream ABI IDs 0–28 are preserved; PKFW is appended as ID 29; v2/v3 buffered TDT (PKBF) is ID 30; the Nemotron-3 diarize-stream params are ID 31. Missing exports fail in the OS loader; incompatible values produce an explicit compatibility error. This checks compatibility, not cryptographic authenticity.
 
 Grain retains capture, journal, window cursor, replay, cancellation, inference lease and post-processing. Both v2 and v3 use PKBF with 10s left / 10s owned / 4.96s right context and continuous TDT predictor state. Owned IDs append once without merging; both detokenize the complete sequence through the native tokenizer. The former Fluid cursor/padding/merger are removed from Grain; PKFW remains independently exposed by the native SDK. The fork ports only the cumulative Grain patch onto upstream 0.4.0, retaining upstream's new encoder, ggml, VAD, language ID, diarization and vocabulary APIs. Predictor/joint failure handling is already upstream. Confidence and some timestamps differ from 0.2.3; bit-exact extraction parity is not claimed for this upgrade.
 
@@ -104,3 +104,7 @@ PKBF continuation to reviewed v3 metadata. Contract 5 distinguishes this
 capability from the former v2-only contract; no ABI structs or worker requests
 are added. V2 behavior is unchanged. See [the v3 plan](FLOW-V3-STATEFUL-PLAN.md)
 for the accuracy-first decision, primary sources, verification and limits.
+
+## November 2 Nemotron-3 diarization
+
+Native revision `c8cf6b11dd5e67131b264025112293bda1bb8c86` adds a second Grain patch on top of `eeffcc3`: the `nemotron3_diar` arch and push-audio diarization, ported from `glimpse-hq/transcribe.cpp` (MIT) at `4b3f456`. Contract 6. Grain Meet uses only the offline `transcribe_diarize_run` path. See `GRAIN-FORK.md` in the fork and `docs/Meet/DIARIZER-RESEARCH.md`.

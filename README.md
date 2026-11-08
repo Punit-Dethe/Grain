@@ -1,7 +1,7 @@
 <div align="center">
   <img src="src-tauri/icons/128x128.png" alt="Grain logo" width="128" height="128" />
   <h1>Grain</h1>
-  <p><strong>Just Use Voice </strong></p>
+  <p><strong>Work at the speed of thought</strong></p>
   <p>
     <a href="https://github.com/Punit-Dethe/Grain/releases">Download</a> ·
     <a href="BUILD.md">Build from source</a> ·
@@ -20,10 +20,10 @@ It's built on [Handy](https://github.com/cjpais/handy), the most battle-tested o
 
 Grain has two release tracks with different feature sets:
 
-| Release track | What's included |
-| --- | --- |
-| **Beta — main app** | All core Grain features: Batch, Flow, and ASR dictation; AI workflows; Agent; Context Awareness; Snippets; Voice Actions; history; and the rest of the main app. **Extensions are not included.** |
-| **Alpha — full extension suite** | Everything in Beta, **plus the full extension suite**, including native/direct integrations and MCP-based tools for the Agent. |
+| Release track                    | What's included                                                                                                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Beta — main app**              | All core Grain features: Batch, Flow, and ASR dictation; AI workflows; Agent; Context Awareness; Snippets; Voice Actions; history; and the rest of the main app. **Extensions are not included.** |
+| **Alpha — full extension suite** | Everything in Beta, **plus the full extension suite**, including native/direct integrations and MCP-based tools for the Agent.                                                                    |
 
 **The difference:** Beta includes the complete core app without extensions; Alpha includes the core app and extensions.
 
@@ -110,10 +110,10 @@ The same extension can expose several related tools, and the Agent can combine t
 
 Grain can reach tools through two implementation paths:
 
-| Adapter | What it is | Intended use |
-| --- | --- | --- |
-| **MCP** | A remote HTTPS Model Context Protocol server discovered and called through the official MCP client stack. | External services and integrations that already expose MCP. |
-| **Native/direct** | A JavaScript tool extension using Grain's constrained SDK and host-brokered APIs. | First-party or third-party integrations that call a service directly instead of using MCP. |
+| Adapter           | What it is                                                                                                | Intended use                                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **MCP**           | A remote HTTPS Model Context Protocol server discovered and called through the official MCP client stack. | External services and integrations that already expose MCP.                                |
+| **Native/direct** | A JavaScript tool extension using Grain's constrained SDK and host-brokered APIs.                         | First-party or third-party integrations that call a service directly instead of using MCP. |
 
 Both adapters normalize into the same host-owned contract:
 
@@ -293,15 +293,15 @@ See [BUILD.md](BUILD.md) for system prerequisites, platform-specific notes, and 
 
 ## Project guides
 
-| Looking for             | Start here                                                          |
-| ----------------------- | ------------------------------------------------------------------- |
-| Full feature details    | [Feature guide](docs/grain-features.md)                             |
-| Building and packaging  | [Build guide](BUILD.md)                                             |
-| Contributing to Grain   | [Contributing guide](CONTRIBUTING.md)                               |
-| Translations            | [Translation guide](CONTRIBUTING_TRANSLATIONS.md)                   |
-| Extension architecture  | [Tool-only extension plan](docs/Extensions%202.0/MCP-EXTENSION-PLAN.md) |
-| Extension progress       | [Progress and evidence](docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md) |
-| Handy compatibility     | [Upstream tracking](Upstream/UPSTREAM.md)                           |
+| Looking for            | Start here                                                               |
+| ---------------------- | ------------------------------------------------------------------------ |
+| Full feature details   | [Feature guide](docs/grain-features.md)                                  |
+| Building and packaging | [Build guide](BUILD.md)                                                  |
+| Contributing to Grain  | [Contributing guide](CONTRIBUTING.md)                                    |
+| Translations           | [Translation guide](CONTRIBUTING_TRANSLATIONS.md)                        |
+| Extension architecture | [Tool-only extension plan](docs/Extensions%202.0/MCP-EXTENSION-PLAN.md)  |
+| Extension progress     | [Progress and evidence](docs/Extensions%202.0/MCP-EXTENSION-PROGRESS.md) |
+| Handy compatibility    | [Upstream tracking](Upstream/UPSTREAM.md)                                |
 
 ## License
 

@@ -30,14 +30,17 @@ use tauri_specta::Event;
 use transcribe_cpp::{Backend, RunOptions, Task, Transcript};
 
 mod chunked;
+mod job;
 mod live;
 pub mod policy;
+
+pub use job::ChunkControl;
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
 
 include!("../../grain_transcription_manager.rs"); // [GRAIN] Owned manager adapters.
 
-fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = payload.downcast_ref::<String>() {
@@ -266,6 +269,9 @@ pub struct TranscriptionManager {
     /// yet. This prevents a second worker from starting after finalize/cancel
     /// closes the router but before the first worker has fully exited.
     active_stream_worker: Arc<AtomicU64>,
+    /// True while a background job is queued or running. It holds the model,
+    /// so one transcript is never written by two models.
+    job_active: Arc<AtomicBool>,
 }
 
 impl TranscriptionManager {
@@ -286,6 +292,7 @@ impl TranscriptionManager {
             stream_active: Arc::new(AtomicBool::new(false)),
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
+            job_active: Arc::new(AtomicBool::new(false)),
         };
 
         // Start the idle watcher
@@ -313,12 +320,12 @@ impl TranscriptionManager {
                         continue;
                     }
 
-                    // While recording, keep the idle timer fresh so the
-                    // model is never unloaded mid-session.
+                    // While recording or transcribing a file, keep the idle
+                    // timer fresh so the model is never unloaded mid-session.
                     let is_recording = app_handle_cloned
                         .try_state::<Arc<AudioRecordingManager>>()
                         .is_some_and(|a| a.is_recording());
-                    if is_recording {
+                    if is_recording || manager_cloned.job_active() {
                         manager_cloned.touch_activity();
                         continue;
                     }
@@ -432,8 +439,7 @@ impl TranscriptionManager {
     /// which frees all of its memory (e.g. before its file is deleted).
     pub fn unload_model(&self) -> Result<()> {
         let _grain = self
-            .grain
-            .claim(crate::grain_transcription::Use::Load)
+            .grain_claim_foreground(crate::grain_transcription::Use::Load)
             .map_err(anyhow::Error::msg)?; // [GRAIN]
         let unload_start = std::time::Instant::now();
         debug!("Starting to unload model");
@@ -496,6 +502,11 @@ impl TranscriptionManager {
     /// is loaded. Never waits for the worker to exit, so it is safe on any
     /// thread, including the event loop.
     pub fn maybe_unload_immediately(&self, context: &str) {
+        // A file job keeps the model for its remaining chunks; it unloads
+        // the model itself when it ends.
+        if self.job_active() {
+            return;
+        }
         let settings = get_settings(&self.app_handle);
         if settings.model_unload_timeout == ModelUnloadTimeout::Immediately
             && self.is_model_loaded()
@@ -519,11 +530,20 @@ impl TranscriptionManager {
         model_id: &str,
         device_index: Option<usize>,
     ) -> Result<()> {
-        let load_start = std::time::Instant::now();
+        // [GRAIN] Foreground waits only for a background chunk, never another capture.
         let _grain = self
-            .grain
-            .claim(crate::grain_transcription::Use::Load)
-            .map_err(anyhow::Error::msg)?; // [GRAIN]
+            .grain_claim_foreground(crate::grain_transcription::Use::Load)
+            .map_err(anyhow::Error::msg)?;
+        self.load_model_with_device_held(model_id, device_index)
+    }
+
+    // [GRAIN] Background callers already hold the shared model lease.
+    fn load_model_with_device_held(
+        &self,
+        model_id: &str,
+        device_index: Option<usize>,
+    ) -> Result<()> {
+        let load_start = std::time::Instant::now();
         debug!("Starting to load model: {}", model_id);
 
         // Emit loading started event
@@ -615,6 +635,7 @@ impl TranscriptionManager {
                 path: model_path.clone(),
                 backend,
                 device,
+                grain_role: crate::grain_engine::Role::Asr, // [GRAIN]
             })
             .map_err(|e| {
                 let error_msg = format!("Failed to load model {}: {}", model_id, e);
@@ -696,6 +717,24 @@ impl TranscriptionManager {
         self.engine.loaded().map(|info| info.backend)
     }
 
+    /// Whether a file job is queued or running, which holds the model.
+    pub fn job_active(&self) -> bool {
+        self.job_active.load(Ordering::Acquire)
+    }
+
+    pub fn set_job_active(&self, active: bool) {
+        self.job_active.store(active, Ordering::Release);
+    }
+
+    /// Refuses a model switch, unload or delete while a file job holds the
+    /// model.
+    pub fn ensure_model_unlocked(&self) -> std::result::Result<(), String> {
+        if self.job_active() {
+            return Err("The model can't change while a file is transcribing".to_string());
+        }
+        Ok(())
+    }
+
     /// Whether a live streaming run is currently in flight.
     pub fn is_streaming(&self) -> bool {
         self.stream_active.load(Ordering::Acquire)
@@ -761,7 +800,7 @@ impl TranscriptionManager {
         }
 
         // [GRAIN] Reserve the shared model after its pending load completes.
-        let Ok(grain) = self.grain.claim(crate::grain_transcription::Use::Stream) else {
+        let Ok(grain) = self.grain_claim_foreground(crate::grain_transcription::Use::Stream) else {
             self.router.clear();
             drain_until_finalize(rx);
             return;
@@ -964,32 +1003,29 @@ impl TranscriptionManager {
         // A cancel from here on (during the model-load wait or chunk planning
         // included) stops every run of this transcription.
         let mark = self.engine.cancel_mark();
-
-        // Update last activity timestamp
         self.touch_activity();
-
-        // Check if model is loaded, if not try to load it
+        // [GRAIN] Wait for the loader before claiming inference; never hold
+        // an inference lease while waiting for a loader that needs that lease.
         {
-            // If the model is loading, wait for it to complete.
-            let mut is_loading = self.is_loading.lock().unwrap();
-            while *is_loading {
-                is_loading = self.loading_condvar.wait(is_loading).unwrap();
-            }
-
-            if !self.is_model_loaded() {
-                return Err(anyhow::anyhow!("Model is not loaded for transcription."));
+            let mut loading = self.is_loading.lock().unwrap();
+            while *loading {
+                loading = self.loading_condvar.wait(loading).unwrap();
             }
         }
-
-        // Get current settings for configuration
         let _grain = self
-            .grain
-            .claim(crate::grain_transcription::Use::Batch)
-            .map_err(anyhow::Error::msg)?; // [GRAIN]
-        let settings = get_settings(&self.app_handle);
+            .grain_claim_foreground(crate::grain_transcription::Use::Batch)
+            .map_err(anyhow::Error::msg)?;
+        let batch = self.loaded_batch_context()?;
+        self.transcribe_cpp(mark, batch, audio)
+    }
 
-        // Validate selected language against the model's supported languages.
-        // If the language isn't supported, fall back to "auto" to prevent errors.
+    // [GRAIN] Background owns the model lease; waiting on a foreground loader here would deadlock.
+    fn loaded_batch_context(&self) -> Result<BatchContext> {
+        let Some(info) = self.engine.loaded() else {
+            return Err(anyhow::anyhow!("Model is not loaded for transcription."));
+        };
+
+        let settings = get_settings(&self.app_handle);
         // Validate against the model that's actually loaded (which can differ
         // from settings.selected_model when a caller loaded a specific model —
         // e.g. the --transcribe-file path's --model), not the persisted
@@ -1009,37 +1045,29 @@ impl TranscriptionManager {
                 settings.selected_language, validated_language, active_model
             );
         }
-
-        let Some(info) = self.engine.loaded() else {
-            return Err(anyhow::anyhow!(
-                "Model failed to load after auto-load attempt. Please check your model settings."
-            ));
-        };
-        self.transcribe_cpp(
-            mark,
+        let setup = run_setup(&info, &settings, &validated_language);
+        Ok(BatchContext {
             info,
-            audio,
-            &settings,
-            &validated_language,
-            &active_model,
-        )
+            settings,
+            active_model,
+            setup,
+        })
     }
 
-    /// transcribe-cpp: the model runs in the engine's worker process, which
-    /// recovers from crashes and hangs itself. Long audio is decoded in
-    /// chunks cut at pauses, unless the model handles it in one run.
     fn transcribe_cpp(
         &self,
         mark: CancelMark,
-        info: LoadedInfo,
+        batch: BatchContext,
         audio: Vec<f32>,
-        settings: &AppSettings,
-        validated_language: &str,
-        active_model: &str,
     ) -> Result<RunOutcome> {
-        let setup = run_setup(&info, settings, validated_language);
+        let BatchContext {
+            info,
+            settings,
+            active_model,
+            setup,
+        } = batch;
         let whole = |pcm: Vec<f32>| {
-            self.run_batch(mark, pcm, &setup.run_options, active_model)
+            self.run_batch(mark, pcm, &setup.run_options, &active_model)
                 .map_err(engine_error)
         };
         // `mark` covers every chunk, so a cancel between two stops the rest.
@@ -1050,7 +1078,7 @@ impl TranscriptionManager {
                 mark,
                 setup.run_options.clone(),
                 audio,
-                active_model,
+                &active_model,
                 settings.vad_backend,
             )
             .map_err(engine_error)?,
@@ -1083,6 +1111,14 @@ impl TranscriptionManager {
                 }
             })
     }
+}
+
+/// What a batch transcription runs with, read once before its first run.
+struct BatchContext {
+    info: LoadedInfo,
+    settings: AppSettings,
+    active_model: String,
+    setup: RunSetup,
 }
 
 /// What one transcription decoded (live or in batch), with how its runs were
@@ -1361,6 +1397,7 @@ fn effective_language_for_model(
     match model_manager.get_model_info(model_id) {
         Some(info) => crate::managers::model::effective_language(
             &settings.selected_language,
+            &[], // [GRAIN] The preferred-language wizard is not part of Grain's onboarding.
             &info.supported_languages,
             info.supports_language_detection,
         ),
@@ -1873,7 +1910,7 @@ mod tests {
     #[test]
     fn non_chinese_output_is_never_converted() {
         let settings = AppSettings {
-            chinese_script: ChineseScript::Traditional,
+            chinese_script: ChineseScript::TraditionalTw,
             ..Default::default()
         };
         for evidence in [

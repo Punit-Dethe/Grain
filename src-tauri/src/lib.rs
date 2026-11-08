@@ -44,19 +44,22 @@ pub mod engine_supervisor;
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
-mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
-                  // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
-                  // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
-                  // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
-                  // the alias keeps every `crate::llm_client::` path working.
+mod grain_events;
+mod grain_file_transcription; // [GRAIN] typed payloads for the webview event surface (see the module docs)
+                              // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
+                              // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
+                              // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
+                              // the alias keeps every `crate::llm_client::` path working.
 mod grain_anthropic;
 mod grain_audio;
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
 mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
 mod grain_engine;
+mod grain_history_audio;
 mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
+mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
@@ -67,6 +70,7 @@ mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of up
 // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
 // every `crate::settings::` path working.
 mod grain_settings;
+mod grain_shortcuts;
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
 mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
 mod grain_window_geometry; // [GRAIN] scale-aware main-window sizing within the desktop work area
@@ -134,6 +138,7 @@ use managers::audio::AudioRecordingManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
 use managers::transcription::TranscriptionManager;
+use managers::transcription_jobs::TranscriptionJobManager;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use tauri::image::Image;
@@ -336,6 +341,12 @@ fn apply_window_corner_rounding(window: &tauri::WebviewWindow) {
 }
 
 fn show_main_window(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
+            log::error!("Failed to set activation policy to Regular: {}", e);
+        }
+    }
     // [GRAIN] The window is destroyed on close to free RAM, so recreate it if
     // absent. Every reopen path (tray, single-instance, macOS Reopen) lands here.
     let main_window = match app.get_webview_window("main") {
@@ -357,12 +368,6 @@ fn show_main_window(app: &AppHandle) {
     }
     if let Err(e) = main_window.set_focus() {
         log::error!("Failed to focus webview window: {}", e);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
-            log::error!("Failed to set activation policy to Regular: {}", e);
-        }
     }
 }
 
@@ -431,6 +436,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    app_handle.manage(TranscriptionJobManager::new(app_handle));
     app_handle.manage(tray::CurrentTrayIconState::new());
     // [GRAIN] Flow owns capture scheduling but no model engine. Its serial worker
     // leases the shared TranscriptionManager model for stateless Parakeet TDT
@@ -477,15 +483,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     #[cfg(unix)]
     signal_handle::setup_signal_handler(app_handle.clone());
 
-    // Apply macOS Accessory policy if starting hidden and tray is available.
-    // If the tray icon is disabled, keep the dock icon so the user can reopen.
-    #[cfg(target_os = "macos")]
-    {
-        let settings = settings::get_settings(app_handle);
-        if settings.start_hidden && settings.show_tray_icon {
-            let _ = app_handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-        }
-    }
+    // [GRAIN] Launch policy is chosen before run(); never demote an activated
+    // application during setup just because start-hidden is selected.
     // Get the current theme to set the appropriate initial icon
     let initial_theme = tray::get_current_theme(app_handle);
 
@@ -548,6 +547,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             "unload_model" => {
                 let transcription_manager = app.state::<Arc<TranscriptionManager>>();
+                if let Err(error) = transcription_manager.ensure_model_unlocked() {
+                    log::warn!("{error}");
+                    return;
+                }
                 if !transcription_manager.is_model_loaded() {
                     log::warn!("No model is currently loaded.");
                     return;
@@ -1031,7 +1034,8 @@ pub fn run(cli_args: CliArgs) {
         }));
     }
 
-    builder
+    #[allow(unused_mut)]
+    let mut app = builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1271,29 +1275,39 @@ pub fn run(cli_args: CliArgs) {
         })
         .invoke_handler(invoke_handler)
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(move |app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = &event {
-                show_main_window(app);
+        .expect("error while building tauri application");
+
+    // [GRAIN] Core settings are created during setup/Ready, so start GUI
+    // launches as Accessory. The existing show-window decision promotes to
+    // Regular for visible/no-tray/onboarding/update launches. Accessory ->
+    // Regular is supported; a post-launch Regular -> Accessory demotion is not
+    // reliable on recent macOS. Headless CLI runs keep their original policy.
+    #[cfg(target_os = "macos")]
+    if !headless_mode {
+        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    }
+
+    app.run(move |app, event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = &event {
+            show_main_window(app);
+        }
+        // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
+        // process alive in the tray so dictation/rolling/pill keep working —
+        // unless launched with --no-tray, where closing is meant to quit. The
+        // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+            // An updater restart must pass through even though ordinary
+            // window closure keeps the process alive in the tray.
+            if should_prevent_tray_exit(
+                *code,
+                app.state::<CliArgs>().no_tray,
+                INTENTIONAL_QUIT.load(Ordering::Relaxed),
+            ) {
+                api.prevent_exit();
             }
-            // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
-            // process alive in the tray so dictation/rolling/pill keep working —
-            // unless launched with --no-tray, where closing is meant to quit. The
-            // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
-                // An updater restart must pass through even though ordinary
-                // window closure keeps the process alive in the tray.
-                if should_prevent_tray_exit(
-                    *code,
-                    app.state::<CliArgs>().no_tray,
-                    INTENTIONAL_QUIT.load(Ordering::Relaxed),
-                ) {
-                    api.prevent_exit();
-                }
-            }
-            let _ = (app, event); // suppress unused warnings on non-macOS
-        });
+        }
+    });
 }
 
 // Keep non-visual binding generation on the same registry the application uses.
@@ -1305,7 +1319,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_update::install_update,
             shortcut::change_binding,
             shortcut::reset_binding,
-            shortcut::change_ptt_setting,
+            grain_shortcuts::change_shortcut_activation_setting,
             shortcut::change_audio_feedback_setting,
             shortcut::change_audio_feedback_volume_setting,
             shortcut::change_sound_theme_setting,
@@ -1443,6 +1457,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::check_apple_intelligence_available,
             commands::initialize_enigo,
             commands::initialize_shortcuts,
+            commands::complete_onboarding,
             commands::models::get_available_models,
             commands::models::get_model_info,
             commands::models::download_model,
@@ -1482,14 +1497,32 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::history::get_audio_file_path,
             commands::history::delete_history_entry,
             commands::history::retry_history_entry_transcription,
+            commands::history::cancel_history_entry_transcription,
+            commands::history::transcribe_file,
+            grain_file_transcription::get_transcription_jobs,
             commands::history::update_history_limit,
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
+            // [GRAIN] Grain Meet.
+            grain_meet::commands::meet_status,
+            grain_meet::commands::meet_list,
+            grain_meet::commands::meet_sources,
+            grain_meet::commands::meet_set_sources,
+            grain_meet::commands::meet_start_recording,
+            grain_meet::commands::meet_stop_recording,
+            grain_meet::commands::meet_process,
+            grain_meet::commands::meet_cancel_processing,
+            grain_meet::commands::meet_transcript,
+            grain_meet::commands::meet_delete,
+            grain_meet::commands::meet_playback_audio,
+            grain_meet::commands::meet_diarizer_installed,
+            grain_meet::commands::meet_download_diarizer,
         ])
         .events(collect_events![
             grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
+            managers::transcription_jobs::TranscriptionJob,
             // Typed live-caption events used by the recording WebView.
             managers::transcription::StreamPhaseEvent,
             managers::transcription::StreamTextEvent,
@@ -1516,6 +1549,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::RecordingError,
             grain_events::PasteError,
             grain_theme::ThemeChanged,
+            grain_meet::commands::MeetStatusChanged, // [GRAIN]
+            grain_meet::commands::MeetDiarizerProgress, // [GRAIN]
         ])
 }
 

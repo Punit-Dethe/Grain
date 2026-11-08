@@ -62,9 +62,9 @@ async resetBinding(id: string) : Promise<Result<BindingResponse, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async changePttSetting(enabled: boolean) : Promise<Result<null, string>> {
+async changeShortcutActivationSetting(activation: ShortcutActivation) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_ptt_setting", { enabled }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_shortcut_activation_setting", { activation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1048,9 +1048,9 @@ async agentRun(messages: AgentMessage[], context: string | null) : Promise<Resul
 }
 },
 /**
- * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, §2.5). The
+ * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, Â§2.5). The
  * user approved (or declined) the exact prepared call named by `token`; the host
- * revalidates and replays *that* call — the model is never re-consulted, so its
+ * revalidates and replays *that* call â€” the model is never re-consulted, so its
  * nondeterminism cannot change what runs. Returns the receipt/result (or the
  * decline) rendered for the chat.
  */
@@ -1085,9 +1085,9 @@ async agentSetPanelMode(expanded: boolean) : Promise<Result<null, string>> {
  * [GRAIN] CENTER panel: the webview reports the exact content height it wants
  * and the backend sizes the window to match (clamped to the work area), keeping
  * it centred and top-anchored so it grows downward. No-op unless the center
- * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] —
+ * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] â€”
  * never resize a visible window from a sync command on the main thread
- * (tauri#3990) — so the height feedback loop stays smooth.
+ * (tauri#3990) â€” so the height feedback loop stays smooth.
  */
 async agentResizePanel(height: number) : Promise<Result<null, string>> {
     try {
@@ -1098,8 +1098,8 @@ async agentResizePanel(height: number) : Promise<Result<null, string>> {
 }
 },
 /**
- * Confirm (⏎ on the reply card): close the panel, refocus the summon target,
- * and paste `text` — the latest assistant reply — at the cursor. A selection
+ * Confirm (âŽ on the reply card): close the panel, refocus the summon target,
+ * and paste `text` â€” the latest assistant reply â€” at the cursor. A selection
  * still held in the target app is replaced by the paste.
  */
 async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
@@ -1112,7 +1112,7 @@ async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
 },
 /**
  * Consume the retained Quick-Agent conversation (the panel calls this on
- * mount). Non-empty only when the panel is reopening from a follow-up offer —
+ * mount). Non-empty only when the panel is reopening from a follow-up offer â€”
  * in that case the panel starts EXPANDED with this history.
  */
 async agentTakeConversation() : Promise<AgentMessage[]> {
@@ -1264,6 +1264,18 @@ async initializeEnigo() : Promise<Result<null, string>> {
 async initializeShortcuts() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("initialize_shortcuts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mark onboarding as finished; called when its last screen closes, so quitting
+ * midway resumes the flow.
+ */
+async completeOnboarding() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("complete_onboarding") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1563,6 +1575,10 @@ async deleteHistoryEntry(id: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Queues the entry to be transcribed again with the current model. Its
+ * progress and outcome arrive as `TranscriptionJob` events.
+ */
 async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("retry_history_entry_transcription", { id }) };
@@ -1570,6 +1586,29 @@ async retryHistoryEntryTranscription(id: number) : Promise<Result<null, string>>
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Stops the entry's background transcription: a queued one is dropped, a
+ * running one stops after the chunk it is on. The entry keeps the text it
+ * had before.
+ */
+async cancelHistoryEntryTranscription(id: number) : Promise<void> {
+    await TAURI_INVOKE("cancel_history_entry_transcription", { id });
+},
+/**
+ * Adds an audio or video file to History and queues its transcription.
+ * Fails without adding anything if the file has no audio Handy can read.
+ */
+async transcribeFile(path: string) : Promise<Result<HistoryEntry, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("transcribe_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getTranscriptionJobs() : Promise<TranscriptionJob[]> {
+    return await TAURI_INVOKE("get_transcription_jobs");
 },
 async updateHistoryLimit(limit: number) : Promise<Result<null, string>> {
     try {
@@ -1598,6 +1637,144 @@ async isLaptop() : Promise<Result<boolean, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+async meetStatus() : Promise<MeetStatus> {
+    return await TAURI_INVOKE("meet_status");
+},
+/**
+ * List meetings, newest first, recovering any interrupted by a crash.
+ */
+async meetList() : Promise<Result<MeetingSummary[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Recall's source settings with the devices available right now. Listing
+ * devices can stall on some systems, so it runs off the async runtime.
+ */
+async meetSources() : Promise<Result<MeetSources, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_sources") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Save Recall's source settings. Dictation settings are never touched.
+ */
+async meetSetSources(settings: SourceSettings) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_set_sources", { settings }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start recording the enabled sources into a new meeting. Returns its id.
+ */
+async meetStartRecording(title: string | null) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_start_recording", { title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop the current recording and seal its session.
+ */
+async meetStopRecording() : Promise<Result<MeetingSummary, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_stop_recording") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start processing a recorded meeting in the background.
+ */
+async meetProcess(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_process", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop the current processing attempt. Its recording is kept.
+ */
+async meetCancelProcessing() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_cancel_processing") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The newest published transcript of a meeting, if any.
+ */
+async meetTranscript(sessionId: string) : Promise<Result<TranscriptRevision | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_transcript", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete a meeting's audio and transcripts. Refused while it is in use.
+ */
+async meetDelete(sessionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_delete", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The meeting's playback file (created on first request): every track mixed
+ * on the meeting clock. Only that one file is opened to the webview.
+ */
+async meetPlaybackAudio(sessionId: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_playback_audio", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Whether the pinned speaker model is installed.
+ */
+async meetDiarizerInstalled() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_diarizer_installed") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Download the pinned speaker model, verifying its size and SHA-256 before
+ * it is installed.
+ */
+async meetDownloadDiarizer() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_download_diarizer") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1610,6 +1787,8 @@ grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
 hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
+meetDiarizerProgress: MeetDiarizerProgress,
+meetStatusChanged: MeetStatusChanged,
 micLevel: MicLevel,
 modelDeleted: ModelDeleted,
 modelDownloadCancelled: ModelDownloadCancelled,
@@ -1627,6 +1806,7 @@ showOverlay: ShowOverlay,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 themeChanged: ThemeChanged,
+transcriptionJob: TranscriptionJob,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
@@ -1635,6 +1815,8 @@ grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
 hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
+meetDiarizerProgress: "meet-diarizer-progress",
+meetStatusChanged: "meet-status-changed",
 micLevel: "mic-level",
 modelDeleted: "model-deleted",
 modelDownloadCancelled: "model-download-cancelled",
@@ -1652,6 +1834,7 @@ showOverlay: "show-overlay",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 themeChanged: "theme-changed",
+transcriptionJob: "transcription-job",
 updateAvailable: "update-available",
 updateDownloadProgress: "update-download-progress"
 })
@@ -1662,6 +1845,10 @@ updateDownloadProgress: "update-download-progress"
 
 /** user-defined types **/
 
+/**
+ * One speaker slot's activity on the meeting clock.
+ */
+export type Activity = { slot: number; start_ns: number; end_ns: number }
 /**
  * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
  * clipboard automatically as they arrive. `First` (default) mirrors the
@@ -1711,7 +1898,11 @@ export type AppSettings = {
  * Missing in pre-schema settings files; the field-level default of zero
  * intentionally triggers one-time migrations instead of using `Self::default()`.
  */
-settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; shortcut_activation: ShortcutActivation;
+/**
+ * Setup is committed only after the final shortcut screen succeeds.
+ */
+onboarding_completed?: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
@@ -1891,11 +2082,20 @@ agent_input_type_to_expand?: boolean;
  * and grows downward. Default `side`; the center panel is in development.
  */
 agent_panel_position?: AgentPanelPosition }
+export type Attribution = { Speaker: number } |
+/**
+ * The diarizer found no speech on this track.
+ */
+"Unassigned" |
+/**
+ * Speaker detection did not run or failed for this track.
+ */
+"Unavailable"
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
-export type ChineseScript = "as_transcribed" | "simplified" | "traditional"
+export type ChineseScript = "as_transcribed" | "simplified" | "traditional_tw" | "traditional_hk"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 /**
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
@@ -2006,7 +2206,12 @@ export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
 export type GrainOverlayPosition = OverlayPosition
 export type HideOverlay = null
-export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
+export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean;
+/**
+ * The name of the file this entry was transcribed from; `None` for a
+ * dictation.
+ */
+source_name: string | null }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
  * Result of changing keyboard implementation
@@ -2058,7 +2263,42 @@ state: string }
  * account tokens; this never supplies a client secret or callback override.
  */
 export type McpPublicOAuthClient = { clientId: string; issuer: string }
+/**
+ * Diarizer download progress in bytes.
+ */
+export type MeetDiarizerProgress = { downloaded: number; total: number }
+/**
+ * Recall's audio sources and what this device can offer.
+ */
+export type MeetSources = { settings: SourceSettings; microphones: SourceDevice[]; outputs: SourceDevice[]; system_audio_supported: boolean }
+export type MeetStatus = { recording: RecordingStatus | null; processing: ProcessingStatus | null;
+/**
+ * The last processing failure, until the next attempt starts.
+ */
+last_error: string | null }
+/**
+ * Grain Meet state changed; the payload is the full current status.
+ */
+export type MeetStatusChanged = MeetStatus
+export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null;
+/**
+ * The opening words of the newest transcript, for the list.
+ */
+preview: string | null;
+/**
+ * Speakers in the newest transcript (0 before transcription).
+ */
+speaker_count: number;
+/**
+ * What each track recorded, in track order.
+ */
+sources: SourceKind[] }
 export type MicLevel = number[]
+export type MicrophoneChoice = { enabled: boolean;
+/**
+ * A `handy-recorder` device id; `None` follows the system default.
+ */
+device_id: string | null }
 /**
  * The model's files were removed.
  */
@@ -2074,7 +2314,7 @@ export type ModelDownloadComplete = string
 /**
  * Byte progress for a model download. Mirrors `managers::model::DownloadProgress`.
  */
-export type ModelDownloadProgress = { model_id: string; downloaded: number; total: number; percentage: number }
+export type ModelDownloadProgress = { model_id: string; downloaded: number; total: number; percentage: number; bytes_per_sec: number | null }
 /**
  * Archive extraction finished.
  */
@@ -2085,6 +2325,7 @@ export type ModelExtractionCompleted = string
 export type ModelExtractionStarted = string
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loading: boolean; is_loaded: boolean; current_model: string | null }
+export type ModelRef = { file: string; arch: string; variant: string; backend: string }
 /**
  * Where a model comes from and how Handy obtains it — the routing discriminant
  * for downloading and on-disk resolution.
@@ -2196,6 +2437,7 @@ enabled?: boolean }
  * model map (model names are not secret).
  */
 export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProvider[]; selected_provider_id: string; configured_provider_ids: string[]; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
+export type ProcessingStatus = { session_id: string; stage: Stage }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.
@@ -2203,6 +2445,7 @@ export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProv
 export type RecordingError = { error_type: string; detail: string | null }
 export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+export type RecordingStatus = { session_id: string; elapsed_ms: number; sources: SourceStatus[]; error: string | null }
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
  * resolved against the OS. Lives in the SDK because it crosses the wire inside
@@ -2210,15 +2453,10 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  * `ThemeMode` preference that produces it.
  *
  * Only the resolved answer travels. A surface that received `System` would
- * have to ask the OS itself, and the pill, the capsule and a sandboxed
- * extension frame are three different toolkits with three different ways of
- * getting that wrong.
+ * have to ask the OS itself. The settings window, pill and Agent panel must
+ * paint the same resolved answer.
  */
 export type ResolvedTheme = "light" | "dark"
-/**
- * A banner for an installed extension that has been revoked or deprecated.
- */
-export type RevocationBanner = { id: string; state: string; reason: string }
 /**
  * Map of provider id → API key. Persisted to a SEPARATE credential file by
  * [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
@@ -2256,6 +2494,19 @@ uncovered_bindings: string[];
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
+export type SessionState =
+/**
+ * Capture may still append; unsealed chunks may exist.
+ */
+"Recording" |
+/**
+ * Every chunk is sealed; the recording is complete or recovered.
+ */
+"Recorded"
+/**
+ * How the dictation shortcut starts and ends a recording.
+ */
+export type ShortcutActivation = "toggle" | "push_to_talk" | "hold_or_toggle"
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type ShowOverlay = string
 /**
@@ -2266,6 +2517,35 @@ export type ShowOverlay = string
  */
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
+export type SourceDevice = { id: string; name: string; is_default: boolean }
+export type SourceKind = "Microphone" | "SystemAudio"
+export type SourceSettings = { microphone: MicrophoneChoice; system_audio: SystemAudioChoice }
+export type SourceStatus = { kind: SourceKind;
+/**
+ * The device being recorded.
+ */
+name: string; recorded_ms: number;
+/**
+ * Peak audio level since the previous status read, 0 to 1.
+ */
+level: number;
+/**
+ * False while this source is not delivering audio.
+ */
+active: boolean }
+export type Speaker = {
+/**
+ * Stable within a revision: `t{track}-s{slot}`.
+ */
+id: string; track: number; slot: number;
+/**
+ * Anonymous label, numbered across the meeting.
+ */
+label: string }
+/**
+ * The phase an attempt is in, for progress display.
+ */
+export type Stage = "Preparing" | "IdentifyingSpeakers" | "Transcribing" | "Publishing"
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
@@ -2298,6 +2578,11 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
+export type SystemAudioChoice = { enabled: boolean;
+/**
+ * A cpal output device id; `None` follows the default output.
+ */
+device_id: string | null }
 /**
  * Broadcast when the effective colour scheme changes — either because the user
  * picked a different mode, or because the OS flipped while on `System`.
@@ -2319,6 +2604,33 @@ export type ThemeMode = "system" | "light" | "dark"
  * immediately *and* show the right radio button without a second round trip.
  */
 export type ThemeState = { mode: ThemeMode; resolved: ResolvedTheme }
+export type TrackStatus = "Complete" |
+/**
+ * Text without speakers; the transcript is still useful.
+ */
+{ SpeakersUnavailable: { reason: string } } |
+/**
+ * No text for this track; its audio is kept for a retry.
+ */
+{ Failed: { reason: string } } |
+/**
+ * Longer than the per-track processing cap; its audio is kept.
+ */
+{ TooLong: { minutes: number; limit_minutes: number } } |
+/**
+ * The track holds no audio.
+ */
+"Empty"
+export type TrackTranscript = { track: number; status: TrackStatus;
+/**
+ * The reviewed full-sequence text of the track's ASR.
+ */
+text: string; words: Word[];
+/**
+ * Raw diarizer activity kept as evidence, so attribution can be
+ * recomputed without repeating capture or inference.
+ */
+activity: Activity[] }
 /**
  * Compute preference for transcribe-cpp (whisper-family GGUF) model loads.
  * Renamed from `WhisperAcceleratorSetting` when the batch path moved from
@@ -2327,6 +2639,24 @@ export type ThemeState = { mode: ThemeMode; resolved: ResolvedTheme }
  * field-level `alias` on [`AppSettings::transcribe_accelerator`].
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
+export type TranscriptRevision = { version: number; revision: number; session_id: string; attempt_id: string; created_unix_ms: number; diarizer: ModelRef | null; asr: ModelRef | null; speakers: Speaker[]; tracks: TrackTranscript[] }
+/**
+ * A background transcription of one History entry.
+ */
+export type TranscriptionJob = { entry_id: number; status: TranscriptionJobStatus }
+export type TranscriptionJobStatus =
+/**
+ * Waiting behind another job.
+ */
+{ state: "queued" } |
+/**
+ * `percent` of the audio is transcribed.
+ */
+{ state: "running"; percent: number } |
+/**
+ * The entry has its new text.
+ */
+{ state: "finished" } | { state: "cancelled" } | { state: "failed"; error: string }
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
  * A newly discovered release. The cache covers WebViews created after this
@@ -2359,6 +2689,11 @@ notes: string | null;
 date: string | null }
 export type VadBackend = "silero" | "earshot"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
+export type Word = { text: string;
+/**
+ * Meeting clock, milliseconds from the session start.
+ */
+start_ms: number; end_ms: number; speaker: Attribution }
 
 /** tauri-specta globals **/
 

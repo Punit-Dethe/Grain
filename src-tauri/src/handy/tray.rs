@@ -354,6 +354,7 @@ mod tests {
 
     fn build_entry(transcription: &str, post_processed: Option<&str>) -> HistoryEntry {
         HistoryEntry {
+            source_name: None, // [GRAIN] Dictation-only tray fixture.
             id: 1,
             file_name: "handy-1.wav".to_string(),
             timestamp: 0,

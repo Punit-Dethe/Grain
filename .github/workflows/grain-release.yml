@@ -19,6 +19,8 @@ name: "Grain Release (Windows)"
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.grain-keys/grain.updater.key
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  contents of ~/.grain-keys/grain.updater.key.password
+#   GRAIN_GITHUB_OAUTH_CLIENT_ID / GRAIN_GITHUB_OAUTH_CLIENT_SECRET
+#     existing desktop registration for the bundled GitHub MCP connection
 
 on:
   workflow_dispatch:
@@ -27,12 +29,20 @@ on:
         description: "Create the GitHub release as a draft (publish after testing to ship the update)"
         type: boolean
         default: true
+      rerelease:
+        description: "Replace an existing public version and move its tag to this verified build"
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
 
 permissions:
   contents: write
+
+concurrency:
+  group: grain-windows-release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -48,7 +58,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Validate supported GitHub extension registration
+        shell: pwsh
+        env:
+          GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID }}
+          GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($name in @('GRAIN_GITHUB_OAUTH_CLIENT_ID', 'GRAIN_GITHUB_OAUTH_CLIENT_SECRET')) {
+            $value = [Environment]::GetEnvironmentVariable($name)
+            $limit = if ($name.EndsWith('_ID')) { 512 } else { 4096 }
+            if ([string]::IsNullOrWhiteSpace($value) -or $value.Length -gt $limit -or $value -ne $value.Trim() -or $value -match '[\x00-\x1f\x7f-\x9f]') {
+              throw "$name is missing or malformed"
+            }
+          }
+          Write-Host 'Supported GitHub registration is configured; values are not logged'
 
       # Fails the release before anything is built if the manifests disagree or
       # the updater feed could not be verified -- both are invisible locally and
@@ -64,6 +91,42 @@ jobs:
           VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
           echo "Application version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Load versioned release notes
+        id: release_notes
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $notesPath = Join-Path $env:GITHUB_WORKSPACE "docs/releases/v$env:RELEASE_VERSION.md"
+          if (-not (Test-Path -LiteralPath $notesPath -PathType Leaf)) {
+            throw "Release notes are missing: $notesPath"
+          }
+          $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding utf8
+          if ([string]::IsNullOrWhiteSpace($notes)) { throw 'Release notes are empty' }
+          $delimiter = "GRAIN_RELEASE_NOTES_$([guid]::NewGuid().ToString('N'))"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "body<<$delimiter" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value $notes -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value $delimiter -Encoding utf8
+
+      - name: Check explicitly requested rerelease
+        if: github.event_name == 'workflow_dispatch' && inputs.rerelease
+        id: rerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v${{ steps.version.outputs.version }}
+          RELEASE_DRAFT: ${{ inputs.draft }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_DRAFT -ne 'false') { throw 'Rerelease requires draft=false' }
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Existing release lookup failed' }
+          if ($release.draft -or $release.immutable) { throw 'A mutable public release is required' }
+          $ref = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $ref.object.type -ne 'commit') { throw 'Expected an existing lightweight version tag' }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "previous_sha=$($ref.object.sha)"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -203,6 +266,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Public/extractable desktop OAuth registration, never account tokens
+          # or the GitHub App private key. Used by the bundled GitHub MCP connection.
+          GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID }}
+          GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # CPU-compat: disable AVX/FMA/etc so CPUs lacking them don't SIGILL.
           # The Vulkan backend does the heavy compute, so the perf impact is negligible.
@@ -216,20 +283,32 @@ jobs:
           releaseName: v${{ steps.version.outputs.version }}
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
-          releaseBody: |
-            # Grain v0.0.10
-
-            The extension beta is now included in the main Windows release. Update Grain to try the extension platform without installing a separate alpha build.
-
-            - Added the extension beta to the main application.
-            - Improved Agent responsiveness when working with extension tools.
-            - Restored Handy's waveform sensitivity while keeping Grain's waveform appearance and animation.
-            - Included small bug fixes and reliability improvements.
-
-            The extension platform is in beta; feedback is welcome as we continue improving it.
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
 
       - name: Verify staged native runtime contract and CPU fallback
         shell: pwsh
         run: python scripts/transcribe_fork.py --runtime-dir src-tauri/transcribe-libs
+
+      - name: Finish explicitly requested rerelease
+        if: github.event_name == 'workflow_dispatch' && inputs.rerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: v${{ steps.version.outputs.version }}
+          PREVIOUS_SHA: ${{ steps.rerelease.outputs.previous_sha }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ref = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $ref.object.sha -ne $env:PREVIOUS_SHA) { throw 'Version tag changed during the build; refusing to retarget it' }
+          # GITHUB_TOKEN prevents this tag update from spawning a second release run.
+          gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$env:RELEASE_TAG" -f "sha=$env:SOURCE_SHA" -F force=true --silent
+          if ($LASTEXITCODE -ne 0) { throw 'Rerelease tag update failed' }
+          $notes = Join-Path $env:RUNNER_TEMP 'grain-rerelease-notes.md'
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json body --jq .body | Set-Content -LiteralPath $notes -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes lookup failed' }
+          Add-Content -LiteralPath $notes -Value "`nRebuilt from source $env:SOURCE_SHA. Already on this version? Download and run the rebuilt installer; same-version builds are not offered automatically by the updater."
+          gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --notes-file $notes
+          if ($LASTEXITCODE -ne 0) { throw 'Rerelease notes update failed' }

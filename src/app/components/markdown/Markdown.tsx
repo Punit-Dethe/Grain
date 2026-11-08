@@ -80,7 +80,7 @@ function parseBlocks(markdown: string): Block[] {
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
 
-  for (let i = 0; i < lines.length; ) {
+  for (let i = 0; i < lines.length;) {
     const line = lines[i];
     const fence = line.match(FENCE);
     if (fence) {

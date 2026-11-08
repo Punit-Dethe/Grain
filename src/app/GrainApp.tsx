@@ -33,6 +33,7 @@ import {
 import { SettingsPage } from "./pages/SettingsPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { AgentPage } from "./pages/AgentPage";
+import { MeetPage } from "./pages/MeetPage";
 import { ExtensionsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
@@ -136,7 +137,8 @@ type IconName =
   | "pause"
   | "star"
   | "refresh"
-  | "trash";
+  | "trash"
+  | "mic";
 
 function Icon({ name, small = false }: { name: IconName; small?: boolean }) {
   return (
@@ -171,6 +173,31 @@ function IconSprite() {
       <symbol id="i-clock" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="9" />
         <path d="M12 7v5l3.5 2" />
+      </symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
+      </symbol>
+      <symbol id="i-speaker" viewBox="0 0 24 24">
+        <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
+        <path d="M15.5 9a4.2 4.2 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" />
+      </symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24">
+        <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
+      </symbol>
+      <symbol id="i-chev-left" viewBox="0 0 24 24">
+        <path d="m14.5 6-6 6 6 6" />
+      </symbol>
+      <symbol id="i-chev-right" viewBox="0 0 24 24">
+        <path d="m9.5 6 6 6-6 6" />
+      </symbol>
+      <symbol id="i-back10" viewBox="0 0 24 24">
+        <path d="M5 12.5a7 7 0 1 0 2.1-5" />
+        <path d="M6.5 3.5v4h4" />
+      </symbol>
+      <symbol id="i-fwd10" viewBox="0 0 24 24">
+        <path d="M19 12.5a7 7 0 1 1-2.1-5" />
+        <path d="M17.5 3.5v4h-4" />
       </symbol>
       <symbol id="i-command" viewBox="0 0 24 24">
         <path d="M9 6a3 3 0 1 0-3 3h3zM15 6a3 3 0 1 1 3 3h-3zM9 15H6a3 3 0 1 0 3 3zM15 15h3a3 3 0 1 1-3 3zM9 9h6v6H9z" />
@@ -245,6 +272,14 @@ const NAV_ITEMS = [
     icon: "box",
     href: "#/extensions/installed",
   },
+  // The meeting workspace's user-facing name is the one `ui2.meet.name` string.
+  {
+    page: "meet",
+    label: "",
+    labelKey: "ui2.meet.name",
+    icon: "mic",
+    href: "#/meet",
+  },
   {
     page: "settings",
     label: "Settings",
@@ -266,6 +301,7 @@ function Sidebar({
   const loading = useModelStore((state) => state.loading);
   const isModelLoaded = useModelStore((state) => state.isModelLoaded);
   const { settings } = useSettings();
+  const { t } = useTranslation();
   const modelStatus = useMemo(() => {
     return getModelIndicatorStatus({
       loading,
@@ -300,13 +336,14 @@ function Sidebar({
         {NAV_ITEMS.map((item) => {
           const active = item.page === route.page;
           const href = "href" in item ? item.href : undefined;
+          const label = "labelKey" in item ? t(item.labelKey) : item.label;
           return (
             <button
               key={item.page}
               type="button"
               className={`nav-item${active ? " active" : ""}`}
               data-page={item.page}
-              title={item.label}
+              title={label}
               disabled={!href}
               aria-current={active ? "page" : undefined}
               onClick={() => {
@@ -314,7 +351,7 @@ function Sidebar({
               }}
             >
               <Icon name={item.icon} />
-              <span>{item.label}</span>
+              <span>{label}</span>
             </button>
           );
         })}
@@ -383,6 +420,7 @@ const OVERVIEW_HERO_IMAGES = [
 ] as const;
 
 function OverviewPage({ history }: { history: HistoryController }) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<HistoryViewMode>("original");
   const [heroImageIndex, setHeroImageIndex] = useState(0);
 
@@ -425,7 +463,9 @@ function OverviewPage({ history }: { history: HistoryController }) {
               src={OVERVIEW_HERO_IMAGES[heroImageIndex].src}
               alt={OVERVIEW_HERO_IMAGES[heroImageIndex].alt}
             />
-            <div className="hero-gradient" aria-hidden="true" />
+            <h2 className="hero-image-title">
+              {t("overview.heroTagline", "Speak naturally. Write effortlessly")}
+            </h2>
             <button
               className="hero-image-toggle"
               type="button"
@@ -655,6 +695,8 @@ function NextShell() {
       <main className="main">
         {route.page === "history" ? (
           <HistorySettings variant="next" controller={history} />
+        ) : route.page === "meet" ? (
+          <MeetPage meetingId={route.meeting ?? null} />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (

@@ -67,7 +67,14 @@ export function ChineseScriptSetting() {
         options={[
           { value: "as_transcribed", label: t("handySync.asTranscribed") },
           { value: "simplified", label: t("handySync.simplified") },
-          { value: "traditional", label: t("handySync.traditional") },
+          {
+            value: "traditional_tw",
+            label: t("handySync.traditionalTw", "Traditional (Taiwan)"),
+          },
+          {
+            value: "traditional_hk",
+            label: t("handySync.traditionalHk", "Traditional (Hong Kong)"),
+          },
         ]}
       />
     </SettingContainer>

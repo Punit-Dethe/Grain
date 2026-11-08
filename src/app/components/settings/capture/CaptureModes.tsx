@@ -35,7 +35,7 @@ export const CaptureModes: React.FC = () => {
   const { t } = useTranslation();
   const { settings, getSetting, updateSetting, isUpdating } = useSettings();
 
-  const pushToTalk = getSetting("push_to_talk") ?? false;
+  const pushToTalk = getSetting("shortcut_activation") === "push_to_talk";
   const alwaysAi = getSetting("capture_always_ai") ?? false;
   const endWithAi = getSetting("capture_end_with_ai") ?? true;
   const aiStartMode = getSetting("capture_ai_start_mode") ?? "transcribe";

@@ -9,8 +9,8 @@ pub mod utils;
 pub mod vad;
 
 pub use audio::{
-    list_output_devices, read_wav_samples, save_wav_file, verify_wav_file, CaptureSink, CaptureVad,
-    VadPolicy,
+    decode_audio_file, list_output_devices, read_wav_samples, save_wav_file, verify_wav_file,
+    CaptureSink, CaptureVad, VadPolicy,
 };
 pub use grain_text::finalize_transcript; // [GRAIN]
 pub use lang_id::detect_output_language;

@@ -7,6 +7,7 @@ use log::info;
 use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::sync::OnceLock;
+use std::sync::{mpsc, Mutex, PoisonError};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -14,18 +15,36 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 #[cfg(target_os = "linux")]
 use crate::utils::{is_gnome_wayland, is_kde_wayland, is_wayland};
 
-fn with_enigo<T>(
+/// Serializes pastes: overlapping ones would restore each other's transcript as
+/// the user's clipboard. Only taken by `paste`, which never runs on the main thread.
+static PASTE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Runs `f` with the shared Enigo on the main thread (macOS TIS APIs require it)
+/// and waits for the result. Runs inline if already on the main thread, so no deadlock.
+fn with_enigo<T: Send + 'static>(
     app_handle: &AppHandle,
-    f: impl FnOnce(&mut Enigo) -> Result<T, String>,
+    f: impl FnOnce(&mut Enigo) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    let enigo_state = app_handle
-        .try_state::<EnigoState>()
-        .ok_or("Enigo state not initialized")?;
-    let mut enigo = enigo_state
-        .0
-        .lock()
-        .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
-    f(&mut enigo)
+    let (tx, rx) = mpsc::sync_channel(1);
+    let app = app_handle.clone();
+    app_handle
+        .run_on_main_thread(move || {
+            let result = (|| {
+                let enigo_state = app
+                    .try_state::<EnigoState>()
+                    .ok_or("Enigo state not initialized")?;
+                let mut enigo = enigo_state
+                    .0
+                    .lock()
+                    .map_err(|e| format!("Failed to lock Enigo: {}", e))?;
+                f(&mut enigo)
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("Failed to run input on the main thread: {}", e))?;
+    // A dropped closure (event loop shutting down) closes the channel.
+    rx.recv()
+        .map_err(|_| "Main thread dropped the input request".to_string())?
 }
 
 fn write_text_to_clipboard(app_handle: &AppHandle, text: &str) -> Result<(), String> {
@@ -87,7 +106,8 @@ fn paste_via_clipboard(
 
         // Fall back to enigo if no native tool handled it
         if !key_combo_sent {
-            with_enigo(app_handle, |enigo| match paste_method {
+            let paste_method = *paste_method;
+            with_enigo(app_handle, move |enigo| match paste_method {
                 // The legacy path cannot detect a mistimed chord, so it keeps the
                 // conservative 100ms modifier hold.
                 PasteMethod::CtrlV => input::send_paste_ctrl_v(enigo, 100),
@@ -713,7 +733,10 @@ fn paste_direct(
         info!("Falling back to enigo for direct text input");
     }
 
-    with_enigo(app_handle, |enigo| input::paste_text_direct(enigo, text))
+    let text = text.to_string();
+    with_enigo(app_handle, move |enigo| {
+        input::paste_text_direct(enigo, &text)
+    })
 }
 
 pub(crate) fn send_return_key(enigo: &mut Enigo, key_type: AutoSubmitKey) -> Result<(), String> {
@@ -763,6 +786,8 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
     auto_submit && paste_method != PasteMethod::None
 }
 
+/// Pastes `text` into the focused app. Call from a worker thread, never the main
+/// thread: it sleeps between steps (input injection hops via `with_enigo`).
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     paste_with_options(text, app_handle, false)
 }
@@ -774,6 +799,9 @@ pub fn paste_with_options(
     app_handle: AppHandle,
     suppress_trailing_space: bool,
 ) -> Result<(), String> {
+    // [GRAIN] The options entry point owns the whole clipboard transaction too.
+    let _paste = PASTE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+
     // [GRAIN] Dictation INTO the Agent conversation window: if that panel is the
     // focused window, the user is dictating into its follow-up box — hand the
     // transcript to it as an event instead of an OS paste. An OS paste there
@@ -836,15 +864,22 @@ pub fn paste_with_options(
             // the legacy path untouched.
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             if settings.reliable_paste {
-                let reliable_result = with_enigo(&app_handle, |enigo| {
+                // Runs entirely on the main thread, as it requires.
+                let (text, app) = (text.clone(), app_handle.clone());
+                let (auto_submit, auto_submit_key, clipboard_handling) = (
+                    settings.auto_submit,
+                    settings.auto_submit_key,
+                    settings.clipboard_handling,
+                );
+                let reliable_result = with_enigo(&app_handle, move |enigo| {
                     crate::paste_tx::try_reliable_paste(
                         &text,
-                        &app_handle,
+                        &app,
                         &paste_method,
                         enigo,
-                        settings.auto_submit,
-                        settings.auto_submit_key,
-                        settings.clipboard_handling,
+                        auto_submit,
+                        auto_submit_key,
+                        clipboard_handling,
                     )
                 });
                 match reliable_result {
@@ -874,8 +909,9 @@ pub fn paste_with_options(
 
     if should_send_auto_submit(settings.auto_submit, paste_method) {
         std::thread::sleep(Duration::from_millis(50));
-        if let Err(error) = with_enigo(&app_handle, |enigo| {
-            send_return_key(enigo, settings.auto_submit_key)
+        let auto_submit_key = settings.auto_submit_key;
+        if let Err(error) = with_enigo(&app_handle, move |enigo| {
+            send_return_key(enigo, auto_submit_key)
         }) {
             log::warn!("Paste succeeded, but auto-submit failed: {error}");
         }

@@ -1,6 +1,6 @@
 [package]
 name = "handy"
-version = "0.0.10"
+version = "0.0.11"
 description = "Grain"
 authors = ["cjpais"]
 edition = "2021"
@@ -69,6 +69,11 @@ env_filter = "0.1.0"
 tokio = { version = "1.43.0", features = ["net", "io-util", "sync", "time"] }
 enigo = "0.6.1"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav", "flac", "mp3", "vorbis"] }
+# Decodes files for transcription. rodio's version, plus the M4A/MP4 (AAC,
+# ALAC) and AIFF support rodio leaves out.
+symphonia = { version = "0.5.5", features = ["aac", "alac", "isomp4", "mp3", "aiff"] }
+# Resamples a decoded file to 16 kHz; the version handy-recorder already uses.
+rubato = "5"
 handy-recorder = "0.1"
 earshot = "1.2.2"
 libc = "0.2"
@@ -190,10 +195,16 @@ transcribe-cpp = { version = "=0.4.0", default-features = false, features = [
   "vulkan",
 ] }
 
+# [GRAIN] Keep the paired native fork; mirror Handy #2340's per-arch posture.
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["metal"] }
+
+# Intel/AMD Metal shader initialization can hang model loading. Use static CPU.
+[target.'cfg(all(target_os = "macos", target_arch = "x86_64"))'.dependencies]
+transcribe-cpp = { version = "=0.4.0", default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-# [GRAIN] macOS links transcribe-cpp statically via Metal (ships no DLLs).
-transcribe-cpp = { version = "=0.4.0", default-features = false, features = ["metal"] }
 # Used by the receipt-sequenced ("reliable") paste path for lazy NSPasteboard
 # promises. Versions track what Tauri already pulls in.
 objc2 = "0.6"
@@ -228,8 +239,8 @@ transcribe-cpp = { version = "=0.4.0", default-features = false, features = [
 [patch.crates-io]
 # [GRAIN] Paired immutable native fork; preserve exact upstream versions/features.
 # See ../native/transcribe-fork.json and ../docs/TRANSCRIBE-CPP-FORK.md.
-transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "eeffcc3887018015d04d20e61d3698a33d790f24" }
-transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "eeffcc3887018015d04d20e61d3698a33d790f24" }
+transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "c8cf6b11dd5e67131b264025112293bda1bb8c86" }
+transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "c8cf6b11dd5e67131b264025112293bda1bb8c86" }
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 

@@ -16,6 +16,21 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash("#/notes")).toEqual({ page: "overview" });
   });
 
+  it("round-trips the meeting workspace and keeps the full rail", () => {
+    const route = { page: "meet" } as const;
+    expect(hashForRoute(route)).toBe("#/meet");
+    expect(routeFromHash("#/meet")).toEqual(route);
+    expect(routeFromHash("#/meet/")).toEqual(route);
+    expect(routeUsesCompactGlobalRail(route)).toBe(false);
+  });
+
+  it("round-trips an opened recording and rejects unsafe ids", () => {
+    const route = { page: "meet", meeting: "5032d7a6-e1ab" } as const;
+    expect(hashForRoute(route)).toBe("#/meet/5032d7a6-e1ab");
+    expect(routeFromHash("#/meet/5032d7a6-e1ab")).toEqual(route);
+    expect(routeFromHash("#/meet/../x")).toEqual({ page: "overview" });
+  });
+
   it("sends the retired About tab to its settings section", () => {
     const section = { page: "settings", section: "about" } as const;
     expect(routeFromHash("#/about")).toEqual(section);

@@ -2,15 +2,14 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { produce } from "immer";
 import { listen } from "@tauri-apps/api/event";
-import { commands, type ModelInfo } from "@/bindings";
+import {
+  commands,
+  type ModelInfo,
+  type ModelDownloadProgress,
+} from "@/bindings";
 import { toast } from "sonner";
 
-interface DownloadProgress {
-  model_id: string;
-  downloaded: number;
-  total: number;
-  percentage: number;
-}
+type DownloadProgress = ModelDownloadProgress;
 
 interface DownloadStats {
   startTime: number;
@@ -318,39 +317,22 @@ export const useModelStore = create<ModelsStore>()(
           }),
         );
 
-        // Update download stats for speed calculation
+        // The native transfer window excludes resumed bytes and decays on stalls.
         const now = Date.now();
         set(
           produce((state) => {
             const current = state.downloadStats[progress.model_id];
 
-            if (!current) {
-              state.downloadStats[progress.model_id] = {
-                startTime: now,
-                lastUpdate: now,
-                totalDownloaded: progress.downloaded,
-                speed: 0,
-              };
-            } else {
-              const timeDiff = (now - current.lastUpdate) / 1000;
-              const bytesDiff = progress.downloaded - current.totalDownloaded;
-
-              if (timeDiff > 0.5) {
-                const currentSpeed = bytesDiff / (1024 * 1024) / timeDiff;
-                const validCurrentSpeed = Math.max(0, currentSpeed);
-                const smoothedSpeed =
-                  current.speed > 0
-                    ? current.speed * 0.8 + validCurrentSpeed * 0.2
-                    : validCurrentSpeed;
-
-                state.downloadStats[progress.model_id] = {
-                  startTime: current.startTime,
-                  lastUpdate: now,
-                  totalDownloaded: progress.downloaded,
-                  speed: Math.max(0, smoothedSpeed),
-                };
-              }
-            }
+            const rate = progress.bytes_per_sec;
+            state.downloadStats[progress.model_id] = {
+              startTime: current?.startTime ?? now,
+              lastUpdate: now,
+              totalDownloaded: progress.downloaded,
+              speed:
+                rate !== null && Number.isFinite(rate)
+                  ? Math.max(0, rate) / (1024 * 1024)
+                  : 0,
+            };
           }),
         );
       });

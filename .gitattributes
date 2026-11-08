@@ -85,3 +85,6 @@ Upstream/rr-cache/** -text
 *.ttf binary
 *.otf binary
 *.woff2 binary
+
+# Package catalogue copies must stay byte-identical on Windows as well.
+src-tauri/src/handy/catalog/catalog.json -text

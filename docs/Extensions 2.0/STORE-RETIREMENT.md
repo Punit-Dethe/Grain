@@ -301,3 +301,18 @@ Run `42495825689` succeeded for `adf2b77c5`. The unsigned NSIS installer
 Installer SHA-256 is
 `8e47a38e57070d7c4efd5c237179280dc9e99e87d3101473268b2847fe47f324`.
 Packaged sign-in, discovery, and read results remain pending for both providers.
+
+### 2026-11-09 — Main integrated into the retirement branch
+
+- Merged `origin/main` at `c066c2a94` into the retirement branch. This brings
+  in the v0.0.11 desktop changes, including Recall, file transcription, and
+  the model catalogue update. The Handy source tree matches that revision.
+- Reconciled the routes and styles that the upstream merge rules had kept on
+  the branch's older versions. Regenerated Tauri bindings and resolved both
+  Rust lockfiles from main's dependency pins with the retired crates removed.
+  The GitHub desktop OAuth registration remains in the release workflow for
+  the bundled MCP preset. The signed store and native worker paths stay retired.
+- Passed TypeScript, Vite, 88 frontend tests, 60 harness unit tests, 157 core
+  and SDK tests, 683 desktop tests, UI parity, and the model catalogue and
+  native fork checks. The installer above predates this merge. Packaged account
+  and provider tests remain pending for the merged branch.

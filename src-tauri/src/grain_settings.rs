@@ -109,11 +109,14 @@ mod tests {
     }
 
     #[test]
-    fn bundled_defaults_keep_push_to_talk_off() {
+    fn bundled_defaults_keep_toggle_activation() {
         let bundled: serde_json::Value =
             serde_json::from_str(include_str!("../resources/default_settings.json")).unwrap();
-        assert_eq!(bundled["push_to_talk"], false);
-        assert!(!get_default_settings().push_to_talk);
+        assert_eq!(bundled["shortcut_activation"], "toggle");
+        assert_eq!(
+            get_default_settings().shortcut_activation,
+            ShortcutActivation::Toggle
+        );
     }
 
     #[test]

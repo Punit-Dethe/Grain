@@ -188,3 +188,11 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     log::info!("Shortcuts initialized successfully");
     Ok(())
 }
+
+/// Mark onboarding as finished; called when its last screen closes, so quitting
+/// midway resumes the flow.
+#[specta::specta]
+#[tauri::command]
+pub fn complete_onboarding(app: AppHandle) -> Result<(), String> {
+    crate::grain_onboarding::complete_setup(&app) // [GRAIN] Persist through the owned, fallible store.
+}

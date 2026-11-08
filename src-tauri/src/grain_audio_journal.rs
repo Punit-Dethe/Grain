@@ -125,8 +125,7 @@ impl PcmJournal {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn path(&self) -> &std::path::Path {
+    pub(crate) fn path(&self) -> &std::path::Path {
         &self.path
     }
 }
@@ -144,8 +143,12 @@ impl PcmJournalReader {
                 "PCM journal frame range exceeds addressable file bounds",
             )
         };
-        let frames = usize::try_from(end_frame.checked_sub(start_frame).ok_or_else(invalid_range)?)
-            .map_err(|_| invalid_range())?;
+        let frames = usize::try_from(
+            end_frame
+                .checked_sub(start_frame)
+                .ok_or_else(invalid_range)?,
+        )
+        .map_err(|_| invalid_range())?;
         let bytes = frames
             .checked_mul(BYTES_PER_FRAME as usize)
             .ok_or_else(invalid_range)?;

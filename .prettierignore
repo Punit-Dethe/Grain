@@ -24,6 +24,16 @@ src-tauri/gen
 # line did not, so `bun run format` had been reformatting it ever since.
 src/app/bindings.ts
 
+# Byte-owned catalogue and serialized/signature fixtures: their producers and
+# protocol tests own formatting, so a formatter must not rewrite the payloads.
+src-tauri/src/handy/catalog/catalog.json
+crates/grain-core/seed/*.json
+crates/grain-core/tests/fixtures/**/*.json
+src-tauri/tests/fixtures/**/*.json
+
+# Rewritten deterministically by Upstream/verdict.py.
+Upstream/verdicts.json
+
 # Misc
 .DS_Store
 *.log

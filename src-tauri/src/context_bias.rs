@@ -267,7 +267,6 @@ mod tests {
         assert_eq!(rendered, "Standing, ActionName");
         assert!(rendered.ends_with("ActionName"));
     }
-
 }
 
 #[cfg(test)]

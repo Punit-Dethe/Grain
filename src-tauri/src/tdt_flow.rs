@@ -72,16 +72,52 @@ pub(crate) struct TdtRunConfig {
     pub(crate) language: Option<String>,
 }
 
-/// One recording's bounded token accumulator. The only growing allocation is
-/// the transcript token sequence; audio remains in the file-backed journal.
+/// Native evidence for one owned decoding window. Native word/token indices
+/// remain local to `transcript`; timestamps are absolute analysis milliseconds.
+/// A word at a window edge may be incomplete: these rows are evidence, not a
+/// canonical meeting transcript. Never concatenate window text to build words.
+#[derive(Debug)]
+pub(crate) struct WindowEvidence {
+    pub window: Window,
+    pub transcript: transcribe_cpp::Transcript,
+}
+
+/// The reviewed full-sequence detokenization plus optional native evidence.
+#[derive(Debug)]
+pub(crate) struct StructuredResult {
+    pub text: String,
+    pub windows: Vec<WindowEvidence>,
+}
+
+/// One recording's bounded-audio token accumulator. Transcript tokens and, when
+/// explicitly requested, native evidence grow with output; audio stays on disk.
 pub(crate) struct TdtAccumulator {
     cursor: BufferedCursor,
     stable_tokens: Vec<Token>,
     decoded_windows: usize,
+    evidence: Option<Vec<WindowEvidence>>,
+    finished: bool,
 }
 
 impl TdtAccumulator {
     pub(crate) fn new(session: &dyn Inference, config: &TdtRunConfig) -> Result<Self, String> {
+        Self::create(session, config, false)
+    }
+
+    /// Opt in before decoding any audio. Normal dictation retains only compact
+    /// tokens, avoiding the extra native strings and word rows.
+    pub(crate) fn new_structured(
+        session: &dyn Inference,
+        config: &TdtRunConfig,
+    ) -> Result<Self, String> {
+        Self::create(session, config, true)
+    }
+
+    fn create(
+        session: &dyn Inference,
+        config: &TdtRunConfig,
+        retain_evidence: bool,
+    ) -> Result<Self, String> {
         let model = session.flow_model()?;
         let variant = model.variant;
         if model.arch != "parakeet"
@@ -97,6 +133,8 @@ impl TdtAccumulator {
             cursor: BufferedCursor::default(),
             stable_tokens: Vec::new(),
             decoded_windows: 0,
+            evidence: retain_evidence.then(Vec::new),
+            finished: false,
         })
     }
 
@@ -119,14 +157,21 @@ impl TdtAccumulator {
         audio: &mut Vec<f32>,
         total_samples: u64,
     ) -> Result<(), String> {
+        if self.finished {
+            return Err("Flow accumulator is finalized or failed; create a fresh replay".into());
+        }
         while let Some(window) = self.cursor.next_stable(total_samples) {
+            // Any failed call may have advanced the native decoder. Poison this
+            // accumulator until the caller creates a fresh, reset replay.
+            self.finished = true;
             read_window(journal, reader, audio, window)?;
-            let tokens = decode_buffered_window(session, config, audio, window)?;
-            self.stable_tokens.extend(tokens);
+            let transcript = decode_buffered_window(session, config, audio, window)?;
+            self.append_window(window, transcript)?;
             if !self.cursor.commit(window) {
                 return Err("Flow window cursor rejected its own stable window".into());
             }
             self.decoded_windows += 1;
+            self.finished = false;
         }
         Ok(())
     }
@@ -141,19 +186,73 @@ impl TdtAccumulator {
         audio: &mut Vec<f32>,
         total_samples: u64,
     ) -> Result<String, String> {
+        self.finish(session, config, journal, reader, audio, total_samples)
+            .map(|result| result.text)
+    }
+
+    pub(crate) fn render_structured(
+        &mut self,
+        session: &mut dyn Inference,
+        config: &TdtRunConfig,
+        journal: &PcmJournal,
+        reader: &mut PcmJournalReader,
+        audio: &mut Vec<f32>,
+        total_samples: u64,
+    ) -> Result<StructuredResult, String> {
+        if self.evidence.is_none() {
+            return Err("Structured output requires evidence collection before decoding".into());
+        }
+        self.finish(session, config, journal, reader, audio, total_samples)
+    }
+
+    fn append_window(
+        &mut self,
+        window: Window,
+        transcript: transcribe_cpp::Transcript,
+    ) -> Result<(), String> {
+        // Validate the entire batch before committing any of it.
+        let tokens = transcript
+            .tokens
+            .iter()
+            .map(convert_token)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.stable_tokens.extend(tokens);
+        if let Some(evidence) = &mut self.evidence {
+            evidence.push(WindowEvidence { window, transcript });
+        }
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        session: &mut dyn Inference,
+        config: &TdtRunConfig,
+        journal: &PcmJournal,
+        reader: &mut PcmJournalReader,
+        audio: &mut Vec<f32>,
+        total_samples: u64,
+    ) -> Result<StructuredResult, String> {
         self.process_stable(session, config, journal, reader, audio, total_samples)?;
-        let mut merged = std::mem::take(&mut self.stable_tokens);
+        // A tail advances native decoder state. Success or failure, finalization
+        // is single-use; retry with a fresh accumulator and reset native state.
+        self.finished = true;
         if let Some(window) = self.cursor.tail(total_samples) {
             read_window(journal, reader, audio, window)?;
-            merged.extend(decode_buffered_window(session, config, audio, window)?);
+            let transcript = decode_buffered_window(session, config, audio, window)?;
+            self.append_window(window, transcript)?;
             self.decoded_windows += 1;
         }
-        let ids: Vec<i32> = merged.iter().map(|token| token.id).collect();
-        Ok(session
+        let ids: Vec<i32> = self.stable_tokens.iter().map(|token| token.id).collect();
+        let text = session
             .detokenize(&ids)
             .map_err(|error| format!("Flow token detokenization failed: {error}"))?
             .trim()
-            .to_string())
+            .to_string();
+        self.stable_tokens = Vec::new();
+        Ok(StructuredResult {
+            text,
+            windows: self.evidence.take().unwrap_or_default(),
+        })
     }
 }
 
@@ -177,7 +276,7 @@ fn decode_buffered_window(
     config: &TdtRunConfig,
     audio: &[f32],
     window: Window,
-) -> Result<Vec<Token>, String> {
+) -> Result<transcribe_cpp::Transcript, String> {
     i32::try_from(window.read_end.div_ceil(FRAME_SAMPLES))
         .map_err(|_| "Flow recording is too long for native timestamps".to_string())?;
     let start =
@@ -208,30 +307,30 @@ fn decode_buffered_window(
             window.read_start, window.read_end
         )
     })?;
-    convert_tokens(transcript.tokens)
+    Ok(transcript)
 }
 
+#[cfg(test)]
 fn convert_tokens(tokens: Vec<transcribe_cpp::Token>) -> Result<Vec<Token>, String> {
-    tokens
-        .into_iter()
-        .map(|token| {
-            let duration_ms = token.t1_ms.saturating_sub(token.t0_ms);
-            if token.t0_ms < 0
-                || token.t1_ms < token.t0_ms
-                || token.t0_ms % ENCODER_FRAME_MS != 0
-                || duration_ms % ENCODER_FRAME_MS != 0
-                || duration_ms / ENCODER_FRAME_MS > 4
-            {
-                return Err("Flow native token carried non-encoder-aligned timing".to_string());
-            }
-            Ok(Token {
-                id: token.id,
-                frame: (token.t0_ms / ENCODER_FRAME_MS) as u64,
-                confidence: token.p,
-                duration: (duration_ms / ENCODER_FRAME_MS) as u32,
-            })
-        })
-        .collect()
+    tokens.iter().map(convert_token).collect()
+}
+
+fn convert_token(token: &transcribe_cpp::Token) -> Result<Token, String> {
+    let duration_ms = token.t1_ms.saturating_sub(token.t0_ms);
+    if token.t0_ms < 0
+        || token.t1_ms < token.t0_ms
+        || token.t0_ms % ENCODER_FRAME_MS != 0
+        || duration_ms % ENCODER_FRAME_MS != 0
+        || duration_ms / ENCODER_FRAME_MS > 4
+    {
+        return Err("Flow native token carried non-encoder-aligned timing".to_string());
+    }
+    Ok(Token {
+        id: token.id,
+        frame: (token.t0_ms / ENCODER_FRAME_MS) as u64,
+        confidence: token.p,
+        duration: (duration_ms / ENCODER_FRAME_MS) as u32,
+    })
 }
 
 #[cfg(test)]
@@ -432,6 +531,223 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(","))
         }
+    }
+
+    #[test]
+    fn structured_output_preserves_window_evidence_and_full_sequence_text() {
+        for incremental in [false, true] {
+            let journal = PcmJournal::create().unwrap();
+            let mut reader = journal.reader().unwrap();
+            let mut session = RecordingInference::default();
+            let config = TdtRunConfig {
+                model_id: "fixture".into(),
+                language: None,
+            };
+            let mut accumulator = TdtAccumulator::new_structured(&session, &config).unwrap();
+            let mut audio = Vec::with_capacity(accumulator.max_input_samples());
+            for block in vec![0.0; 400_001].chunks(8001) {
+                journal.append(block).unwrap();
+                if incremental {
+                    accumulator
+                        .process_stable(
+                            &mut session,
+                            &config,
+                            &journal,
+                            &mut reader,
+                            &mut audio,
+                            journal.frame_count(),
+                        )
+                        .unwrap();
+                }
+            }
+            journal.close().unwrap();
+            let result = accumulator
+                .render_structured(
+                    &mut session,
+                    &config,
+                    &journal,
+                    &mut reader,
+                    &mut audio,
+                    journal.frame_count(),
+                )
+                .unwrap();
+            assert_eq!(result.text, "42,42,42");
+            assert_eq!(result.windows.len(), 3);
+            for (i, evidence) in result.windows.iter().enumerate() {
+                assert_eq!(evidence.window.chunk_start, i as u64 * 160_000);
+                assert_eq!(evidence.transcript.tokens[0].t0_ms, i as i64 * 10_000);
+                assert_eq!(evidence.transcript.tokens[0].p, 0.8);
+            }
+            assert!(audio.capacity() <= BUFFERED_MAX_SAMPLES as usize);
+            let calls = session.calls.len();
+            assert!(accumulator
+                .render(
+                    &mut session,
+                    &config,
+                    &journal,
+                    &mut reader,
+                    &mut audio,
+                    journal.frame_count()
+                )
+                .is_err());
+            assert_eq!(session.calls.len(), calls);
+        }
+    }
+
+    #[test]
+    fn evidence_retains_point_tokens_unicode_and_local_word_membership() {
+        let session = RecordingInference::default();
+        let config = TdtRunConfig {
+            model_id: "fixture".into(),
+            language: None,
+        };
+        let mut accumulator = TdtAccumulator::new_structured(&session, &config).unwrap();
+        let window = BufferedCursor::default().tail(1280).unwrap();
+        let transcript = transcribe_cpp::Transcript {
+            text: "é".into(),
+            raw_text: " é".into(),
+            tokens: vec![transcribe_cpp::Token {
+                id: 42,
+                p: f32::NAN,
+                t0_ms: 0,
+                t1_ms: 0,
+                word_index: 0,
+                seg_index: 0,
+                text: "é".into(),
+            }],
+            words: vec![transcribe_cpp::Word {
+                text: "é".into(),
+                first_token: 0,
+                n_tokens: 1,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        accumulator.append_window(window, transcript).unwrap();
+        let evidence = &accumulator.evidence.as_ref().unwrap()[0].transcript;
+        assert_eq!(evidence.raw_text, " é");
+        assert_eq!(evidence.tokens[0].text, "é");
+        assert_eq!(evidence.tokens[0].word_index, 0);
+        assert!(evidence.tokens[0].p.is_nan());
+        assert_eq!(evidence.words[0].n_tokens, 1);
+        assert_eq!(accumulator.stable_tokens[0].duration, 0);
+    }
+
+    #[test]
+    fn invalid_batch_commits_no_partial_tokens_or_evidence() {
+        let session = RecordingInference::default();
+        let config = TdtRunConfig {
+            model_id: "fixture".into(),
+            language: None,
+        };
+        let mut accumulator = TdtAccumulator::new_structured(&session, &config).unwrap();
+        let window = BufferedCursor::default().tail(1280).unwrap();
+        let transcript = transcribe_cpp::Transcript {
+            tokens: vec![
+                transcribe_cpp::Token::default(),
+                transcribe_cpp::Token {
+                    t0_ms: 1,
+                    t1_ms: 81,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(accumulator.append_window(window, transcript).is_err());
+        assert!(accumulator.stable_tokens.is_empty());
+        assert!(accumulator.evidence.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn failed_decode_requires_fresh_replay_without_reentering_native_state() {
+        for total in [1280, 400_001] {
+            let journal = PcmJournal::create().unwrap();
+            journal.append(&vec![0.0; total]).unwrap();
+            journal.close().unwrap();
+            let mut reader = journal.reader().unwrap();
+            let mut session = RecordingInference {
+                fail_call: Some(1),
+                ..Default::default()
+            };
+            let config = TdtRunConfig {
+                model_id: "fixture".into(),
+                language: None,
+            };
+            let mut accumulator = TdtAccumulator::new_structured(&session, &config).unwrap();
+            let mut audio = Vec::new();
+            assert!(accumulator
+                .render_structured(
+                    &mut session,
+                    &config,
+                    &journal,
+                    &mut reader,
+                    &mut audio,
+                    journal.frame_count()
+                )
+                .is_err());
+            let calls = session.calls.len();
+            assert!(accumulator
+                .render_structured(
+                    &mut session,
+                    &config,
+                    &journal,
+                    &mut reader,
+                    &mut audio,
+                    journal.frame_count()
+                )
+                .is_err());
+            assert_eq!(session.calls.len(), calls);
+        }
+    }
+
+    #[test]
+    fn empty_structured_recording_has_no_native_runs_or_fabricated_evidence() {
+        let journal = PcmJournal::create().unwrap();
+        journal.close().unwrap();
+        let mut reader = journal.reader().unwrap();
+        let mut session = RecordingInference::default();
+        let config = TdtRunConfig {
+            model_id: "fixture".into(),
+            language: None,
+        };
+        let mut accumulator = TdtAccumulator::new_structured(&session, &config).unwrap();
+        let result = accumulator
+            .render_structured(
+                &mut session,
+                &config,
+                &journal,
+                &mut reader,
+                &mut Vec::new(),
+                0,
+            )
+            .unwrap();
+        assert!(result.text.is_empty());
+        assert!(result.windows.is_empty());
+        assert!(session.calls.is_empty());
+    }
+
+    #[test]
+    fn compact_flow_cannot_claim_structured_evidence() {
+        let journal = PcmJournal::create().unwrap();
+        let mut reader = journal.reader().unwrap();
+        let mut session = RecordingInference::default();
+        let config = TdtRunConfig {
+            model_id: "fixture".into(),
+            language: None,
+        };
+        let mut accumulator = TdtAccumulator::new(&session, &config).unwrap();
+        assert!(accumulator
+            .render_structured(
+                &mut session,
+                &config,
+                &journal,
+                &mut reader,
+                &mut Vec::new(),
+                0
+            )
+            .is_err());
+        assert!(!accumulator.finished);
+        assert!(session.calls.is_empty());
     }
 
     #[test]

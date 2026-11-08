@@ -14,5 +14,5 @@ hound = "3.5"
 serde_json = "1"
 
 [patch.crates-io]
-transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "eeffcc3887018015d04d20e61d3698a33d790f24" }
-transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "eeffcc3887018015d04d20e61d3698a33d790f24" }
+transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "c8cf6b11dd5e67131b264025112293bda1bb8c86" }
+transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "c8cf6b11dd5e67131b264025112293bda1bb8c86" }
