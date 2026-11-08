@@ -113,13 +113,76 @@
     border-radius 460ms cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform, width, opacity;
 }
-/* Agent capture: a neutral highlight at the base, fading into the dark surface.
-   Background layers leave controls, layout and waveform untouched. */
+/* The Agent's colour rises from the base. Blue crosses violet into ember,
+   avoiding the green midpoint of a full-spectrum hue rotation. */
 .scard.agent {
+  border-color: #63617a;
+}
+.scard.agent::after {
+  content: "";
+  position: absolute;
+  inset: -65% -35% -100%;
+  z-index: 0;
+  pointer-events: none;
   background:
-    linear-gradient(to top, transparent, var(--s-surface) 80%),
-    linear-gradient(110deg, rgb(228 228 223 / 16%), rgb(228 228 223 / 8%)),
-    var(--s-surface);
+    radial-gradient(ellipse at 23% 70%, rgb(64 116 255 / 85%), transparent 48%),
+    radial-gradient(ellipse at 78% 72%, rgb(255 133 69 / 85%), transparent 46%),
+    radial-gradient(ellipse at 49% 80%, rgb(151 90 211 / 65%), transparent 58%);
+  mask-image: linear-gradient(
+    to top,
+    #000 15%,
+    rgb(0 0 0 / 85%) 40%,
+    transparent 78%
+  );
+  opacity: 0.68;
+  transform-origin: bottom center;
+  animation: agent-colour-drift 9s ease-in-out infinite alternate;
+}
+.scard.agent-working::after {
+  opacity: 0.92;
+  animation-duration: 5s;
+}
+@keyframes agent-colour-drift {
+  from {
+    transform: translate(-6%, 7%) rotate(-7deg) scale(1.05);
+  }
+  to {
+    transform: translate(6%, -12%) rotate(8deg) scale(1.12);
+  }
+}
+.agent-working-phrases {
+  display: inline-grid;
+  text-align: start;
+}
+.agent-working-phrases > span {
+  grid-area: 1 / 1;
+  opacity: 0;
+  transform: translateY(-5px);
+  transition:
+    opacity 180ms ease-out,
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.agent-working-phrases > .active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.agent-working-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scard.agent::after {
+    animation: none;
+    transform: none;
+  }
+  .agent-working-phrases > span {
+    transition: none;
+    transform: none;
+  }
 }
 /* Prompt Record: the same base tint as Agent, in orange/amber/yellow. Reveal
    upward after confirmed activation; the waveform and controls stay above it. */

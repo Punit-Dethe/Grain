@@ -1003,11 +1003,20 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
 async agentGetContext() : Promise<string | null> {
     return await TAURI_INVOKE("agent_get_context");
 },
-/**
- * Consume the first instruction (the panel calls this on mount).
- */
-async agentTakeInstruction() : Promise<string | null> {
+async agentTakeInstruction() : Promise<AgentInstruction | null> {
     return await TAURI_INVOKE("agent_take_instruction");
+},
+/**
+ * The hidden renderer calls this after applying its first reply/error state.
+ * Stop or a superseding summon makes a queued reveal a no-op.
+ */
+async agentPresentReply(generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_present_reply", { generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Copy text to the clipboard (used for the auto-copy of the first reply and the
@@ -1027,9 +1036,9 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
  * fallback pool (enabled providers in saved order). The
  * Explicitly selected text is supplied as the subject of the instruction.
  */
-async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<AgentReply, string>> {
+async agentRun(messages: AgentMessage[], context: string | null, generation: number | null) : Promise<Result<AgentReply, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context }) };
+    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context, generation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1828,6 +1837,10 @@ export type AgentConfirm = { token: string; title: string; summary: string; deta
  * [GRAIN] One material argument of a pending action, for the confirmation panel.
  */
 export type AgentConfirmField = { label: string; value: string }
+/**
+ * Consume the first instruction (the panel calls this on mount).
+ */
+export type AgentInstruction = { text: string; generation: number; is_error: boolean }
 /**
  * One conversation turn from the frontend.
  */

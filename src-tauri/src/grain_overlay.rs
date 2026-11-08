@@ -62,6 +62,17 @@ impl OverlayPresentation {
         self.working = false;
     }
 
+    fn begin_agent_working(&mut self, visible: bool) {
+        self.clear_capture();
+        self.visible = visible;
+        self.agent = true;
+        self.state = "processing".into();
+        self.work_kind = "agent".into();
+        self.working = true;
+        self.notice = None;
+        self.followup = None;
+    }
+
     fn mark_prompt_record(&mut self, session_id: u64) -> bool {
         if session_id != self.session_id
             || self.agent
@@ -76,6 +87,11 @@ impl OverlayPresentation {
 
     fn complete(&mut self, session_id: u64) -> bool {
         if session_id != self.session_id {
+            return false;
+        }
+        // Audio completion/cancellation must not retire the submitted Agent
+        // turn's pill. Only reply presentation or explicit Stop owns that exit.
+        if self.agent && self.work_kind == "agent" {
             return false;
         }
         self.clear_capture();
@@ -216,6 +232,26 @@ pub fn show_processing(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || show_processing_main(&handle));
 }
 
+pub(crate) fn show_agent_working(app: &AppHandle, generation: u64) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if !crate::agent::reply_wait_is_current(&handle, generation) {
+            return;
+        }
+        let Some(ctx) = handle.try_state::<OverlayContext>() else {
+            return;
+        };
+        let mut value = ctx.presentation.lock().unwrap();
+        value.begin_agent_working(
+            crate::settings::get_settings(&handle).overlay_style
+                != crate::settings::OverlayStyle::None,
+        );
+        publish(&handle, &value);
+        drop(value);
+        crate::overlay::show_processing_overlay(&handle);
+    });
+}
+
 fn show_processing_main(app: &AppHandle) {
     let Some(ctx) = app.try_state::<OverlayContext>() else {
         return;
@@ -337,7 +373,9 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             }
             DaemonEvent::RecordingStopped { session_id } if *session_id == value.session_id => {
                 value.ready = false;
-                if value.state == "streaming" {
+                if value.agent && value.work_kind == "agent" {
+                    // The working pill already acknowledged submission.
+                } else if value.state == "streaming" {
                     value.working = true;
                     value.work_kind = "transcribing".into();
                     transcribing = true;
@@ -531,7 +569,9 @@ pub fn change_overlay_style_setting(
 #[tauri::command]
 #[specta::specta]
 pub fn overlay_cancel(app: AppHandle) {
-    if crate::agent::input_is_active(&app) {
+    if crate::agent::waiting_for_reply(&app) {
+        crate::agent::global_close(&app);
+    } else if crate::agent::input_is_active(&app) {
         crate::agent::input_cancel(&app);
     } else {
         crate::utils::cancel_current_operation(&app);
@@ -568,6 +608,39 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
 mod tests {
     use super::OverlayPresentation;
     use crate::settings::OverlayStyle;
+
+    #[test]
+    fn submitted_agent_pill_outlives_audio_completion_until_reply_or_stop() {
+        for visible in [true, false] {
+            let mut value = OverlayPresentation {
+                session_id: 7,
+                agent: true,
+                ready: true,
+                committed: "captured instruction".into(),
+                notice: Some("old notice".into()),
+                followup: Some("old offer".into()),
+                ..Default::default()
+            };
+            value.begin_agent_working(visible);
+            assert_eq!(value.visible, visible);
+            assert_eq!(value.state, "processing");
+            assert!(value.agent && value.working && !value.ready);
+            assert!(
+                value.committed.is_empty() && value.notice.is_none() && value.followup.is_none()
+            );
+            // Both same-session audio teardown and old capture events are inert.
+            assert!(!value.complete(6));
+            assert!(!value.complete(7));
+            value.stream_text(7, "late transcript", "tail");
+            assert!(value.committed.is_empty());
+            assert_eq!(value.visible, visible);
+            assert!(value.working);
+            // AgentInputHide owns completion after reply presentation or Stop.
+            value.agent = false;
+            assert!(value.complete(7));
+            assert!(!value.visible && !value.working);
+        }
+    }
 
     #[test]
     fn prompt_feedback_is_confirmed_for_its_capture_and_cleared_at_completion() {

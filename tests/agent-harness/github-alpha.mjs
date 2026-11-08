@@ -20,6 +20,48 @@ import { waitFor, writeReport, Blocked } from "./support.mjs";
 import { hashFile } from "./stamp.mjs";
 
 export const repository = "Punit-Dethe/grain-github-alpha-test";
+// Match only host-owned constant messages; never retain arbitrary IPC/provider text.
+export function mcpFailureCode(error) {
+  const message = String(error);
+  for (const [text, code] of [
+    [
+      "MCP authentication is temporarily unavailable.",
+      "authentication_unavailable",
+    ],
+    ["The MCP account needs sign-in again.", "reconnect_required"],
+    [
+      "OAuth client registration does not match this authorization server.",
+      "registration_mismatch",
+    ],
+    [
+      "The MCP authorization setup is unsupported or changed.",
+      "authorization_configuration",
+    ],
+    ["The OS credential vault is unavailable.", "credential_vault"],
+    ["MCP protocol negotiation failed.", "protocol_negotiation"],
+    ["MCP protocol negotiation timed out.", "protocol_timeout"],
+    [
+      "MCP catalog request failed; the catalog is incomplete.",
+      "catalogue_request",
+    ],
+    [
+      "MCP discovery timed out; the catalog is incomplete.",
+      "catalogue_timeout",
+    ],
+    [
+      "MCP catalog exceeds the 128-tool limit; discovery is incomplete.",
+      "catalogue_tool_limit",
+    ],
+    [
+      "MCP catalog exceeds the metadata byte limit; discovery is incomplete.",
+      "catalogue_byte_limit",
+    ],
+    ["MCP account setup timed out.", "account_setup_timeout"],
+  ]) {
+    if (message.includes(text)) return code;
+  }
+  return "unclassified";
+}
 export function approvedGitHubAction(confirm, titles, required, optional = {}) {
   if (
     required.owner !== "Punit-Dethe" ||
@@ -158,6 +200,9 @@ export async function runInstalledGitHub(mode) {
           );
         }),
       ]);
+    } catch (error) {
+      error.diagnostic = { command, code: mcpFailureCode(error) };
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -311,7 +356,8 @@ export async function runInstalledGitHub(mode) {
         model: value.post_process_models?.[value.post_process_provider_id],
       };
     });
-    if (!settings.agentEnabled || !settings.modelSelected)
+    const agentMode = mode === "--read" || mode === "--workflow";
+    if (agentMode && (!settings.agentEnabled || !settings.modelSelected))
       throw new Blocked("Enable Agent and select its model in the test build.");
     const presets = await invoke("mcp_provider_status");
     const github = presets.find((item) => item.id === "github");
@@ -323,14 +369,16 @@ export async function runInstalledGitHub(mode) {
       throw new Blocked(
         "Connect and enable the GitHub preset in Browse extensions.",
       );
-    const custom = await invoke("mcp_connections_list");
-    if (
-      custom.some((row) => row.state === "enabled") ||
-      presets.some((row) => row.id !== "github" && row.enabled)
-    )
-      throw new Blocked(
-        "Disable other connections for this focused GitHub check.",
-      );
+    if (agentMode) {
+      const custom = await invoke("mcp_connections_list");
+      if (
+        custom.some((row) => row.state === "enabled") ||
+        presets.some((row) => row.id !== "github" && row.enabled)
+      )
+        throw new Blocked(
+          "Disable other connections for this focused GitHub check.",
+        );
+    }
     return {
       ...settings,
       connected: github.connected,
@@ -349,6 +397,7 @@ export async function runInstalledGitHub(mode) {
           },
         ],
         context: null,
+        generation: null,
       },
       300000,
     );
@@ -464,6 +513,7 @@ export async function runInstalledGitHub(mode) {
           },
         ],
         context: null,
+        generation: null,
       },
       300000,
     );

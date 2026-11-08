@@ -24,6 +24,12 @@
     "recordingHint": "Recording — speak or type",
     "transcribing": "Transcribing…",
     "thinking": "Thinking…",
+    "workingPhrases": {
+      "acknowledged": "On it…",
+      "working": "Working on it…",
+      "thinking": "Thinking it through…",
+      "continuing": "Still on it…"
+    },
     "processing": "PROCESSING",
     "copyReply": "COPY REPLY",
     "copied": "COPIED ✓",

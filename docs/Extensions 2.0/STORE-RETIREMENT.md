@@ -336,3 +336,16 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   TypeScript, Vite, 90 frontend tests, 60 harness unit tests, 156 core
   and SDK tests, 680 desktop tests, catalogue parity, and the upstream
   ratchet passed. Hotkey and microphone acceptance remain pending.
+
+### 2026-11-09 — Agent pill and GitHub fixes reconciled
+
+- Merged `codex/fix-github-extension-auth` at `e4a683419`. The animated
+  working pill, first-reply panel reveal, and deferred shortcut update
+  now run with the unified speech model.
+- The GitHub preset already carried the catalogue size and OAuth fixes.
+  Brought over the reliability evidence and focused diagnostic checks,
+  keeping the harness on the bundled MCP preset and isolated test app.
+- TypeScript, Vite, scoped ESLint, 90 frontend tests, 62 harness tests,
+  and 682 desktop tests passed. The Rust checks used an isolated source
+  copy because the running Windows app held a runtime DLL open.
+  Live pill interaction and packaged GitHub sign-in remain manual checks.

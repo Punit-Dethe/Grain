@@ -37,6 +37,55 @@ const empty: OverlayPresentation = {
   work_kind: "transcribing",
 };
 
+const workingPhraseKeys = [
+  "agent.workingPhrases.acknowledged",
+  "agent.workingPhrases.working",
+  "agent.workingPhrases.thinking",
+  "agent.workingPhrases.continuing",
+] as const;
+
+/** Lives only inside a visible working pill; no timer survives that surface. */
+function AgentWorkingLabel() {
+  const { t } = useTranslation();
+  const [phrase, setPhrase] = useState(0);
+  useEffect(() => {
+    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const update = () => {
+      clearInterval(timer);
+      timer = undefined;
+      if (!document.hidden && !reducedMotion.matches) {
+        timer = setInterval(
+          () => setPhrase((value) => (value + 1) % workingPhraseKeys.length),
+          3800,
+        );
+      }
+    };
+    update();
+    document.addEventListener("visibilitychange", update);
+    reducedMotion.addEventListener("change", update);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", update);
+      reducedMotion.removeEventListener("change", update);
+    };
+  }, []);
+  return (
+    <>
+      <span className="agent-working-status" role="status">
+        {t("agent.thinking")}
+      </span>
+      <span className="agent-working-phrases" aria-hidden="true">
+        {workingPhraseKeys.map((key, index) => (
+          <span key={key} className={index === phrase ? "active" : ""}>
+            {t(key)}
+          </span>
+        ))}
+      </span>
+    </>
+  );
+}
+
 const Waveform = memo(function Waveform({
   ready,
   session,
@@ -393,8 +442,11 @@ export function RecordingOverlay() {
   ]);
 
   if (!presentation.visible) return null;
+  const agentWorking = presentation.agent && presentation.work_kind === "agent";
   const showClose =
-    !hideCompactClose || (presentation.state === "streaming" && hasText);
+    agentWorking ||
+    !hideCompactClose ||
+    (presentation.state === "streaming" && hasText);
   const closeClass = showClose ? "" : "no-close";
   const agentClass = presentation.agent ? "agent" : "";
   const promptClass = presentation.prompt_recording ? "prompt-recording" : "";
@@ -453,7 +505,9 @@ export function RecordingOverlay() {
         <span className="sspinner" />
       </div>
       <span className="swork-label">
-        <span ref={workText}>{label}</span>
+        <span ref={workText}>
+          {agentWorking ? <AgentWorkingLabel /> : label}
+        </span>
       </span>
       {showClose && <div className="sbase-r">{cancelBtn}</div>}
     </div>
@@ -538,7 +592,7 @@ export function RecordingOverlay() {
   return (
     <div dir={direction} className={`ov-stage ${position} ov-fade show`}>
       <div
-        className={`scard compact ${agentClass} ${promptClass} ${closeClass} ${iconClass} ${busy ? "cworking" : ""}`}
+        className={`scard compact ${agentClass} ${promptClass} ${closeClass} ${iconClass} ${busy ? "cworking" : ""} ${agentWorking ? "agent-working" : ""}`}
       >
         {busy ? workingRow(workLabel) : listeningRow(false)}
       </div>

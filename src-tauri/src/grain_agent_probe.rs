@@ -84,6 +84,7 @@ async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
                     content: prompt,
                 }],
                 None,
+                None,
             )
             .await?;
             json!({"reply":reply})
