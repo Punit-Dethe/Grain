@@ -233,3 +233,26 @@ for settings commands.
   and package registry and SDK code. Keep the shared validators, file writer,
   MCP fixtures, and first-party desktop events. Packaged GitHub and Notion
   acceptance remains open.
+
+### 2026-11-08 — Native package machinery deleted
+
+Commit `c929e6af3` removes the package registry, installer, native OAuth,
+worker host, loopback WebSocket bridge, webview assets and permission, and
+package SDK and fixtures. Both desktop targets now use the MCP extension
+contract. First-party desktop events and the shared tool retrieval, storage,
+endpoint admission, and MCP account code remain in use.
+
+- The desktop harness now tests normal model replies and cancellation without
+  a native fixture. It keeps the controlled MCP read/write, lost-reply,
+  connection, and OAuth checks. The native and old manual-approval workflow
+  cases, including their genuine-model adapter, were retired. Some older MCP
+  cases still need to move to current discovery and automatic dispatch.
+- Normal Rust check, frontend and harness builds, UI parity, 77 frontend
+  tests, 60 Node tests, and 155 core tests passed. The 13 real-app cases
+  passed in `run-ePF5i2`, `run-XLvfFz`, `run-UPqfvC`, `run-tZFBHJ`, and
+  `run-JyR3Uk`. The incorrect-receipt control failed as expected in
+  `run-292vZw`. All 110 targeted desktop Agent, execution, and MCP unit
+  tests passed in `logic-WBW3DN`.
+- The next product checkpoint is packaged GitHub sign-in and a tool read
+  with a non-owner account, followed by packaged Notion sign-in and a tool
+  read. External publisher retirement remains a separate operational step.
