@@ -47,7 +47,7 @@ use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
-    get_settings, AgentAutocopy, AgentPanelPosition, AppSettings, ShortcutBinding,
+    get_settings, AgentAutocopy, AgentPanelPosition, ShortcutBinding,
     APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 
@@ -565,7 +565,7 @@ fn summon_inner(app: &AppHandle) {
             state.panel_expanded.store(false, Ordering::SeqCst);
         }
         // Publish ownership before presenting the cancellable voice input.
-        crate::grain_overlay::show_capture(&app, grain_core::SessionMode::Batch);
+        crate::grain_overlay::show_capture(&app, false);
         crate::pill_icon::emit_for_session(&app);
         crate::surface_watch::start(&app);
         crate::bridge::emit(
@@ -690,25 +690,6 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn dictation_model(settings: &AppSettings) -> &str {
-    if settings.selected_model.is_empty() {
-        &settings.selected_asr_model
-    } else {
-        &settings.selected_model
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn agent_dictation_uses_streaming_selection_when_standard_is_empty() {
-    let mut settings = grain_core::settings::get_default_settings();
-    settings.selected_asr_model = "streaming".into();
-    assert_eq!(dictation_model(&settings), "streaming");
-
-    settings.selected_model = "standard".into();
-    assert_eq!(dictation_model(&settings), "standard");
-}
-
 /// Warm the selected model and VAD while the Agent records.
 fn start_dictation(
     app: &AppHandle,
@@ -718,25 +699,24 @@ fn start_dictation(
     if rm.is_recording() {
         return None;
     }
-    let settings = get_settings(app);
-    let model = dictation_model(&settings);
-    if let Err(error) = crate::grain_capture::require_transcribable_model(app, model) {
+    let model = get_settings(app).selected_model;
+    if let Err(error) = crate::grain_capture::require_transcribable_model(app, &model) {
         warn!("[GRAIN] agent: not starting dictation: {error}");
         return None;
     }
     let tm = app.state::<Arc<TranscriptionManager>>();
-    tm.initiate_model_load_for(model.to_owned());
+    tm.initiate_model_load_for(model.clone());
     {
         let rm = Arc::clone(&rm);
         std::thread::spawn(move || {
             let _ = rm.preload_vad();
         });
     }
-    // Agent dictation is a batch-style capture: offline VAD profile (VAD is
-    // always on â€” grain-core settings have no `vad_enabled` toggle).
+    // Agent records one utterance with the selected dictation model and offline VAD.
+    // Its pill stays compact, independent of the model's streaming capability.
     match rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
         Ok(readiness) => {
-            *state.dictation_model.lock().unwrap() = Some(model.to_owned());
+            *state.dictation_model.lock().unwrap() = Some(model);
             Some(readiness)
         }
         Err(e) => {
@@ -1748,7 +1728,7 @@ pub fn input_typing(app: &AppHandle, active: bool) {
         app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
         if let Some(readiness) = start_dictation(app, &state) {
-            crate::grain_overlay::show_capture(app, grain_core::SessionMode::Batch);
+            crate::grain_overlay::show_capture(app, false);
             crate::pill_icon::emit_for_session(app);
             crate::surface_watch::start(app);
             crate::grain_capture::announce_ready(

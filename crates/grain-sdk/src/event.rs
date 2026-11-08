@@ -41,17 +41,12 @@ pub enum ResolvedTheme {
 /// What a recording session is for. Drives the "what you end with wins" logic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum SessionMode {
-    /// Plain dictation — stop pastes the raw transcript.
+    /// Grain Flow capture — model-selected incremental dictation.
     Dictation,
     /// Voice-to-AI — stop sends the transcript to the LLM with the active prompt.
     VoiceToAI,
-    /// Batch — record fully, then transcribe once (no rolling window).
+    /// Handy dictation — the selected model chooses batch or live streaming.
     Batch,
-    /// [GRAIN] Native ASR — live streaming dictation. Tells the pill to switch
-    /// from the small collapsed capsule to the expanded Studio Window, since
-    /// only this mode has a stabilized live-text stream (`Asr*` events) worth
-    /// displaying.
-    NativeAsr,
 }
 
 /// One event broadcast by the daemon. `Clone` so every subscriber gets a copy;

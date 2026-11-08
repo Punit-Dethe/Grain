@@ -9,17 +9,17 @@ reference, implementation history and build evidence are in the
 
 ## Ownership and integration seams
 
-| Responsibility                                                                                                                                                            | Active owner                                                                                                                   | Sync rule                                                                                                                                                                        |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Native window creation, monitor/DPI/text scaling, nonactivation, topmost/Spaces/layer-shell behavior, placement, readiness event, audio throttle, delayed-hide generation | `src-tauri/src/handy/overlay.rs`, compiled as `crate::overlay`                                                                 | Merge Handy fixes into this active module. Preserve only marked integration hooks; do not copy lifecycle algorithms into Grain.                                                  |
-| Capture presentation, session/generation guards, snapshots, Agent ownership, notices/follow-up, cancellation destination                                                  | `src-tauri/src/grain_overlay.rs`                                                                                               | Grain adapter around the shared lifecycle. Re-thread upstream contracts here; do not alias it as `crate::overlay`.                                                               |
-| First real sample, cancellation during arming, feedback and mute                                                                                                          | Shared recorder/audio-manager `RecordingReadiness`; `src-tauri/src/grain_capture.rs` adapts callers                            | Check Batch, Flow, Native ASR, Agent, extensions, action sessions and onboarding. Device-open success is not sample readiness. Preserve cancellation after every blocking stage. |
-| Bounded PCM/journal callbacks and resampler tail                                                                                                                          | Shared marked recorder/audio-manager hooks; `grain_audio_journal.rs`, `grain_actions.rs`                                       | Preserve journal ownership, overflow failure and tail delivery. The unrelated ring-buffer and Earshot ports remain deferred.                                                     |
-| Stream text and working phases                                                                                                                                            | Shared transcription manager emits `StreamTextEvent`/`StreamPhaseEvent`; owned overlay adapts public events/snapshot hydration | Committed prefix plus replaceable tentative tail; retain finalizing text, reject stale sessions, and keep Compact/None from opening.                                             |
-| UI layout, caption expansion/scrolling, cleanup, waveform motion, colors and Agent tint                                                                                   | `src/app/overlay/RecordingOverlay.tsx`, `wave.ts`, `overlay.css`                                                               | Grain-owned. Review upstream UI commits as behavioral problem reports and adapt relevant fixes explicitly; never merge/restore the upstream frontend file.                       |
-| App/site identity                                                                                                                                                         | `pill_icon.rs`, `surface_watch.rs`                                                                                             | Keep existing Rust detection and per-session cleanup. No foreground-app detection in the WebView.                                                                                |
-| Preferences                                                                                                                                                               | `grain-core` settings/context, owned commands, settings store/components                                                       | Persist in Rust; frontend commands write, events/snapshot read. No frontend-only preference or new parallel settings system.                                                     |
-| Build/event boundary                                                                                                                                                      | `lib.rs`, `grain_events.rs`, generated `src/app/bindings.ts`, `recording-overlay.html`, `vite.config.ts`                       | Compile the shared lifecycle and owned adapters separately. Export bindings after command/event/type changes. Keep the owned entry in both the native builders and Vite.         |
+| Responsibility                                                                                                                                                            | Active owner                                                                                                                   | Sync rule                                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native window creation, monitor/DPI/text scaling, nonactivation, topmost/Spaces/layer-shell behavior, placement, readiness event, audio throttle, delayed-hide generation | `src-tauri/src/handy/overlay.rs`, compiled as `crate::overlay`                                                                 | Merge Handy fixes into this active module. Preserve only marked integration hooks; do not copy lifecycle algorithms into Grain.                                              |
+| Capture presentation, session/generation guards, snapshots, Agent ownership, notices/follow-up, cancellation destination                                                  | `src-tauri/src/grain_overlay.rs`                                                                                               | Grain adapter around the shared lifecycle. Re-thread upstream contracts here; do not alias it as `crate::overlay`.                                                           |
+| First real sample, cancellation during arming, feedback and mute                                                                                                          | Shared recorder/audio-manager `RecordingReadiness`; `src-tauri/src/grain_capture.rs` adapts callers                            | Check batch/streaming Dictation, Flow, Agent, action sessions and onboarding. Device-open success is not sample readiness. Preserve cancellation after every blocking stage. |
+| Bounded PCM/journal callbacks and resampler tail                                                                                                                          | Shared marked recorder/audio-manager hooks; `grain_audio_journal.rs`, `grain_actions.rs`                                       | Preserve journal ownership, overflow failure and tail delivery. The unrelated ring-buffer and Earshot ports remain deferred.                                                 |
+| Stream text and working phases                                                                                                                                            | Shared transcription manager emits `StreamTextEvent`/`StreamPhaseEvent`; owned overlay adapts public events/snapshot hydration | Committed prefix plus replaceable tentative tail; retain finalizing text, reject stale sessions, and keep Compact/None from opening.                                         |
+| UI layout, caption expansion/scrolling, cleanup, waveform motion, colors and Agent tint                                                                                   | `src/app/overlay/RecordingOverlay.tsx`, `wave.ts`, `overlay.css`                                                               | Grain-owned. Review upstream UI commits as behavioral problem reports and adapt relevant fixes explicitly; never merge/restore the upstream frontend file.                   |
+| App/site identity                                                                                                                                                         | `pill_icon.rs`, `surface_watch.rs`                                                                                             | Keep existing Rust detection and per-session cleanup. No foreground-app detection in the WebView.                                                                            |
+| Preferences                                                                                                                                                               | `grain-core` settings/context, owned commands, settings store/components                                                       | Persist in Rust; frontend commands write, events/snapshot read. No frontend-only preference or new parallel settings system.                                                 |
+| Build/event boundary                                                                                                                                                      | `lib.rs`, `grain_events.rs`, generated `src/app/bindings.ts`, `recording-overlay.html`, `vite.config.ts`                       | Compile the shared lifecycle and owned adapters separately. Export bindings after command/event/type changes. Keep the owned entry in both the native builders and Vite.     |
 
 The shared overlay's marked hooks are limited to the owned entry document,
 shared-bounds snapshot, supplemental notice/follow-up state access, public audio
@@ -28,24 +28,26 @@ offset hooks and updated bounds fixtures do not replace Handy placement logic.
 
 ## Product contract to preserve
 
-| Saved preference      | Standard (Batch / Flow) | Streaming shortcut |
-| --------------------- | ----------------------- | ------------------ |
-| `none` (None)         | Hidden                  | Hidden             |
-| `minimal` (Compact)   | Compact                 | Compact            |
-| `live` (Live preview) | Compact                 | Live text          |
+| Saved preference      | Batch / Flow model | Streaming model |
+| --------------------- | ------------------ | --------------- |
+| `none` (None)         | Hidden             | Hidden          |
+| `minimal` (Compact)   | Compact            | Compact         |
+| `live` (Live preview) | Compact            | Live text       |
 
 Agent capture is compact when enabled, with its blue/sky-blue base tint.
 Its result/conversation window stays separate. Compact/Live preference changes
 apply to the next capture; None hides the active pill. Top/Bottom placement is
-independent of this preference. Selected models choose the internal Standard action, not the pill presentation.
-`selected_model` drives Standard; `selected_asr_model` drives Streaming.
-Alt+Space (Option+Space on macOS) starts Standard or reviewed Parakeet TDT
-v2/v3 Flow automatically; all speech-to-text runs locally.
-Translate to English retains Standard because Flow cannot translate.
+independent of this preference.
+`selected_model` is the single dictation model. Alt+Space (Option+Space on
+macOS) starts Handy's shared TranscribeAction, which selects offline/streaming
+VAD and live decode from model capability. Only reviewed Parakeet TDT v2/v3
+artifacts route to Flow; Translate to English uses the shared action.
+Live preview follows selected model capability plus the Live preference; Flow
+stays compact. There is no separate Streaming model, binding or action.
 The coordinator resolves through `grain_dictation_routing.rs` at start and
 retains that action for stop/PTT release even if settings change.
-`transcribe_realtime` remains an internal action with no binding or model-change
-shortcut reconciliation. AI can borrow Standard or Streaming.
+`transcribe_realtime` remains internal; the optional AI key uses the same
+selected model. See [the convergence record](DICTATION-CONVERGENCE-2026-11-06.md).
 
 Preserve the always-dark `#1F1F21` surface and `#474749` border, neutral gray
 accents, foreground icon, and original Grain waveform response. Waveform is the

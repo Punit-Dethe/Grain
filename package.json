@@ -30,7 +30,7 @@
     "test:agent:harness": "node --test tests/agent-harness/runner.test.mjs"
   },
   "dependencies": {
-    "@handy-computer/models": "0.2.2",
+    "@handy-computer/models": "0.2.3",
     "@fontsource-variable/ibm-plex-sans": "5.3.0",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/api": "^2.11.1",

@@ -1,6 +1,6 @@
 //! Grain presentation supplements to Handy's shared overlay lifecycle.
 use base64::Engine;
-use grain_core::{DaemonEvent, SessionMode};
+use grain_core::DaemonEvent;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::{
@@ -35,22 +35,21 @@ pub struct OverlayPresentation {
 
 impl OverlayPresentation {
     fn for_capture(
-        mode: SessionMode,
+        live_preview: bool,
         style: crate::settings::OverlayStyle,
         app_icon_enabled: bool,
     ) -> Self {
         Self {
             app_icon_enabled,
             visible: style != crate::settings::OverlayStyle::None,
-            // Live preview applies only to the live-transcription action.
+            // Live preview follows the selected model capability, as in Handy.
             // Minimal forces every action to use the compact recording card.
-            state:
-                if style == crate::settings::OverlayStyle::Live && mode == SessionMode::NativeAsr {
-                    "streaming"
-                } else {
-                    "recording"
-                }
-                .into(),
+            state: if style == crate::settings::OverlayStyle::Live && live_preview {
+                "streaming"
+            } else {
+                "recording"
+            }
+            .into(),
             ..Default::default()
         }
     }
@@ -146,7 +145,7 @@ pub fn set_app_icon_enabled(app: &AppHandle, enabled: bool) {
     }
 }
 
-pub fn show_capture(app: &AppHandle, mode: SessionMode) -> u64 {
+pub fn show_capture(app: &AppHandle, live_preview: bool) -> u64 {
     let generation = app
         .state::<OverlayContext>()
         .capture_generation
@@ -160,7 +159,7 @@ pub fn show_capture(app: &AppHandle, mode: SessionMode) -> u64 {
             .load(Ordering::Acquire)
             == generation
         {
-            show_capture_main(&handle, mode);
+            show_capture_main(&handle, live_preview);
         }
     });
     generation
@@ -183,10 +182,15 @@ pub fn hide_failed_capture(app: &AppHandle, generation: u64) {
     });
 }
 
-fn show_capture_main(app: &AppHandle, mode: SessionMode) {
+fn show_capture_main(app: &AppHandle, live_preview: bool) {
     let settings = crate::settings::get_settings(app);
-    let presentation =
-        OverlayPresentation::for_capture(mode, settings.overlay_style, settings.pill_show_app_icon);
+    // Use the caller's capability snapshot, the same one Handy uses for VAD.
+    // Do not re-read the selected model after this show was queued.
+    let presentation = OverlayPresentation::for_capture(
+        live_preview,
+        settings.overlay_style,
+        settings.pill_show_app_icon,
+    );
     let streaming = presentation.state == "streaming";
     if let Some(ctx) = app.try_state::<OverlayContext>() {
         ctx.notice_generation.fetch_add(1, Ordering::AcqRel);
@@ -564,12 +568,11 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
 mod tests {
     use super::OverlayPresentation;
     use crate::settings::OverlayStyle;
-    use grain_core::SessionMode;
 
     #[test]
     fn prompt_feedback_is_confirmed_for_its_capture_and_cleared_at_completion() {
-        for mode in [SessionMode::Batch, SessionMode::NativeAsr] {
-            let mut value = OverlayPresentation::for_capture(mode, OverlayStyle::Live, false);
+        for streaming in [false, true] {
+            let mut value = OverlayPresentation::for_capture(streaming, OverlayStyle::Live, false);
             value.session_id = 2;
             assert!(!value.mark_prompt_record(1));
             assert!(!value.prompt_recording);
@@ -602,11 +605,7 @@ mod tests {
     #[test]
     fn missing_icon_is_distinct_from_the_disabled_icon_preference() {
         for enabled in [true, false] {
-            let value = OverlayPresentation::for_capture(
-                SessionMode::Batch,
-                OverlayStyle::Minimal,
-                enabled,
-            );
+            let value = OverlayPresentation::for_capture(false, OverlayStyle::Minimal, enabled);
             assert_eq!(value.app_icon_enabled, enabled);
             assert!(value.icon.is_none());
             assert!(!value.prompt_recording);
@@ -616,27 +615,15 @@ mod tests {
     #[test]
     fn pill_preference_and_capture_mode_select_presentation() {
         for (style, visible, expected_states) in [
-            (OverlayStyle::None, false, ["recording"; 4]),
-            (OverlayStyle::Minimal, true, ["recording"; 4]),
-            (
-                OverlayStyle::Live,
-                true,
-                ["recording", "recording", "recording", "streaming"],
-            ),
+            (OverlayStyle::None, false, ["recording"; 2]),
+            (OverlayStyle::Minimal, true, ["recording"; 2]),
+            (OverlayStyle::Live, true, ["recording", "streaming"]),
         ] {
-            for (mode, expected_state) in [
-                SessionMode::Batch,
-                SessionMode::Dictation,
-                SessionMode::VoiceToAI,
-                SessionMode::NativeAsr,
-            ]
-            .into_iter()
-            .zip(expected_states)
-            {
-                let mut value = OverlayPresentation::for_capture(mode, style, true);
+            for (streaming, expected_state) in [false, true].into_iter().zip(expected_states) {
+                let mut value = OverlayPresentation::for_capture(streaming, style, true);
                 value.session_id = 7;
-                assert_eq!(value.visible, visible, "{style:?} / {mode:?}");
-                assert_eq!(value.state, expected_state, "{style:?} / {mode:?}");
+                assert_eq!(value.visible, visible, "{style:?} / {streaming:?}");
+                assert_eq!(value.state, expected_state, "{style:?} / {streaming:?}");
                 if expected_state == "streaming" {
                     value.stream_text(7, "live words", "tail");
                     assert_eq!(value.committed, "live words");

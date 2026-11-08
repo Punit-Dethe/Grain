@@ -31,11 +31,12 @@ a saved `extension_mode` binding, so no keyboard backend registers a chord for
 it, and Handy's shortcut handler and macOS `secure_input.rs` carry no Extension
 Mode hooks.
 
-Standard (`transcribe`, Alt+Space) selects reviewed installed Parakeet TDT v2/v3
-Flow through `grain-core/capture.rs` and `grain_dictation_routing.rs`. Other
-models use ordinary local batch inference. Translate to English retains the
-batch path. Streaming (`transcribe_native_asr`, Ctrl+Space) retains its separate
-model selection and native streaming path.
+Dictation (`transcribe`, Alt+Space) uses a single `selected_model`, catalogue
+and Handy capture action. Streaming capability chooses Handy's streaming VAD
+and live decode; non-streaming models use its offline/chunked/batch policy.
+Exact reviewed TDT v2/v3 models route to Flow; translation uses the shared
+capture action. There is no separate Streaming shortcut or model slot.
+See [the convergence record](DICTATION-CONVERGENCE-2026-11-06.md).
 
 Speech provider types, commands, cloud toggles and STT credential maps no longer
 exist in the product contract. Unknown development settings are ignored and

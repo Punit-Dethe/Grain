@@ -22,9 +22,8 @@ pub(crate) fn capture_shortcut_conflicts(
     id: &str,
     candidate: &str,
 ) -> bool {
-    const IDS: [&str; 5] = [
+    const IDS: [&str; 4] = [
         "transcribe",
-        "transcribe_native_asr",
         "summon_agent",
         "transcribe_send_to_ai",
         "prompt_record",
@@ -72,27 +71,9 @@ mod capture_shortcut_conflict_tests {
     use super::*;
 
     #[test]
-    fn streaming_default_is_supported_by_both_shortcut_backends() {
-        let settings = settings::get_default_settings();
-        let raw = &settings.bindings["transcribe_native_asr"].current_binding;
-        assert_eq!(raw, "ctrl+space");
-        assert!(crate::shortcut::tauri_impl::validate_shortcut(raw).is_ok());
-        assert!(raw
-            .parse::<tauri_plugin_global_shortcut::Shortcut>()
-            .is_ok());
-        assert!(raw.parse::<handy_keys::Hotkey>().unwrap().key.is_some());
-        assert!(!capture_shortcut_conflicts(
-            &settings,
-            "transcribe_native_asr",
-            raw
-        ));
-    }
-
-    #[test]
     fn every_capture_and_agent_pair_conflicts_even_when_features_are_off() {
         let ids = [
             "transcribe",
-            "transcribe_native_asr",
             "summon_agent",
             "transcribe_send_to_ai",
             "prompt_record",
@@ -495,20 +476,6 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
     Ok(())
 }
 
-/// [GRAIN] Which mode the AI shortcut starts from idle. Runtime-only — every
-/// capture mode is always registered, so no key is added or dropped by this.
-#[tauri::command]
-#[specta::specta]
-pub fn change_capture_ai_start_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
-    if !grain_core::capture::is_capture_mode(&mode) {
-        return Err("AI start mode must be Dictation or Streaming".into());
-    }
-    let mut settings = settings::get_settings(&app);
-    settings.capture_ai_start_mode = mode;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 /// [GRAIN] Whether the AI shortcut, pressed during a capture, ends it and routes
 /// the transcript to AI.
 #[tauri::command]
@@ -711,4 +678,16 @@ pub(crate) fn require_main_window(window: &tauri::WebviewWindow) -> Result<(), S
     (window.label() == "main")
         .then_some(())
         .ok_or_else(|| "extension management is available only from Grain settings".to_string())
+}
+
+/// Catalogue preferences do not alter the recognition language or selected model.
+#[tauri::command]
+#[specta::specta]
+pub fn change_spoken_languages_setting(
+    app: AppHandle,
+    languages: Vec<String>,
+) -> Result<(), String> {
+    app.state::<std::sync::Arc<grain_core::AppContext>>()
+        .update_settings(|settings| settings.spoken_languages = languages)
+        .map_err(|error| error.to_string())
 }

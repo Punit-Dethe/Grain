@@ -1,224 +1,101 @@
-/**
- * [GRAIN] One model picker for both roles.
- *
- * Grain needs two model slots: one local model and one Live streaming model.
- * Flow can use the local slot only when it contains a reviewed Parakeet TDT
- * artifact.
- * They were two visually identical collapsibles stacked on top of each other,
- * which asked the user to work out from their titles alone that these were
- * different registries serving different capture modes — and gave no answer at
- * all to "which one am I supposed to pick?".
- *
- * Here both roles are stated up front as two slots. Each says what it is for,
- * what is in it, and — when it is empty — that it is empty and how to fix that.
- * Choosing happens in one library below, with a tab per role, so the picker is
- * a single place rather than two lookalikes.
- */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronRight, Plus } from "lucide-react";
 import { useModelStore } from "@/stores/modelStore";
-import { useSettings } from "@/hooks/useSettings";
-import { ModelLibrary } from "../ModelLibrary";
-import { AsrModelLibrary } from "../AsrModelLibrary";
-import { getFlowAvailability } from "@/lib/flowAvailability";
+import { ModelsSettings } from "@/handy-models/components/settings/models/ModelsSettings";
+import { useModelEntries } from "@/handy-models/components/settings/models/modelEntries";
+import { toTableModel } from "@/handy-models/components/shared/modelTable/tableModel";
+import {
+  Codes,
+  Values,
+} from "@/handy-models/components/shared/modelTable/columns";
+import { watchModelJobs } from "@/handy-models/modelJobs";
 
-export type ModelRole = "standard" | "streaming";
+/** Handy's catalogue, with Grain's existing settings and model store. */
+export function ModelPicker() {
+  const { t } = useTranslation();
+  const { models, currentModel, loading } = useModelStore();
+  const { facts, lists } = useModelEntries();
+  const [expanded, setExpanded] = useState<boolean | null>(null);
+  const catalogueId = useId();
+  const selectedInfo = models.find((model) => model.id === currentModel);
+  const selected = selectedInfo ? toTableModel(selectedInfo, t) : null;
+  // One language keeps the closed row compact; the catalogue shows every
+  // preferred language in its full set of accuracy columns.
+  const summaryGrading = { ...facts, langs: facts.langs.slice(0, 1) };
+  const open = expanded ?? (!loading && !selected);
 
-interface SlotProps {
-  role: ModelRole;
-  label: string;
-  purpose: string;
-  modelName: string | null;
-  open: boolean;
-  onOpen: () => void;
+  useEffect(() => {
+    void useModelStore.getState().initialize();
+    return watchModelJobs();
+  }, []);
+
+  useEffect(() => {
+    if (currentModel) setExpanded(false);
+  }, [currentModel]);
+
+  return (
+    <section className="handy-model-catalogue space-y-3">
+      <h2 className="text-xl font-semibold">{t("settings.models.title")}</h2>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={open ? catalogueId : undefined}
+        onClick={() => setExpanded(!open)}
+        className="grid w-full grid-cols-[minmax(0,1fr)_auto_16px] items-center gap-4 rounded-xl border border-line bg-paper-raised px-4 py-3 text-start transition-colors hover:bg-wash focus:outline-none focus-visible:ring-1 focus-visible:ring-logo-primary"
+      >
+        <span className="min-w-0">
+          <span
+            className="block truncate text-sm font-semibold"
+            title={selected?.name}
+          >
+            {selected?.name ?? t("settings.models.choose", "Choose a model")}
+          </span>
+          <span className="mt-1 block text-xs text-ink-3">
+            {t(
+              open
+                ? "settings.models.hideCatalogue"
+                : "settings.models.browseCatalogue",
+            )}
+          </span>
+        </span>
+        {selected ? (
+          <span className="grid gap-2">
+            <Codes langs={summaryGrading.langs} />
+            <Values
+              grading={summaryGrading}
+              model={selected.model}
+              streaming={selected.streaming}
+              sizeMb={selected.sizeMb}
+            />
+          </span>
+        ) : (
+          <span />
+        )}
+        <ChevronDown
+          size={16}
+          aria-hidden="true"
+          className={open ? "rotate-180" : ""}
+        />
+      </button>
+      {open && (
+        <div
+          id={catalogueId}
+          className="flex h-[min(65vh,640px)] min-h-[320px]"
+        >
+          <ModelsSettings facts={facts} lists={lists} />
+        </div>
+      )}
+      <CatalogueError />
+    </section>
+  );
 }
 
-/**
- * An empty slot has to read as deliberately empty and immediately actionable.
- * A blank row with a chevron reads as broken, so the empty state says what is
- * missing and carries its own call to action.
- */
-const ModelSlot: React.FC<SlotProps> = ({
-  role,
-  label,
-  purpose,
-  modelName,
-  open,
-  onOpen,
-}) => {
-  const { t } = useTranslation();
-  const filled = Boolean(modelName);
-
-  return (
-    <button
-      type="button"
-      className={`model-slot${filled ? " is-filled" : " is-empty"}${open ? " is-open" : ""}`}
-      aria-expanded={open}
-      onClick={onOpen}
-    >
-      <span className="model-slot-role">{label}</span>
-      <span className="model-slot-name">
-        {filled ? modelName : t("settings.speechToText.picker.empty")}
-      </span>
-      <span className="model-slot-foot">
-        <span className="model-slot-purpose">{purpose}</span>
-        <span className="model-slot-action">
-          {filled ? (
-            <>
-              <Check size={13} aria-hidden="true" />
-              {t("settings.speechToText.picker.change")}
-            </>
-          ) : (
-            <>
-              <Plus size={13} aria-hidden="true" />
-              {t("settings.speechToText.picker.choose")}
-            </>
-          )}
-          <ChevronRight size={13} aria-hidden="true" />
-        </span>
-      </span>
-      <span className="model-slot-id" aria-hidden="true">
-        {role}
-      </span>
-    </button>
-  );
-};
-
-export const ModelPicker: React.FC = () => {
-  const { t } = useTranslation();
-  const { getSetting } = useSettings();
-  const { models: allModels, currentModel, initialize } = useModelStore();
-
-  // Which role's library is open. `null` = closed; the picker is not a
-  // permanently-expanded wall of models.
-  const [openRole, setOpenRole] = useState<ModelRole | null>(null);
-  // Mount each library only once its tab has been opened, then keep it mounted
-  // so reopening is instant and the height animation runs both ways.
-  const [mounted, setMounted] = useState<Record<ModelRole, boolean>>({
-    standard: false,
-    streaming: false,
-  });
-
-  useEffect(() => {
-    void initialize();
-  }, [initialize]);
-
-  useEffect(() => {
-    if (openRole) setMounted((prev) => ({ ...prev, [openRole]: true }));
-  }, [openRole]);
-
-  const selectedAsrModel = getSetting("selected_asr_model") ?? "";
-  const streamingModels = useMemo(
-    () => allModels.filter((m) => m.supports_streaming),
-    [allModels],
-  );
-
-  const standardName =
-    allModels.find((m) => m.id === currentModel)?.name ?? null;
-  const streamingName =
-    streamingModels.find((m) => m.id === selectedAsrModel)?.name ?? null;
-  const flowAvailable = getFlowAvailability(
-    allModels,
-    currentModel,
-    getSetting("translate_to_english") ?? false,
-  ).available;
-  const standardPurpose = t(
-    flowAvailable
-      ? "settings.speechToText.picker.standard.purposeFlow"
-      : "settings.speechToText.picker.standard.purpose",
-  );
-
-  // Close the library once a role's model actually changes — the question that
-  // opened it has been answered.
-  const prev = useRef({ standard: currentModel, streaming: selectedAsrModel });
-  useEffect(() => {
-    const changed =
-      (prev.current.standard !== currentModel && currentModel != null) ||
-      (prev.current.streaming !== selectedAsrModel && selectedAsrModel !== "");
-    if (changed) setOpenRole(null);
-    prev.current = { standard: currentModel, streaming: selectedAsrModel };
-  }, [currentModel, selectedAsrModel]);
-
-  const toggle = (role: ModelRole) =>
-    setOpenRole((current) => (current === role ? null : role));
-
-  return (
-    <div className="space-y-2.5">
-      <div className="flex items-center gap-2.5 px-1">
-        <h2 className="font-mono text-[0.68rem] font-semibold text-ink uppercase tracking-[0.18em]">
-          {t("settings.speechToText.picker.title")}
-        </h2>
-        <div className="flex-1 flex items-center gap-2 translate-y-[-1px]">
-          <span className="flex-1 border-t border-line" />
-        </div>
-      </div>
-
-      <div className="surface-well overflow-hidden">
-        <div className="model-slot-row">
-          <ModelSlot
-            role="standard"
-            label={t("settings.speechToText.picker.standard.label")}
-            purpose={standardPurpose}
-            modelName={standardName}
-            open={openRole === "standard"}
-            onOpen={() => toggle("standard")}
-          />
-          <ModelSlot
-            role="streaming"
-            label={t("settings.speechToText.picker.streaming.label")}
-            purpose={t("settings.speechToText.picker.streaming.purpose")}
-            modelName={streamingName}
-            open={openRole === "streaming"}
-            onOpen={() => toggle("streaming")}
-          />
-        </div>
-
-        {/* Height animates via the grid-rows 0fr↔1fr technique — no JS
-            measuring, no jump. */}
-        <div
-          className="grid motion-reduce:transition-none"
-          style={{
-            gridTemplateRows: openRole ? "1fr" : "0fr",
-            transition: "grid-template-rows 260ms ease-out",
-          }}
-        >
-          <div className="overflow-hidden min-h-0">
-            <div className="model-library-panel">
-              {/* The same tabs inside the library, so a user who opened the
-                  wrong one can switch without closing and starting again. */}
-              <div
-                className="model-role-tabs"
-                role="tablist"
-                aria-label={t("settings.speechToText.picker.title")}
-              >
-                {(["standard", "streaming"] as const).map((role) => (
-                  <button
-                    key={role}
-                    type="button"
-                    role="tab"
-                    aria-selected={openRole === role}
-                    className={openRole === role ? "active" : ""}
-                    onClick={() => setOpenRole(role)}
-                  >
-                    {t(`settings.speechToText.picker.${role}.label`)}
-                  </button>
-                ))}
-              </div>
-              {mounted.standard && (
-                <div hidden={openRole !== "standard"}>
-                  <ModelLibrary />
-                </div>
-              )}
-              {mounted.streaming && (
-                <div hidden={openRole !== "streaming"}>
-                  <AsrModelLibrary />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+function CatalogueError() {
+  const error = useModelStore((state) => state.error);
+  return error ? (
+    <p role="alert" className="text-status-error">
+      {error}
+    </p>
+  ) : null;
+}

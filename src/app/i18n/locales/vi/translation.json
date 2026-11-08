@@ -156,22 +156,40 @@
       "noSettingsNeeded": "Mô hình này hoạt động tự động mà không cần cấu hình."
     },
     "models": {
-      "title": "Mô hình chuyển đổi",
-      "description": "Chọn mô hình chuyển đổi hoặc tải thêm mô hình. Các mô hình khác nhau có mức độ chính xác và tốc độ khác nhau.",
-      "downloaded": "Đã tải xuống",
-      "available": "Có thể tải xuống",
-      "deleteConfirm": "Bạn có chắc chắn muốn xóa {{modelName}}? Bạn sẽ cần tải lại để sử dụng.",
-      "deleteActiveConfirm": "{{modelName}} là mô hình đang hoạt động của bạn. Xóa nó sẽ dừng phiên âm cho đến khi bạn chọn một mô hình mới. Bạn có chắc không?",
-      "deleteTitle": "Xóa mô hình",
-      "filters": {
-        "all": "Tất cả",
-        "multiLanguage": "Đa ngôn ngữ",
-        "translation": "Dịch thuật",
-        "allLanguages": "Tất cả ngôn ngữ"
+      "title": "Mô hình",
+      "changeLanguages": "Đổi ngôn ngữ",
+      "sections": {
+        "yours": "Trên máy tính này",
+        "fits": "Cho các ngôn ngữ của bạn",
+        "untested": "Chưa kiểm thử"
       },
-      "noModelsMatch": "Không có mô hình nào khớp với bộ lọc này.",
-      "yourModels": "Mô hình đã tải",
-      "availableModels": "Có sẵn để tải xuống"
+      "untestedNote": "Chưa được kiểm thử với Handy. Chúng có thể chậm hơn hoặc mắc nhiều lỗi hơn.",
+      "untestedHidden_one": "{{count}} mô hình khác chưa được tinh chỉnh cho việc đọc chính tả. Hãy tìm kiếm để thấy nó.",
+      "untestedHidden_other": "{{count}} mô hình khác chưa được tinh chỉnh cho việc đọc chính tả. Hãy tìm kiếm để thấy chúng.",
+      "emptyYours": "Chưa có mô hình nào. Hãy chọn một mô hình bên dưới: nó sẽ được tải xuống, rồi Grain sẽ dùng nó.",
+      "showMore": "Hiển thị thêm {{count}}",
+      "showFewer": "Hiển thị ít hơn",
+      "download": "Tải xuống và dùng",
+      "downloadingThenUse": "{{percent}}% của {{total}}, rồi tự chuyển sang",
+      "loading": "Đang tải…",
+      "deleteAsk": "Xóa {{name}}? Việc này giải phóng {{size}}.",
+      "deleteAskActive": "Xóa {{name}}? Grain không thể chuyển đổi giọng nói cho đến khi bạn chọn mô hình khác.",
+      "cancel": "Hủy",
+      "deleteModel": "Xóa {{name}}",
+      "cancelDownload": "Dừng tải xuống {{name}}",
+      "legend": {
+        "open": "Cách xếp hạng mô hình",
+        "accuracyNote": "Với mỗi ngôn ngữ của bạn: số từ mô hình nhận sai trong các bản ghi âm kiểm thử của chúng tôi.",
+        "speedNote": {
+          "accelerated": "Thời gian để gõ ra 30 giây lời nói trên chip đồ họa của laptop kiểm thử của chúng tôi. Máy tính này có thể khác.",
+          "cpu": "Thời gian để gõ ra 30 giây lời nói trên bộ xử lý của laptop kiểm thử của chúng tôi. Máy tính này có thể khác."
+        },
+        "marks": "? chưa được đo. — không nghe được ngôn ngữ đó."
+      },
+      "rescan": {
+        "label": "Quét lại",
+        "tooltip": "Quét lại các mô hình được thêm vào thư mục mô hình hoặc bộ nhớ đệm Hugging Face bên ngoài Grain"
+      }
     },
     "general": {
       "title": "Chung",
@@ -213,6 +231,12 @@
       "pushToTalk": {
         "label": "Nhấn để nói",
         "description": "Giữ để ghi âm, thả để dừng"
+      },
+      "preferredLanguages": {
+        "title": "Ngôn ngữ ưa thích",
+        "description": "Các ngôn ngữ bạn nói. Grain dùng chúng để đề xuất mô hình.",
+        "noMatch": "Không có ngôn ngữ nào khớp với “{{query}}”",
+        "weak": "Chưa có mô hình nào nhận dạng tốt {{languages}}."
       }
     },
     "sound": {
@@ -628,5 +652,91 @@
   "overlay": {
     "transcribing": "Đang chuyển đổi...",
     "processing": "Đang xử lý..."
+  },
+  "modelTable": {
+    "tags": {
+      "preview": "Xem trước trực tiếp",
+      "previewTitle": "Hiển thị lời bạn nói trong lớp phủ Trực tiếp khi bạn nói, rồi gõ ra khi bạn dừng",
+      "translate": "Dịch",
+      "translateTitle": "Có thể chuyển lời bạn nói thành văn bản tiếng Anh. Bật trong cài đặt"
+    },
+    "rubric": {
+      "gradeTitle": "Độ chính xác {{language}}: {{grade}}",
+      "accuracyTitle": "Độ chính xác {{language}}",
+      "overallTitle": "Độ chính xác cho các ngôn ngữ của bạn: {{grade}}",
+      "overall": "Độ chính xác cho các ngôn ngữ của bạn",
+      "meaning": {
+        "A": "Rất ít lỗi: lời bạn nói thường được gõ ra đúng như vậy",
+        "B": "Có một số lỗi: thỉnh thoảng bạn sẽ phải sửa vài từ",
+        "C": "Lỗi khá thường xuyên: một số chi tiết có thể bị mất",
+        "D": "Nhiều lỗi: bạn nên kiểm tra và sửa lại những gì nó gõ",
+        "F": "Thường không rõ ràng: phần lớn lời bạn nói có thể bị sai"
+      },
+      "unsupported": "Mô hình này không hiểu {{language}}, nên không thể gõ ngôn ngữ này",
+      "unrated": "Mô hình này hiểu {{language}}, nhưng chúng tôi chưa đo mức độ tốt đến đâu",
+      "under": "dưới {{max}}%",
+      "between": "{{min}} đến {{max}}%",
+      "over": "{{min}}% trở lên",
+      "speedTitle": "Tốc độ: {{speed}}",
+      "speedName": {
+        "0": "Rất chậm",
+        "1": "Chậm",
+        "2": "Vừa phải",
+        "3": "Nhanh",
+        "4": "Rất nhanh"
+      },
+      "speedMeaning": {
+        "0": "Chữ của bạn hiện ra sau một lúc lâu",
+        "1": "Chữ của bạn hiện ra sau một lúc",
+        "2": "Chữ của bạn hiện ra sau một lát",
+        "3": "Chữ của bạn hiện ra gần như ngay lập tức",
+        "4": "Chữ của bạn hiện ra ngay lập tức"
+      },
+      "speedPreview": "{{meaning}}, có xem trước trực tiếp khi bạn nói",
+      "untimed": "Chúng tôi chưa đo tốc độ của mô hình này",
+      "underSeconds": "dưới {{max}} giây",
+      "betweenSeconds": "{{min}} đến {{max}} giây",
+      "overSeconds": "{{min}} giây trở lên"
+    },
+    "roles": {
+      "recommended": "Được đề xuất",
+      "faster": "Nhanh hơn",
+      "accurate": "Chính xác hơn",
+      "fromAll": "Từ tất cả mô hình"
+    },
+    "speed": "Tốc độ",
+    "size": "Dung lượng",
+    "accuracy": "Độ chính xác",
+    "search": "Tìm kiếm mô hình",
+    "allLabel": "Các mô hình giọng nói",
+    "noMatch": "Không có gì khớp với “{{query}}”. Hãy thử một ngôn ngữ, hoặc một dòng mô hình như Whisper hay Parakeet",
+    "noFilterMatch": "Không có mô hình nào khớp với các bộ lọc này",
+    "speedUntested": "Chưa đo tốc độ",
+    "speedWords": {
+      "0": "Rất chậm, chữ hiện ra sau một lúc lâu",
+      "1": "Chậm, chữ hiện ra sau một lúc",
+      "2": "Vừa phải, chữ hiện ra sau một lát",
+      "3": "Nhanh, chữ hiện ra gần như ngay lập tức",
+      "4": "Rất nhanh, chữ hiện ra ngay lập tức"
+    },
+    "speedWordsPreview": {
+      "0": "Rất chậm, có xem trước trực tiếp khi bạn nói",
+      "1": "Chậm, có xem trước trực tiếp khi bạn nói",
+      "2": "Vừa phải, có xem trước trực tiếp khi bạn nói",
+      "3": "Nhanh, có xem trước trực tiếp khi bạn nói",
+      "4": "Rất nhanh, có xem trước trực tiếp khi bạn nói"
+    },
+    "missingLanguage": "Thiếu một ngôn ngữ",
+    "allLanguages": "Tất cả",
+    "downloadingLine": "Đang tải xuống {{percent}}% của {{total}}",
+    "customLine": "Được thêm từ thư mục mô hình của bạn. Không xếp hạng.",
+    "legacyLine": "Một bản tải xuống cũ. Không xếp hạng."
+  },
+  "languagePicker": {
+    "search": "Tìm kiếm ngôn ngữ",
+    "addAnother": "Thêm ngôn ngữ khác",
+    "remove": "Xóa {{language}}",
+    "alreadyAdded_one": "Đã thêm {{languages}} rồi.",
+    "alreadyAdded_other": "Đã thêm {{languages}} rồi."
   }
 }

@@ -233,10 +233,8 @@ const settingUpdaters: {
     const result = await commands.changeAgentEnabledSetting(value as boolean);
     if (result.status === "error") throw new Error(result.error);
   },
-  // [GRAIN] The AI shortcut's idle start mode. Runtime-only — every capture
-  // mode is always registered, so this writes a flag without touching hotkeys.
-  capture_ai_start_mode: (value) =>
-    commands.changeCaptureAiStartModeSetting(value as string),
+  spoken_languages: (value) =>
+    commands.changeSpokenLanguagesSetting(value as string[]),
   capture_end_with_ai: (value) =>
     commands.changeCaptureEndWithAiSetting(value as boolean),
   capture_always_ai: (value) =>
@@ -305,8 +303,6 @@ const settingUpdaters: {
     commands.changeTranscribeGpuDevice(value as string | null),
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
-  // [GRAIN] Native ASR model selection — separate registry from `selected_model`.
-  selected_asr_model: (value) => commands.selectAsrModel(value as string),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

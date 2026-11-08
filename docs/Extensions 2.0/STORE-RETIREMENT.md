@@ -325,3 +325,14 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   engine lease protects model selection through decoding.
 - The model-selection regression and desktop suite passed (684 tests).
   Windows hotkey and microphone acceptance remain a manual check.
+
+### 2026-11-09 — Unified dictation model integrated
+
+- Merged `origin/main` at `99dc383bc` and brought in the single model
+  picker, catalogue, and capture routing. This supersedes the two-slot
+  fallback above. Agent reads `selected_model` at capture start and
+  uses that model for submit regardless of its streaming capability.
+- Kept the MCP-only connection paths and regenerated Tauri bindings.
+  TypeScript, Vite, 90 frontend tests, 60 harness unit tests, 156 core
+  and SDK tests, 680 desktop tests, catalogue parity, and the upstream
+  ratchet passed. Hotkey and microphone acceptance remain pending.
