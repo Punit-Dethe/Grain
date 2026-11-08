@@ -5,6 +5,21 @@ remote MCP connections. Grain ships endpoint and authentication configuration.
 GitHub and Notion host their own servers. Adding a preset requires a Grain
 change and a release. Custom remote MCPs can be added directly in the app.
 
+## Current checkpoint
+
+- The in-repository runtime cutover is complete. Agent discovery, schema
+  lookup and execution use MCP. The signed store, publisher tooling, package
+  runtime and native fixtures are retired. The controlled MCP checkpoint
+  covers connection ownership, dispatch, cancellation and write replay.
+- Packaged acceptance is open. Test GitHub with a non-owner account and Notion
+  with a known test page. Confirm sign-in, a nonzero tool count and an Agent
+  read, then repeat after restarting the test app. Test one custom connection
+  through add, enable, edit and remove.
+- The connection detail pages and dedicated Configure MCP page are separate
+  UI work. Older MCP harness cases that still expect manual approvals need
+  adaptation before they can be counted as current coverage. The external
+  registry repository and credentials have their own retirement step.
+
 ## Original execution order
 
 1. Switch Browse to the bundled GitHub and Notion presets. Expose the existing
@@ -376,3 +391,13 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   TypeScript, scoped ESLint, and a check of documented suite names
   against the runner. Packaged browser consent and a live tool read
   remain separate checks.
+
+### 2026-11-09 — Plan reconciliation and packaged handoff
+
+- Restricted installed GitHub automation to preset preflight and catalogue
+  discovery. The old live Agent modes depended on approval prompts that the
+  automatic MCP dispatcher no longer produces. Use the controlled MCP
+  workflow suite for write evidence and a user-run read for hosted acceptance.
+- All 60 focused harness tests passed, including refusal of the removed
+  live Agent modes before launching the installer. Request a fresh isolated
+  Windows artifact from this branch for the packaged checks above.

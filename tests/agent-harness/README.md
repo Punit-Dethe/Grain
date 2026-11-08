@@ -168,52 +168,24 @@ cargo --config 'target.x86_64-pc-windows-msvc.runner=["powershell.exe","-NoProfi
 
 ## Installed GitHub MCP checkpoint
 
-Run from the repository root on Windows:
+Use the **Build Test** workflow with `github-mcp-test=true`. Open **Grain GitHub
+Test**, connect GitHub under **Browse extensions**, and enable it. Close that
+app before running these discovery-only commands on Windows.
 
 ```powershell
 node tests/agent-harness/github-alpha.mjs --preflight
 node tests/agent-harness/github-alpha.mjs --catalogue
-node tests/agent-harness/github-alpha.mjs --read
-node tests/agent-harness/github-alpha.mjs --workflow
 node --test tests/agent-harness/github-alpha.test.mjs
 ```
 
-Build the isolated Windows app using the Build Test workflow's
-github-mcp-test option. In Grain GitHub Test, enable Agent, select its model,
-connect GitHub from Browse extensions and disable other connections. Close
-the app before running the script. The GitHub CLI needs independent read
-access to Punit-Dethe/grain-github-alpha-test/README.md for the read check.
+The script verifies the bundled preset and OAuth registration, then records
+the tool catalogue from the installed app. Reports go in
+`.runs/github-alpha-*/evidence/`. Only the owned test process is stopped.
 
-This focused script starts the installed Grain GitHub Test app, attaches to its owned
-WebView2 through loopback CDP and invokes production Tauri Agent commands. It
-does not use Computer Use, screenshots, simulated clicks, fixtures or a model
-relay. `--read` approves only the test repository's README getter, verifies the
-returned content independently, restarts the owned app, then repeats the read.
-Preflight and catalogue discovery are read-only. The catalogue check records
-supported tool names, a count and a digest without executing tools. The README
-check verifies the result through the independent GitHub CLI and repeats the
-read after restarting the owned app. Existing test account credentials stay in
-the isolated profile.
-
-`--workflow` is an explicitly authorized write checkpoint on the disposable
-`Punit-Dethe/grain-github-alpha-test` repository: one marked issue, update/close,
-one marked branch and a synthetic file. Exact argument/title guards refuse other
-actions and repeated writes. Independent CLI reads verify each effect and main's
-unchanged commit. Test objects are retained in the report for inspection; failed
-or uncertain work must not be replayed automatically. No account connect or
-disconnect is automated by this mode. Its final exposure check requires a test build
-with `agent-tool-trace` diagnostics; an older binary may pass effects while that
-distinct check remains Blocked. New log entries contain tool identities/counts
-only; the original log level is restored even when the batch fails.
-
-Reports record the installed binary hash and per-stage verdicts under ignored
-`.runs/github-alpha-*/evidence/`; subsequent runs also stamp this script. Only
-the spawned host is stopped, with cleanup reported independently. Disposable
-WebView directories and evidence can be removed after review; process cleanup
-does not claim file deletion. Retain this small installed-app checkpoint
-until the standard runner can target installed apps directly, then consolidate
-it there rather than building another testing framework. This verifies the real
-Agent/MCP command path, not physical shortcuts or visual interaction.
+For live Agent acceptance, open the test app yourself and ask Agent to read the
+first line of a known README in a disposable repository. Compare the reply with
+the file. Use a non-owner account for GitHub consent acceptance. The controlled
+`mcp-agent-workflows` suite covers writes and replay protection.
 
 ### Linear consent preflight (opt-in, no account)
 
