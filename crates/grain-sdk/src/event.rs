@@ -261,14 +261,6 @@ pub enum DaemonEvent {
         message: String,
     },
 
-    /// [GRAIN] Extension platform (SPEC §3.3): a scripted extension was
-    /// disabled after violating the tool worker resource policy.
-    /// The Overview UI shows the reason; the user re-enables explicitly.
-    ExtensionDisabled {
-        id: String,
-        reason: String,
-    },
-
     /// [GRAIN] The icon of whatever the user is dictating into, so the pill can
     /// show that it understands the surface rather than merely that it is on.
     ///

@@ -199,7 +199,6 @@ export function configuredMcpHandlers(ctx) {
             new Set(saved.connections.map((x) => x.accountId)).size,
             2,
           );
-          assert.equal((await ctx.status()).worker.count, 0);
           assert.ok(
             !(await ctx.invoke("mcp_provider_status")).some(
               (x) => x.id === first.id,
@@ -388,7 +387,7 @@ export function configuredMcpHandlers(ctx) {
         await stage(
           "custom-connections-available-with-developer-mode-off",
           async () => {
-            await ctx.invoke("extension_set_developer_mode", {
+            await ctx.invoke("agent_harness_set_mcp_development", {
               enabled: false,
             });
             try {
@@ -400,7 +399,7 @@ export function configuredMcpHandlers(ctx) {
               });
               assert.equal(await readFile(path, "utf8"), before);
             } finally {
-              await ctx.invoke("extension_set_developer_mode", {
+              await ctx.invoke("agent_harness_set_mcp_development", {
                 enabled: true,
               });
             }

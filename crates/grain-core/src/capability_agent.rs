@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::capability_index::{ActionInput, ExtensionDirectoryEntry};
-use grain_sdk::manifest::{ActionDecl, ActionParamKind};
+use grain_sdk::action::ActionParamKind;
 
 /// Prefix on every provider-facing tool name, so an action tool can never
 /// collide with a host meta-tool like [`LOAD_EXTENSION`] and the host can tell
@@ -160,19 +160,6 @@ pub fn parse_and_validate_arguments(action: &ActionInput, raw: &str) -> Result<V
             .params
             .iter()
             .map(|param| (param.name.as_str(), param.kind, param.required)),
-    )
-}
-
-/// Revalidate against the installed native declaration, independently of the
-/// model parser and index. Optional nulls retain the existing omission policy.
-pub fn validate_native_arguments(action: &ActionDecl, value: &Value) -> Result<Value, String> {
-    crate::tool_schema::validate_argument_shape(value)?;
-    validate_parameter_values(
-        value.clone(),
-        action
-            .params
-            .iter()
-            .map(|param| (param.name.trim(), param.kind, param.required)),
     )
 }
 
@@ -738,7 +725,7 @@ mod tests {
         assert!(phrases.iter().any(|phrase| phrase.contains("notes")));
         assert!(!phrases.iter().any(|phrase| phrase.contains("edit")));
     }
-    use grain_sdk::manifest::ActionRisk;
+    use grain_sdk::action::ActionRisk;
 
     fn action(canonical: &str) -> ActionInput {
         ActionInput {
@@ -1155,58 +1142,5 @@ mod tests {
         let page = search_metadata(&[hostile], "", 0);
         let description = page["tools"][0]["description"].as_str().unwrap();
         assert!(description.len() <= 320 && !description.contains('\u{202e}'));
-    }
-
-    #[test]
-    fn native_value_validation_matches_model_projection_and_bounds_encoded_data() {
-        let native: ActionDecl = serde_json::from_value(json!({
-            "id": "write", "title": "Write", "risk": "confirm",
-            "params": [{"name": "title", "kind": "text"},
-                {"name": "priority", "kind": "number", "required": false}]
-        }))
-        .unwrap();
-        let mut projected = action("native.write");
-        projected.params = native
-            .params
-            .iter()
-            .map(|param| crate::capability_index::ActionParamInput {
-                name: param.name.clone(),
-                kind: param.kind,
-                required: param.required,
-            })
-            .collect();
-        for value in [
-            json!({"title": "Bug", "priority": 2}),
-            json!({"title": "Bug", "priority": null}),
-            json!({}),
-            json!({"title": "  "}),
-            json!({"title": null}),
-            json!({"title": 3}),
-            json!({"title": "Bug", "priority": "high"}),
-            json!({"title": "Bug", "secret-key-payload": true}),
-            json!([]),
-        ] {
-            let raw = serde_json::to_string(&value).unwrap();
-            assert_eq!(
-                validate_native_arguments(&native, &value),
-                parse_and_validate_arguments(&projected, &raw)
-            );
-        }
-        assert_eq!(
-            validate_native_arguments(&native, &json!({"title": "Bug", "priority": null})).unwrap(),
-            json!({"title": "Bug"})
-        );
-        assert!(
-            !validate_native_arguments(&native, &json!({"secret-key-payload": true}))
-                .unwrap_err()
-                .contains("secret-key-payload")
-        );
-        // Encoded length, rather than Unicode character count or raw value size.
-        for value in [
-            json!({"title": "x".repeat(ARGUMENTS_MAX_BYTES)}),
-            json!({"title": "\u{0000}".repeat(ARGUMENTS_MAX_BYTES / 5)}),
-        ] {
-            assert!(validate_native_arguments(&native, &value).is_err());
-        }
     }
 }

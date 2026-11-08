@@ -39,22 +39,10 @@ mod commands;
 mod context_bias; // [GRAIN] budgeted whisper decoder-prefix hotwords
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod context_screen; // [GRAIN] foreground-window image capture for the Agent's opt-in screen image
-#[cfg(any(feature = "agent-harness", test))]
-mod dev_extensions; // [GRAIN] validated load-unpacked project reader
 #[path = "handy/engine_supervisor/mod.rs"]
 pub mod engine_supervisor;
-#[cfg(any(feature = "agent-harness", test))]
-mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)
-#[cfg(any(feature = "agent-harness", test))]
-mod events_server; // [GRAIN] authenticated loopback WebSocket for native workers and developer control
-#[cfg(any(feature = "agent-harness", test))]
-mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
-#[cfg(any(feature = "agent-harness", test))]
-mod extension_icons; // [GRAIN] verified master icon -> installed extension card icon
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
-#[cfg(any(feature = "agent-harness", test))]
-mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
 mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
                   // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
@@ -84,8 +72,6 @@ mod grain_update; // [GRAIN] in-app update check/install over the signed release
 mod grain_window_geometry; // [GRAIN] scale-aware main-window sizing within the desktop work area
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
-#[cfg(any(feature = "agent-harness", test))]
-mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/input.rs"]
 mod input;
 mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
@@ -95,8 +81,6 @@ mod overlay;
 pub(crate) use grain_settings as settings;
 #[cfg(feature = "agent-harness")]
 mod grain_agent_harness;
-#[cfg(feature = "agent-harness")]
-mod grain_agent_harness_auth;
 #[cfg(feature = "agent-harness")]
 mod grain_agent_harness_mcp;
 mod grain_llm_fallback;
@@ -482,22 +466,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // confirmed missed paste and the moment the clipboard is handed back.
     app_handle.manage(paste_catch::PasteCatchState::default());
 
-    // Native fixture workers own a loopback bridge. Ordinary MCP sessions
-    // connect on demand and need neither a local listener nor a worker reaper.
-    #[cfg(feature = "agent-harness")]
-    {
-        if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
-            events_server::start(app_handle.clone());
-            extension_host::start(app_handle.clone(), ctx.inner().clone());
-            if get_settings(app_handle).extension_developer_mode {
-                if let Err(error) = events_server::enable_dev_control(&ctx.data_dir) {
-                    log::error!("[GRAIN] failed to expose developer control token: {error}");
-                }
-            } else {
-                events_server::disable_dev_control(&ctx.data_dir);
-            }
-        }
-    }
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
     // after permissions are confirmed (on macOS) or after onboarding completes.
@@ -962,31 +930,14 @@ pub fn run(cli_args: CliArgs) {
     let invoke_handler = {
         let harness_handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
             grain_agent_harness::agent_harness_status,
-            grain_agent_harness::agent_harness_fixture,
+            grain_agent_harness::agent_harness_set_mcp_development,
             grain_agent_harness::agent_harness_submit,
             grain_agent_harness::agent_harness_shutdown,
-            grain_agent_harness_auth::agent_harness_auth,
             grain_agent_harness_mcp::agent_harness_mcp,
             grain_agent_harness_mcp::agent_harness_configured_consent,
-            grain_commands::native::extensions_overview,
-            grain_commands::native::extension_set_enabled,
-            grain_commands::native::extension_developer_status,
-            grain_commands::native::extension_set_developer_mode,
-            grain_commands::native::extension_load_unpacked,
-            grain_commands::native::extension_unload_dev,
-            grain_commands::native::extension_grant,
-            grain_commands::native::extension_import_pack,
-            grain_commands::native::extension_uninstall,
-            grain_auth::extension_auth_connection,
-            grain_auth::extension_auth_connect,
-            grain_auth::extension_auth_disconnect,
         ];
         move |invoke: tauri::ipc::Invoke| {
-            let command = invoke.message.command();
-            if command.starts_with("agent_harness_")
-                || command.starts_with("extension_")
-                || command == "extensions_overview"
-            {
+            if invoke.message.command().starts_with("agent_harness_") {
                 harness_handler(invoke)
             } else {
                 invoke_handler(invoke)
@@ -1178,18 +1129,7 @@ pub fn run(cli_args: CliArgs) {
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 let data_dir = crate::portable::app_data_dir(&app.handle())
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                app.manage(grain_core::AppContext::new(resource_dir, data_dir.clone()));
-                #[cfg(feature = "agent-harness")]
-                {
-                    match grain_core::extensions::ExtensionsRegistry::load(&data_dir) {
-                        Ok(reg) => {
-                            app.manage(std::sync::Arc::new(reg));
-                        }
-                        Err(e) => log::error!("[GRAIN] fixture registry failed to load: {e}"),
-                    }
-                    extension_host::quarantine_invalid_extensions(&app.handle())
-                        .map_err(std::io::Error::other)?;
-                }
+                app.manage(grain_core::AppContext::new(resource_dir, data_dir));
             }
 
             #[cfg(feature = "agent-harness")]
@@ -1350,15 +1290,6 @@ pub fn run(cli_args: CliArgs) {
                     INTENTIONAL_QUIT.load(Ordering::Relaxed),
                 ) {
                     api.prevent_exit();
-                }
-            }
-            #[cfg(feature = "agent-harness")]
-            if let tauri::RunEvent::Exit = &event {
-                if let Some(ctx) = app
-                    .try_state::<Arc<grain_core::AppContext>>()
-                    .filter(|_| !headless_mode)
-                {
-                    events_server::disable_dev_control(&ctx.data_dir);
                 }
             }
             let _ = (app, event); // suppress unused warnings on non-macOS

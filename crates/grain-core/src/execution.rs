@@ -47,10 +47,10 @@ pub enum RiskClass {
 impl RiskClass {
     /// The host floor from the action's declared risk. This is the *minimum*; it
     /// can be tightened below, never loosened.
-    pub fn floor(declared: grain_sdk::manifest::ActionRisk) -> Self {
+    pub fn floor(declared: grain_sdk::action::ActionRisk) -> Self {
         match declared {
-            grain_sdk::manifest::ActionRisk::Safe => RiskClass::Safe,
-            grain_sdk::manifest::ActionRisk::Confirm => RiskClass::Confirm,
+            grain_sdk::action::ActionRisk::Safe => RiskClass::Safe,
+            grain_sdk::action::ActionRisk::Confirm => RiskClass::Confirm,
         }
     }
 
@@ -478,7 +478,7 @@ pub fn default_idempotency_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grain_sdk::manifest::ActionRisk;
+    use grain_sdk::action::ActionRisk;
     use serde_json::json;
 
     fn prepared(risk: RiskClass, side_effect: SideEffect) -> PreparedCall {

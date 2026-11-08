@@ -33,6 +33,7 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 | Field                     | Reason                                                                                                |
 | ------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `settings_schema_version` | Internal settings-file format version used to run migrations after upgrades; never user-configurable. |
+| `extension_developer_mode` | Debug-only access to development MCP providers. The acceptance harness controls it through its isolated command. |
 
 ## Write-only by design
 

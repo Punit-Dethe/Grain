@@ -57,7 +57,7 @@ export function configuredRuntimeHandlers(ctx) {
   }
   async function reset() {
     await ctx.closePanel();
-    await ctx.invoke("extension_set_developer_mode", { enabled: true });
+    await ctx.invoke("agent_harness_set_mcp_development", { enabled: true });
     for (const record of await list()) await remove(record);
     ctx.provider().configure({
       lifecycle: "stateless",
@@ -122,11 +122,6 @@ export function configuredRuntimeHandlers(ctx) {
     await ctx.waitFor(
       "Configured protocol session disposed",
       () => ctx.provider().activeSessions === 0,
-    );
-    assert.equal(
-      (await ctx.status()).worker.count,
-      0,
-      "Custom MCP started a native worker",
     );
     await ctx.closePanel();
   }
@@ -281,7 +276,7 @@ export function configuredRuntimeHandlers(ctx) {
                   definition("OAuth", CONFIGURED_ENDPOINT, "oauth"),
                 );
               if (transition === "developer-off")
-                await ctx.invoke("extension_set_developer_mode", {
+                await ctx.invoke("agent_harness_set_mcp_development", {
                   enabled: false,
                 });
             };
@@ -355,7 +350,9 @@ export function configuredRuntimeHandlers(ctx) {
             );
             ctx.provider().attemptLateReply();
             await ctx.closePanel();
-            await ctx.invoke("extension_set_developer_mode", { enabled: true });
+            await ctx.invoke("agent_harness_set_mcp_development", {
+              enabled: true,
+            });
             if (transition === "remove") record = await add();
             await enable(record);
             ctx.provider().configure({ result: "normal" });

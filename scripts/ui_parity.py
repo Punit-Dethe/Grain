@@ -12,8 +12,7 @@ driven three different ways:
   * by **name** — ``updateSetting("paste_method", …)``;
   * by a **dedicated command** — the provider pools never touch
     ``post_process_providers`` by name, they call ``ppUpsertProvider``;
-  * by a **raw invoke** — the extension platform calls
-    ``invoke("extension_set_developer_mode")`` rather than the typed binding.
+  * by a **raw invoke** — the renderer may use a command name directly.
 
 All three count. Anything none of them reach must be listed in
 ``scripts/ui-parity-exceptions.md`` with a reason, or CI fails. That file is the record of
@@ -226,8 +225,7 @@ def gate(tree: str) -> int:
         if field in blob:
             continue
         # A dedicated command that covers the field counts: pp_set_fallback_enabled
-        # reaches post_process_fallback_enabled, and extension_set_developer_mode
-        # reaches extension_developer_mode, without either spelling the field.
+        # reaches post_process_fallback_enabled without spelling the field.
         # Matched on word tokens (singularised) rather than substrings, so
         # `post_process_providers` pairs with `pp_upsert_provider`.
         if any(covers(field, snake) for snake in called):

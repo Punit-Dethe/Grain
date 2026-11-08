@@ -772,7 +772,7 @@ pub(crate) fn mcp_action_input(
     provider_name: &str,
     tool: &rmcp::model::Tool,
 ) -> grain_core::capability_index::ActionInput {
-    use grain_sdk::manifest::ActionRisk;
+    use grain_sdk::action::ActionRisk;
     let tool_name = tool.name.to_string();
     let title = tool
         .title
@@ -866,7 +866,7 @@ pub(crate) fn fixture_session() -> CapabilitySession {
 mod tests {
     use super::*;
     use grain_core::capability_index::{ActionInput, ExtensionDirectoryEntry};
-    use grain_sdk::manifest::ActionRisk;
+    use grain_sdk::action::ActionRisk;
 
     fn action() -> ActionInput {
         ActionInput {

@@ -61,7 +61,7 @@ impl ValidatedDescriptor {
             return Err(ContractError::UnsupportedSchema);
         }
         // Explicit provisional profile, not a guessed semver range evaluator.
-        if descriptor.grain_api != grain_sdk::compatibility::EXTENSION_API_REQUIREMENT {
+        if descriptor.grain_api != grain_sdk::mcp::MCP_DESCRIPTOR_API_REQUIREMENT {
             return Err(ContractError::UnsupportedApi);
         }
         if validate_extension_id(&descriptor.id).is_err()

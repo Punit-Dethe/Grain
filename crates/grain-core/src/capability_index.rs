@@ -37,9 +37,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use grain_sdk::manifest::{
-    parse_utterance, ActionParamKind, ActionRisk, ExtensionManifest, UtterancePart,
-};
+use grain_sdk::action::{ActionParamKind, ActionRisk};
 
 use crate::text::{fuzzy_keys, normalise, same_word, tokens};
 
@@ -137,21 +135,14 @@ const EXACT_MAX_NAMING_EXTS: usize = 2;
 
 // ── The retriever's input contract ───────────────────────────────────────────
 
-/// One installed action, projected for retrieval.
-///
-/// This is the **target V2 contract**, deliberately richer than today's
-/// manifest. [`actions_from_manifest`] fills what exists now (title, utterance
-/// phrasings, params, provider context) and leaves the Phase-0 additions
-/// (`examples`, `when_to_use`, `description`, `tags`) empty. The retriever's
-/// input shape does not change when those manifest fields land — they just start
-/// carrying signal. Settling this shape now is the point of building the index
-/// first.
+/// One tool's metadata projected into the retrieval index.
+/// Sources supply the fields they have. Unavailable metadata stays empty.
 #[derive(Clone, Debug)]
 pub struct ActionInput {
     pub extension_id: String,
     pub action_id: String,
-    /// Human-readable, e.g. `github.create_issue`. The provider-facing safe tool
-    /// name is a separate encoding owned by the Phase-2 registry, not here.
+    /// Stable identity, for example `mcp.github:create_issue`.
+    /// The model-facing tool name is derived separately.
     pub canonical_id: String,
     /// Extension display name, an implicit alias by contract.
     pub provider_name: String,
@@ -886,94 +877,6 @@ impl HotSet {
     }
 }
 
-// ── Building inputs from an installed manifest ───────────────────────────────
-
-/// Short, human-readable namespace for an extension: the last dotted segment of
-/// its reverse-dns id (`com.grain.github` -> `github`). Drives the canonical id.
-fn namespace_of(extension_id: &str) -> &str {
-    extension_id.rsplit('.').next().unwrap_or(extension_id)
-}
-
-/// Project one installed extension's declared actions into retriever inputs.
-///
-/// Reads only what the current manifest carries; the Phase-0 additions
-/// (`examples`, `when_to_use`, `description`, `tags`) stay empty until they
-/// exist, and the retriever's contract does not change when they arrive.
-///
-/// `enabled` is passed in because the manifest cannot know runtime state; the
-/// host holds it. Embedded JavaScript tools are platform-independent.
-pub fn actions_from_manifest(ext: &ExtensionManifest, enabled: bool) -> Vec<ActionInput> {
-    let namespace = namespace_of(&ext.id).to_string();
-    // Provider identity and description supply extension-level context;
-    // action titles and utterances supply the tool-specific retrieval terms.
-    let mut aliases: Vec<String> = vec![ext.name.clone()];
-    let mut provider_context: Vec<String> = Vec::new();
-    if !ext.description.is_empty() {
-        provider_context.push(ext.description.clone());
-    }
-    aliases.retain(|alias| !alias.trim().is_empty());
-    aliases.dedup();
-
-    ext.contributes
-        .actions
-        .iter()
-        .map(|action| {
-            // Utterance literals become phrasings; `{param}` spans are dropped —
-            // "play {artist}" contributes "play", not the artist name.
-            let phrases: Vec<String> = action
-                .utterances
-                .iter()
-                .filter_map(|utterance| parse_utterance(utterance.trim()).ok())
-                .map(|parts| {
-                    parts
-                        .iter()
-                        .filter_map(|part| match part {
-                            UtterancePart::Literal(literal) => Some(literal.as_str()),
-                            UtterancePart::Param(_) => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .filter(|phrase| !phrase.trim().is_empty())
-                .collect();
-            let params: Vec<ActionParamInput> = action
-                .params
-                .iter()
-                .map(|param| ActionParamInput {
-                    // Manifest validation treats surrounding whitespace as
-                    // insignificant; project the same canonical name so the
-                    // provider schema and Rust validator cannot drift.
-                    name: param.name.trim().to_string(),
-                    kind: param.kind,
-                    required: param.required,
-                })
-                .collect();
-
-            ActionInput {
-                canonical_id: format!("{}:{}", ext.id, action.id.trim()),
-                extension_id: ext.id.clone(),
-                action_id: action.id.trim().to_string(),
-                provider_name: ext.name.clone(),
-                title: action.title.trim().to_string(),
-                aliases: aliases.clone(),
-                namespaces: vec![namespace.clone()],
-                tags: Vec::new(),
-                examples: Vec::new(),
-                phrases,
-                params,
-                when_to_use: String::new(),
-                when_not_to_use: String::new(),
-                description: String::new(),
-                provider_context: provider_context.clone(),
-                risk: action.risk,
-                enabled,
-                platform_ok: true,
-                quarantined: false,
-            }
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -993,7 +896,7 @@ mod tests {
 
     /// Minimal fluent builder so tests read as intent, not field soup.
     fn action(extension: &str, id: &str) -> ActionInput {
-        let namespace = namespace_of(extension).to_string();
+        let namespace = extension.rsplit('.').next().unwrap_or(extension).to_string();
         ActionInput {
             canonical_id: format!("{namespace}.{id}"),
             extension_id: extension.to_string(),
@@ -1467,42 +1370,5 @@ mod tests {
             "a dropped word must not lose the match: {:?}",
             hot.ids()
         );
-    }
-
-    #[test]
-    fn manifest_projection_reads_todays_fields() {
-        let json = serde_json::json!({
-            "id": "com.grain.spotify",
-            "name": "Spotify",
-            "version": "0.0.1",
-            "tier": "scripted",
-            "entry_source": "//",
-            "description": "Control Spotify playback",
-            "contributes": {
-                "actions": [
-                    { "id": "next", "title": "Skip to the next track", "risk": "safe", "utterances": ["skip this", "next song"] },
-                    { "id": "play", "title": "Play an artist", "risk": "safe", "utterances": ["play {artist}"], "params": [{ "name": "artist", "kind": "entity" }] }
-                ]
-            }
-        });
-        let ext: ExtensionManifest = serde_json::from_value(json).expect("manifest parses");
-        let inputs = actions_from_manifest(&ext, true);
-        assert_eq!(inputs.len(), 2);
-        let play = inputs.iter().find(|i| i.action_id == "play").unwrap();
-        assert_eq!(play.canonical_id, "com.grain.spotify:play");
-        assert!(play.aliases.contains(&"Spotify".to_string()));
-        assert_eq!(play.provider_context, vec!["Control Spotify playback"]);
-        assert!(
-            play.phrases.iter().any(|p| p == "play"),
-            "utterance literal kept, placeholder dropped"
-        );
-        assert!(play.params.iter().any(|param| param.name == "artist"));
-        assert!(play.tags.is_empty());
-
-        // And the projection retrieves: "skip this" names the next track.
-        let index = CapabilityIndex::build(inputs);
-        let (c, a) = empty_ctx();
-        let hot = index.retrieve("skip this", &ctx(&c, &a), transcript(5));
-        assert_eq!(hot.entries[0].canonical_id, "com.grain.spotify:next");
     }
 }

@@ -64,7 +64,6 @@ export async function sourceFingerprint() {
       "vite.config.ts",
       "index.html",
       "recording-overlay.html",
-      "extension-host.html",
     ].map((path) => join(repo, path)),
   );
   for (const input of [

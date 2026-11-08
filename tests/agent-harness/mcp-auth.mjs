@@ -1285,7 +1285,7 @@ export function mcpAuthHandlers(ctx) {
             const old = await begin("A"),
               before = tokenCount();
             if (boundary === "developer-mode-off")
-              await ctx.invoke("extension_set_developer_mode", {
+              await ctx.invoke("agent_harness_set_mcp_development", {
                 enabled: false,
               });
             else
@@ -1299,7 +1299,7 @@ export function mcpAuthHandlers(ctx) {
             assert.equal(tokenCount(), before);
             assert.equal(await ctx.vaultCount(), 0);
             if (boundary === "developer-mode-off")
-              await ctx.invoke("extension_set_developer_mode", {
+              await ctx.invoke("agent_harness_set_mcp_development", {
                 enabled: true,
               });
             assert.equal((await state()).connected, false);
@@ -1324,7 +1324,9 @@ export function mcpAuthHandlers(ctx) {
             await clean();
           }
         } finally {
-          await ctx.invoke("extension_set_developer_mode", { enabled: true });
+          await ctx.invoke("agent_harness_set_mcp_development", {
+            enabled: true,
+          });
           await clean();
         }
       },
@@ -1340,7 +1342,7 @@ export function mcpAuthHandlers(ctx) {
             if (ctx.fault === "skip-mcp-disable") return;
             if (boundary === "provider-disable") await control("disable");
             else
-              await ctx.invoke("extension_set_developer_mode", {
+              await ctx.invoke("agent_harness_set_mcp_development", {
                 enabled: false,
               });
           }
@@ -1381,7 +1383,7 @@ export function mcpAuthHandlers(ctx) {
           }
           async function resume(boundary) {
             if (boundary === "developer-mode-off")
-              await ctx.invoke("extension_set_developer_mode", {
+              await ctx.invoke("agent_harness_set_mcp_development", {
                 enabled: true,
               });
             await control("enable");
@@ -1514,7 +1516,9 @@ export function mcpAuthHandlers(ctx) {
           throw error;
         } finally {
           try {
-            await ctx.invoke("extension_set_developer_mode", { enabled: true });
+            await ctx.invoke("agent_harness_set_mcp_development", {
+              enabled: true,
+            });
             await clean();
           } catch (error) {
             if (!failure) throw error;

@@ -358,167 +358,6 @@ pub(crate) fn mcp_outcome(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn native_outcome(
-    result: Result<Value, crate::extension_host::ActionCallError>,
-    prepared: &PreparedCall,
-) -> ActionOutcome {
-    use crate::extension_host::ActionCallError;
-    let outcome = match result {
-        Ok(value) => parse_worker_outcome(value, prepared),
-        Err(ActionCallError::Execution(failure)) => failure.into_outcome(),
-        Err(ActionCallError::Unavailable(message)) => grain_core::execution::ExecutionFailure::new(
-            grain_core::execution::DispatchPhase::NotDispatched,
-            FailureClass::Internal,
-            message,
-        )
-        .into_outcome(),
-    };
-    #[cfg(feature = "agent-harness")]
-    crate::grain_agent_harness::observe_outcome(
-        &prepared.extension_id,
-        &prepared.action_id,
-        &outcome,
-    );
-    outcome
-}
-
-/// Map the worker's structured `"action"` reply to an [`ActionOutcome`]. Shape:
-/// `{ "error": {class?, message} }` | `{ "needsInteraction": <Interaction> }` |
-/// `{ "ok": {title?, body?, details?} }`. The envelope is strict; provenance
-/// and write receipts are host-owned and worker error text never crosses the
-/// trust boundary.
-#[cfg(test)]
-fn parse_worker_outcome(value: Value, prepared: &PreparedCall) -> ActionOutcome {
-    let Some(root) = value.as_object() else {
-        return native_result_unavailable("The extension returned an invalid action result.");
-    };
-    let recognized = ["error", "needsInteraction", "ok"]
-        .into_iter()
-        .filter(|key| root.contains_key(*key))
-        .count();
-    if recognized != 1 || root.len() != 1 {
-        return native_result_unavailable("The extension returned an invalid action result.");
-    }
-
-    if let Some(error) = root.get("error") {
-        let class = error
-            .get("class")
-            .and_then(Value::as_str)
-            .map(map_failure_class)
-            .unwrap_or(FailureClass::Internal);
-        // A worker exception may contain credentials, request bodies, or prompt
-        // injection. The host maps only its coarse class to user/model text.
-        return ActionOutcome::ToolReportedError {
-            message: format!(
-                "{} Partial effects may have occurred; do not repeat automatically.",
-                worker_failure_message(class)
-            ),
-        };
-    }
-    if root.contains_key("needsInteraction") {
-        // Initial V2 has no continuation token for extension-authored follow-up.
-        // Failing honestly is safer than rendering an interaction that cannot be
-        // resumed or accepting a worker-minted confirmation token.
-        return native_result_unavailable(
-            "This action needs more input, but extension follow-up is not available yet.",
-        );
-    }
-
-    let ok = &root["ok"];
-    let (title, body, details) = if let Some(text) = ok.as_str() {
-        (None, bounded_text(text, 4 * 1024), Vec::new())
-    } else if ok.is_null() {
-        (None, None, Vec::new())
-    } else if let Some(object) = ok.as_object() {
-        let title = object
-            .get("title")
-            .and_then(Value::as_str)
-            .and_then(|text| bounded_text(text, 160));
-        let body = object
-            .get("body")
-            .and_then(Value::as_str)
-            .and_then(|text| bounded_text(text, 4 * 1024));
-        let mut details: Vec<Field> = object
-            .get("details")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .take(16)
-            .filter_map(|row| {
-                let label = bounded_text(row.get("label")?.as_str()?, 80)?;
-                let value = bounded_text(row.get("value")?.as_str()?, 600)?;
-                Some(Field { label, value })
-            })
-            .collect();
-        // Plain object data is still useful. Promote unreserved scalar fields to
-        // bounded details rather than silently claiming success with "Done".
-        if title.is_none() && body.is_none() && details.is_empty() {
-            details.extend(object.iter().take(16).filter_map(|(label, value)| {
-                let label = bounded_text(label, 80)?;
-                let value = value_to_string(value).and_then(|text| bounded_text(&text, 600))?;
-                Some(Field { label, value })
-            }));
-        }
-        (title, body, details)
-    } else {
-        return native_result_unavailable("The extension returned an invalid action result.");
-    };
-
-    ActionOutcome::Succeeded(SuccessData {
-        // Provenance is host-owned; a worker cannot label itself "GitHub".
-        source: Some(prepared.provider_name.clone()),
-        title,
-        body,
-        structured_content: None,
-        details,
-        // A worker cannot hide a host-classified write by returning receipt:false.
-        receipt: prepared.side_effect == SideEffect::Write,
-    })
-}
-
-#[cfg(test)]
-fn native_result_unavailable(message: &str) -> ActionOutcome {
-    grain_core::execution::ExecutionFailure::new(
-        grain_core::execution::DispatchPhase::ResponseReceived,
-        FailureClass::Internal,
-        message,
-    )
-    .into_outcome()
-}
-
-#[cfg(test)]
-fn bounded_text(text: &str, max_bytes: usize) -> Option<String> {
-    let clean = grain_core::capability_agent::sanitize(text, max_bytes);
-    (!clean.is_empty()).then_some(clean)
-}
-
-#[cfg(test)]
-fn worker_failure_message(class: FailureClass) -> &'static str {
-    match class {
-        FailureClass::Auth => "Connect or reauthorize the account, then try again.",
-        FailureClass::Network => "The extension could not reach its service.",
-        FailureClass::InvalidArgument => "The extension rejected the action arguments.",
-        FailureClass::NotFound => "The requested item or action was not found.",
-        FailureClass::RateLimited => "The service is rate-limited; try again shortly.",
-        FailureClass::Cancelled => "The action was cancelled.",
-        FailureClass::Internal => "The extension action failed.",
-    }
-}
-
-#[cfg(test)]
-fn map_failure_class(raw: &str) -> FailureClass {
-    match raw {
-        "auth" => FailureClass::Auth,
-        "network" => FailureClass::Network,
-        "invalid" | "invalid_argument" => FailureClass::InvalidArgument,
-        "not_found" | "notfound" => FailureClass::NotFound,
-        "rate_limited" | "ratelimited" => FailureClass::RateLimited,
-        "cancelled" => FailureClass::Cancelled,
-        _ => FailureClass::Internal,
-    }
-}
-
 fn confirm_interaction(prepared: &PreparedCall, title: &str) -> Interaction {
     let details: Vec<Field> = prepared
         .arguments
@@ -641,10 +480,10 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn third_party_call() -> PreparedCall {
+    fn mcp_call() -> PreparedCall {
         prepare(
-            "com.example.github:create_issue",
-            "com.example.github",
+            "mcp.github:create_issue",
+            "mcp.github",
             "create_issue",
             "GitHub",
             json!({ "title": "Bug" }),
@@ -656,7 +495,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_policy_never_stores_a_per_call_confirmation() {
-        let prepared = third_party_call();
+        let prepared = mcp_call();
         let token = prepared.token.clone();
         assert!(prepared.risk.needs_confirmation());
         assert_eq!(prepared.side_effect, SideEffect::Write);
@@ -670,49 +509,6 @@ mod tests {
             }
         ));
         assert!(!discard(&token));
-    }
-
-    #[test]
-    fn worker_cannot_spoof_provenance_or_hide_a_write_receipt() {
-        let outcome = parse_worker_outcome(
-            json!({ "ok": { "source": "System", "body": "created", "receipt": false } }),
-            &third_party_call(),
-        );
-        let ActionOutcome::Succeeded(data) = outcome else {
-            panic!("expected success");
-        };
-        assert_eq!(data.source.as_deref(), Some("GitHub"));
-        assert!(data.receipt);
-        assert_eq!(data.body.as_deref(), Some("created"));
-    }
-
-    #[test]
-    fn worker_error_text_never_crosses_the_trust_boundary() {
-        let outcome = parse_worker_outcome(
-            json!({ "error": { "class": "auth", "message": "token=super-secret" } }),
-            &third_party_call(),
-        );
-        let ActionOutcome::ToolReportedError { message } = outcome else {
-            panic!("expected a reported tool error");
-        };
-        assert!(message.contains(worker_failure_message(FailureClass::Auth)));
-        assert!(message.contains("Partial effects"));
-        assert!(!message.contains("super-secret"));
-    }
-
-    #[test]
-    fn worker_outcomes_are_strict_and_interactions_fail_honestly() {
-        assert!(matches!(
-            parse_worker_outcome(json!({ "result": "done" }), &third_party_call()),
-            ActionOutcome::ResultUnavailable { .. }
-        ));
-        assert!(matches!(
-            parse_worker_outcome(
-                json!({ "needsInteraction": { "kind": "confirm" } }),
-                &third_party_call()
-            ),
-            ActionOutcome::ResultUnavailable { .. }
-        ));
     }
 
     #[test]

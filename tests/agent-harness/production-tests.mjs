@@ -13,14 +13,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
 const exec = promisify(execFile);
 const groups = {
-  registry: "extensions::tests::",
-  imported: "imported_update_security_tests::",
-  developer: "dev_extensions::tests::",
   agent: "agent::",
-  native: "extension_host::tests::",
   execution: "action_exec::tests::",
   mcp: "grain_mcp::",
-  auth: "grain_auth::",
 };
 let group = "all",
   output = join(here, ".runs");
@@ -95,15 +90,8 @@ try {
     const env = { ...process.env };
     delete env.TAURI_CONFIG;
     delete env.GRAIN_AGENT_HARNESS_ROOT;
-    const registry = id === "registry";
-    const cargoArgs = [
-      "test",
-      "--locked",
-      ...(registry ? ["-p", "grain-core"] : []),
-      "--lib",
-      filter,
-    ];
-    if (process.platform === "win32" && !registry) {
+    const cargoArgs = ["test", "--locked", "--lib", filter];
+    if (process.platform === "win32") {
       delete env.CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUNNER;
       // A TOML argv array preserves paths containing spaces; Cargo's runner
       // environment string splits whitespace rather than interpreting quotes.
@@ -133,14 +121,14 @@ try {
     let tail = "";
     const result = {
       id: `logic.${id}`,
-      description: `${registry ? "Core registry" : "Normal backend"} lib tests filtered by ${filter}`,
+      description: `Normal backend lib tests filtered by ${filter}`,
       status: "Not run",
     };
     try {
       const exitCode = await new Promise((resolve, reject) => {
         stopping = undefined;
         current = spawn("cargo", cargoArgs, {
-          cwd: registry ? repo : join(repo, "src-tauri"),
+          cwd: join(repo, "src-tauri"),
           env,
           windowsHide: true,
           stdio: ["ignore", "pipe", "pipe"],

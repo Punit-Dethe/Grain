@@ -9,7 +9,6 @@ import {
   mkdtemp,
   readFile,
   writeFile,
-  copyFile,
   rm,
   realpath,
 } from "node:fs/promises";
@@ -19,19 +18,7 @@ import { dirname, join, resolve, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { chromium } from "@playwright/test";
-import {
-  AUTOMATIC_MCP_WORKFLOWS,
-  scenarios,
-  selectScenarios,
-} from "./scenarios.mjs";
-import { installationHandlers } from "./installation.mjs";
-import { registryHandlers } from "./registry.mjs";
-import { foundationHandlers } from "./foundation.mjs";
-import { authenticationHandlers } from "./authentication.mjs";
-import { accountOwnershipHandlers } from "./auth-ownership.mjs";
-import { accountRefreshHandlers } from "./auth-refresh.mjs";
-import { accountScheduleHandlers } from "./auth-schedules.mjs";
-import { startAuthFixture } from "./auth-fixture.mjs";
+import { scenarios, selectScenarios } from "./scenarios.mjs";
 import { startMcpFixture } from "./mcp-fixture.mjs";
 import { mcpHandlers } from "./mcp.mjs";
 import { mcpAuthHandlers } from "./mcp-auth.mjs";
@@ -43,7 +30,6 @@ import {
   MCP_INDEPENDENCE_IDS,
 } from "./mcp-independence.mjs";
 import { workflowHandlers } from "./workflow.mjs";
-import { configuredModel } from "./live-model.mjs";
 import { liveHandlers, LIVE_ENDPOINT, LIVE_REPOSITORY } from "./mcp-live.mjs";
 import { hfHandlers, HF_ENDPOINT, HF_DOCUMENT } from "./mcp-hf-live.mjs";
 import {
@@ -58,7 +44,6 @@ import {
   startConformanceRelay,
 } from "./conformance-support.mjs";
 import { startModel } from "./model.mjs";
-import { developerReload } from "./developer.mjs";
 import { verifyBuild, runnerFingerprint } from "./stamp.mjs";
 import {
   waitFor as poll,
@@ -73,15 +58,7 @@ const repo = resolve(here, "../..");
 const options = { suite: "smoke" };
 for (let i = 2; i < process.argv.length; i++) {
   const option = process.argv[i];
-  if (
-    [
-      "--list",
-      "--help",
-      "--focus-click",
-      "--live-configured",
-      "--linear-sign-in",
-    ].includes(option)
-  )
+  if (["--list", "--help", "--linear-sign-in"].includes(option))
     options[option.slice(2)] = true;
   else if (
     [
@@ -100,7 +77,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (options.help) {
   console.log(
-    "node tests/agent-harness/run.mjs [--list] [--suite smoke|lifecycle|idle|mcp-agent-workflows|agent-workflow|agent-live|agent-interruption|agent-interruption-live|native-failures|native-foundation|native-auth|native-auth-schedules|mcp|mcp-auth|mcp-configured|mcp-configured-runtime|mcp-configured-auth|mcp-connection-checkpoint|mcp-independence|mcp-refresh|mcp-foundation|mcp-live|mcp-hf-live|mcp-linear-preflight|mcp-linear-guards|mcp-linear-sign-in|mcp-linear-contracts|native-installation|registry-recovery|all] [--scenario ID] [--binary path] [--output directory] [--focus-click] [--live-configured] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build first with tests/agent-harness/build.ps1. Scripted suites need no model key. agent-live and agent-interruption-live require explicit --live-configured and uses only the selected ordinary Grain model with disposable tool objects; it is excluded from all. native-auth, Agent workflow/interruption suites and MCP fixtures require Python cryptography for owned TLS. mcp-foundation runs twenty-three controlled transport/OAuth cases in one host; mcp-configured runs three host metadata management cases without account sign-in; mcp-configured-runtime runs three anonymous custom-server execution/ownership/cancellation cases; mcp-configured-auth runs six custom OAuth/account/client cases; mcp-connection-checkpoint runs all twelve configured cases, all twenty-three foundation cases and both smoke cases in one host, with separate verdicts and original deadlines; mcp-independence selects its two independent-provider cases; mcp-refresh selects its two actual-expiry/recovery cases. mcp-live is opt-in public DeepWiki acceptance; mcp-hf-live is a fixed anonymous public Hugging Face nested text read. Both are excluded from all. mcp-linear-preflight creates actual read-only Linear SDK consent and cancels without opening a browser; excluded from all. mcp-linear-guards verifies browser/grant controls without opening a browser. mcp-linear-sign-in requires --linear-sign-in and an interactive terminal; two human browser steps, no tool execution. mcp-linear-contracts uses the same opt-in with one sign-in and structural contract inspection/restart, no tools execute. These suites are excluded from all. --focus-click is confined to agent.reopen-escape.",
+    "node tests/agent-harness/run.mjs [--list] [--suite NAME | --scenario ID] [--binary path] [--output directory] [--linear-sign-in]\nWindows real Agent/WebView2 acceptance. Build with tests/agent-harness/build.ps1. See --list for cases and suites. The controlled TLS peers need Python with cryptography. Linear browser tests require explicit opt-in.",
   );
   process.exit(0);
 }
@@ -132,14 +109,6 @@ if (linearHumanSelected && !process.stdin.isTTY)
   throw new Error(
     "Linear browser testing requires an interactive terminal for browser approval",
   );
-if (
-  selected.some((scenario) =>
-    ["agent-live", "agent-interruption-live"].includes(scenario.suite),
-  ) !== !!options["live-configured"]
-)
-  throw new Error(
-    "Genuine model acceptance requires --suite agent-live or agent-interruption-live with --live-configured (or one agent.live-* scenario); the switch is refused in ordinary suites",
-  );
 let conformanceBinding;
 if (selected.some((scenario) => scenario.suite === "mcp-conformance")) {
   assert.ok(
@@ -160,25 +129,9 @@ if (selected.some((scenario) => scenario.suite === "mcp-conformance")) {
     undefined,
     "Conformance context is confined to official cases",
   );
-if (options["focus-click"] && options.scenario !== "agent.reopen-escape")
-  throw new Error("--focus-click requires --scenario agent.reopen-escape");
 if (
   options.fault &&
   ![
-    "wrong-greeting",
-    "unsupported-api-as-current",
-    "missing-escape",
-    "successful-error",
-    "skip-restart",
-    "lost-pointer",
-    "stringified-number",
-    "wrong-account",
-    "abandoned-auth",
-    "wrong-owner",
-    "unchanged-auth-declaration",
-    "uncancelled-login",
-    "accepted-partial-consent",
-    "released-refresh",
     "wrong-mcp-type",
     "supported-mcp-excluded",
     "short-mcp-preview",
@@ -202,10 +155,7 @@ if (
     "skip-mcp-disable",
     "skip-mcp-client-change",
     "abandoned-mcp-client-secret",
-    "missing-staged-selection",
     "wrong-workflow-receipt",
-    "skip-workflow-denial",
-    "skip-workflow-expiry",
   ].includes(options.fault)
 )
   throw new Error("Unknown oracle fault");
@@ -216,26 +166,9 @@ if (
   throw new Error(
     "skip-linear-cancel requires one isolated Linear preflight scenario",
   );
-for (const [fault, ids] of [
-  [
-    "skip-workflow-denial",
-    ["agent.workflow-denial-native", "agent.workflow-denial-mcp"],
-  ],
-  ["skip-workflow-expiry", ["agent.workflow-expiry"]],
-]) {
-  if (options.fault === fault && !ids.includes(options.scenario))
-    throw new Error(`${fault} requires its isolated interruption scenario`);
-}
-if (
-  options.fault === "missing-staged-selection" &&
-  !["agent.staged-native", "agent.staged-mcp"].includes(options.scenario)
-)
-  throw new Error(
-    "missing-staged-selection requires an isolated staged workflow scenario",
-  );
 if (
   options.fault === "wrong-workflow-receipt" &&
-  !["agent.workflow-native", "agent.workflow-mcp"].includes(options.scenario)
+  options.scenario !== "agent.workflow-mcp"
 )
   throw new Error(
     "wrong-workflow-receipt requires an isolated write workflow scenario",
@@ -248,7 +181,6 @@ if (
     "missing-live-evidence requires one isolated public live read scenario",
   );
 for (const [fault, scenario] of [
-  ["unsupported-api-as-current", "native.api-compatibility"],
   ["wrong-mcp-peer-account", "mcp.auth-provider-independence"],
   ["missing-mcp-issuer-rotation", "mcp.auth-issuer-binding"],
   ["missing-mcp-refresh-failure", "mcp.auth-temporary-recovery"],
@@ -270,67 +202,11 @@ for (const [fault, scenario] of [
   ["supported-mcp-excluded", "mcp.mixed-catalog"],
   ["short-mcp-preview", "mcp.response-preview"],
   ["accepted-mcp-catalog", "mcp.catalog-budgets"],
-  ["released-refresh", "native.auth-refresh-logout"],
-  ["uncancelled-login", "native.auth-cancellation"],
-  ["accepted-partial-consent", "native.auth-expiry"],
 ]) {
   if (options.fault === fault && options.scenario !== scenario)
     throw new Error(`${fault} requires --scenario ${scenario}`);
 }
-if (
-  options.fault === "wrong-owner" &&
-  options.scenario !== "native.auth-owners"
-)
-  throw new Error("wrong-owner requires --scenario native.auth-owners");
-if (
-  options.fault === "unchanged-auth-declaration" &&
-  options.scenario !== "native.auth-binding"
-)
-  throw new Error(
-    "unchanged-auth-declaration requires --scenario native.auth-binding",
-  );
-if (
-  options.fault === "wrong-account" &&
-  options.scenario !== "native.auth-fixture"
-)
-  throw new Error("wrong-account requires --scenario native.auth-fixture");
-if (
-  options.fault === "abandoned-auth" &&
-  options.scenario !== "native.auth-fixture"
-)
-  throw new Error("abandoned-auth requires --scenario native.auth-fixture");
-if (
-  options.fault === "stringified-number" &&
-  options.scenario !== "native.typed-contract"
-)
-  throw new Error(
-    "stringified-number requires --scenario native.typed-contract",
-  );
-if (
-  options.fault === "missing-escape" &&
-  options.scenario !== "agent.reopen-escape"
-)
-  throw new Error("missing-escape requires --scenario agent.reopen-escape");
-if (
-  options.fault === "successful-error" &&
-  options.scenario !== "native.reply-failures"
-)
-  throw new Error("successful-error requires --scenario native.reply-failures");
-if (
-  options.fault === "skip-restart" &&
-  options.scenario !== "native.consent-persistence"
-)
-  throw new Error(
-    "skip-restart requires --scenario native.consent-persistence",
-  );
 const runId = randomUUID();
-if (
-  options.fault === "lost-pointer" &&
-  options.scenario !== "native.registry-preservation"
-)
-  throw new Error(
-    "lost-pointer requires --scenario native.registry-preservation",
-  );
 const output = resolve(options.output ?? join(here, ".runs"));
 await mkdir(output, { recursive: true });
 const root = await mkdtemp(join(output, "run-"));
@@ -347,7 +223,6 @@ const report = {
     kind: "webview2-cdp",
     node: process.version,
     architecture: process.arch,
-    focusClick: Boolean(options["focus-click"]),
   },
   commit: "unknown",
   dirtyFiles: [],
@@ -360,7 +235,7 @@ const report = {
     "Checks in scenario metadata are partial supporting coverage; manual ledger is unchanged.",
   ],
 };
-let child, browser, model, main, authProvider, mcpProvider, mcpPeer;
+let child, browser, model, main, mcpProvider, mcpPeer;
 let interrupted = false;
 const cancellation = new AbortController();
 const waitFor = (description, operation, options = {}) =>
@@ -459,11 +334,6 @@ const status = async () => {
   value.hostSession = hostSession;
   return value;
 };
-const fixture = (operation) => invoke("agent_harness_fixture", { operation });
-const events = (snapshot, phase, action) =>
-  snapshot.events.filter(
-    (event) => event.phase === phase && (!action || event.action === action),
-  );
 async function findWindow(label) {
   for (const context of browser.contexts()) {
     for (const page of context.pages()) {
@@ -523,706 +393,24 @@ async function request(instruction = "hello", { timeoutMs = 20000 } = {}) {
   );
   return page;
 }
-async function greeting(revision = "one") {
-  await closePanel();
-  const before = await status();
+async function scriptedReply() {
   await invoke("agent_harness_submit", { instruction: "hello" });
   const page = await panel();
-  await waitFor("Automatically approved greeting", async () => {
-    const snapshot = await status();
-    return (
-      events(snapshot, "completed", "hello").length ===
-        events(before, "completed", "hello").length + 1 &&
-      !snapshot.agent.active
-    );
-  });
-  await page
-    .getByText(`Harness hello (${revision})`, { exact: false })
-    .first()
-    .waitFor({ state: "visible", timeout: 15000 });
-  const after = await status();
-  assert.equal(after.agent.pendingApproval, false);
-  assert.equal(
-    events(after, "dispatched", "hello").length,
-    events(before, "dispatched", "hello").length + 1,
-    "Greeting must dispatch once",
-  );
-  assert.equal(
-    after.worker.current.pending,
-    0,
-    "Worker retained a pending reply after completion",
-  );
-  return after;
+  await page.getByText("Harness ready", { exact: true }).waitFor();
 }
-async function slowStart() {
-  const before = await status();
-  const page = await request("slow_hello");
-  await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
-  const active = await waitFor("Slow native dispatch", async () => {
-    const snapshot = await status();
-    return (
-      events(snapshot, "dispatched", "slow_hello").length ===
-        events(before, "dispatched", "slow_hello").length + 1 &&
-      snapshot.worker.current?.pending === 1 &&
-      snapshot
-    );
-  });
-  return { before, active, page };
-}
-
-async function failureCall(
-  action,
-  expectedOutcome,
-  { retire = true, uiText } = {},
-) {
-  const before = await status();
-  const modelStart = model.journal.length;
-  const page = await request(action);
-  const approvedAt = performance.now();
-  await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
-  const after = await waitFor(
-    `${action} classified and Agent released`,
-    async () => {
-      const snapshot = await status();
-      return (
-        events(snapshot, "outcome", action).length ===
-          events(before, "outcome", action).length + 1 &&
-        !snapshot.agent.active &&
-        !snapshot.agent.pendingApproval &&
-        snapshot
-      );
-    },
-    { timeoutMs: 30000 },
-  );
-  const outcome = events(after, "outcome", action).at(-1);
-  assert.equal(
-    outcome.outcome,
-    expectedOutcome,
-    `${action} reported the wrong certainty`,
-  );
-  const dispatches = events(after, "dispatched", action).slice(
-    events(before, "dispatched", action).length,
-  );
-  assert.equal(
-    dispatches.length,
-    1,
-    `${action} must dispatch once, with no automatic retry`,
-  );
-  const worker = dispatches[0].worker;
-  if (retire) {
-    assert.equal(
-      after.worker.current,
-      null,
-      `${action} retained the failed worker`,
-    );
-    assert.equal(
-      after.tokenCount,
-      baselineTokens,
-      `${action} leaked its token`,
-    );
-    assert.ok(
-      events(after, "retired").some((event) => event.worker === worker),
-      `${action} failed to retire its exact owner`,
-    );
-    await waitFor(
-      "Retired native supervisor destruction",
-      async () => !(await findWindow(/^extension-host-/)),
-    );
-  } else {
-    assert.equal(
-      after.worker.current.pending,
-      0,
-      `${action} retained a pending reply`,
-    );
-  }
-  assert.equal(
-    after.fixtureEnabled,
-    true,
-    "Ordinary failure disabled the extension",
-  );
-  assert.equal(
-    model.journal
-      .slice(modelStart)
-      .flatMap((entry) => entry.returned)
-      .filter((name) => name.startsWith("act__")).length,
-    1,
-    "Model action was silently replayed",
-  );
-  const text = await page.locator("body").innerText();
-  assert.ok(
-    !text.includes("HARNESS_PRIVATE_ERROR_MARKER"),
-    "Private worker error leaked into the UI",
-  );
-  if (uiText)
-    assert.ok(
-      text.includes(uiText),
-      `${action} omitted its truthful visible notice`,
-    );
-  const invoked = events(after, "invoked", action).at(-1);
-  return {
-    before,
-    after,
-    worker,
-    page,
-    outcome,
-    invoked,
-    approvedAt,
-    elapsedAfterApprovalMs: performance.now() - approvedAt,
-  };
-}
-const inputEvidence = [];
-function takeInputEvidence() {
-  return inputEvidence.splice(0);
-}
-async function escapePanel(page) {
-  if (options.fault !== "missing-escape") {
-    let output;
-    let failure;
-    try {
-      output = await exec(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-File",
-          join(here, "native-input.ps1"),
-          "-OwnerPid",
-          String(child.pid),
-          ...(options["focus-click"] ? ["-FocusByClick"] : []),
-        ],
-        { timeout: 10000, windowsHide: true, maxBuffer: 16384 },
-      );
-    } catch (error) {
-      output = error;
-      failure = error;
-    }
-    // Preserve guarded refusals as well as accepted input. A successful SendInput
-    // call is not proof that the shortcut handler received the key.
-    let observation;
-    try {
-      observation = JSON.parse(String(output.stdout ?? "").trim());
-    } catch (error) {
-      inputEvidence.push({
-        schema: 1,
-        kind: "native-escape-diagnostic-missing",
-      });
-      // Compilation/startup failures may predate the adapter's finally block.
-      // Retain their original error rather than replacing it with a JSON error.
-      throw failure ?? error;
-    }
-    assert.equal(observation.schema, 1);
-    assert.equal(observation.kind, "native-escape");
-    assert.ok(inputEvidence.length < 64, "Native input evidence overflowed");
-    inputEvidence.push(observation);
-    if (failure) throw failure;
-    assert.equal(observation.accepted, 2);
-    assert.equal(observation.foregroundBefore, true);
-    assert.equal(observation.heldModifiers, "");
-    assert.equal(observation.escapeHeld, false);
-    if (options["focus-click"]) {
-      assert.equal(observation.focusClickAccepted, 2);
-      assert.equal(observation.physicalCoordinates, true);
-    }
-  } else {
-    inputEvidence.push({ kind: "native-escape-withheld", schema: 1 });
-  }
-  await waitFor("Escape window destruction", () => page.isClosed(), {
-    timeoutMs: 8000,
-  });
-  await waitFor("Escape releases Agent", async () => {
-    const value = await status();
-    return !value.agent.active && !value.agent.pendingApproval;
-  });
-}
-async function noLateSuccess(before, worker) {
-  // Wait beyond the fixture's real 15-second handler, not a shortened fake clock.
-  const started = performance.now();
-  await waitFor(
-    "Interrupted-call observation window",
-    () => performance.now() - started >= 16000,
-    { timeoutMs: 18000, intervalMs: 250 },
-  );
-  const snapshot = await status();
-  assert.equal(
-    events(snapshot, "completed", "slow_hello").length,
-    events(before, "completed", "slow_hello").length,
-    "Interrupted call reported a late success",
-  );
-  assert.equal(
-    events(snapshot, "dispatched", "slow_hello").length,
-    events(before, "dispatched", "slow_hello").length + 1,
-    "Interrupted call was automatically repeated",
-  );
-  assert.ok(
-    events(snapshot, "retired").some((event) => event.worker === worker),
-    "Interrupted generation did not retire",
-  );
-}
-async function changeRevision(revision) {
-  const source = await readFile(
-    join(here, "fixtures/lifecycle/main.js"),
-    "utf8",
-  );
-  const fixtureSource = source.replace('"one"', JSON.stringify(revision));
-  await writeFile(
-    assertWithin(root, join(root, "fixture/dist/main.js")),
-    options.fault === "wrong-greeting"
-      ? fixtureSource.replace(
-          "Harness hello (",
-          "Intentional incorrect greeting (",
-        )
-      : fixtureSource,
-  );
-  if (options.fault === "successful-error") {
-    const path = assertWithin(root, join(root, "fixture/dist/main.js"));
-    await writeFile(
-      path,
-      (await readFile(path, "utf8")).replace(
-        'error: { class: "network", message: "HARNESS_PRIVATE_ERROR_MARKER" }',
-        'ok: { body: "Intentional error-to-success oracle fault" }',
-      ),
-    );
-  }
-  if (options.fault === "stringified-number") {
-    const path = assertWithin(root, join(root, "fixture/dist/main.js"));
-    await writeFile(
-      path,
-      (await readFile(path, "utf8")).replace(
-        "JSON.stringify(args)",
-        "JSON.stringify({ ...args, count: String(args.count) })",
-      ),
-    );
-  }
-}
-
 const handlers = {
-  async "native.reply-failures"() {
-    for (const [action, classification, retire, uiText] of [
-      [
-        "tool_error",
-        "toolReportedError",
-        false,
-        "Partial effects may have occurred",
-      ],
-      [
-        "thrown_error",
-        "toolReportedError",
-        false,
-        "Partial effects may have occurred",
-      ],
-      ["malformed_result", "resultUnavailable", false, "invalid action result"],
-      ["lost_reply", "unknownOutcome", true, "could not confirm its result"],
-    ]) {
-      const call = await failureCall(action, classification, {
-        retire,
-        uiText,
-      });
-      const fresh = await greeting();
-      if (retire) assert.notEqual(fresh.worker.current.identity, call.worker);
-    }
-  },
-  async "native.readiness-failure"() {
-    await writeFile(
-      assertWithin(root, join(root, "fixture/dist/main.js")),
-      "self.close();\n",
-    );
-    const before = await status();
-    const page = await request();
-    await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
-    const after = await waitFor(
-      "Unready worker failure",
-      async () => {
-        const value = await status();
-        return (
-          events(value, "outcome", "hello").length ===
-            events(before, "outcome", "hello").length + 1 &&
-          !value.agent.active &&
-          value
-        );
-      },
-      { timeoutMs: 10000 },
-    );
-    assert.equal(events(after, "outcome", "hello").at(-1).outcome, "failed");
-    assert.equal(
-      events(after, "dispatched").length,
-      events(before, "dispatched").length,
-      "Unready worker dispatched a tool",
-    );
-    const spawned = events(after, "spawned").slice(
-      events(before, "spawned").length,
-    );
-    assert.equal(spawned.length, 1, "Startup was retried or never attempted");
-    assert.ok(
-      events(after, "retired").some(
-        (event) => event.worker === spawned[0].worker,
-      ),
-    );
-    assert.equal(after.worker.current, null);
-    assert.equal(after.tokenCount, baselineTokens);
-    assert.equal(after.fixtureEnabled, true);
-    await waitFor(
-      "Unready supervisor destruction",
-      async () => !(await findWindow(/^extension-host-/)),
-    );
-    assert.match(await page.locator("body").innerText(), /not dispatched/);
-    await changeRevision("one");
-    await greeting();
-  },
-  async "native.source-drift"() {
-    const warm = await greeting();
-    const before = await status();
-    const page = await request();
-    await changeRevision("two"); // Deliberately no load or developer reload.
-    await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
-    await waitFor(
-      "Source drift refusal",
-      async () => !(await status()).agent.active,
-    );
-    assert.equal(
-      events(await status(), "dispatched").length,
-      events(before, "dispatched").length,
-      "Old approval executed changed source",
-    );
-    assert.match(
-      await page.locator("body").innerText(),
-      /no longer approved or available|changed/,
-    );
-    const fresh = await greeting("two");
-    assert.notEqual(
-      fresh.worker.current.identity,
-      warm.worker.current.identity,
-      "New source used the obsolete warm worker",
-    );
-  },
-  async "native.absolute-deadline"() {
-    const call = await failureCall("deadline_hello", "unknownOutcome", {
-      uiText: "could not confirm its result",
-    });
-    const elapsed = call.outcome.elapsedMs - call.invoked.elapsedMs;
-    assert.ok(
-      elapsed >= 19500 && elapsed <= 23000,
-      `Native absolute deadline took ${elapsed}ms`,
-    );
-    assert.ok(
-      call.elapsedAfterApprovalMs <= 24000,
-      "Approval-to-failure exceeded its local acceptance tolerance",
-    );
-    console.log(
-      `OBSERVED native absolute deadline ${elapsed}ms from invocation`,
-    );
-    const fresh = await greeting();
-    assert.notEqual(fresh.worker.current.identity, call.worker);
-    // Observe beyond the original handler's 25s deadline, including recovery.
-    await waitFor(
-      "Late deadline observation",
-      () => performance.now() - call.approvedAt >= 27000,
-      { timeoutMs: 9000, intervalMs: 200 },
-    );
-    const after = await status();
-    assert.equal(
-      events(after, "dispatched", "deadline_hello").length,
-      events(call.before, "dispatched", "deadline_hello").length + 1,
-    );
-    assert.equal(
-      events(after, "completed", "deadline_hello").length,
-      events(call.before, "completed", "deadline_hello").length,
-    );
-    assert.equal(
-      after.worker.current.identity,
-      fresh.worker.current.identity,
-      "Old timeout cleanup killed the replacement",
-    );
-  },
-  async "native.result-budgets"() {
-    for (const [action, classification] of [
-      ["oversized_result", "resultUnavailable"],
-      ["oversized_raw", "unknownOutcome"],
-    ]) {
-      const call = await failureCall(action, classification, {
-        uiText:
-          action === "oversized_raw"
-            ? "could not confirm its result"
-            : "exceeding its supported budget",
-      });
-      const fresh = await greeting();
-      assert.notEqual(fresh.worker.current.identity, call.worker);
-    }
-  },
-  async "native.invalid-input"() {
-    for (const instruction of [
-      "invalid_arguments",
-      "missing_arguments",
-      "wrong_arguments",
-      "oversized_arguments",
-      "malformed_arguments",
-    ]) {
-      await closePanel();
-      const before = await status();
-      const modelStart = model.journal.length;
-      await invoke("agent_harness_submit", { instruction });
-      const page = await panel();
-      await waitFor(
-        "Invalid-input Agent completion",
-        async () =>
-          model.journal.length >= modelStart + 3 &&
-          !(await status()).agent.active,
-      );
-      const after = await status();
-      assert.equal(after.agent.pendingApproval, false);
-      assert.equal(
-        after.worker.current,
-        null,
-        "Invalid arguments woke a worker",
-      );
-      assert.equal(
-        events(after, "dispatched").length,
-        events(before, "dispatched").length,
-      );
-      const text = await page.locator("body").innerText();
-      assert.match(
-        text,
-        /undeclared parameter|arguments|Invalid or repeated model tool-call identity/,
-      );
-      assert.ok(
-        !text.includes("HARNESS_PRIVATE_ARGUMENT_MARKER"),
-        "Rejected parameter key leaked into the UI",
-      );
-    }
-    await greeting();
-  },
-  async "native.cold-warm"() {
-    const cold = await status();
-    assert.equal(cold.worker.current, null);
-    const first = await greeting();
-    const second = await greeting();
-    assert.equal(
-      second.worker.current.identity,
-      first.worker.current.identity,
-      "Warm greeting restarted the worker",
-    );
-  },
-  async "agent.decline"() {
-    const before = await status();
-    const page = await request();
-    await activate(page.locator(".agc-confirm-actions .agc-cancel-btn"));
-    await waitFor("Decline release", async () => {
-      const value = await status();
-      return !value.agent.active && !value.agent.pendingApproval;
-    });
-    assert.equal(
-      events(await status(), "dispatched").length,
-      events(before, "dispatched").length,
-    );
-    await greeting();
-  },
-  async "agent.close-pending"() {
-    const before = await status();
-    await request();
-    await closePanel();
-    assert.equal(
-      events(await status(), "dispatched").length,
-      events(before, "dispatched").length,
-    );
-    await greeting();
-  },
-  async "agent.typed-approval"() {
-    const before = await status();
-    const page = await request();
-    await activate(page.locator("button.agc-c-followup"));
-    const input = page.locator("textarea").first();
-    await input.fill("yes");
-    // Like button activation, exercise the real React handler without a CDP
-    // native focus/resize race. Native Escape has its own OS input case.
-    await input.evaluate((element) =>
-      element.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "Enter",
-          code: "Enter",
-          bubbles: true,
-          cancelable: true,
-        }),
-      ),
-    );
-    await waitFor("Typed approval completion", async () => {
-      const value = await status();
-      return (
-        events(value, "completed", "hello").length ===
-          events(before, "completed", "hello").length + 1 && !value.agent.active
-      );
-    });
-    assert.equal(
-      events(await status(), "dispatched", "hello").length,
-      events(before, "dispatched", "hello").length + 1,
-    );
-  },
-  async "agent.stale-approval"() {
-    const before = await status();
-    const page = await request();
-    await changeRevision("two");
-    await developerReload(root);
-    await activate(page.locator(".agc-confirm-actions .agc-action-btn"));
-    await waitFor("Stale approval release", async () => {
-      const value = await status();
-      return !value.agent.active && !value.agent.pendingApproval;
-    });
-    assert.equal(
-      events(await status(), "dispatched").length,
-      events(before, "dispatched").length,
-      "Stale approval dispatched changed code",
-    );
-    await greeting("two");
-  },
-  async "agent.escape-slow"() {
-    const slow = await slowStart();
-    await escapePanel(slow.page);
-    await greeting();
-    await noLateSuccess(slow.before, slow.active.worker.current.identity);
-  },
-  async "agent.reopen-escape"() {
-    const before = await status();
-    for (let cycle = 0; cycle < 10; cycle++) {
-      // No added handoff sleep: close/reopen exercises deferred OS cleanup.
-      await request();
-      await closePanel();
-      const replacement = await request();
-      await escapePanel(replacement);
-      assert.equal(
-        events(await status(), "dispatched").length,
-        events(before, "dispatched").length,
-        "Closing a replacement approval dispatched a tool",
-      );
-    }
-    await greeting();
-  },
+  "agent.model-reply": scriptedReply,
   async "agent.close-model"() {
+    const start = model.journal.length;
     await invoke("agent_harness_submit", { instruction: "model_wait" });
-    const page = await panel();
-    await waitFor(
-      "Delayed provider request",
-      () => model.journal.at(-1)?.state === "received",
+    await waitFor("Held model request", () =>
+      model.journal.slice(start).some((entry) => entry.state === "received"),
     );
     await closePanel();
-    await waitFor("Provider cancellation", () =>
-      model.journal.some((entry) => entry.state === "cancelled"),
+    await waitFor("Held model cancelled", () =>
+      model.journal.slice(start).some((entry) => entry.state === "cancelled"),
     );
-    assert.equal(page.isClosed(), true);
-    await greeting();
-  },
-  async "agent.close-slow"() {
-    const slow = await slowStart();
-    await closePanel();
-    const fresh = await greeting();
-    assert.notEqual(
-      fresh.worker.current.identity,
-      slow.active.worker.current.identity,
-    );
-    await noLateSuccess(slow.before, slow.active.worker.current.identity);
-  },
-  async "native.ten-replacements"() {
-    const generations = new Set();
-    for (let cycle = 0; cycle < 10; cycle++) {
-      const result = await greeting();
-      assert.ok(
-        !generations.has(result.worker.current.identity),
-        "Replacement reused an old worker token",
-      );
-      generations.add(result.worker.current.identity);
-      await closePanel();
-      await fixture("unload");
-      await waitFor("Unloaded worker/token cleanup", async () => {
-        const value = await status();
-        return value.worker.count === 0 && value.tokenCount === baselineTokens;
-      });
-      await fixture("load");
-    }
-    await greeting();
-  },
-  async "native.disable-slow"() {
-    const slow = await slowStart();
-    await fixture("disable");
-    await fixture("enable");
-    const fresh = await greeting();
-    assert.notEqual(
-      fresh.worker.current.identity,
-      slow.active.worker.current.identity,
-    );
-    await noLateSuccess(slow.before, slow.active.worker.current.identity);
-    assert.equal(
-      (await status()).worker.current.identity,
-      fresh.worker.current.identity,
-      "Old cleanup killed the replacement",
-    );
-  },
-  async "native.hot-reload"() {
-    let last = await greeting();
-    for (const revision of ["two", "three"]) {
-      await changeRevision(revision);
-      const reload = await developerReload(root);
-      assert.equal(reload.enabled, true);
-      const fresh = await greeting(revision);
-      assert.notEqual(
-        fresh.worker.current.identity,
-        last.worker.current.identity,
-      );
-      last = fresh;
-    }
-    const slow = await slowStart();
-    await changeRevision("four");
-    await developerReload(root);
-    await greeting("four");
-    await noLateSuccess(slow.before, slow.active.worker.current.identity);
-    await fixture("disable");
-    await changeRevision("five");
-    const disabled = await developerReload(root);
-    assert.equal(disabled.enabled, false);
-    assert.equal(disabled.restartedWorker, false);
-    assert.equal((await status()).worker.current, null);
-    await fixture("enable");
-    await greeting("five");
-  },
-  async "native.real-idle"() {
-    const warm = await greeting();
-    await closePanel();
-    const started = performance.now();
-    await waitFor(
-      "Production idle reaper",
-      async () => !(await status()).worker.current,
-      { timeoutMs: 170000, intervalMs: 1000 },
-    );
-    assert.ok(
-      performance.now() - started >= 115000,
-      "Worker retired substantially before the production idle threshold",
-    );
-    console.log(
-      `OBSERVED idle retirement after ${Math.round(performance.now() - started)}ms`,
-    );
-    const fresh = await greeting();
-    assert.notEqual(
-      fresh.worker.current.identity,
-      warm.worker.current.identity,
-    );
-    await closePanel();
-    const near = performance.now();
-    await waitFor(
-      "Near-idle-boundary wait",
-      () => performance.now() - near >= 110000,
-      { timeoutMs: 115000, intervalMs: 500 },
-    );
-    const slow = await slowStart();
-    console.log(
-      "OBSERVED near-boundary slow call dispatch; awaiting its result",
-    );
-    await waitFor(
-      "Near-boundary slow completion",
-      async () =>
-        events(await status(), "completed", "slow_hello").length ===
-        events(slow.before, "completed", "slow_hello").length + 1,
-      { timeoutMs: 20000 },
-    );
-    assert.equal(
-      (await status()).worker.current.identity,
-      fresh.worker.current.identity,
-      "Active call was reaped at the idle boundary",
-    );
+    await scriptedReply();
   },
 };
 let hostBinary;
@@ -1293,13 +481,12 @@ async function stopHost() {
   main = null;
   await waitFor(
     "Old host endpoint release",
-    async () => !(await portOpen(cdpPort)) && !(await portOpen(17124)),
+    async () => !(await portOpen(cdpPort)),
     { timeoutMs: 10000 },
   );
   assert.equal(child.exitCode, 0, `Host ${pid} did not exit normally`);
 }
 async function restartHost(beforeLaunch) {
-  if (options.fault === "skip-restart") return;
   const oldSession = hostSession;
   const snapshot = await status();
   priorEvents.splice(0, priorEvents.length, ...snapshot.events);
@@ -1309,67 +496,15 @@ async function restartHost(beforeLaunch) {
   await launchHost();
   assert.equal(hostSession, oldSession + 1);
   const after = await status();
-  assert.equal(after.worker.count, 0);
-  assert.equal(after.tokenCount, baselineTokens);
   assert.equal(after.agent.pendingApproval, false);
   assert.equal(after.agent.active, false);
 }
-const installation = installationHandlers({
-  root,
-  repo,
-  here,
-  fault: options.fault,
-  status,
-  fixture,
-  request,
-  greeting,
-  closePanel,
-  activate,
-  waitFor,
-  events,
-  restartHost,
-  main: () => main,
-  log: () => logTail,
-});
-Object.assign(handlers, installation.handlers);
-const registrySuite = registryHandlers({
-  root,
-  here,
-  status,
-  fixture,
-  greeting,
-  restartHost,
-  waitFor,
-  imported: installation.imported,
-  allow: installation.allow,
-  fault: options.fault,
-});
-Object.assign(handlers, registrySuite.handlers);
-const foundationSuite = foundationHandlers({
-  root,
-  here,
-  status,
-  fixture,
-  request,
-  greeting,
-  activate,
-  waitFor,
-  events,
-  restartHost,
-  imported: installation.imported,
-  allow: installation.allow,
-  model: () => model,
-  failureCall,
-  fault: options.fault,
-});
-Object.assign(handlers, foundationSuite.handlers);
 const configuredMcpSuite = configuredMcpHandlers({
   root,
   main: () => main,
   invoke,
   status,
   restartHost,
-  fixture,
   panel,
   closePanel,
   fault: options.fault,
@@ -1387,72 +522,6 @@ const configuredRuntimeSuite = configuredRuntimeHandlers({
   model: () => model,
 });
 Object.assign(handlers, configuredRuntimeSuite.handlers);
-const authenticationSuite = authenticationHandlers({
-  fault: options.fault,
-  root,
-  invoke,
-  main: () => main,
-  provider: () => authProvider,
-  model: () => model,
-  status,
-  request,
-  activate,
-  waitFor,
-  events,
-  restartHost,
-});
-Object.assign(handlers, authenticationSuite.handlers);
-const accountContext = {
-  fault: options.fault,
-  root,
-  repo,
-  invoke,
-  main: () => main,
-  provider: () => authProvider,
-  model: () => model,
-  vaultCount: async () => {
-    const output = await exec(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-File",
-        join(here, "auth-cleanup.ps1"),
-        "-Root",
-        root,
-        "-RunId",
-        runId,
-        "-InventoryOnly",
-      ],
-      { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
-    );
-    const value = JSON.parse(output.stdout.trim());
-    assert.equal(value.kind, "native-vault-inventory");
-    assert.ok(
-      Number.isInteger(value.count) && value.count >= 0 && value.count <= 256,
-    );
-    return value.count;
-  },
-  closePanel,
-  panel,
-  status,
-  request,
-  activate,
-  waitFor,
-  events,
-  restartHost,
-};
-const accountOwnershipSuite = accountOwnershipHandlers(accountContext);
-Object.assign(handlers, accountOwnershipSuite.handlers);
-const accountSchedules = accountScheduleHandlers(
-  accountContext,
-  accountOwnershipSuite.controls,
-);
-Object.assign(handlers, accountSchedules.handlers);
-const accountRefresh = accountRefreshHandlers(
-  accountContext,
-  accountOwnershipSuite.controls,
-);
-Object.assign(handlers, accountRefresh.handlers);
 const mcpSuite = mcpHandlers({
   invoke,
   status,
@@ -1521,7 +590,7 @@ const mcpAuthSuite = mcpAuthHandlers({
         root,
         "-RunId",
         runId,
-        "-Mcp",
+
         "-InventoryOnly",
         ...(clientSecret ? ["-McpClientSecret"] : []),
         ...(registration ? ["-McpRegistration"] : []),
@@ -1587,16 +656,12 @@ const workflowSuite = workflowHandlers({
   root,
   invoke,
   status,
-  fixture,
   request,
   activate,
   waitFor,
   closePanel,
   panel,
   restartHost,
-  events,
-  imported: installation.imported,
-  allow: installation.allow,
   provider: () => mcpProvider,
   model: () => model,
   fault: options.fault,
@@ -1699,7 +764,6 @@ for (const testCase of conformanceCases) {
     }
   };
 }
-let baselineTokens = 0;
 let cdpPort;
 try {
   const version = await exec("git", ["rev-parse", "HEAD"], { cwd: repo });
@@ -1735,10 +799,6 @@ try {
       "Harness executable is missing; run tests/agent-harness/build.ps1 first",
     );
   }
-  if (await portOpen(17124))
-    throw new Blocked(
-      "Harness events port 17124 is already in use; run this suite serially",
-    );
   let build;
   try {
     build = await verifyBuild(binary);
@@ -1795,36 +855,7 @@ try {
         "Dispatch observations are client-side; no independent remote-server receipt.",
       ],
     };
-  const liveConfig = options["live-configured"]
-    ? await configuredModel()
-    : null;
-  if (liveConfig) {
-    report.evidenceClass =
-      "real-application/configured-live-model/controlled-disposable-tools";
-    report.configuredModel = {
-      endpoint: liveConfig.endpoint,
-      model: liveConfig.model,
-      evidenceClass:
-        "real-application/configured-live-model/controlled-disposable-tools",
-      limitations: [
-        "One configured model; no personal provider objects, OAuth, general model compatibility or relevance certification.",
-      ],
-    };
-  }
-  model = await startModel({
-    fault: options.fault,
-    liveConfig,
-    // Registry recovery uses direct native tool selection.
-    registryCheckpoint: selected.every(
-      (scenario) =>
-        scenario.suite === "registry-recovery" ||
-        [
-          "native.registry-refusal",
-          "native.legacy-quarantine",
-          "native.api-compatibility",
-        ].includes(scenario.id),
-    ),
-  });
+  model = await startModel({ fault: options.fault });
   await writeFile(
     join(root, ".grain-agent-harness.json"),
     JSON.stringify({
@@ -1844,24 +875,21 @@ try {
       mcpLinearConsent: linearHumanSelected || linearGuardsSelected,
     }),
   );
-  const tlsPurposes = new Set();
-  for (const [suite, purpose] of [
-    ["native-auth", "native"],
-    ["mcp", "mcp"],
-    ["mcp-configured-runtime", "mcp"],
-    ["mcp-configured-auth", "mcp"],
-    ["mcp-auth", "mcp"],
-    ["mcp-conformance", "mcp"],
-    ["agent-workflow", "mcp"],
-    ["agent-live", "mcp"],
-    ["agent-interruption", "mcp"],
-    ["agent-interruption-live", "mcp"],
-  ]) {
-    if (!selected.some((scenario) => scenario.suite === suite)) continue;
-    if (tlsPurposes.has(purpose)) continue;
-    tlsPurposes.add(purpose);
+  if (
+    selected.some((scenario) =>
+      [
+        "mcp",
+        "mcp-configured-runtime",
+        "mcp-configured-auth",
+        "mcp-auth",
+        "mcp-conformance",
+        "agent-workflow",
+        "agent-interruption",
+      ].includes(scenario.suite),
+    )
+  ) {
     try {
-      await exec("python", [join(here, "auth-tls.py"), root, purpose], {
+      await exec("python", [join(here, "auth-tls.py"), root], {
         timeout: 10000,
         windowsHide: true,
         maxBuffer: 4096,
@@ -1871,11 +899,6 @@ try {
         "HTTPS fixtures need Python with cryptography for disposable TLS",
       );
     }
-  }
-  if (selected.some((scenario) => scenario.suite === "native-auth")) {
-    authProvider = await startAuthFixture(root, {
-      wrongAccount: options.fault === "wrong-account",
-    });
   }
   if (conformanceBinding)
     mcpProvider = await startConformanceRelay(root, conformanceBinding);
@@ -1887,9 +910,7 @@ try {
         "mcp-configured-auth",
         "mcp-auth",
         "agent-workflow",
-        "agent-live",
         "agent-interruption",
-        "agent-interruption-live",
       ].includes(scenario.suite),
     )
   ) {
@@ -1908,7 +929,7 @@ try {
       wrongWorkflowReceipt: options.fault === "wrong-workflow-receipt",
     });
   }
-  if (authProvider || mcpProvider) {
+  if (mcpProvider) {
     if (selected.some((scenario) => MCP_INDEPENDENCE_IDS.includes(scenario.id)))
       mcpPeer = await startMcpFixture(root, {
         authenticated: true,
@@ -1920,7 +941,6 @@ try {
         schema: 1,
         runId,
         modelPort: model.port,
-        authPort: authProvider?.port,
         mcpPort: mcpProvider?.port,
         mcpPeerPort: mcpPeer?.port,
         mcpAuth: selected.some((scenario) =>
@@ -1932,12 +952,6 @@ try {
       }),
     );
   }
-  await mkdir(join(root, "fixture/dist"), { recursive: true });
-  await copyFile(
-    join(here, "fixtures/lifecycle/manifest.json"),
-    join(root, "fixture/manifest.json"),
-  );
-  await changeRevision("one");
   cdpPort = await unusedPort();
   hostBinary = binary;
   await launchHost();
@@ -1970,11 +984,6 @@ try {
       }),
       /MCP (peer|account) fixture is not enabled/,
     );
-  if (!authProvider)
-    await assert.rejects(
-      invoke("agent_harness_auth", { operation: "status" }),
-      /Native auth fixture is not enabled/,
-    );
   if (!mcpProvider && !report.liveMcp)
     await assert.rejects(
       invoke("agent_harness_mcp", { operation: "discover" }),
@@ -1987,13 +996,11 @@ try {
     );
   assert.equal(firstStatus.runId, runId);
   assert.equal(firstStatus.applicationId, "com.grain.agent-harness");
-  assert.equal(firstStatus.eventsPort, 17124);
   assert.equal(
     resolve(firstStatus.profile.replace(/^\\\\\?\\/, "")),
     resolve(root, "data"),
     "Host did not use the disposable profile",
   );
-  baselineTokens = firstStatus.tokenCount;
   assert.deepEqual(
     firstStatus.shortcutBindings,
     [],
@@ -2020,66 +1027,20 @@ try {
     };
     try {
       await closePanel();
-      await fixture("unload").catch((error) => {
-        if (!String(error).includes("not a load-unpacked")) throw error;
-      });
-      if ((await status()).fixtureInstalled) await fixture("remove_installed");
-      await changeRevision("one");
-      await copyFile(
-        join(here, "fixtures/lifecycle/manifest.json"),
-        join(root, "fixture/manifest.json"),
-      );
-      if (
-        scenario.id !== "native.legacy-quarantine" &&
-        scenario.suite !== "native-auth" &&
-        scenario.suite !== "mcp" &&
-        scenario.suite !== "mcp-conformance" &&
-        scenario.suite !== "mcp-live" &&
-        scenario.suite !== "mcp-hf-live" &&
-        scenario.suite !== "mcp-linear-preflight" &&
-        scenario.suite !== "mcp-linear-guards" &&
-        scenario.suite !== "mcp-linear-sign-in" &&
-        scenario.suite !== "mcp-linear-contracts" &&
-        scenario.suite !== "mcp-auth" &&
-        scenario.suite !== "mcp-configured" &&
-        scenario.suite !== "mcp-configured-runtime" &&
-        scenario.suite !== "mcp-configured-auth" &&
-        !AUTOMATIC_MCP_WORKFLOWS.includes(scenario.id) &&
-        !["native-installation", "registry-recovery"].includes(scenario.suite)
-      )
-        await fixture("load");
       const eventStart = (await status()).events.length;
       await handlers[scenario.id]();
       await closePanel();
-      await fixture("unload").catch((error) => {
-        if (!String(error).includes("not a load-unpacked")) throw error;
-      });
-      if ((await status()).fixtureInstalled) await fixture("remove_installed");
-      await waitFor("Scenario cleanup baseline", async () => {
-        const value = await status();
-        return (
-          value.worker.count === 0 &&
-          value.tokenCount === baselineTokens &&
-          !value.agent.active &&
-          !value.agent.pendingApproval &&
-          !(await findWindow(/^extension-host-/))
-        );
-      });
+      await waitFor(
+        "Scenario cleanup baseline",
+        async () => !(await status()).agent.active,
+      );
       const end = await status();
       result.events = linearHumanSelected ? [] : end.events.slice(eventStart);
       result.model = linearHumanSelected ? [] : model.journal.slice(modelStart);
       result.observations = [
-        ...takeInputEvidence(),
-        ...installation.takeEvidence(),
-        ...registrySuite.takeEvidence(),
-        ...foundationSuite.takeEvidence(),
         ...configuredMcpSuite.takeEvidence(),
         ...configuredRuntimeSuite.takeEvidence(),
         ...configuredAuthSuite.takeEvidence(),
-        ...authenticationSuite.takeEvidence(),
-        ...accountOwnershipSuite.takeEvidence(),
-        ...accountSchedules.takeEvidence(),
-        ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
         ...hfSuite.takeEvidence(),
@@ -2126,17 +1087,9 @@ try {
       result.model = linearHumanSelected ? [] : model.journal.slice(modelStart);
       result.observations = [
         ...(result.observations ?? []),
-        ...takeInputEvidence(),
-        ...installation.takeEvidence(),
-        ...registrySuite.takeEvidence(),
-        ...foundationSuite.takeEvidence(),
         ...configuredMcpSuite.takeEvidence(),
         ...configuredRuntimeSuite.takeEvidence(),
         ...configuredAuthSuite.takeEvidence(),
-        ...authenticationSuite.takeEvidence(),
-        ...accountOwnershipSuite.takeEvidence(),
-        ...accountSchedules.takeEvidence(),
-        ...accountRefresh.takeEvidence(),
         ...mcpSuite.takeEvidence(),
         ...liveSuite.takeEvidence(),
         ...hfSuite.takeEvidence(),
@@ -2158,9 +1111,7 @@ try {
           "mcp-linear-contracts",
           "mcp-auth",
           "agent-workflow",
-          "agent-live",
           "agent-interruption",
-          "agent-interruption-live",
         ].includes(scenario.suite)
       ) {
         for (const observation of result.observations) {
@@ -2263,46 +1214,6 @@ try {
       errors.push(`Model cleanup: ${error.message}`);
     }
   }
-  if (authProvider) {
-    report.nativeAuthFixture = {
-      port: authProvider.port,
-      requests: authProvider.journal,
-      limitations: [
-        "Controlled consent replaces external browser handoff; live-provider acceptance remains pending.",
-      ],
-    };
-    try {
-      await authProvider.close();
-      await poll(
-        "Native auth fixture listener release",
-        async () => !(await portOpen(authProvider.port)),
-        { timeoutMs: 3000 },
-      );
-    } catch (error) {
-      errors.push(`Auth provider cleanup: ${error.message}`);
-    }
-    try {
-      const output = await exec(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-File",
-          join(here, "auth-cleanup.ps1"),
-          "-Root",
-          root,
-          "-RunId",
-          runId,
-        ],
-        { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
-      );
-      const result = JSON.parse(output.stdout.trim());
-      assert.equal(result.kind, "native-vault-cleanup");
-      assert.equal(result.remaining, 0);
-      report.nativeVaultCleanup = result;
-    } catch (error) {
-      errors.push(`Owned credential cleanup: ${error.message}`);
-    }
-  }
   if (mcpProvider) {
     report.mcpFixture = {
       port: mcpProvider.port,
@@ -2343,7 +1254,7 @@ try {
           root,
           "-RunId",
           runId,
-          "-Mcp",
+
           ...(linearSelected ? ["-McpLinear"] : []),
         ],
         { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
@@ -2365,7 +1276,7 @@ try {
             root,
             "-RunId",
             runId,
-            "-Mcp",
+
             "-McpConfigured",
           ],
           { timeout: 10000, windowsHide: true, maxBuffer: 4096 },
@@ -2411,38 +1322,13 @@ try {
       errors.push(error.message);
     }
   }
-  if (child) {
-    try {
-      await poll(
-        "Harness event listener release",
-        async () => !(await portOpen(17124)),
-        { timeoutMs: 3000 },
-      );
-    } catch (error) {
-      errors.push(error.message);
-    }
-  }
   report.cleanup = {
     status: errors.length ? "Fail" : "Pass",
     errors: linearHumanSelected ? errors.map(safeLinearError) : errors,
   };
   report.completedAt = new Date().toISOString();
   // Keep reports/screenshots only. Delete only verified children of this unique run.
-  for (const name of [
-    "data",
-    "fixture",
-    "fixture-b",
-    "mcp-author",
-    "fixture.grainpack",
-    "auth-tls",
-    "mcp-tls",
-    "auth-fixture.grainpack",
-    "auth-peer.grainpack",
-    "auth-fixture-a",
-    "auth-fixture-b",
-    "auth-fixture-a.grainpack",
-    "auth-fixture-b.grainpack",
-  ]) {
+  for (const name of ["data", "mcp-tls"]) {
     try {
       await rm(assertWithin(root, join(root, name)), {
         recursive: true,

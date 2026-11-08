@@ -157,12 +157,7 @@ pub(crate) fn validate_live_post(
         }
         let value = serde_json::to_value(message).map_err(|_| "Invalid public MCP test message")?;
         if let Some(action) = validated_hf_action(&value)? {
-            super::grain_agent_harness::observe(
-                "mcp-live-attempt",
-                "mcp.grain-harness",
-                action,
-                "",
-            );
+            super::grain_agent_harness::observe("mcp-live-attempt", action);
         }
         return Ok(());
     }
@@ -174,7 +169,7 @@ pub(crate) fn validate_live_post(
     }
     let value = serde_json::to_value(message).map_err(|_| "Invalid public MCP test message")?;
     if let Some(action) = validated_live_action(&value)? {
-        super::grain_agent_harness::observe("mcp-live-attempt", "mcp.grain-harness", action, "");
+        super::grain_agent_harness::observe("mcp-live-attempt", action);
     }
     Ok(())
 }

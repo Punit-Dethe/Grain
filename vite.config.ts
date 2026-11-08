@@ -6,32 +6,8 @@ import { resolve } from "path";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
-export default defineConfig(async ({ mode }) => ({
-  plugins: [
-    react(),
-    tailwindcss(),
-    ...(mode === "agent-harness"
-      ? [
-          {
-            name: "grain-agent-harness-port",
-            transform(code: string, id: string) {
-              if (id.replace(/\\/g, "/").endsWith("/extension-runtime.ts")) {
-                return code.replace(
-                  /ws:\/\/127\.0\.0\.1:7124/g,
-                  "ws://127.0.0.1:17124",
-                );
-              }
-            },
-            transformIndexHtml(html: string) {
-              return html.replace(
-                /ws:\/\/127\.0\.0\.1:7124/g,
-                "ws://127.0.0.1:17124",
-              );
-            },
-          },
-        ]
-      : []),
-  ],
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
 
   // Path aliases
   resolve: {
@@ -41,15 +17,11 @@ export default defineConfig(async ({ mode }) => ({
     },
   },
 
-  // The legacy fixture supervisor is embedded only in the acceptance host.
   build: {
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
         recordingOverlay: resolve(__dirname, "recording-overlay.html"),
-        ...(mode === "agent-harness"
-          ? { extensionHost: resolve(__dirname, "extension-host.html") }
-          : {}),
       },
     },
   },
@@ -75,4 +47,4 @@ export default defineConfig(async ({ mode }) => ({
       ignored: ["**/src-tauri/**"],
     },
   },
-}));
+});

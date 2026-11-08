@@ -8,30 +8,24 @@ export const AUTOMATIC_MCP_WORKFLOWS = [
 ];
 
 export const scenarios = [
+  {
+    id: "agent.model-reply",
+    suite: "smoke",
+    checks: [],
+    description:
+      "Real Agent shows a scripted model reply without connected tools",
+  },
+  {
+    id: "agent.close-model",
+    suite: "smoke",
+    checks: [],
+    description:
+      "Closing the real Agent cancels its held model request and a fresh request succeeds",
+  },
   ...[
-    [
-      "agent.workflow-denial-native",
-      "Native denied write cannot retry with changed arguments; independent verification continues",
-    ],
-    [
-      "agent.workflow-denial-mcp",
-      "MCP denied write cannot retry; external peer confirms unchanged object",
-    ],
-    [
-      "agent.workflow-expiry",
-      "Real two-minute MCP approval expiry and actual restart prevent stale workflow dispatch",
-    ],
-    [
-      "agent.workflow-stop-native",
-      "Close native pending write and held model after actual write; old confirmations and late responses cannot resume",
-    ],
     [
       "agent.workflow-stop-mcp",
       "Close a held model before and after an actual MCP write; exact wire counts prevent continuation or replay",
-    ],
-    [
-      "agent.workflow-failure-native",
-      "Actual native write receipt survives subsequent HTTP model outage with an unfinished notice",
     ],
     [
       "agent.workflow-failure-mcp",
@@ -39,7 +33,7 @@ export const scenarios = [
     ],
     [
       "agent.workflow-unknown-mcp",
-      "Peer performs one write then drops its reply; uncertainty blocks changed-argument retry and independent read verifies effects",
+      "Peer writes once and drops its reply; uncertainty blocks retry and an independent read verifies effects",
     ],
   ].map(([id, description]) => ({
     id,
@@ -47,302 +41,14 @@ export const scenarios = [
     suite: "agent-interruption",
     checks: [48],
   })),
-  ...["native", "mcp"].map((kind) => ({
-    id: `agent.live-${kind}-interruption`,
-    suite: "agent-interruption-live",
-    checks: [48],
-    description: `Configured genuine model ${kind} denial/independent verification and post-write model outage preserve actual effects and unfinished receipt`,
-  })),
-  {
-    id: "agent.live-native-workflow",
-    suite: "agent-live",
-    checks: [46, 47],
-    description:
-      "Opt-in configured genuine model selects native schemas incrementally and completes an actually approved read/write/verify task",
-  },
-  {
-    id: "agent.live-mcp-workflow",
-    suite: "agent-live",
-    checks: [46, 47],
-    description:
-      "Opt-in configured genuine model selects MCP schemas incrementally and completes an approved disposable read/write/verify with actual peer receipts",
-  },
-  {
-    id: "agent.staged-native",
-    suite: "agent-workflow",
-    checks: [46],
-    description:
-      "Real native catalog pages, exact/no-match search, two incremental selected schemas and reuse of the original read",
-  },
-  {
-    id: "agent.staged-mcp",
-    suite: "agent-workflow",
-    checks: [46],
-    description:
-      "Real paginated MCP catalog, metadata-only search and incremental selection preserve the original callable read",
-  },
-  {
-    id: "agent.schema-budget",
-    suite: "agent-workflow",
-    checks: [46],
-    description:
-      "Over-budget supported MCP selection is refused atomically while the previously selected read still executes",
-  },
-  {
-    id: "agent.directory-coverage",
-    suite: "agent-workflow",
-    checks: [46],
-    description:
-      "Real startup with 101 owned installed extensions reports 100-directory coverage and refuses the omitted owner without workers",
-  },
-  {
-    id: "agent.workflow-native",
-    suite: "agent-workflow",
-    checks: [47],
-    description:
-      "Native read/approved disposable write/verify continuation, withheld model batch tails, three duplicate confirmations and stale-owner refusal",
-  },
   {
     id: "agent.workflow-mcp",
     suite: "agent-workflow",
     checks: [47],
     description:
-      "Automatic MCP read, disposable write and independent verification in one task, with exact correlated model results and wire receipts",
-  },
-  {
-    id: "native.author-results",
-    suite: "native-foundation",
-    checks: [57],
-    description:
-      "Real native public result/context contract: tagged null/empty, plain display, invalid boolean/ambiguous/follow-up refusal and restricted invocation context",
-  },
-  {
-    id: "native.api-compatibility",
-    suite: "native-foundation",
-    checks: [59],
-    description:
-      "Missing, empty and unsupported installed/developer API profiles are refused without changing the working owner",
-  },
-  {
-    id: "native.typed-contract",
-    suite: "native-foundation",
-    checks: [22],
-    description:
-      "Real native typed/optional arguments round-trip; changed declaration without reload refuses the old approval",
-  },
-  {
-    id: "native.legacy-quarantine",
-    suite: "native-foundation",
-    checks: [2],
-    description:
-      "Real restarts quarantine an installed extension with retired privileges, preserve its artifact and refuse re-enable",
-  },
-  {
-    id: "native.cold-warm",
-    suite: "smoke",
-    checks: [3, 4],
-    description:
-      "Agent searches/loads a single tool, waits for approval, executes once, then reuses the warm worker",
-  },
-  {
-    id: "agent.decline",
-    suite: "smoke",
-    checks: [],
-    description: "Declined approval never dispatches the native tool",
-  },
-  {
-    id: "agent.typed-approval",
-    suite: "lifecycle",
-    checks: [29],
-    description:
-      "Typed yes resumes the exact pending call once through the real follow-up field",
-  },
-  {
-    id: "agent.stale-approval",
-    suite: "lifecycle",
-    checks: [27],
-    description:
-      "Reload invalidates the displayed approval; clicking the old confirmation cannot dispatch",
-  },
-  {
-    id: "agent.escape-slow",
-    suite: "lifecycle",
-    checks: [29],
-    description:
-      "Windows Escape with the owned Agent focused interrupts a slow call and permits a fresh session",
-  },
-  {
-    id: "agent.reopen-escape",
-    suite: "lifecycle",
-    checks: [29, 30],
-    description:
-      "Ten immediate close/reopen pairs preserve native Escape and never execute discarded approvals",
-  },
-  {
-    id: "agent.close-pending",
-    suite: "lifecycle",
-    checks: [30],
-    description:
-      "Closing a pending confirmation discards it and a fresh session recovers",
-  },
-  {
-    id: "agent.close-model",
-    suite: "lifecycle",
-    checks: [30],
-    description:
-      "Closing during a delayed model reply cancels the request and a fresh session recovers",
-  },
-  {
-    id: "agent.close-slow",
-    suite: "lifecycle",
-    checks: [29],
-    description:
-      "Real close button interrupts a slow dispatched tool without a late success or replay",
-  },
-  {
-    id: "native.ten-replacements",
-    suite: "lifecycle",
-    checks: [5, 6],
-    description:
-      "Ten unload/load cycles replace workers and retain one dispatch per approved greeting",
-  },
-  {
-    id: "native.disable-slow",
-    suite: "lifecycle",
-    checks: [25],
-    description:
-      "Disable during a slow call retires only its worker; re-enabled fast call recovers",
-  },
-  {
-    id: "native.hot-reload",
-    suite: "lifecycle",
-    checks: [27, 37],
-    description:
-      "Source reload replaces idle/in-flight workers, preserves disabled state, and recovers Agent calls",
-  },
-  {
-    id: "native.real-idle",
-    suite: "idle",
-    checks: [35],
-    description:
-      "Production idle reaper retires the worker; a new call recovers; near-boundary slow call survives",
-  },
-  {
-    id: "native.reply-failures",
-    suite: "native-failures",
-    checks: [21],
-    description:
-      "Lost replies, declared/thrown errors and malformed envelopes have honest, private classifications and no replay",
-  },
-  {
-    id: "native.readiness-failure",
-    suite: "native-failures",
-    checks: [21],
-    description:
-      "A worker that never authenticates fails before dispatch, retires its token and permits a fresh request",
-  },
-  {
-    id: "native.source-drift",
-    suite: "native-failures",
-    checks: [26],
-    description:
-      "Warm source changed without reload invalidates the old approval; a fresh request executes the new source",
-  },
-  {
-    id: "native.absolute-deadline",
-    suite: "native-failures",
-    checks: [24, 32],
-    description:
-      "A real 25-second tool exceeds the production 20-second absolute deadline, retires once and recovers without replay",
-  },
-  {
-    id: "native.result-budgets",
-    suite: "native-failures",
-    checks: [33, 34],
-    description:
-      "Decoded and raw oversized replies fail at distinct boundaries, retire their workers and recover on the shared listener",
-  },
-  {
-    id: "native.invalid-input",
-    suite: "native-failures",
-    checks: [],
-    description:
-      "Undeclared model arguments fail before approval or worker startup and private parameter keys remain hidden",
-  },
-  {
-    id: "native.consent-persistence",
-    suite: "native-installation",
-    checks: [40, 52],
-    description:
-      "Real consent Cancel/Allow, disabled/enabled restarts, pending-call disable and committed state recovery",
-  },
-  {
-    id: "native.stale-review",
-    suite: "native-installation",
-    checks: [38],
-    description:
-      "Replacing a package invalidates the real open permission sheet; a fresh sheet shows current declarations",
-  },
-  {
-    id: "native.owner-restoration",
-    suite: "native-installation",
-    checks: [28, 39, 53],
-    description:
-      "Same-version import replacement and installed/developer A/B/restoration survive actual host restarts and refuse old approvals",
-  },
-  {
-    id: "native.enablement-approval",
-    suite: "native-installation",
-    checks: [19],
-    description:
-      "Disable/re-enable and source replacement refuse the previous call approval, then fresh greetings recover",
-  },
-  {
-    id: "native.registry-refusal",
-    suite: "native-installation",
-    checks: [49],
-    description:
-      "Malformed/future registry startup preserves the file, reports unavailable operations, then a restored isolated profile recovers",
-  },
-  {
-    id: "native.registry-preservation",
-    suite: "registry-recovery",
-    checks: [49],
-    description:
-      "Opaque account pointer, disabled and quarantined records survive restart; explicit validated recovery restores actual tools",
-  },
-  {
-    id: "native.registry-save-failure",
-    suite: "registry-recovery",
-    checks: [49],
-    description:
-      "Real Windows publication locks refuse enable durably and disable live with honest save failure, then explicit recovery survives restart",
+      "Automatic MCP read, write and independent verification with exact wire receipts",
   },
 ];
-
-scenarios.push({
-  id: "native.auth-fixture",
-  suite: "native-auth",
-  checks: [],
-  description:
-    "Guarded native OAuth fixture: real consent, PKCE, scoped OS vault, approved A/B reads, stale approval refusal, restart and disconnect",
-});
-scenarios.push(
-  {
-    id: "native.auth-binding",
-    suite: "native-auth",
-    checks: [41],
-    description:
-      "Real vault legacy/unbound credential refusal, four reviewed declaration changes, fresh grants and restart reads",
-  },
-  {
-    id: "native.auth-owners",
-    suite: "native-auth",
-    checks: [45, 53],
-    description:
-      "Actual CLI builds and installed/developer A/B account ownership, reload, stale approval refusal, restart, restoration and parked uninstall",
-  },
-);
 
 scenarios.push({
   id: "mcp.legacy-http-probe",
@@ -419,21 +125,6 @@ scenarios.push(
   },
 );
 
-// A contract-only checkpoint: individual scenarios retain their own verdicts,
-// wire oracles and cleanup. Transport/deadline changes need broader suites.
-export const EXTENSION_CONTRACT_CHECKPOINT = [
-  "native.author-results",
-  "native.api-compatibility",
-  "native.typed-contract",
-  "native.legacy-quarantine",
-  "native.owner-restoration",
-  "native.auth-fixture",
-  "mcp.transport-contract",
-  "mcp.auth-provider-independence",
-  "native.cold-warm",
-  "agent.decline",
-];
-
 export function selectScenarios(suite) {
   if (suite === "mcp-agent-workflows")
     return scenarios.filter((scenario) =>
@@ -455,13 +146,6 @@ export function selectScenarios(suite) {
     return scenarios.filter(
       (scenario) => scenario.suite === "mcp-configured-runtime",
     );
-  if (suite === "extension-contract")
-    return EXTENSION_CONTRACT_CHECKPOINT.map((id) => {
-      const scenario = scenarios.find((item) => item.id === id);
-      if (!scenario)
-        throw new Error(`Missing contract checkpoint scenario: ${id}`);
-      return scenario;
-    });
   if (suite === "mcp-refresh")
     return scenarios.filter((scenario) =>
       ["mcp.auth-refresh-recovery", "mcp.auth-refresh-refusal"].includes(
@@ -480,27 +164,14 @@ export function selectScenarios(suite) {
     return scenarios.filter((scenario) =>
       ["mcp", "mcp-auth"].includes(scenario.suite),
     );
-  if (suite === "native-auth-schedules")
-    return scenarios.filter((scenario) =>
-      [
-        "native.auth-cancellation",
-        "native.auth-switch",
-        "native.auth-failed-switch",
-        "native.auth-expiry",
-      ].includes(scenario.id),
-    );
   if (
     ![
       "smoke",
-      "lifecycle",
-      "idle",
-      "native-failures",
-      "native-foundation",
+
       "agent-workflow",
-      "agent-live",
+
       "agent-interruption",
-      "agent-interruption-live",
-      "native-auth",
+
       "mcp",
       "mcp-live",
       "mcp-hf-live",
@@ -509,8 +180,7 @@ export function selectScenarios(suite) {
       "mcp-linear-sign-in",
       "mcp-linear-contracts",
       "mcp-auth",
-      "native-installation",
-      "registry-recovery",
+
       "all",
     ].includes(suite)
   )
@@ -526,13 +196,8 @@ export function selectScenarios(suite) {
           "mcp-linear-guards",
           "mcp-linear-sign-in",
           "mcp-linear-contracts",
-          "agent-live",
-          "agent-interruption-live",
         ].includes(scenario.suite)) ||
-      (suite === "registry-recovery" &&
-        scenario.id === "native.registry-refusal") ||
-      scenario.suite === suite ||
-      (suite === "lifecycle" && scenario.suite === "smoke"),
+      scenario.suite === suite,
   );
 }
 
@@ -594,34 +259,6 @@ scenarios.push(
       "Live public normal/large documentation reads through production bounds, actual Agent approval and fresh recovery",
   },
   {
-    id: "native.auth-cancellation",
-    suite: "native-auth",
-    checks: [42],
-    description:
-      "Six real callback/held-exchange cancellation schedules: reload, disable, disconnect, late callback refusal and fresh restart reads",
-  },
-  {
-    id: "native.auth-switch",
-    suite: "native-auth",
-    checks: [43],
-    description:
-      "Explicit disconnect A / connect B, stale approval refuses without dispatch, actual B read and restart",
-  },
-  {
-    id: "native.auth-failed-switch",
-    suite: "native-auth",
-    checks: [50],
-    description:
-      "Cancelled, denied and failed code exchange preserve selected A across actual reads/restarts; successful B switch refuses stale approval",
-  },
-  {
-    id: "native.auth-expiry",
-    suite: "native-auth",
-    checks: [51],
-    description:
-      "Partial consent refused, real short-lived grants expire without refresh and reconnect, real refresh recovers once without login",
-  },
-  {
     id: "mcp.auth-provider-independence",
     suite: "mcp-auth",
     checks: [14],
@@ -653,14 +290,6 @@ scenarios.push(
       "Real expiry without refresh and invalid_grant refusal dispatch no tool or new login; explicit reconnect and restart recover the actual account",
   },
 );
-
-scenarios.push({
-  id: "native.auth-refresh-logout",
-  suite: "native-auth",
-  checks: [44],
-  description:
-    "Actual held refresh cannot restore logout; reconnect/restart identify replacement account; a second provider reads independently in the same host",
-});
 
 scenarios.push(
   {

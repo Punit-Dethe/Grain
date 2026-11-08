@@ -4,8 +4,16 @@ Start with the frontend unit tests and affected Rust tests. On Windows use
 the existing Cargo runner at `scripts/run-rust-test.ps1` for desktop library
 tests. Use the real-app harness for an application boundary that the normal
 tests cannot cover. The configured MCP suites are the current checkpoint for
-custom connections. The signed-store suites and author CLI were retired on
-8 November. Dated evidence below describes its own build and scope.
+custom connections. The signed store, native package fixtures and worker
+transport were retired on 8 November. Dated evidence below describes older
+builds and includes historical commands.
+
+Build with `pwsh -NoProfile -File tests/agent-harness/build.ps1`. Use
+`node tests/agent-harness/run.mjs --list` for the current scenario inventory.
+The `smoke`, `mcp-agent-workflows`, `mcp-configured`, and
+`mcp-configured-runtime` suites cover the MCP-only cutover. The controlled TLS
+fixtures need Python with `cryptography` on `PATH`. Older MCP model fixtures
+that still wait for manual approval require adaptation to automatic dispatch.
 
 **15 October final discovery checkpoint:** compact deferred names/exact recovery
 are the normal debug/release policy; the experiment variable is retired. Nine

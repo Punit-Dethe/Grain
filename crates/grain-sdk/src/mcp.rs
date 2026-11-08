@@ -41,6 +41,7 @@ fn deserialize_headers<'de, D: serde::Deserializer<'de>>(
     deserializer.deserialize_map(Headers)
 }
 
+pub const MCP_DESCRIPTOR_API_REQUIREMENT: &str = "^1.0";
 pub const MCP_DESCRIPTOR_SCHEMA: u8 = 1;
 pub const MCP_DESCRIPTOR_MAX_BYTES: usize = 8 * 1024;
 

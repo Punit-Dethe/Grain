@@ -712,6 +712,3 @@ pub(crate) fn require_main_window(window: &tauri::WebviewWindow) -> Result<(), S
         .then_some(())
         .ok_or_else(|| "extension management is available only from Grain settings".to_string())
 }
-
-#[cfg(any(feature = "agent-harness", test))]
-pub(crate) mod native;

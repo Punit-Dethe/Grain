@@ -1757,17 +1757,6 @@ pub(crate) fn harness_submit_instruction(app: &AppHandle, text: String) {
 }
 
 #[cfg(feature = "agent-harness")]
-pub(crate) fn harness_pending_confirmation(app: &AppHandle) -> Option<String> {
-    app.try_state::<AgentState>()?
-        .execution
-        .state
-        .lock()
-        .unwrap()
-        .pending_action
-        .clone()
-}
-
-#[cfg(feature = "agent-harness")]
 pub(crate) fn harness_snapshot(app: &AppHandle) -> serde_json::Value {
     let Some(state) = app.try_state::<AgentState>() else {
         return serde_json::json!(null);

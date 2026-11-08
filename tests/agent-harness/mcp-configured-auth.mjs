@@ -60,7 +60,7 @@ export function configuredAuthHandlers(ctx) {
   }
   async function reset() {
     await ctx.closePanel();
-    await ctx.invoke("extension_set_developer_mode", { enabled: true });
+    await ctx.invoke("agent_harness_set_mcp_development", { enabled: true });
     for (const record of await list()) await remove(record);
     assert.equal(await ctx.vaultCount(), 0);
     assert.equal(await ctx.vaultCount(true), 0);
@@ -153,7 +153,6 @@ export function configuredAuthHandlers(ctx) {
       "Configured authenticated sessions disposed",
       () => ctx.provider().activeSessions === 0,
     );
-    assert.equal((await ctx.status()).worker.count, 0);
     await ctx.closePanel();
   }
   return {
@@ -557,7 +556,9 @@ export function configuredAuthHandlers(ctx) {
             await assert.rejects(oauth().callback(flow.callback));
             assert.equal(tokens().length, baseline);
             assert.equal(await ctx.vaultCount(), 0);
-            await ctx.invoke("extension_set_developer_mode", { enabled: true });
+            await ctx.invoke("agent_harness_set_mcp_development", {
+              enabled: true,
+            });
             if (transition === "remove") record = await add();
             if (transition === "destination")
               record = await replace(record, definition());

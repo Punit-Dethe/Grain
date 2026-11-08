@@ -181,7 +181,7 @@ fn provider_control(id: &str) -> std::sync::Arc<session::Control> {
         .clone()
 }
 
-#[cfg(any(feature = "agent-harness", test))]
+#[cfg(feature = "agent-harness")]
 pub(crate) fn invalidate_development_sessions() {
     for item in CATALOG.iter().filter(|item| !is_preset(item)) {
         provider_control(item.id).invalidate();
@@ -346,7 +346,7 @@ impl Provider<'_> {
             name: self.name.into(),
             description: self.description.into(),
             version: "1.0.0".into(),
-            grain_api: format!("^{}", grain_sdk::GRAIN_API_VERSION),
+            grain_api: grain_sdk::mcp::MCP_DESCRIPTOR_API_REQUIREMENT.into(),
             transport: McpTransport::StreamableHttp {
                 url: self.endpoint.into(),
                 headers: self.headers(),

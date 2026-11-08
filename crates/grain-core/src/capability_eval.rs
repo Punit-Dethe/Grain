@@ -472,14 +472,14 @@ impl Corpus {
                 let mut phrases = Vec::new();
                 let mut param_names: Vec<String> = action.params.clone();
                 for utterance in &action.utterances {
-                    if let Ok(parts) = grain_sdk::manifest::parse_utterance(utterance.trim()) {
+                    if let Ok(parts) = grain_sdk::action::parse_utterance(utterance.trim()) {
                         let mut literal = Vec::new();
                         for part in &parts {
                             match part {
-                                grain_sdk::manifest::UtterancePart::Literal(text) => {
+                                grain_sdk::action::UtterancePart::Literal(text) => {
                                     literal.push(text.clone())
                                 }
-                                grain_sdk::manifest::UtterancePart::Param(name) => {
+                                grain_sdk::action::UtterancePart::Param(name) => {
                                     if !param_names.contains(name) {
                                         param_names.push(name.clone());
                                     }
@@ -510,7 +510,7 @@ impl Corpus {
                         .into_iter()
                         .map(|name| ActionParamInput {
                             name,
-                            kind: grain_sdk::manifest::ActionParamKind::Text,
+                            kind: grain_sdk::action::ActionParamKind::Text,
                             required: false,
                         })
                         .collect(),
@@ -518,7 +518,7 @@ impl Corpus {
                     when_not_to_use: action.when_not_to_use.clone(),
                     description: String::new(),
                     provider_context: provider_context.clone(),
-                    risk: grain_sdk::manifest::ActionRisk::Safe,
+                    risk: grain_sdk::action::ActionRisk::Safe,
                     enabled: !action.disabled,
                     platform_ok: action.platform_ok,
                     quarantined: false,

@@ -12,7 +12,6 @@
 
 mod atomic_file;
 pub mod context;
-pub mod extensions;
 // Provisional remote descriptors and host-owned identity, without a transport.
 pub mod mcp;
 // Host-owned custom connection metadata, separate from credentials/transport.
@@ -23,11 +22,6 @@ pub use grain_sdk as event;
 pub mod capture;
 pub mod providers;
 pub mod settings;
-// [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
-pub mod trust;
-// Bounded, atomic local storage of the signed store metadata; no service.
-// [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.
-pub mod install;
 // [GRAIN] The ASR-text substrate (normalise/tokens/same_word/fuzzy_keys) shared
 // by every matcher, so the V2 retriever (`capability_index`) matches speech by
 // exactly the same rules the index files tokens under — the one place that
