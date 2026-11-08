@@ -270,6 +270,11 @@ endpoint admission, and MCP account code remain in use.
   passed registration validation. Its packaging step supplied the registered
   GitHub client. This is build evidence and leaves account consent and tool
   execution to the live checks.
+- The [6 November GitHub audit](https://github.com/Punit-Dethe/Grain/blob/508579a16644469ad8f102d9ab4bf283f3a56ef0/docs/Extensions%202.0/GITHUB-RELIABILITY-FIX.md)
+  recorded a separate signed-in discovery failure. The all-toolset catalogue
+  exceeded the 512 KiB SSE limit present in v0.0.11. This branch already carries
+  the shared 2 MiB catalogue budget for JSON and SSE and a regression test.
+  All 83 desktop MCP tests passed again in `logic-AX5nd4`.
 - Anonymous discovery confirmed the GitHub MCP resource points to
   `https://github.com/login/oauth`. Notion advertises dynamic registration
   and S256 at `https://mcp.notion.com`. The two browser sign-ins still need
