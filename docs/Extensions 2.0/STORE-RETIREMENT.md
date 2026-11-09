@@ -11,7 +11,8 @@ change and a release. Custom remote MCPs can be added directly in the app.
   lookup and execution use MCP. The signed store, publisher tooling, package
   runtime and native fixtures are retired. The controlled MCP checkpoint
   covers connection ownership, dispatch, cancellation and write replay.
-- Packaged acceptance is open. Test GitHub with a non-owner account and Notion
+- The user reported that the packaged test app worked. Broader acceptance
+  remains open. Test GitHub with a non-owner account and Notion
   with a known test page. Confirm sign-in, a nonzero tool count and an Agent
   read, then repeat after restarting the test app. Test one custom connection
   through add, enable, edit and remove.
@@ -401,3 +402,11 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
 - All 60 focused harness tests passed, including refusal of the removed
   live Agent modes before launching the installer. Request a fresh isolated
   Windows artifact from this branch for the packaged checks above.
+
+### 2026-11-09 — Cleanup closeout
+
+- The user reported that the installed test app worked after receiving the
+  Windows installers. That confirms their smoke test. The individual
+  non-owner consent, restart and custom-connection checks were not reported.
+- The in-repository cleanup is complete. The remaining acceptance, UI,
+  harness coverage and external registry work are tracked separately above.
