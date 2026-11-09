@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -73,10 +74,13 @@ export const Dropdown: React.FC<DropdownProps> = ({
   ariaLabel,
 }) => {
   const { t } = useTranslation();
+  const menuId = useId();
   const [isOpen, setIsOpen] = useState(false);
   const [box, setBox] = useState<MenuBox | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const focusOnOpen = useRef(false);
 
   /* [GRAIN] The menu is PORTALLED out (see `portalHost`) and positioned in
      viewport coordinates, rather than being `absolute` inside the trigger.
@@ -118,6 +122,18 @@ export const Dropdown: React.FC<DropdownProps> = ({
     if (isOpen) place();
   }, [isOpen, place]);
 
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!isOpen || !menu || !focusOnOpen.current) return;
+    focusOnOpen.current = false;
+    const selected = menu.querySelector<HTMLButtonElement>(
+      'button[aria-selected="true"]:enabled',
+    );
+    (
+      selected ?? menu.querySelector<HTMLButtonElement>("button:enabled")
+    )?.focus();
+  }, [isOpen, box]);
+
   useEffect(() => {
     if (!isOpen) return;
     const onDocMouseDown = (event: MouseEvent) => {
@@ -132,10 +148,16 @@ export const Dropdown: React.FC<DropdownProps> = ({
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsOpen(false);
+      if (event.key !== "Escape") return;
+      if (menuRef.current?.contains(document.activeElement)) {
+        triggerRef.current?.focus();
+      }
+      setIsOpen(false);
     };
     // Capture phase: catches scrolling of any ancestor, not just the window.
-    const onReflow = () => place();
+    const onReflow = (event: Event) => {
+      if (event.target !== menuRef.current) place();
+    };
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("scroll", onReflow, true);
@@ -158,21 +180,41 @@ export const Dropdown: React.FC<DropdownProps> = ({
     (option) => option.value === selectedValue,
   );
 
-  const handleSelect = (value: string) => {
+  const handleSelect = (value: string, event: React.MouseEvent) => {
     onSelect(value);
+    if (event.detail === 0) triggerRef.current?.focus();
     setIsOpen(false);
   };
 
-  const handleToggle = () => {
+  const toggle = (fromKeyboard: boolean) => {
     if (disabled) return;
+    focusOnOpen.current = !isOpen && fromKeyboard;
     if (!isOpen && onRefresh) onRefresh();
     setIsOpen(!isOpen);
   };
 
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Tab") {
+      triggerRef.current?.focus();
+      setIsOpen(false);
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const buttons = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>("button:enabled"),
+    );
+    const index = buttons.findIndex((button) => button === event.target);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    buttons[index + step]?.focus();
+  };
+
   const menu = box && (
     <div
+      id={menuId}
       ref={menuRef}
-      className="fixed bg-paper-raised border border-line rounded-lg overflow-y-auto"
+      onKeyDown={handleMenuKeyDown}
+      className="fixed bg-paper-raised border border-line rounded-lg overflow-y-auto overscroll-contain"
       style={{
         left: box.left,
         width: box.width,
@@ -185,6 +227,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
         zIndex: 1000,
       }}
       role="listbox"
+      aria-label={ariaLabel}
     >
       {options.length === 0 ? (
         <div className="px-2 py-1 text-sm text-ink-soft">
@@ -210,7 +253,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
                   ? "bg-[var(--accent-tint)] text-accent font-semibold"
                   : ""
               } ${option.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-              onClick={() => handleSelect(option.value)}
+              onClick={(event) => handleSelect(option.value, event)}
               disabled={option.disabled}
             >
               <span className="whitespace-normal break-words">
@@ -226,17 +269,29 @@ export const Dropdown: React.FC<DropdownProps> = ({
   return (
     <div className={`relative ${className}`} ref={anchorRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={`px-2 py-[5px] text-sm font-medium bg-paper-sunken border border-line rounded-lg min-w-[200px] w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-all duration-150 ${
           disabled
             ? "opacity-50 cursor-not-allowed"
             : "hover:bg-[var(--accent-tint)] hover:border-accent cursor-pointer"
         }`}
-        onClick={handleToggle}
+        onClick={(event) => toggle(event.detail === 0)}
+        onKeyDown={(event) => {
+          if (
+            isOpen ||
+            (event.key !== "ArrowDown" && event.key !== "ArrowUp")
+          ) {
+            return;
+          }
+          event.preventDefault();
+          toggle(true);
+        }}
         disabled={disabled}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
+        aria-controls={isOpen ? menuId : undefined}
       >
         <span className="truncate">{selectedOption?.label || placeholder}</span>
         <svg

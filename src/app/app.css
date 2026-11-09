@@ -2051,25 +2051,33 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
   color: var(--text-4);
 }
 
-.history-date-filter {
+.grain-root .history-search input:focus {
+  outline: none;
+  box-shadow: none !important;
+}
+
+.history-search:focus-within {
+  color: var(--text-1);
+}
+
+.grain-root .history-date-filter > button {
   height: 32px;
-  max-width: 100%;
-  padding: 0 8px;
+  min-width: 0;
+  width: 132px;
   border: 1px solid var(--hairline);
   border-radius: 7px;
   color: var(--text-1);
   background: var(--bg-2);
-  font-size: 10.5px;
-  cursor: pointer;
+  font-size: 11px;
 }
 
-.history-date-filter:hover {
+.grain-root .history-date-filter > button:hover {
   background: var(--bg-3);
 }
 
-.history-date-filter:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 2px;
+.grain-root .history-date-filter > button:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
 }
 
 .toolbar-spacer {

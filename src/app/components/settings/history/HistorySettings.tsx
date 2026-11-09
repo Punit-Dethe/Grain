@@ -20,6 +20,7 @@ import { useOsType } from "@/hooks/useOsType";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
+import { Dropdown } from "../../ui/Dropdown";
 import { HistoryCard, type HistoryViewMode } from "@/history/HistoryCard";
 import {
   wasPostProcessRequested,
@@ -49,6 +50,7 @@ const IconButton: React.FC<{
 );
 
 const PAGE_SIZE = 30;
+const RECENT_DATE_COUNT = 30;
 
 interface OpenRecordingsButtonProps {
   onClick: () => void;
@@ -331,21 +333,34 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
         ? yesterdayTime
         : Number(dateFilter);
 
-  const olderDays = useMemo(() => {
+  const dateOptions = useMemo(() => {
     const days = new Set<number>();
+    const day = new Date(yesterdayTime);
+    for (let offset = 2; offset < RECENT_DATE_COUNT; offset += 1) {
+      day.setDate(day.getDate() - 1);
+      days.add(day.setHours(0, 0, 0, 0));
+    }
     for (const entry of activeEntries) {
-      const day = getEntryDay(entry.timestamp);
-      if (day < yesterdayTime) days.add(day);
+      const entryDay = getEntryDay(entry.timestamp);
+      if (entryDay < yesterdayTime) days.add(entryDay);
     }
     // Keep the selected date available if its last entry is deleted.
     if (selectedDay < yesterdayTime) days.add(selectedDay);
-    return [...days].sort((a, b) => b - a);
-  }, [activeEntries, selectedDay, yesterdayTime]);
-
-  const dateFormatter = useMemo(
-    () => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium" }),
-    [i18n.language],
-  );
+    const formatter = new Intl.DateTimeFormat(i18n.language, {
+      dateStyle: "medium",
+    });
+    return [
+      { value: "all", label: t("ui2.history.filters.all") },
+      { value: "today", label: t("ui2.history.filters.today") },
+      { value: "yesterday", label: t("ui2.history.filters.yesterday") },
+      ...[...days]
+        .sort((a, b) => b - a)
+        .map((date) => ({
+          value: String(date),
+          label: formatter.format(date),
+        })),
+    ];
+  }, [activeEntries, i18n.language, selectedDay, t, yesterdayTime]);
 
   const baseEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -375,7 +390,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
 
   if (variant === "next") {
     let nextContent: React.ReactNode;
-    if (activeLoading) {
+    if (activeLoading || (activeLoadingMore && visibleEntries.length === 0)) {
       nextContent = (
         <div className="history-state" role="status">
           {t("settings.history.loading")}
@@ -399,7 +414,9 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
         <div className="history-state">
           {viewMode === "processed"
             ? t("ui2.history.noProcessedInView")
-            : t("settings.history.empty")}
+            : dateFilter !== "all"
+              ? t("ui2.history.noTranscriptsForDate")
+              : t("settings.history.empty")}
         </div>
       );
     } else {
@@ -460,23 +477,13 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
                 placeholder="Search transcription history"
               />
             </label>
-            <select
+            <Dropdown
               className="history-date-filter"
-              aria-label={t("ui2.history.filterByDate")}
-              value={dateFilter}
-              onChange={(event) => setDateFilter(event.target.value)}
-            >
-              <option value="all">{t("ui2.history.filters.all")}</option>
-              <option value="today">{t("ui2.history.filters.today")}</option>
-              <option value="yesterday">
-                {t("ui2.history.filters.yesterday")}
-              </option>
-              {olderDays.map((day) => (
-                <option key={day} value={day}>
-                  {dateFormatter.format(day)}
-                </option>
-              ))}
-            </select>
+              ariaLabel={t("ui2.history.filterByDate")}
+              options={dateOptions}
+              selectedValue={dateFilter}
+              onSelect={setDateFilter}
+            />
             <span className="toolbar-spacer" />
             <div
               aria-label="History transcription view"

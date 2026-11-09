@@ -949,6 +949,7 @@
     "history": {
       "eyebrow": "Archive 03",
       "filterByDate": "Filter history by date",
+      "noTranscriptsForDate": "No matching transcriptions for this date",
       "filters": {
         "all": "All",
         "today": "Today",
