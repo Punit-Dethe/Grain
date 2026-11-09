@@ -4620,7 +4620,7 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   background: rgba(201, 70, 70, 0.08);
 }
 
-/* Extensions — calm lists, artwork-led store, full-canvas product detail. */
+/* Extensions workspace and shared connection states. */
 .extensions-workspace-page {
   overflow-y: auto;
 }
@@ -4668,8 +4668,7 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
 }
 
 .header-actions,
-.extension-toolbar,
-.installed-extension-actions {
+.extension-toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -4697,253 +4696,6 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   flex: 1 1 auto;
 }
 
-.installed-extension-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-/* Installed extensions use their square identity icon, separate from gallery art. */
-.installed-extension-card {
-  min-width: 0;
-  min-height: 88px;
-  padding: 12px;
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.026);
-  box-shadow: none;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.installed-extension-card .extension-artwork {
-  width: 56px;
-  height: 56px;
-}
-
-.installed-extension-card:hover,
-.installed-extension-card:focus-visible {
-  background: rgba(255, 255, 255, 0.044);
-  outline: none;
-}
-
-.installed-extension-card:focus-visible {
-  box-shadow: 0 0 0 3px var(--accent-focus);
-}
-
-.extension-disabled .extension-artwork,
-.extension-disabled .installed-extension-copy {
-  opacity: 0.56;
-}
-
-.extension-artwork,
-.store-artwork,
-.preview-media {
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
-  background-color: var(--bg-3);
-  background-image:
-    linear-gradient(
-      180deg,
-      rgba(8, 10, 14, 0) 38%,
-      rgba(8, 10, 14, 0.12) 58%,
-      rgba(8, 10, 14, 0.78) 100%
-    ),
-    radial-gradient(
-      100% 120% at 12% 10%,
-      var(--art-a, #bcbcb6),
-      transparent 54%
-    ),
-    radial-gradient(
-      90% 120% at 92% 24%,
-      var(--art-b, #79c7bd),
-      transparent 58%
-    ),
-    radial-gradient(
-      110% 100% at 52% 110%,
-      var(--art-c, #e3a483),
-      transparent 62%
-    ),
-    linear-gradient(135deg, #292929, #171717 70%);
-}
-
-.extension-artwork::before,
-.store-artwork::before,
-.preview-media::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  opacity: 0.42;
-  background-image: radial-gradient(
-    rgba(255, 255, 255, 0.72) 0.55px,
-    transparent 0.7px
-  );
-  background-size: 4px 4px;
-  mask-image: linear-gradient(
-    180deg,
-    #000 0%,
-    rgba(0, 0, 0, 0.75) 46%,
-    transparent 94%
-  );
-  mix-blend-mode: soft-light;
-}
-
-.extension-artwork::after,
-.store-artwork::after,
-.preview-media::after {
-  content: "";
-  position: absolute;
-  inset: -20%;
-  z-index: 0;
-  background: conic-gradient(
-    from 180deg at 50% 50%,
-    transparent,
-    var(--art-a, #bcbcb6),
-    transparent,
-    var(--art-b, #79c7bd),
-    transparent
-  );
-  opacity: 0.28;
-  filter: blur(28px);
-}
-
-.extension-artwork {
-  width: 72px;
-  height: 72px;
-  border-radius: 9px;
-}
-
-.extension-artwork {
-  position: relative;
-  overflow: hidden;
-  background: var(--bg-3);
-}
-
-.extension-artwork::before,
-.extension-artwork::after {
-  content: none;
-}
-
-.extension-icon-placeholder {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--text-3);
-  font-size: 24px;
-  font-weight: 550;
-}
-
-.extension-artwork img,
-.store-artwork img,
-.preview-media img {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.extension-artwork img,
-.store-artwork img {
-  object-fit: contain;
-}
-
-.installed-extension-copy {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-  align-content: center;
-}
-
-:is(
-  .extension-artwork,
-  .store-artwork,
-  .preview-media
-)[data-has-artwork="true"] {
-  background-image: none;
-}
-
-:is(
-    .extension-artwork,
-    .store-artwork,
-    .preview-media
-  )[data-has-artwork="true"]::before,
-:is(
-    .extension-artwork,
-    .store-artwork,
-    .preview-media
-  )[data-has-artwork="true"]::after {
-  content: none;
-}
-
-.installed-extension-heading {
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.installed-extension-heading strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 14.5px;
-  font-weight: 620;
-  letter-spacing: -0.012em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Only actionable account/status problems need text alongside the switch. */
-.installed-extension-state {
-  color: var(--text-3);
-  font-size: 11px;
-}
-
-.installed-extension-heading span,
-.verified-word {
-  margin-left: 6px;
-  color: var(--accent);
-  font-size: 9px;
-  font-weight: 660;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.installed-extension-copy p {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  max-width: 670px;
-  margin: 0;
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.installed-extension-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* Destructive, so it colours only on approach — a permanently red button in a
-   list you scroll past reads as an alert rather than an action. */
-.extension-uninstall-button:hover:not(:disabled),
-.extension-uninstall-button:focus-visible {
-  color: var(--danger);
-  background: rgba(201, 70, 70, 0.12);
-}
-
-.extension-state,
 .extension-inline-error {
   padding: 18px;
   border-radius: 10px;
@@ -4951,51 +4703,6 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   background: rgba(255, 255, 255, 0.026);
   text-align: center;
   font-size: 12px;
-}
-
-.extension-empty-state {
-  min-height: 210px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 30px 24px;
-  background: rgba(255, 255, 255, 0.018);
-  box-shadow: inset 0 0 0 1px var(--hairline-soft);
-}
-
-.extension-empty-symbol {
-  width: 42px;
-  height: 42px;
-  margin-bottom: 13px;
-  display: grid;
-  place-items: center;
-  border-radius: 10px;
-  color: var(--text-3);
-  background: rgba(255, 255, 255, 0.035);
-  box-shadow: inset 0 0 0 1px var(--hairline-soft);
-}
-
-.extension-empty-state > strong {
-  color: var(--text-1);
-  font-size: 13.5px;
-  font-weight: 610;
-}
-
-.extension-empty-state > p {
-  max-width: 340px;
-  margin: 5px 0 14px;
-  color: var(--text-4);
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-
-.extension-empty-state > .button {
-  min-height: 32px;
-  padding-inline: 11px;
-  color: var(--text-2);
-  background: rgba(255, 255, 255, 0.045);
-  font-size: 11.5px;
 }
 
 .extension-inline-error {
@@ -5033,15 +4740,6 @@ html[data-theme="light"] .tools-nav button.active {
 html[data-theme="light"] .tools-canvas {
   background: transparent;
 }
-html[data-theme="light"] .installed-extension-card {
-  background: #fcfcfb;
-  box-shadow: inset 0 0 0 1px rgba(26, 26, 26, 0.07);
-}
-
-html[data-theme="light"] .extension-empty-state {
-  background: rgba(252, 252, 251, 0.52);
-}
-
 @media (max-width: 1120px) {
   .tools-shell {
     grid-template-columns: 214px minmax(0, 1fr);
@@ -5057,9 +4755,6 @@ html[data-theme="light"] .extension-empty-state {
   }
   .tools-scroll {
     padding: 28px 22px 60px;
-  }
-  .installed-extension-list {
-    grid-template-columns: minmax(0, 1fr);
   }
   .extension-toolbar {
     align-items: stretch;

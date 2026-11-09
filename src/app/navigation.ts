@@ -25,13 +25,17 @@ export const EXTENSION_VIEW_IDS = ["installed", "browse", "configure"] as const;
 
 export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
 
+export type ExtensionRoute =
+  | { page: "extensions"; view: ExtensionViewId; provider?: never }
+  | { page: "extensions"; view: "installed" | "browse"; provider: string };
+
 export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
   | { page: "meet"; meeting?: string }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
-  | { page: "extensions"; view: ExtensionViewId };
+  | ExtensionRoute;
 
 const settingsSections = new Set<string>(SETTINGS_SECTION_IDS);
 const toolSections = new Set<string>(TOOL_SECTION_IDS);
@@ -63,6 +67,17 @@ export function routeFromHash(hash: string): AppRoute {
     return { page: "tools", section: toolsMatch[1] as ToolSectionId };
   }
 
+  const detailMatch = path.match(
+    /^\/extensions\/(installed|browse)\/([a-z0-9-]+)$/,
+  );
+  if (detailMatch) {
+    return {
+      page: "extensions",
+      view: detailMatch[1] === "browse" ? "browse" : "installed",
+      provider: detailMatch[2],
+    };
+  }
+
   const extensionsMatch = path.match(/^\/extensions\/([^/]+)$/);
   if (extensionsMatch && extensionViews.has(extensionsMatch[1])) {
     return {
@@ -85,7 +100,10 @@ export function routeFromHash(hash: string): AppRoute {
 export function hashForRoute(route: AppRoute): string {
   if (route.page === "settings") return `#/settings/${route.section}`;
   if (route.page === "tools") return `#/tools/${route.section}`;
-  if (route.page === "extensions") return `#/extensions/${route.view}`;
+  if (route.page === "extensions") {
+    const path = `#/extensions/${route.view}`;
+    return route.provider ? `${path}/${route.provider}` : path;
+  }
   if (route.page === "meet" && route.meeting) return `#/meet/${route.meeting}`;
   return `#/${route.page}`;
 }

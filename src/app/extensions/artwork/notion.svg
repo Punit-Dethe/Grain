@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 320">
+  <defs>
+    <pattern id="paper" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#746b5e" fill-opacity=".27"/>
+    </pattern>
+  </defs>
+  <path fill="#e9e2d4" d="M0 0h720v320H0z"/>
+  <path fill="url(#paper)" d="M0 0h720v320H0z"/>
+  <g transform="rotate(-10 224 160)">
+    <rect x="131" y="62" width="192" height="210" rx="8" fill="#c7b99f"/>
+    <rect x="126" y="56" width="192" height="210" rx="8" fill="#f8f4ec" stroke="#7a6e5c"/>
+    <path d="M150 88h54m-54 16h117m-117 18h90m-90 18h117m-117 49h117m-117 18h90m-90 18h117" stroke="#ada08b" stroke-width="2" stroke-linecap="round"/>
+    <rect x="150" y="155" width="24" height="15" rx="3" fill="#d6c5a4"/>
+  </g>
+  <g transform="rotate(8 468 160)">
+    <rect x="363" y="49" width="236" height="232" rx="8" fill="#c7b99f"/>
+    <rect x="357" y="42" width="236" height="232" rx="8" fill="#fffdf7" stroke="#7a6e5c"/>
+    <path d="M382 77h77" stroke="#514639" stroke-width="3" stroke-linecap="round"/>
+    <path d="M382 101h147" stroke="#ada08b" stroke-width="2" stroke-linecap="round"/>
+    <rect x="382" y="124" width="186" height="115" rx="4" fill="#f5efe4" stroke="#aa9d88"/>
+    <path d="M382 153h186m-186 29h186m-186 29h186m-118-87v115" stroke="#aa9d88"/>
+    <rect x="462" y="162" width="49" height="11" rx="4" fill="#b5c5a7"/>
+    <rect x="462" y="191" width="61" height="11" rx="4" fill="#ddbd91"/>
+    <rect x="462" y="220" width="41" height="11" rx="4" fill="#c3b6cb"/>
+  </g>
+</svg>

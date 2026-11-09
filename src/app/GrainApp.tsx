@@ -691,7 +691,7 @@ function NextShell() {
         ) : route.page === "tools" ? (
           <ToolsPage section={route.section} />
         ) : route.page === "extensions" ? (
-          <ExtensionsPage view={route.view} />
+          <ExtensionsPage view={route.view} provider={route.provider} />
         ) : (
           <OverviewPage history={history} />
         )}

@@ -73,6 +73,15 @@ describe("UI 2.0 hash navigation", () => {
     },
   );
 
+  it.each(["installed", "browse"] as const)(
+    "round-trips a preset detail from %s",
+    (view) => {
+      const route = { page: "extensions", view, provider: "github" } as const;
+      expect(hashForRoute(route)).toBe(`#/extensions/${view}/github`);
+      expect(routeFromHash(hashForRoute(route))).toEqual(route);
+    },
+  );
+
   it("resolves top-level Tools and Extensions to their default views", () => {
     expect(routeFromHash("#/tools")).toEqual({
       page: "tools",
@@ -109,6 +118,8 @@ describe("UI 2.0 hash navigation", () => {
     "#/settings/unknown",
     "#/tools/unknown",
     "#/extensions/unknown",
+    "#/extensions/configure/github",
+    "#/extensions/browse/%2f",
     "#/not-a-page",
   ])("resolves unknown hash %s safely to overview", (hash) =>
     expect(routeFromHash(hash)).toEqual({ page: "overview" }),
