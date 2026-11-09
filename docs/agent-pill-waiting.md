@@ -24,3 +24,21 @@ Dictation with Agent open: only active Agent input or a busy recorder blocks
 dictation startup. An Agent reply window can stay open while dictating into
 another app. In the focused, expanded panel, dictated text appends to the
 follow-up draft while a reply is running. Sending waits for that reply to finish.
+
+## Top notch
+
+Agent now opens one window at the top center of the monitor work area. It
+shows the microphone waveform during capture, rotates status text after
+submission, then grows the same shell when the first reply or error arrives.
+The starting logical sizes are 300 × 54 for capture and 580 × 460 for replies.
+Both are clamped to the work area. Long replies and follow-ups scroll inside
+the expanded notch.
+
+The notch reuses the dictation pill's waveform and explicit dimension
+transitions. Agent no longer uses the dictation pill or either legacy reply
+layout. The first reply stays tied to its summon generation, and closing the
+notch releases the Agent capture or request independently of dictation.
+
+Visual handoff: use `bun run dev:asr` and check the top-edge entry, the
+recording-to-working handoff, the reply expansion and scrolling, and dismissal
+from capture and working states.

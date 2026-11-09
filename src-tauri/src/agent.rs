@@ -40,14 +40,9 @@ use crate::input::EnigoState;
 use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
-use crate::settings::{
-    get_settings, AgentPanelPosition, ShortcutBinding, APPLE_INTELLIGENCE_PROVIDER_ID,
-};
+use crate::settings::{get_settings, ShortcutBinding, APPLE_INTELLIGENCE_PROVIDER_ID};
 
-/// Window label (matched by its capability + the frontend router in
-/// `main.tsx`). The summon INPUT is native (it lives in the pill process); the
-/// PANEL (`agent-panel`) is the only Agent webview â€” the bottom-right reply
-/// card / conversation.
+/// Agent recording, progress and reply share this webview.
 pub const PANEL_LABEL: &str = "agent-panel";
 
 /// Recording binding id used for the palette's dictation (kept distinct from the
@@ -61,36 +56,8 @@ const AGENT_CLOSE_BINDING: &str = "agent_close";
 /// keys (suppressed at register, restored at teardown).
 const AGENT_FOLLOWUP_BINDING: &str = "agent_followup";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-/// Panel geometry (logical px). The COMPACT reply card sits in the bottom-right
-/// corner; the EXPANDED conversation occupies the full side footprint.
-///
-/// On Windows the transparent window stays at the expanded footprint and its
-/// native region follows the visible card. Other platforms size the window to
-/// the card. There is no drop shadow or gutter to budget for.
-const PANEL_W: f64 = 500.0;
-const PANEL_COMPACT_W: f64 = 432.0;
-const PANEL_COMPACT_H: f64 = 488.0;
-/// Tallest the SIDE window ever gets (the conversation on a big screen).
-const PANEL_SIDE_MAX_H: f64 = 880.0;
-const PANEL_MARGIN: f64 = 20.0;
-
-/// [GRAIN] CENTER-TOP panel geometry (logical px). The center variant is a
-/// single sleek surface anchored near the top-centre of the work area. Its width
-/// is fixed (a touch broader than the compact card); its HEIGHT is driven by the
-/// webview â€” it hugs its content and grows downward as the conversation grows,
-/// up to a max, after which the surface scrolls internally.
-const PANEL_CENTER_W: f64 = 588.0;
-/// Distance from the work-area top edge to the panel's top (fixed anchor â€” the
-/// panel grows downward from here).
-const PANEL_CENTER_TOP: f64 = 76.0;
-/// Breathing room kept below the panel when it reaches its tallest.
-const PANEL_CENTER_BOTTOM_GAP: f64 = 52.0;
-/// Height the center panel opens at (loading state, before any content lands).
-/// Close to the resting minimum so the webview's first height report barely
-/// nudges it â€” avoids a visible grow-in on reveal.
-const PANEL_CENTER_START_H: f64 = 178.0;
-/// Absolute floor so the window can never collapse to nothing mid-resize.
-const PANEL_CENTER_MIN_H: f64 = 96.0;
+const NOTCH_CAPTURE: (f64, f64) = (300.0, 54.0);
+const NOTCH_REPLY: (f64, f64) = (580.0, 460.0);
 
 /// The Agent's system instruction. The user's dictated/typed instruction is the
 /// task; the selected text (if any) is supplied as context separately.
@@ -385,17 +352,10 @@ pub struct AgentState {
     dictation_capture: Mutex<Option<AgentCapture>>,
     /// First turn executing behind the pill, before a reply/error is rendered.
     waiting_for_reply: AtomicBool,
-    /// [GRAIN] True while the reply panel is in its EXPANDED conversation stage
-    /// (it owns a follow-up text field). Dictation is routed INTO that field
-    /// only when the panel is expanded AND focused â€” never over the compact
-    /// reply card. Set by `agent_set_panel_mode` / `show_panel`.
-    pub panel_expanded: AtomicBool,
-    /// [GRAIN] CENTER-panel only: the current logical height the webview last
-    /// requested via `agent_resize_panel`. Lets window transitions (reveal /
-    /// follow-up focus) preserve an already-grown surface instead of snapping it
-    /// back to the opening height. `0.0` means "not sized yet â†’ use the start
-    /// height". Reset on each fresh summon.
-    pub center_height: Mutex<f64>,
+    /// Dictation can target a focused notch once it shows a reply.
+    reply_visible: AtomicBool,
+    draining_voice: AtomicBool,
+    notch_generation: AtomicU64,
 }
 
 /// One conversation turn from the frontend.
@@ -469,26 +429,7 @@ pub fn summon(app: &AppHandle) {
 fn summon_inner(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        // Re-summon while the input is already up: just re-present it (the pill
-        // refreshes the chip and re-grabs keyboard focus). No fresh capture â€” a
-        // synthetic Ctrl+C now would clobber the user's original selection.
-        let already_open = app
-            .try_state::<AgentState>()
-            .map(|s| s.input_active.load(Ordering::SeqCst))
-            .unwrap_or(false);
-        if already_open {
-            let chars = app
-                .try_state::<AgentState>()
-                .and_then(|s| s.context.lock().ok().and_then(|g| g.clone()))
-                .map(|c| c.chars().count() as u32)
-                .unwrap_or(0);
-            crate::bridge::emit(
-                &app,
-                DaemonEvent::AgentInputShow {
-                    selection_chars: chars,
-                    type_to_expand: false,
-                },
-            );
+        if blocks_dictation(&app) {
             return;
         }
 
@@ -513,7 +454,6 @@ fn summon_inner(app: &AppHandle) {
             return;
         };
         clear_pending_action(&app);
-        let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
         // Identifies THIS summon. The screen frame is taken at the end (below),
         // after the user already has their listening card, so it needs a way to
         // know whether the session it belongs to is still the current one.
@@ -532,66 +472,30 @@ fn summon_inner(app: &AppHandle) {
                 *g = None;
             }
             summon_gen = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Ok(mut g) = state.center_height.lock() {
-                *g = 0.0; // fresh session opens at the start height
-            }
             state.input_active.store(true, Ordering::SeqCst);
-            // Fresh session starts compact â€” dictation won't route to the panel
-            // until it actually expands into the conversation stage.
-            state.panel_expanded.store(false, Ordering::SeqCst);
+            state.reply_visible.store(false, Ordering::SeqCst);
         }
-        // Publish ownership before presenting the cancellable voice input.
-        crate::grain_overlay::show_capture(&app, false);
-        crate::pill_icon::emit_for_session(&app);
-        crate::surface_watch::start(&app);
-        crate::bridge::emit(
-            &app,
-            DaemonEvent::AgentInputShow {
-                selection_chars: chars,
-                type_to_expand: false,
-            },
-        );
-        // Nonactivating voice pill: global Enter submits and Escape cancels.
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let state = handle.state::<AgentState>();
+            if state.summon_gen.load(Ordering::SeqCst) != summon_gen
+                || (!state.input_active.load(Ordering::SeqCst) && !waiting_for_reply(&handle))
+            {
+                return;
+            }
+            ensure_capture_notch(&handle, summon_gen);
+        });
+        // The capture notch keeps the source app focused.
         register_transient_shortcuts(&app);
         // Fetch enabled extensions' tool catalogues while the user speaks, so
         // the request does not open those connections after submit.
         crate::capability::prefetch::start(&app);
-        crate::grain_capture::announce_ready(
+        crate::grain_capture::announce_agent_ready(
             &app,
             &app.state::<Arc<AudioRecordingManager>>(),
             readiness,
-            true,
         );
         drop(start_guard);
-
-        // A new summon starts a fresh session â€” drop any open reply panel.
-        let app_close = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if !app_close.try_state::<AgentState>().is_some_and(|state| {
-                state.input_active.load(Ordering::SeqCst)
-                    && state.summon_gen.load(Ordering::SeqCst) == summon_gen
-            }) {
-                return;
-            }
-            if let Some(panel) = app_close.get_webview_window(PANEL_LABEL) {
-                let _ = panel.close();
-            }
-        });
-        {
-            std::thread::sleep(Duration::from_millis(120)); // let the close land
-            let app_prep = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if !app_prep.try_state::<AgentState>().is_some_and(|state| {
-                    state.input_active.load(Ordering::SeqCst)
-                        && state.summon_gen.load(Ordering::SeqCst) == summon_gen
-                }) {
-                    return;
-                }
-                if let Err(e) = prepare_panel(&app_prep) {
-                    warn!("[GRAIN] agent: failed to pre-create panel: {e}");
-                }
-            });
-        }
 
         // [GRAIN] The screen frame comes LAST, and deliberately so. `PrintWindow`
         // plus a downscale and a PNG encode is a few hundred milliseconds on a
@@ -626,7 +530,7 @@ fn summon_inner(app: &AppHandle) {
 pub fn panel_dictation_target(app: &AppHandle) -> bool {
     let expanded = app
         .try_state::<AgentState>()
-        .map(|s| s.panel_expanded.load(Ordering::SeqCst))
+        .map(|s| s.reply_visible.load(Ordering::SeqCst))
         .unwrap_or(false);
     if !expanded {
         return false;
@@ -640,20 +544,6 @@ pub fn panel_dictation_target(app: &AppHandle) -> bool {
 pub(crate) fn blocks_dictation(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
-}
-
-/// Pre-create the reply panel HIDDEN (the webview loads in the background) so
-/// showing it at submit is instant. Main-thread only. No-op if it exists.
-fn prepare_panel(app: &AppHandle) -> Result<(), String> {
-    if app.get_webview_window(PANEL_LABEL).is_some() {
-        return Ok(());
-    }
-    let (sw, sh) = panel_start_size(app);
-    let w = build_window(app, PANEL_LABEL, sw, sh)
-        .map_err(|e| format!("failed to build agent panel: {e}"))?;
-    place_panel(&w); // placed but NOT shown
-    info!("[GRAIN] agent: panel pre-created (hidden, warming)");
-    Ok(())
 }
 
 struct AgentCapture {
@@ -684,7 +574,7 @@ fn start_dictation(
         });
     }
     // Agent records one utterance with the selected dictation model and offline VAD.
-    // Its pill stays compact, independent of the model's streaming capability.
+    // The listening notch is the same size for every model.
     match rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
         Ok(readiness) => {
             *state.dictation_capture.lock().unwrap() = Some(AgentCapture {
@@ -705,22 +595,6 @@ fn start_dictation(
     }
 }
 
-/// THE reveal choke point: every path that makes the panel visible goes through
-/// here, and each one announces itself first.
-///
-/// Showing a window and arming its opening animation are two different threads
-/// of control, and there is no ordering between them â€” which frame the webview
-/// happens to paint when the window appears used to be a race that a fixed
-/// pre-show delay could only ever narrow, never close. So the ordering is
-/// removed instead of tuned: the panel renders NOTHING until this event lands
-/// (`agent-reveal` in `AgentPanel.tsx`), so showing early costs an empty
-/// transparent window for a frame rather than a flash of the resting card, and
-/// the first thing ever painted is the entrance animation's own first frame.
-fn reveal_panel(win: &tauri::WebviewWindow) {
-    let _ = win.app_handle().emit_to(PANEL_LABEL, "agent-reveal", ());
-    show_and_focus(win);
-}
-
 /// Show + reliably grab keyboard focus. A hotkey-summoned, always-on-top, frameless
 /// window is subject to Windows' foreground lock: it appears on top but keyboard
 /// focus stays with the previous app, so typing/Enter/Esc go nowhere. We bridge the
@@ -738,12 +612,21 @@ fn show_and_focus(win: &tauri::WebviewWindow) {
     // focus call racing `close()`.
     let app = win.app_handle().clone();
     let label = win.label().to_string();
+    let generation = app
+        .state::<AgentState>()
+        .notch_generation
+        .load(Ordering::SeqCst);
     std::thread::spawn(move || {
         for delay_ms in [60_u64, 180] {
             std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             let app = app.clone();
             let label = label.clone();
             let _ = app.clone().run_on_main_thread(move || {
+                if app.state::<AgentState>().summon_gen.load(Ordering::SeqCst) != generation
+                    || ordinary_dictation_live(&app)
+                {
+                    return;
+                }
                 if let Some(w) = app.get_webview_window(&label) {
                     // Only if focus was actually lost. `focus_now` re-runs
                     // ShowWindow + BringWindowToTop + SetForegroundWindow, and on
@@ -846,7 +729,7 @@ fn build_window(
             .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
-            .focused(true)
+            .focused(false)
             .shadow(false)
             .visible(false);
 
@@ -871,19 +754,26 @@ fn build_window(
             .map(|s| s.summon_gen.load(Ordering::SeqCst))
             .unwrap_or(0);
         window.on_window_event(move |event| {
-            if matches!(event, tauri::WindowEvent::Destroyed)
-                && app.get_webview_window(PANEL_LABEL).is_none()
-            {
-                unregister_transient_shortcuts_deferred(&app);
-                let state = app.try_state::<AgentState>();
-                let still_ours = state
-                    .as_ref()
-                    .map(|s| s.summon_gen.load(Ordering::SeqCst) == built_for)
-                    .unwrap_or(false);
-                if still_ours {
-                    clear_screen_image(&app);
-                    clear_pending_action(&app);
-                }
+            if !matches!(event, tauri::WindowEvent::Destroyed) {
+                return;
+            }
+            let state = app.state::<AgentState>();
+            let generation = state.summon_gen.load(Ordering::SeqCst);
+            if generation != built_for && (blocks_dictation(&app) || waiting_for_reply(&app)) {
+                // Destroy is asynchronous. Reuse the label after Tauri removes the old window.
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let handle = app.clone();
+                    let _ =
+                        app.run_on_main_thread(move || ensure_capture_notch(&handle, generation));
+                });
+                return;
+            }
+            unregister_transient_shortcuts_deferred(&app);
+            if generation == built_for {
+                cancel_notch_capture(&app);
+                clear_screen_image(&app);
+                clear_pending_action(&app);
             }
         });
     }
@@ -926,42 +816,6 @@ fn monitor_work_logical(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64,
     ))
 }
 
-/// The user's chosen reply-surface position (side card vs center-top panel).
-fn panel_position(app: &AppHandle) -> AgentPanelPosition {
-    get_settings(app).agent_panel_position
-}
-
-/// The footprint a freshly built panel window opens at, per the active layout.
-/// The exact size is corrected the moment it is placed / resized, but building
-/// at the right size avoids a first-paint flash.
-fn panel_start_size(app: &AppHandle) -> (f64, f64) {
-    if panel_position(app) == AgentPanelPosition::Center {
-        (PANEL_CENTER_W, PANEL_CENTER_START_H)
-    } else if cfg!(windows)
-        || app
-            .try_state::<AgentState>()
-            .is_some_and(|state| state.panel_expanded.load(Ordering::SeqCst))
-    {
-        (PANEL_W, PANEL_SIDE_MAX_H)
-    } else {
-        (PANEL_COMPACT_W, PANEL_COMPACT_H)
-    }
-}
-
-/// The two visible side-card sizes, clamped to the monitor work area.
-fn side_size(work_w: f64, work_h: f64, expanded: bool) -> (f64, f64) {
-    let max_w = (work_w - 2.0 * PANEL_MARGIN).max(1.0);
-    let max_h = (work_h - 2.0 * PANEL_MARGIN).max(1.0);
-    if expanded {
-        (
-            PANEL_W.min(max_w),
-            (work_h - 110.0).clamp(360.0, PANEL_SIDE_MAX_H).min(max_h),
-        )
-    } else {
-        (PANEL_COMPACT_W.min(max_w), PANEL_COMPACT_H.min(max_h))
-    }
-}
-
 /// Move AND resize in a single step when bounds really change.
 ///
 /// `set_size` + `set_position` are two window operations, and between them the
@@ -1001,63 +855,6 @@ fn bounds_match_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: 
     pos.x == px(x) && pos.y == px(y) && size.width as i32 == px(w) && size.height as i32 == px(h)
 }
 
-/// Clip the full-size Windows host to the compact card while leaving its
-/// WebView viewport unchanged. Windows owns a successful region until the next
-/// SetWindowRgn or window destruction; only failed regions are deleted here.
-#[cfg(windows)]
-fn set_side_region_win32(
-    window: &tauri::WebviewWindow,
-    expanded: bool,
-    compact_w: f64,
-    compact_h: f64,
-) -> bool {
-    use windows::Win32::Foundation::{HWND, POINT, RECT};
-    use windows::Win32::Graphics::Gdi::{
-        ClientToScreen, CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
-
-    let (Ok(raw), Ok(scale)) = (window.hwnd(), window.scale_factor()) else {
-        return false;
-    };
-    let hwnd = HWND(raw.0 as isize as _);
-    unsafe {
-        if expanded {
-            return SetWindowRgn(hwnd, None, true) != 0;
-        }
-        // Regions use outer-window coordinates; the card sits in the client
-        // area. Account for any invisible border around the frameless window.
-        let mut outer = RECT::default();
-        let mut client = RECT::default();
-        let mut client_origin = POINT::default();
-        if GetWindowRect(hwnd, &mut outer).is_err()
-            || GetClientRect(hwnd, &mut client).is_err()
-            || !ClientToScreen(hwnd, &mut client_origin).as_bool()
-        {
-            return false;
-        }
-        let client_w = client.right - client.left;
-        let client_h = client.bottom - client.top;
-        if client_w <= 0 || client_h <= 0 {
-            return false;
-        }
-        let right = client_origin.x - outer.left + client_w;
-        let bottom = client_origin.y - outer.top + client_h;
-        let card_w = ((compact_w * scale).round() as i32).clamp(1, client_w);
-        let card_h = ((compact_h * scale).round() as i32).clamp(1, client_h);
-        let region = CreateRectRgn(right - card_w, bottom - card_h, right, bottom);
-        if region.0.is_null() {
-            return false;
-        }
-        if SetWindowRgn(hwnd, Some(region), true) != 0 {
-            true
-        } else {
-            let _ = DeleteObject(HGDIOBJ(region.0));
-            false
-        }
-    }
-}
-
 /// One atomic move+resize. `false` if the handle or scale factor is unavailable,
 /// so the caller can fall back to the two-step path.
 #[cfg(windows)]
@@ -1086,73 +883,40 @@ fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f6
     }
 }
 
-/// Place the panel per the active layout. SIDE anchors the bottom-right corner
-/// (the reference design). CENTER pins the top-centre and sizes to the height
-/// the webview last requested (preserved across transitions so an already-grown
-/// surface never snaps back).
-fn place_panel(window: &tauri::WebviewWindow) {
-    if panel_position(window.app_handle()) == AgentPanelPosition::Center {
-        #[cfg(windows)]
-        let _ = set_side_region_win32(window, true, 0.0, 0.0);
-        let stored = window
-            .app_handle()
-            .try_state::<AgentState>()
-            .and_then(|s| s.center_height.lock().ok().map(|g| *g))
-            .unwrap_or(0.0);
-        let h = if stored >= PANEL_CENTER_MIN_H {
-            stored
-        } else {
-            PANEL_CENTER_START_H
-        };
-        place_panel_center(window, h);
-        return;
-    }
-
+/// The work-area top keeps the notch clear of system bars.
+fn place_notch(window: &tauri::WebviewWindow, size: (f64, f64)) {
     let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
     if let Some((ox, oy, sw, sh)) = metrics {
-        let expanded = window
-            .app_handle()
-            .try_state::<AgentState>()
-            .is_some_and(|state| state.panel_expanded.load(Ordering::SeqCst));
-
-        #[cfg(windows)]
-        {
-            // Keep the WebView viewport fixed. The compact native region gives
-            // clicks outside the card back to the app underneath; expansion
-            // removes that region before the CSS card animation begins.
-            let (w, h) = side_size(sw, sh, true);
-            let (cw, ch) = side_size(sw, sh, false);
-            let x = ox + sw - w - PANEL_MARGIN;
-            let y = oy + sh - h - PANEL_MARGIN;
-            set_bounds(window, x, y, w, h);
-            if set_side_region_win32(window, expanded, cw, ch) {
-                return;
-            }
-            warn!("[GRAIN] agent: side window region unavailable; using native card bounds");
-        }
-
-        // Cross-platform fallback: reserve only the visible card's footprint.
-        let (w, h) = side_size(sw, sh, expanded);
-        let x = ox + sw - w - PANEL_MARGIN;
-        let y = oy + sh - h - PANEL_MARGIN;
-        set_bounds(window, x, y, w, h);
+        let w = size.0.min(sw.max(1.0));
+        let h = size.1.min(sh.max(1.0));
+        set_bounds(window, ox + (sw - w) / 2.0, oy, w, h);
     }
 }
 
-/// Anchor + size the CENTER-TOP panel. Width is fixed; `height` is the webview's
-/// requested content height, clamped to the work area. The top edge is pinned
-/// (`PANEL_CENTER_TOP` below the work-area top) so the surface grows downward.
-fn place_panel_center(window: &tauri::WebviewWindow, height: f64) {
-    let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
-    if let Some((ox, oy, sw, sh)) = metrics {
-        let w = PANEL_CENTER_W.min(sw - 32.0);
-        let max_h = (sh - PANEL_CENTER_TOP - PANEL_CENTER_BOTTOM_GAP).max(PANEL_CENTER_MIN_H);
-        let h = height.clamp(PANEL_CENTER_MIN_H, max_h);
-        let x = ox + (sw - w) / 2.0;
-        let y = oy + PANEL_CENTER_TOP;
-        // One step, same as SIDE: the center panel grows on every height report,
-        // so a two-step resize would jitter the whole surface continuously.
-        set_bounds(window, x, y, w, h);
+fn ensure_capture_notch(app: &AppHandle, generation: u64) {
+    let state = app.state::<AgentState>();
+    if state.summon_gen.load(Ordering::SeqCst) != generation
+        || (!blocks_dictation(app) && !waiting_for_reply(app))
+    {
+        return;
+    }
+    let show = || -> Result<(), String> {
+        if let Some(window) = app.get_webview_window(PANEL_LABEL) {
+            if state.notch_generation.load(Ordering::SeqCst) != generation {
+                window.destroy().map_err(|error| error.to_string())?;
+            }
+            return Ok(());
+        }
+        state.notch_generation.store(generation, Ordering::SeqCst);
+        let window = build_window(app, PANEL_LABEL, NOTCH_CAPTURE.0, NOTCH_CAPTURE.1)
+            .map_err(|error| error.to_string())?;
+        place_notch(&window, NOTCH_CAPTURE);
+        window.show().map_err(|error| error.to_string())?;
+        Ok(())
+    };
+    if let Err(error) = show() {
+        warn!("[GRAIN] agent: failed to show the notch: {error}");
+        cancel_notch_capture(app);
     }
 }
 
@@ -1425,13 +1189,10 @@ fn clear_pending_action(app: &AppHandle) {
     if let Some(state) = app.try_state::<AgentState>() {
         // Closing before the renderer consumes its first instruction must not
         // leave a queued turn (and its transient-shortcut ownership) alive.
-        let was_waiting = {
+        {
             let mut pending = state.pending_instruction.lock().unwrap();
             pending.take();
-            state.waiting_for_reply.swap(false, Ordering::SeqCst)
-        };
-        if was_waiting {
-            crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+            state.waiting_for_reply.store(false, Ordering::SeqCst);
         }
         if let Some(token) = state.execution.cancel() {
             crate::action_exec::discard(&token);
@@ -1473,12 +1234,56 @@ pub struct AgentInstruction {
 
 #[tauri::command]
 #[specta::specta]
-pub fn agent_take_instruction(app: AppHandle) -> Option<AgentInstruction> {
-    app.try_state::<AgentState>()
-        .and_then(|state| state.pending_instruction.lock().ok()?.take())
+pub fn agent_take_instruction(app: AppHandle, generation: u64) -> Option<AgentInstruction> {
+    let state = app.try_state::<AgentState>()?;
+    let mut pending = state.pending_instruction.lock().ok()?;
+    if pending.as_ref()?.generation == generation && reply_wait_is_current(&app, generation) {
+        pending.take()
+    } else {
+        None
+    }
 }
 
-/// The hidden renderer calls this after applying its first reply/error state.
+#[derive(Serialize, Type)]
+pub struct AgentNotchStatus {
+    generation: u64,
+    working: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
+    let state = app.state::<AgentState>();
+    let generation = state.notch_generation.load(Ordering::SeqCst);
+    AgentNotchStatus {
+        generation,
+        working: reply_wait_is_current(&app, generation),
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_notch_action(app: AppHandle, generation: u64, submit: bool) {
+    let state = app.state::<AgentState>();
+    if state.summon_gen.load(Ordering::SeqCst) != generation {
+        return;
+    }
+    if submit {
+        input_submit_voice(&app);
+    } else {
+        cancel_notch_capture(&app);
+    }
+}
+
+fn cancel_notch_capture(app: &AppHandle) {
+    if blocks_dictation(app) {
+        input_cancel(app);
+    } else if waiting_for_reply(app) {
+        input_cancel_cleanup(app);
+    }
+}
+
+/// Expand the capture notch after its renderer commits the first reply or error.
 /// Stop or a superseding summon makes a queued reveal a no-op.
 #[tauri::command]
 #[specta::specta]
@@ -1488,6 +1293,7 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         let state = handle.state::<AgentState>();
         let pending = state.pending_instruction.lock().unwrap();
         if !reply_wait_is_current(&handle, generation)
+            || state.notch_generation.load(Ordering::SeqCst) != generation
             || handle.get_webview_window(PANEL_LABEL).is_none()
         {
             return;
@@ -1497,12 +1303,15 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
             .waiting_for_reply
             .store(false, Ordering::SeqCst);
         drop(pending);
-        crate::bridge::emit(&handle, DaemonEvent::AgentInputHide);
-        if let Err(error) = show_panel(
-            &handle,
-            panel_position(&handle) == AgentPanelPosition::Center,
-        ) {
-            error!("[GRAIN] agent: failed to present reply: {error}");
+        let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
+            return;
+        };
+        place_notch(&window, NOTCH_REPLY);
+        state.reply_visible.store(true, Ordering::SeqCst);
+        register_followup_shortcut(&handle);
+        let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
+        if !ordinary_dictation_live(&handle) {
+            show_and_focus(&window);
         }
     })
     .map_err(|error| error.to_string())
@@ -1539,99 +1348,7 @@ fn begin_reply_wait(app: &AppHandle) {
             let _ = crate::shortcut::unregister_shortcut(&handle, submit_binding());
         });
     });
-    crate::surface_watch::stop(app);
-    crate::grain_overlay::show_agent_working(app, generation);
-}
-
-/// Change the side panel's native input region (or resize the fallback window)
-/// and swap the global Enter accordingly: compact owns a global
-/// Enter (= Confirm/paste); expanded owns an in-window input, so a registered
-/// global Enter would swallow the user's keystrokes.
-///
-/// ASYNC on purpose: a sync command runs on the MAIN thread, and calling
-/// `set_size` on a visible window from inside a command on the main thread
-/// deadlocks on Windows (tauri#3990 / tao#381). On a runtime worker the window
-/// operations are proxied to the event loop safely.
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), String> {
-    if let Some(state) = app.try_state::<AgentState>() {
-        state.panel_expanded.store(expanded, Ordering::SeqCst);
-    }
-    if let Some(w) = app.get_webview_window(PANEL_LABEL) {
-        place_panel(&w);
-    }
-    arm_global_enter(&app, expanded);
-    Ok(())
-}
-
-/// [GRAIN] CENTER panel: the webview reports the exact content height it wants
-/// and the backend sizes the window to match (clamped to the work area), keeping
-/// it centred and top-anchored so it grows downward. No-op unless the center
-/// layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] â€”
-/// never resize a visible window from a sync command on the main thread
-/// (tauri#3990) â€” so the height feedback loop stays smooth.
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_resize_panel(app: AppHandle, height: f64) -> Result<(), String> {
-    if panel_position(&app) != AgentPanelPosition::Center {
-        return Ok(());
-    }
-    let clamped = height.max(PANEL_CENTER_MIN_H);
-    if let Some(state) = app.try_state::<AgentState>() {
-        if let Ok(mut g) = state.center_height.lock() {
-            *g = clamped;
-        }
-    }
-    if let Some(w) = app.get_webview_window(PANEL_LABEL) {
-        place_panel_center(&w, clamped);
-    }
-    Ok(())
-}
-
-/// Register (or release) the transient global Enter for the reply panel. Global
-/// Enter = "Confirm/paste the shown reply", and it must be live ONLY for the
-/// SIDE compact card: the side-expanded conversation and the CENTER surface both
-/// own an in-window input, so a global Enter would swallow the user's keystrokes.
-fn arm_global_enter(app: &AppHandle, expanded: bool) {
-    if !expanded && panel_position(app) == AgentPanelPosition::Side {
-        register_one_transient(app, submit_binding());
-    } else {
-        let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
-    }
-}
-
-fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
-    // Escape (close) + the configurable follow-up shortcut are live whenever the
-    // panel is up. The global Enter (= Confirm/paste latest reply) is COMPACT
-    // only â€” the expanded panel owns its own input field.
-    register_one_transient(app, close_binding());
-    register_followup_shortcut(app);
-    if let Some(state) = app.try_state::<AgentState>() {
-        state.panel_expanded.store(expanded, Ordering::SeqCst);
-    }
-    arm_global_enter(app, expanded);
-
-    info!("[GRAIN] agent: showing panel (expanded: {expanded})");
-    let win = match app.get_webview_window(PANEL_LABEL) {
-        Some(w) => {
-            place_panel(&w);
-            w
-        }
-        None => {
-            info!("[GRAIN] agent: building panel window");
-            let (w, h) = panel_start_size(app);
-            let w = build_window(app, PANEL_LABEL, w, h)
-                .map_err(|e| format!("failed to build agent panel: {e}"))?;
-            info!("[GRAIN] agent: panel window built");
-            place_panel(&w);
-            info!("[GRAIN] agent: panel window placed");
-            w
-        }
-    };
-    reveal_panel(&win);
-    info!("[GRAIN] agent: panel shown");
-    Ok(())
+    let _ = app.emit_to(PANEL_LABEL, "agent-working", generation);
 }
 
 // ============================================================================
@@ -1654,7 +1371,6 @@ pub fn input_submit_text(app: &AppHandle, text: String) {
 
     let text = text.trim().to_string();
     if text.is_empty() {
-        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
         input_cancel_cleanup(app);
         return;
     }
@@ -1666,8 +1382,7 @@ pub fn input_submit_text(app: &AppHandle, text: String) {
     dispatch_instruction(app.clone(), text, generation);
 }
 
-/// Submit voice capture. Keep the working pill through transcription and the
-/// first model turn; the warm reply panel executes that turn while hidden.
+/// Submit voice capture and keep the notch compact until the first reply.
 pub fn input_submit_voice(app: &AppHandle) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
@@ -1676,6 +1391,9 @@ pub fn input_submit_voice(app: &AppHandle) {
         return;
     }
     let capture = state.dictation_capture.lock().unwrap().take();
+    state
+        .draining_voice
+        .store(capture.is_some(), Ordering::SeqCst);
     let generation = state.summon_gen.load(Ordering::SeqCst);
     begin_reply_wait(app);
 
@@ -1696,14 +1414,18 @@ pub fn input_submit_voice(app: &AppHandle) {
             // Never stop a newer capture with the same binding.
             let _start = crate::grain_actions::capture_start_guard();
             let rm = app.state::<Arc<AudioRecordingManager>>();
-            if !rm.is_recording_readiness_current(capture.readiness_generation) {
+            let samples = if !rm.is_recording_readiness_current(capture.readiness_generation) {
                 None
             } else if !current(&app) {
                 rm.cancel_recording();
                 None
             } else {
                 rm.stop_recording(AGENT_BINDING, rm.cancel_generation())
-            }
+            };
+            app.state::<AgentState>()
+                .draining_voice
+                .store(false, Ordering::SeqCst);
+            samples
         };
         if !current(&app) {
             return;
@@ -1753,12 +1475,10 @@ pub fn input_cancel(app: &AppHandle) {
     }
     state.dictation_capture.lock().unwrap().take();
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
-    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
     input_cancel_cleanup(app);
 }
 
-/// Destroy the pre-warmed hidden panel and release the transient shortcuts â€”
-/// Esc during input means "never mind" ("destroy if not in use").
+/// Destroy the capture notch and release its transient shortcuts.
 fn input_cancel_cleanup(app: &AppHandle) {
     // Bump BEFORE clearing: a screen capture started by this summon may still be
     // encoding, and would otherwise store its frame into the session the user
@@ -1800,20 +1520,16 @@ pub fn input_typing(app: &AppHandle, active: bool) {
         app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
         if let Some(readiness) = start_dictation(app, &state) {
-            crate::grain_overlay::show_capture(app, false);
-            crate::pill_icon::emit_for_session(app);
-            crate::surface_watch::start(app);
-            crate::grain_capture::announce_ready(
+            crate::grain_capture::announce_agent_ready(
                 app,
                 &app.state::<Arc<AudioRecordingManager>>(),
                 readiness,
-                true,
             );
         }
     }
 }
 
-/// Submit the first turn to the hidden reply panel.
+/// Submit the first turn to the notch renderer.
 fn dispatch_instruction(app: AppHandle, text: String, generation: u64) {
     if !queue_first_message(
         &app.state::<AgentState>(),
@@ -1825,7 +1541,6 @@ fn dispatch_instruction(app: AppHandle, text: String, generation: u64) {
     ) {
         return;
     }
-    prepare_panel_loading(&app);
     let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
 }
 
@@ -1833,15 +1548,15 @@ fn dispatch_instruction(app: AppHandle, text: String, generation: u64) {
 #[cfg(feature = "agent-harness")]
 pub(crate) fn harness_submit_instruction(app: &AppHandle, text: String) {
     clear_pending_action(app);
-    if let Some(state) = app.try_state::<AgentState>() {
-        state.summon_gen.fetch_add(1, Ordering::SeqCst);
-    }
+    let generation = app
+        .state::<AgentState>()
+        .summon_gen
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
     begin_reply_wait(app);
-    dispatch_instruction(
-        app.clone(),
-        text,
-        app.state::<AgentState>().summon_gen.load(Ordering::SeqCst),
-    );
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || ensure_capture_notch(&handle, generation));
+    dispatch_instruction(app.clone(), text, generation);
 }
 
 #[cfg(feature = "agent-harness")]
@@ -1851,38 +1566,6 @@ pub(crate) fn harness_snapshot(app: &AppHandle) -> serde_json::Value {
     };
     let run = state.execution.state.lock().unwrap();
     serde_json::json!({"active": run.active.is_some(), "pendingApproval": run.pending_action.is_some(), "generation": run.generation})
-}
-
-/// Prepare the warm hidden panel to execute the first instruction.
-fn prepare_panel_loading(app: &AppHandle) {
-    let generation = app.state::<AgentState>().summon_gen.load(Ordering::SeqCst);
-
-    // The center panel starts expanded and owns an in-window follow-up field.
-    if panel_position(app) == AgentPanelPosition::Center {
-        if let Some(state) = app.try_state::<AgentState>() {
-            state.panel_expanded.store(true, Ordering::SeqCst);
-        }
-    }
-
-    let (sw, sh) = panel_start_size(app);
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if !reply_wait_is_current(&app2, generation) {
-            return;
-        }
-        let win = match app2.get_webview_window(PANEL_LABEL) {
-            Some(w) => w,
-            None => match build_window(&app2, PANEL_LABEL, sw, sh) {
-                Ok(w) => w,
-                Err(e) => {
-                    error!("[GRAIN] agent: failed to build panel for reveal: {e}");
-                    return;
-                }
-            },
-        };
-        place_panel(&win);
-        let _ = app2.emit_to(PANEL_LABEL, "agent-loading", ());
-    });
 }
 
 /// Queue a capture error for the same first-reply handoff.
@@ -1895,7 +1578,6 @@ fn deliver_agent_error(app: &AppHandle, message: &str, generation: u64) {
             is_error: true,
         },
     ) {
-        prepare_panel_loading(app);
         let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
     }
 }
@@ -1904,7 +1586,7 @@ fn submit_binding() -> ShortcutBinding {
     ShortcutBinding {
         id: AGENT_SUBMIT_BINDING.to_string(),
         name: "Agent Submit".to_string(),
-        description: "Submit the visible Agent palette.".to_string(),
+        description: "Submit the Agent recording.".to_string(),
         default_binding: "enter".to_string(),
         current_binding: "enter".to_string(),
     }
@@ -2050,7 +1732,7 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
                 || state.input_active.load(Ordering::SeqCst)
                 // A new instruction may already have registered Escape while
                 // its window creation is still queued on the main thread.
-                || state.pending_instruction.lock().unwrap().is_some()
+                || state.waiting_for_reply.load(Ordering::SeqCst)
             {
                 return;
             }
@@ -2071,10 +1753,7 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
     });
 }
 
-/// Called by the transient global Enter shortcut. During the INPUT phase the
-/// pill owns the typed text, so the core asks it to submit (it answers with
-/// SubmitText/SubmitVoice over the WS). On the compact panel the frontend owns
-/// the displayed reply version and answers with `agent_confirm_paste`.
+/// Submit the Agent recording from its transient global Enter shortcut.
 pub fn global_submit(app: &AppHandle) {
     let input_live = app
         .try_state::<AgentState>()
@@ -2082,15 +1761,14 @@ pub fn global_submit(app: &AppHandle) {
         .unwrap_or(false);
     if input_live {
         input_submit_voice(app);
-    } else if app.get_webview_window(PANEL_LABEL).is_some() {
-        let _ = app.emit_to(PANEL_LABEL, "agent-global-enter", ());
     }
 }
 
 /// Expand the visible reply panel for a follow-up.
 pub fn open_followup(app: &AppHandle) {
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
-        if panel.is_visible().unwrap_or(false) {
+        if !blocks_dictation(app) && !waiting_for_reply(app) && panel.is_visible().unwrap_or(false)
+        {
             let _ = app.emit_to(PANEL_LABEL, "agent-followup", ());
             show_and_focus(&panel);
         }
@@ -2150,6 +1828,15 @@ pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
     })
 }
 
+fn ordinary_dictation_live(app: &AppHandle) -> bool {
+    !app.state::<AgentState>()
+        .draining_voice
+        .load(Ordering::SeqCst)
+        && app
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|audio| audio.is_recording())
+}
+
 /// Called by the transient global Escape shortcut. This is backend-owned so a
 /// wedged webview can still be dismissed without quitting the whole app. During
 /// the INPUT phase it cancels the whole summon (input + dictation + warm
@@ -2160,10 +1847,7 @@ pub fn global_close(app: &AppHandle) {
         .try_state::<AgentState>()
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
-    let dictation_live = app
-        .try_state::<Arc<AudioRecordingManager>>()
-        .is_some_and(|audio| audio.is_recording())
-        && !crate::grain_overlay::agent_owns_pill(app);
+    let dictation_live = ordinary_dictation_live(app);
     match escape_target(input_live, dictation_live, waiting_for_reply(app)) {
         EscapeTarget::AgentInput => {
             input_cancel(app);

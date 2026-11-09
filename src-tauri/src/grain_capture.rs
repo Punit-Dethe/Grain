@@ -32,6 +32,24 @@ pub fn announce_ready(
     readiness: RecordingReadiness,
     cue: bool,
 ) {
+    announce(app, manager, readiness, cue, true);
+}
+
+pub fn announce_agent_ready(
+    app: &AppHandle,
+    manager: &Arc<AudioRecordingManager>,
+    readiness: RecordingReadiness,
+) {
+    announce(app, manager, readiness, true, false);
+}
+
+fn announce(
+    app: &AppHandle,
+    manager: &Arc<AudioRecordingManager>,
+    readiness: RecordingReadiness,
+    cue: bool,
+    dictation_overlay: bool,
+) {
     let app = app.clone();
     let manager = Arc::clone(manager);
     std::thread::spawn(move || {
@@ -49,7 +67,7 @@ pub fn announce_ready(
         let handle = app.clone();
         let ready_manager = Arc::clone(&manager);
         let _ = app.run_on_main_thread(move || {
-            if ready_manager.is_recording_readiness_current(generation) {
+            if dictation_overlay && ready_manager.is_recording_readiness_current(generation) {
                 crate::grain_overlay::mark_ready(&handle);
                 crate::overlay::emit_recording_ready(&handle);
             }

@@ -1222,10 +1222,8 @@ pub fn run(cli_args: CliArgs) {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
-                // [GRAIN] The Agent panel is the only Agent webview (the summon
-                // input is native, in the pill process). On its close, release
-                // the transient Enter/Escape shortcuts — unless the native input
-                // phase still owns them (guarded inside the deferred helper).
+                // [GRAIN] The Agent notch owns its transient shortcuts while
+                // recording, working or showing a reply.
                 if window.label() == agent::PANEL_LABEL {
                     agent::unregister_transient_shortcuts_deferred(&window.app_handle());
                     return;
@@ -1382,7 +1380,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_enabled_setting,
             grain_commands::change_snippets_enabled_setting,
             grain_commands::change_agent_screen_image_setting,
-            grain_commands::change_agent_panel_position_setting,
             grain_commands::change_scrap_that_enabled_setting,
             grain_commands::change_paste_catch_enabled_setting,
             grain_commands::detect_active_app,
@@ -1432,8 +1429,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_copy,
             agent::agent_run,
             agent::agent_confirm_action,
-            agent::agent_set_panel_mode,
-            agent::agent_resize_panel,
+            agent::agent_notch_status,
+            agent::agent_notch_action,
             agent::agent_confirm_paste,
             commands::cancel_operation,
             commands::is_portable,

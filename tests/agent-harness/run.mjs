@@ -368,7 +368,7 @@ async function activate(locator) {
 async function closePanel() {
   const page = await findWindow("agent-panel");
   if (!page) return;
-  await activate(page.locator("button.agc-c-x, button.agc-close"));
+  await activate(page.locator("button.agent-notch-close"));
   await waitFor(
     "Agent window destruction",
     async () => page.isClosed() || !(await findWindow("agent-panel")),

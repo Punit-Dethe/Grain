@@ -603,17 +603,6 @@ async changeAgentScreenImageSetting(enabled: boolean) : Promise<Result<null, str
 }
 },
 /**
- * [GRAIN] Agent reply-surface position (side card vs center-top panel).
- */
-async changeAgentPanelPositionSetting(position: AgentPanelPosition) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_panel_position_setting", { position }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
  * matcher is never invoked for it).
  */
@@ -978,11 +967,11 @@ async showMainWindowCommand() : Promise<Result<null, string>> {
 async agentGetContext() : Promise<string | null> {
     return await TAURI_INVOKE("agent_get_context");
 },
-async agentTakeInstruction() : Promise<AgentInstruction | null> {
-    return await TAURI_INVOKE("agent_take_instruction");
+async agentTakeInstruction(generation: number) : Promise<AgentInstruction | null> {
+    return await TAURI_INVOKE("agent_take_instruction", { generation });
 },
 /**
- * The hidden renderer calls this after applying its first reply/error state.
+ * Expand the capture notch after its renderer commits the first reply or error.
  * Stop or a superseding summon makes a queued reveal a no-op.
  */
 async agentPresentReply(generation: number) : Promise<Result<null, string>> {
@@ -1033,40 +1022,11 @@ async agentConfirmAction(token: string, approve: boolean) : Promise<Result<Agent
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * Change the side panel's native input region (or resize the fallback window)
- * and swap the global Enter accordingly: compact owns a global
- * Enter (= Confirm/paste); expanded owns an in-window input, so a registered
- * global Enter would swallow the user's keystrokes.
- *
- * ASYNC on purpose: a sync command runs on the MAIN thread, and calling
- * `set_size` on a visible window from inside a command on the main thread
- * deadlocks on Windows (tauri#3990 / tao#381). On a runtime worker the window
- * operations are proxied to the event loop safely.
- */
-async agentSetPanelMode(expanded: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_set_panel_mode", { expanded }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
+async agentNotchStatus() : Promise<AgentNotchStatus> {
+    return await TAURI_INVOKE("agent_notch_status");
 },
-/**
- * [GRAIN] CENTER panel: the webview reports the exact content height it wants
- * and the backend sizes the window to match (clamped to the work area), keeping
- * it centred and top-anchored so it grows downward. No-op unless the center
- * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] â€”
- * never resize a visible window from a sync command on the main thread
- * (tauri#3990) â€” so the height feedback loop stays smooth.
- */
-async agentResizePanel(height: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_resize_panel", { height }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
+async agentNotchAction(generation: number, submit: boolean) : Promise<void> {
+    await TAURI_INVOKE("agent_notch_action", { generation, submit });
 },
 /**
  * Confirm (âŽ on the reply card): close the panel, refocus the summon target,
@@ -1809,13 +1769,7 @@ export type AgentMessage = {
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
 role: string; content: string }
-/**
- * [GRAIN] Where the Agent reply surface appears. `Side` (default) is the
- * original bottom-right card that grows into a right-side conversation.
- * `Center` is the sleek center-top panel that hugs its content and grows
- * downward as the conversation lengthens (up to a max height, then scrolls).
- */
-export type AgentPanelPosition = "side" | "center"
+export type AgentNotchStatus = { generation: number; working: boolean }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */
@@ -1984,13 +1938,7 @@ scrap_that_enabled?: boolean;
  * typing card. When off, the input stays in voice mode and typing is
  * ignored until the user expands it explicitly (Tab / click).
  */
-agent_input_type_to_expand?: boolean;
-/**
- * [GRAIN] Where the Agent reply surface appears: the original bottom-right
- * `side` card, or the sleek center-top `center` panel that hugs its content
- * and grows downward. Default `side`; the center panel is in development.
- */
-agent_panel_position?: AgentPanelPosition }
+agent_input_type_to_expand?: boolean }
 export type Attribution = { Speaker: number } |
 /**
  * The diarizer found no speech on this track.
@@ -2312,7 +2260,7 @@ export type OnboardingStep =
  * also the persisted `overlay_position` setting (grain-core re-exports it).
  */
 export type OverlayPosition = "top" | "bottom"
-export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
+export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
 export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
  * Handy's presentation contract. Position only selects an edge.

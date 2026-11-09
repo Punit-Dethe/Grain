@@ -21,7 +21,6 @@ pub struct OverlayPresentation {
     pub state: String,
     pub ready: bool,
     pub session_id: u64,
-    pub agent: bool,
     pub prompt_recording: bool,
     pub app_icon_enabled: bool,
     pub icon: Option<String>,
@@ -61,19 +60,8 @@ impl OverlayPresentation {
         self.working = false;
     }
 
-    fn begin_agent_working(&mut self, visible: bool) {
-        self.clear_capture();
-        self.visible = visible;
-        self.agent = true;
-        self.state = "processing".into();
-        self.work_kind = "agent".into();
-        self.working = true;
-        self.notice = None;
-    }
-
     fn mark_prompt_record(&mut self, session_id: u64) -> bool {
         if session_id != self.session_id
-            || self.agent
             || self.working
             || !matches!(self.state.as_str(), "recording" | "streaming")
         {
@@ -85,11 +73,6 @@ impl OverlayPresentation {
 
     fn complete(&mut self, session_id: u64) -> bool {
         if session_id != self.session_id {
-            return false;
-        }
-        // Audio completion/cancellation must not retire the submitted Agent
-        // turn's pill. Only reply presentation or explicit Stop owns that exit.
-        if self.agent && self.work_kind == "agent" {
             return false;
         }
         self.clear_capture();
@@ -225,26 +208,6 @@ pub fn show_processing(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || show_processing_main(&handle));
 }
 
-pub(crate) fn show_agent_working(app: &AppHandle, generation: u64) {
-    let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if !crate::agent::reply_wait_is_current(&handle, generation) {
-            return;
-        }
-        let Some(ctx) = handle.try_state::<OverlayContext>() else {
-            return;
-        };
-        let mut value = ctx.presentation.lock().unwrap();
-        value.begin_agent_working(
-            crate::settings::get_settings(&handle).overlay_style
-                != crate::settings::OverlayStyle::None,
-        );
-        publish(&handle, &value);
-        drop(value);
-        crate::overlay::show_processing_overlay(&handle);
-    });
-}
-
 fn show_processing_main(app: &AppHandle) {
     let Some(ctx) = app.try_state::<OverlayContext>() else {
         return;
@@ -280,8 +243,6 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::RecordingStopped { .. }
             | DaemonEvent::ProcessingComplete { .. }
             | DaemonEvent::SessionCancelled { .. }
-            | DaemonEvent::AgentInputShow { .. }
-            | DaemonEvent::AgentInputHide
             | DaemonEvent::PasteMissed { .. }
             | DaemonEvent::PasteMissedClear
             | DaemonEvent::PasteCatchDisabled
@@ -335,8 +296,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::RecordingStopped { .. }
             | DaemonEvent::ProcessingComplete { .. }
             | DaemonEvent::SessionCancelled { .. }
-            | DaemonEvent::AgentInputShow { .. }
-            | DaemonEvent::AgentInputHide
             | DaemonEvent::PasteMissed { .. }
             | DaemonEvent::PasteMissedClear
             | DaemonEvent::PasteCatchDisabled
@@ -362,9 +321,7 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             }
             DaemonEvent::RecordingStopped { session_id } if *session_id == value.session_id => {
                 value.ready = false;
-                if value.agent && value.work_kind == "agent" {
-                    // The working pill already acknowledged submission.
-                } else if value.state == "streaming" {
+                if value.state == "streaming" {
                     value.working = true;
                     value.work_kind = "transcribing".into();
                     transcribing = true;
@@ -379,17 +336,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             {
                 // A clipboard notice is independent of capture completion.
                 hide = value.complete(*session_id);
-            }
-            DaemonEvent::AgentInputShow { .. } => {
-                value.agent = true;
-            }
-            DaemonEvent::AgentInputHide => {
-                if value.agent {
-                    crate::surface_watch::stop(app);
-                    value.agent = false;
-                    let session_id = value.session_id;
-                    hide = value.complete(session_id);
-                }
             }
             DaemonEvent::PasteMissed { .. } | DaemonEvent::PasteError { .. } => {
                 value.notice = Some(
@@ -538,17 +484,8 @@ pub fn change_overlay_style_setting(
 #[tauri::command]
 #[specta::specta]
 pub fn overlay_cancel(app: AppHandle) {
-    if agent_owns_pill(&app) {
-        crate::agent::global_close(&app);
-    } else {
-        crate::utils::cancel_current_operation(&app);
-        crate::grain_actions::cancel_session(&app);
-    }
-}
-
-pub(crate) fn agent_owns_pill(app: &AppHandle) -> bool {
-    app.try_state::<OverlayContext>()
-        .is_some_and(|ctx| ctx.presentation.lock().unwrap().agent)
+    crate::utils::cancel_current_operation(&app);
+    crate::grain_actions::cancel_session(&app);
 }
 
 static LAST_PUBLIC_LEVEL: AtomicU64 = AtomicU64::new(0);
@@ -562,6 +499,9 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
         return;
     }
     LAST_PUBLIC_LEVEL.store(now, Ordering::Relaxed);
+    if crate::agent::blocks_dictation(app) {
+        let _ = app.emit_to(crate::agent::PANEL_LABEL, "mic-level", levels);
+    }
     crate::bridge::emit(
         app,
         DaemonEvent::AudioLevel {
@@ -574,36 +514,6 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
 mod tests {
     use super::OverlayPresentation;
     use crate::settings::OverlayStyle;
-
-    #[test]
-    fn submitted_agent_pill_outlives_audio_completion_until_reply_or_stop() {
-        for visible in [true, false] {
-            let mut value = OverlayPresentation {
-                session_id: 7,
-                agent: true,
-                ready: true,
-                committed: "captured instruction".into(),
-                notice: Some("old notice".into()),
-                ..Default::default()
-            };
-            value.begin_agent_working(visible);
-            assert_eq!(value.visible, visible);
-            assert_eq!(value.state, "processing");
-            assert!(value.agent && value.working && !value.ready);
-            assert!(value.committed.is_empty() && value.notice.is_none());
-            // Both same-session audio teardown and old capture events are inert.
-            assert!(!value.complete(6));
-            assert!(!value.complete(7));
-            value.stream_text(7, "late transcript", "tail");
-            assert!(value.committed.is_empty());
-            assert_eq!(value.visible, visible);
-            assert!(value.working);
-            // AgentInputHide owns completion after reply presentation or Stop.
-            value.agent = false;
-            assert!(value.complete(7));
-            assert!(!value.visible && !value.working);
-        }
-    }
 
     #[test]
     fn prompt_feedback_is_confirmed_for_its_capture_and_cleared_at_completion() {
@@ -620,17 +530,15 @@ mod tests {
             assert!(!value.prompt_recording);
             assert!(!value.app_icon_enabled);
         }
-        for (state, working, agent) in [
-            ("transcribing", false, false),
-            ("processing", false, false),
-            ("streaming", true, false),
-            ("recording", false, true),
+        for (state, working) in [
+            ("transcribing", false),
+            ("processing", false),
+            ("streaming", true),
         ] {
             let mut value = OverlayPresentation {
                 session_id: 2,
                 state: state.into(),
                 working,
-                agent,
                 ..Default::default()
             };
             assert!(!value.mark_prompt_record(2));

@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AgentPanelPosition,
   ChineseScript,
   VadBackend,
   AppSettings as Settings,
@@ -244,8 +243,6 @@ const settingUpdaters: {
     commands.changeScrapThatEnabledSetting(value as boolean),
   agent_screen_image: (value) =>
     commands.changeAgentScreenImageSetting(value as boolean),
-  agent_panel_position: (value) =>
-    commands.changeAgentPanelPositionSetting(value as AgentPanelPosition),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>

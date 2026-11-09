@@ -1,45 +1,17 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  RotateCcw,
-  X,
-  Check,
-} from "lucide-react";
+import { ArrowUp, AudioLines, Copy, RotateCcw, X, Check } from "lucide-react";
 import {
   commands,
   type AgentMessage,
   type AgentConfirm,
-  type AgentPanelPosition,
   type AgentReply,
 } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
+import { CaptureWaveform } from "../../overlay/CaptureWaveform";
+import { AgentWorkingLabel } from "./AgentWorkingLabel";
 import "./agent.css";
-
-/** [GRAIN] CENTER layout geometry that must agree with the backend
- * (`agent.rs`): the panel's top is pinned this far below the work-area top and
- * keeps this gap at the bottom, so the frontend can cap its own max-height to
- * match what the window will actually clamp to. */
-const CENTER_TOP_OFFSET = 76;
-const CENTER_BOTTOM_GAP = 52;
-
-/** Duration of the card's opening growth — must match `agc-expand` in
- * `agent.css`. Nothing on the backend races it any more: the window no longer
- * waits a guessed interval before showing, because the panel paints nothing at
- * all until `agent-reveal` arrives. */
-const REVEAL_MS = 440;
-/** Shared opening curve. Decelerating, no overshoot. */
-const EXPAND_EASE = "cubic-bezier(0.16, 0.84, 0.3, 1)";
 
 type Role = "user" | "assistant";
 interface ChatMessage {
@@ -51,12 +23,8 @@ interface ChatMessage {
 }
 
 const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-// Glyph constants (kept out of JSX so the i18n lint doesn't treat them as copy).
-const SEND_ARROW = "↵";
 const ENTER_GLYPH = "⏎";
 
-/** Compact relative age for a source chip ("3d ago", "yesterday"). Symbols
- * only, so no i18n copy — matches the hardcoded keycap glyphs above. */
 /** Pretty-print one part of a shortcut binding for the keycap chips. */
 function keycapLabel(part: string): string {
   const p = part.trim().toLowerCase();
@@ -85,20 +53,6 @@ function keycapLabel(part: string): string {
   }
 }
 
-/**
- * [GRAIN] The Agent panel — the bottom-right reply surface, in two stages:
- *
- *   COMPACT (the reference card): retry pager (‹ 1/N ›) top-left, ✕ top-right,
- *   the captured text (quote, expandable via "More"), the reply, and a bottom
- *   bar — Ask follow up (+ its configurable shortcut as keycaps) · copy ·
- *   retry · Confirm ⏎ (pastes the displayed reply into the source app).
- *
- *   EXPANDED (the conversation): grows to the sidebar footprint when the user
- *   asks a follow-up (button or shortcut). Retry
- *   and the version pager disappear once a follow-up exists — versions belong
- *   to the first reply only. Esc closes either stage.
- *
- */
 export function AgentPanel() {
   const { t } = useTranslation();
   // ONE handle for the component's life. `getCurrentWindow()` mints a fresh
@@ -116,38 +70,18 @@ export function AgentPanel() {
   const [versions, setVersions] = useState<AgentReply[]>([]);
   const [versionIdx, setVersionIdx] = useState(0);
   const [expanded, setExpanded] = useState(false);
-  // The warm panel executes the first turn while hidden behind the working pill.
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copyFlash, setCopyFlash] = useState(false);
-  // CENTER: which reply's copy icon is currently flashing (per-turn, not global).
   const [flashedId, setFlashedId] = useState<string | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
-  // Bumped on every reveal signal so the card replays its opening animation.
-  // The window is warm and pre-created, so mounting is NOT the reveal.
-  const [appearNonce, setAppearNonce] = useState(0);
-  // Nothing renders until the window is actually being shown. Showing a window
-  // and arming an animation inside it are independent, so which one wins is a
-  // race — and the losing order paints the card at rest for a frame before it
-  // snaps small and grows, which is what read as the panel opening twice. With
-  // nothing to paint until the entrance is armed, that order stops mattering.
   const [revealed, setRevealed] = useState(false);
   const revealedRef = useRef(false);
-  const revealingRef = useRef(false);
-  // Set by `expand()` to the box the card occupied BEFORE the window grew. Its
-  // presence tells the reveal effect to animate the card's box open from there
-  // instead of playing the plain opening growth. Consumed once.
-  const growFromRef = useRef<{ w: number; h: number } | null>(null);
-  const expandingRef = useRef(false);
-  const [followupShortcut, setFollowupShortcut] = useState<string>("");
-  // Which reply surface this session is rendering — loaded at mount. `side` is
-  // the original bottom-right card; `center` is the sleek center-top panel.
-  const [position, setPosition] = useState<AgentPanelPosition>("side");
-  const positionRef = useRef<AgentPanelPosition>("side");
-  positionRef.current = position;
-  // CENTER only: false until the user opens a follow-up. While false the bottom
-  // shows the follow-up + Confirm bar; once true it's just the text field — and
-  // it stays true for the rest of the session (the bar never returns).
+  const [capture, setCapture] = useState<{
+    generation: number;
+    working: boolean;
+  } | null>(null);
+  const generationRef = useRef<number | null>(null);
+  const [followupShortcut, setFollowupShortcut] = useState("");
   const [composing, setComposing] = useState(false);
   const composingRef = useRef(false);
   composingRef.current = composing;
@@ -159,16 +93,9 @@ export function AgentPanel() {
   const versionIdxRef = useRef(0);
   const expandedRef = useRef(false);
   const busyRef = useRef(false);
-  const followupRef = useRef<HTMLInputElement>(null);
-  // CENTER layout: the auto-growing follow-up textarea. `cardRef` is the card
-  // itself — every layout uses it for the reveal animation, and CENTER also
-  // reports its height to the backend so the window hugs its content.
   const centerInputRef = useRef<HTMLTextAreaElement>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const lastReportedH = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
   const flashTimer = useRef<number | undefined>(undefined);
-  const startedRef = useRef(false);
   // Guards the first LLM run so the mount-take and the `agent-instruction`
   // event (whichever wins the race) only trigger it once.
   const firstRunStartedRef = useRef(false);
@@ -194,21 +121,9 @@ export function AgentPanel() {
     ? expandedConfirmAction
     : compactConfirmAction;
 
-  /** The window is on screen — render, and play the entrance. Idempotent: the
-   * backend announces the reveal AND the panel checks for itself on mount, so
-   * whichever arrives first wins and the second is a no-op. One window is only
-   * ever revealed once (Esc destroys it rather than hiding it). */
   const reveal = useCallback(() => {
-    if (revealedRef.current) return;
     revealedRef.current = true;
     setRevealed(true);
-    setAppearNonce((n) => n + 1);
-  }, []);
-
-  const flashCopied = useCallback(() => {
-    setCopyFlash(true);
-    window.clearTimeout(flashTimer.current);
-    flashTimer.current = window.setTimeout(() => setCopyFlash(false), 1600);
   }, []);
 
   /** Run the FIRST instruction (or a retry of it) — compact stage. */
@@ -285,80 +200,10 @@ export function AgentPanel() {
         setError(e instanceof Error ? e.message : t("agent.error"));
       } finally {
         setBusy(false);
-        followupRef.current?.focus();
       }
     },
     [t],
   );
-
-  /** Expand into the conversation stage (button / shortcut / pill offer). */
-  const expand = useCallback(async () => {
-    if (expandedRef.current) {
-      followupRef.current?.focus();
-      return;
-    }
-    // The first run is still in flight — expanding now would strand its reply
-    // in the (hidden) version list. The button is disabled; this also covers
-    // the global follow-up shortcut.
-    if (
-      expandingRef.current ||
-      busyRef.current ||
-      versionsRef.current.length === 0
-    )
-      return;
-    expandingRef.current = true;
-    // Freeze the displayed version into the conversation history (evidence and
-    // not-found carried through so the footer persists after expanding).
-    const reply = versionsRef.current[versionIdxRef.current];
-    const seed: ChatMessage[] = [];
-    if (instructionRef.current) {
-      seed.push({ id: rid(), role: "user", content: instructionRef.current });
-    }
-    if (reply && reply.text) {
-      seed.push({
-        id: rid(),
-        role: "assistant",
-        content: reply.text,
-        confirmAction: reply.confirm_action,
-      });
-    }
-    // Pin the compact card before changing the native input region. On Windows
-    // its WebView viewport is already full size; other platforms may resize the
-    // native window here. Offset dimensions exclude the entrance transform.
-    const card = cardRef.current;
-    const from = {
-      w: card?.offsetWidth || window.innerWidth,
-      h: card?.offsetHeight || window.innerHeight,
-    };
-    if (card) {
-      card.style.width = `${from.w}px`;
-      card.style.height = `${from.h}px`;
-    }
-    try {
-      const result = await commands.agentSetPanelMode(true);
-      if (result.status === "error") throw new Error(result.error);
-      // The fixed Windows viewport is ready immediately. A compact viewport
-      // still needs a frame or two for a native resize to reach the WebView.
-      if (window.innerWidth <= from.w || window.innerHeight <= from.h) {
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        );
-      }
-      if (!cardRef.current) return;
-      growFromRef.current = from;
-      setMessages(seed);
-      setExpanded(true);
-      setAppearNonce((n) => n + 1);
-      window.setTimeout(() => followupRef.current?.focus(), 60);
-    } catch {
-      // Keep the compact card usable if the native resize fails.
-      card?.style.removeProperty("width");
-      card?.style.removeProperty("height");
-      void commands.agentSetPanelMode(false).catch(() => {});
-    } finally {
-      expandingRef.current = false;
-    }
-  }, []);
 
   /** Open the CENTER follow-up field (button click or the continuation
    * shortcut). Once open it stays open for the session. */
@@ -394,25 +239,15 @@ export function AgentPanel() {
     void runFirst(instructionRef.current);
   }, [runFirst]);
 
-  const copyReply = useCallback(() => {
-    const text = expandedRef.current
-      ? lastReplyOf(messagesRef.current)
-      : (versionsRef.current[versionIdxRef.current]?.text ?? "");
-    if (!text) return;
-    commands
-      .agentCopy(text)
-      .then(flashCopied)
-      .catch(() => {});
-  }, [flashCopied]);
-
   /** Take the queued first instruction and run it — guarded so the mount-take
    * and the `agent-instruction` event fire it at most once. */
   const startFirstIfQueued = useCallback(async () => {
-    if (firstRunStartedRef.current) return;
+    const generation = generationRef.current;
+    if (generation === null || firstRunStartedRef.current) return;
     let instruction: Awaited<ReturnType<typeof commands.agentTakeInstruction>> =
       null;
     try {
-      instruction = await commands.agentTakeInstruction();
+      instruction = await commands.agentTakeInstruction(generation);
     } catch {
       /* nothing queued yet */
     }
@@ -429,109 +264,80 @@ export function AgentPanel() {
     }
   }, [runFirst]);
 
-  // Mount: load settings + the summon context. The panel is pre-created HIDDEN,
-  // so mount runs BEFORE the user submits — the first instruction usually
-  // arrives later via the `agent-instruction` event (below). We still try a
-  // take here in case the instruction beat the webview to the punch.
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    (async () => {
-      try {
-        const res = await commands.getAppSettings();
-        if (res.status === "ok") {
-          setPosition(res.data.agent_panel_position ?? "side");
-          const b = res.data.bindings["agent_followup"];
-          if (b) setFollowupShortcut(b.current_binding);
-        }
-      } catch {
-        /* defaults hold */
-      }
-      try {
-        contextRef.current = await commands.agentGetContext();
-      } catch {
-        /* no context is fine */
-      }
-      await startFirstIfQueued();
-    })();
-  }, [startFirstIfQueued]);
-
-  // Backend → panel signals for the pre-created (warm) window lifecycle.
-  useEffect(() => {
-    // `listen()` resolves asynchronously, so a subscription can land AFTER this
-    // effect has been torn down. Retiring it on arrival is what guarantees no
-    // orphan outlives the effect — "destroy if not in use", and the reason a
-    // single event can never be handled twice.
     let dead = false;
-    const uns: Array<() => void> = [];
-    const track = (un: () => void) => (dead ? un() : uns.push(un));
-    // The core queued the first instruction after we mounted → run it.
-    void win
-      .listen("agent-instruction", () => {
-        void startFirstIfQueued();
-      })
-      .then(track);
-    // The ONE entrance signal, emitted by every backend path that shows this
-    // window (`reveal_panel` in `agent.rs`) and always after the state event
-    // below, so the card is already showing the right thing when it appears.
-    // The state events do NOT arm the entrance themselves — two of them can
-    // land for a single reveal, and that played the animation twice.
-    void win.listen("agent-reveal", reveal).then(track);
-    // Hidden preparation: keep loading until the first reply or error lands.
-    void win
-      .listen("agent-loading", () => {
-        if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
-      })
-      .then(track);
-    // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
-    // the expanded conversation was focused). Append the transcript to the
-    // follow-up field without using the clipboard.
-    void win
-      .listen<string>("agent-panel-dictation", (e) => {
-        const dictated = (e.payload || "").trim();
-        if (!dictated) return;
-        const append = (el: HTMLTextAreaElement | HTMLInputElement | null) => {
-          if (!el) return;
-          const sep = el.value && !el.value.endsWith(" ") ? " " : "";
-          el.value = el.value + sep + dictated;
-          if (el instanceof HTMLTextAreaElement) {
+    const unlisten: Array<() => void> = [];
+    const track = (release: () => void) => {
+      if (dead) release();
+      else unlisten.push(release);
+    };
+    void (async () => {
+      const settings = await commands.getAppSettings();
+      if (!dead && settings.status === "ok") {
+        setFollowupShortcut(
+          settings.data.bindings.agent_followup?.current_binding ?? "",
+        );
+      }
+    })().catch(console.error);
+
+    let workingGeneration: number | null = null;
+    void Promise.all([
+      win
+        .listen<number>("agent-working", ({ payload }) => {
+          workingGeneration = payload;
+          setCapture((current) =>
+            current?.generation === payload
+              ? { ...current, working: true }
+              : current,
+          );
+        })
+        .then(track),
+      win
+        .listen("agent-instruction", () => void startFirstIfQueued())
+        .then(track),
+      win.listen("agent-reveal", reveal).then(track),
+      win.listen("agent-followup", startCompose).then(track),
+      win
+        .listen<string>("agent-panel-dictation", ({ payload }) => {
+          const dictated = payload.trim();
+          if (!dictated || !revealedRef.current) return;
+          const append = () => {
+            const el = centerInputRef.current;
+            if (dead || !el) return;
+            const sep = el.value && !el.value.endsWith(" ") ? " " : "";
+            el.value += sep + dictated;
             el.style.height = "auto";
             el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+            el.focus();
+          };
+          if (composingRef.current) append();
+          else {
+            startCompose();
+            requestAnimationFrame(append);
           }
-          el.focus();
-        };
-        if (positionRef.current !== "center") {
-          append(followupRef.current);
-          return;
-        }
-        // CENTER: the field only exists once composing, but the backend has
-        // already suppressed the OS paste to route the transcript here — so a
-        // dictation while the quiet bar is showing would be dropped outright.
-        // Dictating IS the request to compose: open the field, then append.
-        if (composingRef.current) {
-          append(centerInputRef.current);
-          return;
-        }
-        startCompose();
-        requestAnimationFrame(() => append(centerInputRef.current));
+        })
+        .then(track),
+    ])
+      .then(async () => {
+        const [status, context] = await Promise.all([
+          commands.agentNotchStatus(),
+          commands.agentGetContext(),
+        ]);
+        if (dead) return;
+        generationRef.current = status.generation;
+        contextRef.current = context;
+        setCapture({
+          ...status,
+          working: status.working || workingGeneration === status.generation,
+        });
+        await startFirstIfQueued();
       })
-      .then(track);
-    // A window BUILT already-visible (the windowless follow-up rebuild) emits
-    // its reveal while this webview is still loading, so that event is gone
-    // before anything can hear it. Asking closes that hole: whichever of the
-    // two answers first reveals, and `reveal` makes the loser a no-op. Without
-    // this, one path would render a permanently blank window.
-    void win
-      .isVisible()
-      .then((v) => {
-        if (v) reveal();
-      })
-      .catch(() => {});
+      .catch(console.error);
     return () => {
       dead = true;
-      uns.forEach((u) => u());
+      unlisten.forEach((release) => release());
     };
-  }, [reveal, startCompose, startFirstIfQueued, t, win]);
+  }, [reveal, startCompose, startFirstIfQueued, win]);
 
   // Reveal only after reply/error state has committed. The host verifies that
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
@@ -547,138 +353,10 @@ export function AgentPanel() {
     }
   }, [busy, error, revealed, versions.length]);
 
-  // Replay the opening animation on each reveal. Restarted imperatively rather
-  // than by remounting: the card carries refs (height reporting, scroll) that
-  // must survive, and re-adding the class after a reflow is what re-arms a CSS
-  // animation on an element that is already in the tree.
-  //
-  // LAYOUT effect, not a passive one: on expand the conversation card mounts in
-  // the same commit that arms the animation, and a passive effect would let it
-  // paint once at full size first — a visible pop before the growth begins.
-  useLayoutEffect(() => {
-    const el = cardRef.current;
-    if (!el || appearNonce === 0) return;
-    revealingRef.current = true;
-    const from = growFromRef.current;
-    growFromRef.current = null;
-
-    const to = { w: window.innerWidth, h: window.innerHeight };
-    let anim: Animation | undefined;
-    if (from) {
-      // Expanding: grow the card's own box out to fill the window.
-      //
-      // `from` being set IS the signal, with no second opinion about whether the
-      // box actually got bigger. That extra test used to decide this, and when
-      // it read equal sizes it fell through to the ENTRANCE animation — which
-      // shrinks the full-size card to 0.86 and grows it back. A growth that
-      // measures as no growth must be a no-op, never a different animation.
-      //
-      // The inline size is the START box, so the first painted frame is right
-      // by construction — never dependent on when the animation's own first
-      // keyframe lands. Setting it to the TARGET and leaning on `fill:
-      // backwards` instead is what flashed the full-size card for one frame at
-      // the start of the growth. `fill: forwards` then holds the end box until
-      // the finish handler hands the card back to the stylesheet.
-      el.classList.remove("is-appearing");
-      el.classList.add("is-growing");
-      el.style.width = `${from.w}px`;
-      el.style.height = `${from.h}px`;
-      anim = el.animate(
-        [
-          { width: `${from.w}px`, height: `${from.h}px` },
-          { width: `${to.w}px`, height: `${to.h}px` },
-        ],
-        { duration: REVEAL_MS, easing: EXPAND_EASE, fill: "forwards" },
-      );
-      const done = anim;
-      void done.finished
-        .then(() => {
-          // Clear the pin FIRST (the stylesheet's 100%/100% is the same box the
-          // fill is holding), then release the fill — so no frame falls between
-          // the two and snaps the card shut.
-          el.style.width = "";
-          el.style.height = "";
-          done.cancel();
-        })
-        .catch(() => {});
-    } else {
-      el.classList.remove("is-appearing");
-      void el.offsetWidth; // force reflow so the animation restarts
-      el.classList.add("is-appearing");
-    }
-
-    // Hand the card back to the stylesheet once it has played out, so nothing
-    // (a pinned box, `will-change`) outlives the animation that needed it.
-    const timer = window.setTimeout(() => {
-      el.classList.remove("is-appearing", "is-growing");
-      el.style.width = "";
-      el.style.height = "";
-      revealingRef.current = false;
-    }, REVEAL_MS + 60);
-    return () => {
-      window.clearTimeout(timer);
-      anim?.cancel();
-    };
-  }, [appearNonce]);
-
-  // Backend bridges: the transient global Enter (compact → confirm) and the
-  // follow-up shortcut / pill click (→ expand).
   useEffect(() => {
-    // Same late-resolve guard as the lifecycle listeners above.
-    let dead = false;
-    const uns: Array<() => void> = [];
-    const track = (un: () => void) => (dead ? un() : uns.push(un));
-    void win
-      .listen("agent-global-enter", () => {
-        if (!expandedRef.current) confirm();
-      })
-      .then(track);
-    void win
-      .listen("agent-followup", () => {
-        // CENTER: the continuation shortcut opens (and focuses) the follow-up
-        // field. SIDE keeps its discrete expand step.
-        if (positionRef.current === "center") {
-          startCompose();
-        } else {
-          expand();
-        }
-      })
-      .then(track);
-    return () => {
-      dead = true;
-      uns.forEach((u) => u());
-    };
-  }, [confirm, expand, startCompose, win]);
+    if (revealed && expanded) endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, expanded, busy, revealed]);
 
-  useEffect(() => {
-    // A smooth scroll running at the same time as the reveal is two animations
-    // moving the same content on different curves — it reads as stutter. While
-    // the card is opening, jump instead; the user has not seen the old position
-    // anyway.
-    endRef.current?.scrollIntoView({
-      behavior: revealingRef.current ? "auto" : "smooth",
-      block: "end",
-    });
-  }, [messages, versions, versionIdx, busy]);
-
-  const sendFollowup = useCallback(async () => {
-    const el = followupRef.current;
-    const text = el?.value.trim() ?? "";
-    if (!text || busyRef.current) return;
-    if (el) el.value = "";
-    const next: ChatMessage[] = [
-      ...messagesRef.current,
-      { id: rid(), role: "user", content: text },
-    ];
-    setMessages(next);
-    await runConversation(next);
-  }, [runConversation]);
-
-  // ── CENTER layout: unified follow-up + auto-grow plumbing ─────────────────
-  // Send a follow-up in the CENTER surface. Unlike the side card there is no
-  // discrete "expand" step — the surface is one continuously-growing thread — so
-  // the first follow-up materialises the opening exchange (instruction + the
-  // shown reply) into the conversation before appending the new turn.
   const runFollowup = useCallback(
     async (text: string) => {
       if (!text.trim() || busyRef.current) return;
@@ -711,27 +389,10 @@ export function AgentPanel() {
       ];
       setMessages(next);
       await runConversation(next);
-      // runConversation returns focus to the SIDE input; the center textarea
-      // is a different element, so return focus to it here.
       centerInputRef.current?.focus();
     },
     [runConversation],
   );
-
-  /** Report the card's natural height to the backend so the window hugs it. The
-   * CSS max-height caps the measurement, so the window stops growing and the
-   * thread scrolls internally past that point. `offsetHeight` (not the bounding
-   * rect) so the reveal animation's transform never leaks into the size the
-   * window is driven to. */
-  const reportHeight = useCallback(() => {
-    const el = cardRef.current;
-    if (!el) return;
-    const h = el.offsetHeight;
-    if (h > 0 && Math.abs(h - lastReportedH.current) >= 2) {
-      lastReportedH.current = h;
-      void commands.agentResizePanel(h).catch(() => {});
-    }
-  }, []);
 
   /** Grow the follow-up textarea with its content (capped, then it scrolls). */
   const autoGrowTextarea = useCallback(() => {
@@ -763,19 +424,6 @@ export function AgentPanel() {
     [runFollowup, confirm],
   );
 
-  /** Cap the center panel's own max-height to what the window will clamp to, so
-   * the internal scroll kicks in exactly when the window stops growing. */
-  const centerMax = useMemo(() => {
-    const avail =
-      (typeof window !== "undefined" && window.screen?.availHeight) ||
-      window.innerHeight ||
-      800;
-    return Math.max(
-      220,
-      Math.round(avail - CENTER_TOP_OFFSET - CENTER_BOTTOM_GAP),
-    );
-  }, []);
-
   /** Copy one specific answer (the per-reply copy affordance). Only the copied
    * reply's icon flashes — the flash is keyed by turn id, not global. */
   const copyOne = useCallback((id: string, text: string) => {
@@ -790,32 +438,11 @@ export function AgentPanel() {
       .catch(() => {});
   }, []);
 
-  // CENTER: drive the window height from the card's content. A ResizeObserver
-  // catches every source of growth (reply lands, follow-up added, textarea
-  // grows, quote expands) and reports the new height on the next frame.
-  useEffect(() => {
-    if (position !== "center") return;
-    const el = cardRef.current;
-    if (!el) return;
-    let raf = 0;
-    const measure = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(reportHeight);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => {
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-    };
-  }, [position, reportHeight]);
-
   // CENTER: "just start typing" opens the follow-up field, seeded with the key —
   // the same type-to-expand feel as the summon pill. Only while the panel is
   // focused (global keydown), not composing, and idle.
   useEffect(() => {
-    if (position !== "center") return;
+    if (!revealed) return;
     const onKey = (e: KeyboardEvent) => {
       if (composingRef.current || busyRef.current) return;
       if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return;
@@ -838,7 +465,7 @@ export function AgentPanel() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [position, startCompose]);
+  }, [revealed, startCompose]);
 
   /** Resume exactly the host-held action shown in this reply. The model is not
    * called again and cannot substitute a provider, tool, or argument. */
@@ -912,448 +539,216 @@ export function AgentPanel() {
     : [];
   const canConfirm =
     !busy && !displayedConfirmAction && displayedReply.trim().length > 0;
-  // Held back until the window is actually being shown — see `reveal`.
-  const rootClass = `agent-panel-root${revealed ? " is-revealed" : ""}`;
+  const thread: ChatMessage[] = expanded
+    ? messages
+    : [
+        ...messages,
+        ...(!busy && !error && displayedReply
+          ? [
+              {
+                id: "a0",
+                role: "assistant" as const,
+                content: displayedReply,
+                confirmAction: compactConfirmAction,
+              },
+            ]
+          : []),
+      ];
+  const hasAnswer = thread.some((m) => m.role === "assistant");
+  // Redo re-runs the first instruction only (there are no versions once the
+  // conversation branches), so it lives under the sole pre-follow-up answer.
+  const canRedo =
+    !expanded && !busy && !displayedConfirmAction && versions.length > 0;
+  // The shortcut reads as one unit, e.g. "Alt Q" — never split into chips.
+  const shortcutLabel = shortcutParts.join(" ");
 
-  // ══ CENTER: the sleek center-top panel ════════════════════════════════════
-  // One continuously-growing surface (no compact/expanded split). Before the
-  // first follow-up the thread is the submitted message and shown answer; a follow-up
-  // materialises the exchange into a threaded conversation.
-  if (position === "center") {
-    const thread: ChatMessage[] = expanded
-      ? messages
-      : [
-          ...messages,
-          ...(!busy && !error && displayedReply
-            ? [
-                {
-                  id: "a0",
-                  role: "assistant" as const,
-                  content: displayedReply,
-                  confirmAction: compactConfirmAction,
-                },
-              ]
-            : []),
-        ];
-    const hasAnswer = thread.some((m) => m.role === "assistant");
-    // Redo re-runs the first instruction only (there are no versions once the
-    // conversation branches), so it lives under the sole pre-follow-up answer.
-    const canRedo =
-      !expanded && !busy && !displayedConfirmAction && versions.length > 0;
-    // The shortcut reads as one unit, e.g. "Alt Q" — never split into chips.
-    const shortcutLabel = shortcutParts.join(" ");
-    const lastIdx = thread.length - 1;
-
-    return (
-      <div className={rootClass}>
-        <div
-          ref={cardRef}
-          className="agc-card agc-center"
-          style={{ maxHeight: centerMax }}
-        >
-          {/* Top edge: a fade to black so content dissolves under the rim. */}
-          <div className="agc-c-fade" aria-hidden="true" />
-          <button
-            type="button"
-            className="agc-c-x"
-            title={t("agent.escCue")}
-            onClick={() => void win.close()}
-          >
-            <X size={12} />
-          </button>
-
-          {/* Content — grows with the conversation, scrolls past the max. */}
-          <div className="agc-c-scroll">
-            {quoteText && !expanded && (
-              <div
-                className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
-                onClick={() => setQuoteOpen((v) => !v)}
-                role="button"
-                tabIndex={-1}
-              >
-                {quoteText}
-              </div>
+  return (
+    <div className="agent-panel-root">
+      <section
+        className={revealed ? "agent-notch is-reply" : "agent-notch"}
+        aria-label={t("agent.brand")}
+      >
+        <header className="agent-notch-header">
+          <AudioLines
+            size={16}
+            className="agent-notch-mark"
+            aria-hidden="true"
+          />
+          <span className="agent-notch-label">
+            {revealed ? (
+              t("agent.brand")
+            ) : capture?.working ? (
+              <AgentWorkingLabel />
+            ) : (
+              <span role="status">{t("agent.notchListening")}</span>
             )}
-
-            {thread.map((m, idx) => (
-              <div key={m.id} className={`agc-c-turn is-${m.role}`}>
-                {m.role === "user" ? (
-                  <div className="agc-c-user">{m.content}</div>
-                ) : (
-                  <>
-                    <div className="agc-c-answer">
-                      <AgentMarkdown markdown={m.content} />
-                    </div>
-                    {m.confirmAction && renderConfirmAction(m.confirmAction)}
-                    {expanded && (
-                      <div className="agc-c-tools">
-                        <button
-                          type="button"
-                          className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                          onClick={() => copyOne(m.id, m.content)}
-                          title={t("agent.copyReply")}
-                        >
-                          {flashedId === m.id ? (
-                            <Check size={13} />
-                          ) : (
-                            <Copy size={13} />
-                          )}
-                        </button>
-                        {canRedo && idx === lastIdx && (
-                          <button
-                            type="button"
-                            className="agc-c-tool"
-                            onClick={retry}
-                            title={t("agent.retry")}
-                          >
-                            <RotateCcw size={13} />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            ))}
-
-            {busy && (
-              <div className="agent-typing" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-            )}
-            {error && <div className="agc-error">{error}</div>}
-            <div ref={endRef} />
-          </div>
-
-          {/* Bottom: JUST the text field once composing; otherwise the quiet
-              follow-up + shortcut (left) and Confirm on the first reply (right). */}
-          {composing ? (
-            <div className="agc-c-compose">
-              {/* Enabled while busy, for the same reason as the side field. */}
-              <textarea
-                ref={centerInputRef}
-                rows={1}
-                className="agc-c-textarea"
-                placeholder={
-                  busy
-                    ? t("agent.followupWaiting")
-                    : t("agent.followupPlaceholder")
-                }
-                onInput={autoGrowTextarea}
-                onKeyDown={onCenterKey}
-              />
-            </div>
-          ) : hasAnswer ? (
-            <div className="agc-c-bar">
-              <button
-                type="button"
-                className="agc-c-followup"
-                disabled={busy}
-                onClick={startCompose}
-              >
-                {t("agent.askFollowup")}
-                {shortcutLabel && (
-                  <span className="agc-c-kbd">{shortcutLabel}</span>
-                )}
-              </button>
-              <span className="agc-spacer" />
-              {!expanded && (
-                <>
-                  <button
-                    type="button"
-                    className={`agc-c-tool agc-c-bar-tool ${flashedId === "a0" ? "is-flash" : ""}`}
-                    onClick={() => copyOne("a0", displayedReply)}
-                    title={t("agent.copyReply")}
-                  >
-                    {flashedId === "a0" ? (
-                      <Check size={13} />
-                    ) : (
-                      <Copy size={13} />
-                    )}
-                  </button>
-                  {canRedo && (
-                    <button
-                      type="button"
-                      className="agc-c-tool agc-c-bar-tool"
-                      onClick={retry}
-                      title={t("agent.retry")}
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="agc-c-insert"
-                    disabled={!canConfirm}
-                    onClick={confirm}
-                    title={t("agent.confirmHint")}
-                  >
-                    {t("agent.confirm")}
-                  </button>
-                </>
-              )}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
-
-  // ── COMPACT: the reference reply card ─────────────────────────────────────
-  if (!expanded) {
-    return (
-      <div className={rootClass}>
-        <div className="agc-card" ref={cardRef}>
-          {/* Header: version pager (left) · close (right). Draggable. */}
-          <div className="agc-head" data-tauri-drag-region>
-            <div className="agc-pager">
-              <button
-                type="button"
-                className="agc-pager-btn"
-                disabled={busy || versionIdx <= 0}
-                onClick={() => setVersionIdx((i) => Math.max(0, i - 1))}
-                title={t("agent.prevVersion")}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span className="agc-pager-count">
-                {Math.min(versionIdx + 1, Math.max(versions.length, 1))}/
-                {Math.max(versions.length, 1)}
-              </span>
-              <button
-                type="button"
-                className="agc-pager-btn"
-                disabled={busy || versionIdx >= versions.length - 1}
-                onClick={() =>
-                  setVersionIdx((i) => Math.min(versions.length - 1, i + 1))
-                }
-                title={t("agent.nextVersion")}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-            <span className="agc-spacer" />
-            <button
-              type="button"
-              className="agc-close"
-              title={t("agent.escCue")}
-              onClick={() => void win.close()}
-            >
-              <X size={15} />
-            </button>
-          </div>
-
-          {/* Optional selected source text; the submitted message is below. */}
-          {quoteText && (
-            <div
-              className={`agc-quote ${quoteOpen ? "is-open" : ""}`}
-              onClick={() => setQuoteOpen((v) => !v)}
-              role="button"
-              tabIndex={-1}
-            >
-              <span className="agc-quote-text">{quoteText}</span>
-              {!quoteOpen && quoteText.length > 120 && (
-                <span className="agc-quote-more">…{t("agent.more")}</span>
-              )}
+          </span>
+          {!revealed && !capture?.working && (
+            <div className="agent-notch-wave">
+              <CaptureWaveform ready session={capture?.generation ?? 0} />
             </div>
           )}
-
-          {/* Reply */}
-          <div className="agc-body">
-            {messages.map((m) => (
-              <div key={m.id} className="agc-turn agc-submitted">
-                <div className="agc-turn-body agc-turn-body--user">
-                  {m.content}
-                </div>
-              </div>
-            ))}
-            {busy ? (
-              <div className="agent-typing" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-            ) : error ? (
-              <div className="agc-error">{error}</div>
-            ) : (
-              <>
-                <div className="agc-reply">
-                  <AgentMarkdown markdown={displayedReply} />
-                </div>
-                {compactConfirmAction &&
-                  renderConfirmAction(compactConfirmAction)}
-              </>
-            )}
-            <div ref={endRef} />
-          </div>
-
-          {/* Bottom bar: Ask follow up + keycaps · copy · retry · Confirm ⏎ */}
-          <div className="agc-foot">
+          {!revealed && capture && !capture.working && (
             <button
               type="button"
-              className="agc-followup-btn"
-              disabled={busy || versions.length === 0}
-              onClick={expand}
-            >
-              {t("agent.askFollowup")}
-              {shortcutParts.map((p, i) => (
-                <span key={i} className="agc-keycap">
-                  {p}
-                </span>
-              ))}
-            </button>
-            <span className="agc-spacer" />
-            <button
-              type="button"
-              className={`agc-icon-btn ${copyFlash ? "is-flash" : ""}`}
-              disabled={!canConfirm}
-              onClick={copyReply}
-              title={t("agent.copyReply")}
-            >
-              {copyFlash ? <Check size={14} /> : <Copy size={14} />}
-            </button>
-            <button
-              type="button"
-              className="agc-icon-btn"
-              disabled={
-                busy || !!displayedConfirmAction || versions.length === 0
+              className="agent-notch-control agent-notch-submit"
+              title={t("agent.notchSubmit")}
+              aria-label={t("agent.notchSubmit")}
+              onClick={() =>
+                void commands.agentNotchAction(capture.generation, true)
               }
-              onClick={retry}
-              title={t("agent.retry")}
             >
-              <RotateCcw size={14} />
+              <ArrowUp size={15} />
             </button>
-            <button
-              type="button"
-              className="agc-confirm"
-              disabled={!canConfirm}
-              onClick={confirm}
-              title={t("agent.confirmHint")}
-            >
-              {t("agent.confirm")}
-              <span className="agc-confirm-glyph">{ENTER_GLYPH}</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── EXPANDED: the conversation ─────────────────────────────────────────────
-  return (
-    <div className={rootClass}>
-      <div className="agc-card agc-card--expanded" ref={cardRef}>
-        {/* Header (draggable): a quiet wordmark balances the close button. */}
-        <div className="agc-head agc-head--expanded" data-tauri-drag-region>
-          <span className="agc-title">{t("agent.brand")}</span>
-          <span className="agc-spacer" />
+          )}
           <button
             type="button"
-            className="agc-close"
-            title={t("agent.escCue")}
-            onClick={() => void win.close()}
+            className="agent-notch-control agent-notch-close"
+            title={revealed ? t("agent.notchClose") : t("agent.notchCancel")}
+            aria-label={
+              revealed ? t("agent.notchClose") : t("agent.notchCancel")
+            }
+            disabled={!revealed && !capture}
+            onClick={() => {
+              if (revealed) void win.close();
+              else if (capture)
+                void commands.agentNotchAction(capture.generation, false);
+            }}
           >
             <X size={15} />
           </button>
-        </div>
+        </header>
 
-        {/* Conversation — the user's turns are bubbles, answers are prose. */}
-        <div className="agc-scroll">
-          {messages.map((m) => (
-            <div key={m.id} className="agc-turn">
-              <div className={`agc-turn-body agc-turn-body--${m.role}`}>
-                {m.role === "assistant" ? (
-                  <AgentMarkdown markdown={m.content} />
-                ) : (
-                  m.content
+        {revealed && (
+          <div className="agent-notch-reply">
+            <div className="agc-c-scroll">
+              {quoteText && !expanded && (
+                <button
+                  className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
+                  onClick={() => setQuoteOpen((v) => !v)}
+                  type="button"
+                  aria-expanded={quoteOpen}
+                >
+                  {quoteText}
+                </button>
+              )}
+
+              {thread.map((m) => (
+                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                  {m.role === "user" ? (
+                    <div className="agc-c-user">{m.content}</div>
+                  ) : (
+                    <>
+                      <div className="agc-c-answer">
+                        <AgentMarkdown markdown={m.content} />
+                      </div>
+                      {m.confirmAction && renderConfirmAction(m.confirmAction)}
+                      {expanded && (
+                        <div className="agc-c-tools">
+                          <button
+                            type="button"
+                            className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
+                            onClick={() => copyOne(m.id, m.content)}
+                            aria-label={t("agent.copyReply")}
+                            title={t("agent.copyReply")}
+                          >
+                            {flashedId === m.id ? (
+                              <Check size={13} />
+                            ) : (
+                              <Copy size={13} />
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+
+              {busy && (
+                <div className="agent-typing" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              )}
+              {error && <div className="agc-error">{error}</div>}
+              <div ref={endRef} />
+            </div>
+
+            {/* Bottom: JUST the text field once composing; otherwise the quiet
+              follow-up + shortcut (left) and Confirm on the first reply (right). */}
+            {composing ? (
+              <div className="agc-c-compose">
+                {/* Enabled while busy, so users can draft a follow-up. */}
+                <textarea
+                  ref={centerInputRef}
+                  rows={1}
+                  className="agc-c-textarea"
+                  placeholder={
+                    busy
+                      ? t("agent.followupWaiting")
+                      : t("agent.followupPlaceholder")
+                  }
+                  onInput={autoGrowTextarea}
+                  onKeyDown={onCenterKey}
+                />
+              </div>
+            ) : hasAnswer ? (
+              <div className="agc-c-bar">
+                <button
+                  type="button"
+                  className="agc-c-followup"
+                  disabled={busy}
+                  onClick={startCompose}
+                >
+                  {t("agent.askFollowup")}
+                  {shortcutLabel && (
+                    <span className="agc-c-kbd">{shortcutLabel}</span>
+                  )}
+                </button>
+                <span className="agc-spacer" />
+                {!expanded && (
+                  <>
+                    <button
+                      type="button"
+                      className={`agc-c-tool agc-c-bar-tool ${flashedId === "a0" ? "is-flash" : ""}`}
+                      onClick={() => copyOne("a0", displayedReply)}
+                      title={t("agent.copyReply")}
+                    >
+                      {flashedId === "a0" ? (
+                        <Check size={13} />
+                      ) : (
+                        <Copy size={13} />
+                      )}
+                    </button>
+                    {canRedo && (
+                      <button
+                        type="button"
+                        className="agc-c-tool agc-c-bar-tool"
+                        onClick={retry}
+                        aria-label={t("agent.retry")}
+                        title={t("agent.retry")}
+                      >
+                        <RotateCcw size={13} />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="agc-c-insert"
+                      disabled={!canConfirm}
+                      onClick={confirm}
+                      title={t("agent.confirmHint")}
+                    >
+                      {t("agent.confirm")}
+                    </button>
+                  </>
                 )}
               </div>
-              {m.role === "assistant" &&
-                m.confirmAction &&
-                renderConfirmAction(m.confirmAction)}
-            </div>
-          ))}
-
-          {busy && (
-            <div className="agc-turn">
-              <div className="agent-typing" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-            </div>
-          )}
-
-          {error && <div className="agc-error">{error}</div>}
-          <div ref={endRef} />
-        </div>
-
-        {/* Follow-up input */}
-        <div className={`agc-input ${busy ? "is-busy" : ""}`}>
-          {/* NOT disabled while busy. Disabling a focused field makes the
-              browser blur it on the spot, and the refocus in `runConversation`
-              then runs before React has re-enabled it — focusing a disabled
-              input is a no-op, so focus was lost for good and every follow-up
-              needed a fresh click. Staying enabled means focus is never taken
-              away in the first place, and the user can compose their next
-              question while the answer is still coming. Submitting is what's
-              blocked while busy (`sendFollowup` guards, and Send is disabled). */}
-          <input
-            ref={followupRef}
-            type="text"
-            className="agc-input-field"
-            placeholder={
-              busy ? t("agent.followupWaiting") : t("agent.followupPlaceholder")
-            }
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void sendFollowup();
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="agc-send"
-            disabled={busy}
-            title={t("agent.followupPlaceholder")}
-            // Clicking a button moves focus to it, so sending by mouse emptied
-            // the field AND took the caret out of it. Send is the one control
-            // whose whole purpose is to return you to typing.
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void sendFollowup()}
-          >
-            {SEND_ARROW}
-          </button>
-        </div>
-
-        {/* Bottom bar: copy · Confirm (pastes the latest reply) */}
-        <div className="agc-foot agc-foot--expanded">
-          <span className="agc-cue">{t("agent.escCue")}</span>
-          <span className="agc-spacer" />
-          <button
-            type="button"
-            className={`agc-icon-btn ${copyFlash ? "is-flash" : ""}`}
-            disabled={!canConfirm}
-            onClick={copyReply}
-            title={t("agent.copyReply")}
-          >
-            {copyFlash ? <Check size={14} /> : <Copy size={14} />}
-          </button>
-          <button
-            type="button"
-            className="agc-confirm"
-            disabled={!canConfirm}
-            onClick={confirm}
-            title={t("agent.confirmHint")}
-          >
-            {t("agent.confirm")}
-            <span className="agc-confirm-glyph">{ENTER_GLYPH}</span>
-          </button>
-        </div>
-      </div>
+            ) : null}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

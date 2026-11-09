@@ -594,19 +594,6 @@ pub fn change_agent_screen_image_setting(app: AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
-/// [GRAIN] Agent reply-surface position (side card vs center-top panel).
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_panel_position_setting(
-    app: AppHandle,
-    position: settings::AgentPanelPosition,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_panel_position = position;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 /// [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be
 /// resolved (unsupported platform, no foreground window). Silent — no UI.
 #[tauri::command]

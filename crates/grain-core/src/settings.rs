@@ -204,23 +204,6 @@ pub struct CustomContextProfile {
     pub targets: Vec<ContextProfileTarget>,
 }
 
-/// [GRAIN] Where the Agent reply surface appears. `Side` (default) is the
-/// original bottom-right card that grows into a right-side conversation.
-/// `Center` is the sleek center-top panel that hugs its content and grows
-/// downward as the conversation lengthens (up to a max height, then scrolls).
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentPanelPosition {
-    Side,
-    Center,
-}
-
-impl Default for AgentPanelPosition {
-    fn default() -> Self {
-        AgentPanelPosition::Side
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum PostProcessApiFormat {
@@ -823,11 +806,6 @@ pub struct AppSettings {
     /// ignored until the user expands it explicitly (Tab / click).
     #[serde(default = "default_true")]
     pub agent_input_type_to_expand: bool,
-    /// [GRAIN] Where the Agent reply surface appears: the original bottom-right
-    /// `side` card, or the sleek center-top `center` panel that hugs its content
-    /// and grows downward. Default `side`; the center panel is in development.
-    #[serde(default)]
-    pub agent_panel_position: AgentPanelPosition,
 }
 
 fn default_true() -> bool {
@@ -1643,7 +1621,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_screen_image: false,
         scrap_that_enabled: false,
         agent_input_type_to_expand: true,
-        agent_panel_position: AgentPanelPosition::default(),
     }
 }
 

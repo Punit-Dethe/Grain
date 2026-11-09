@@ -13,6 +13,10 @@
   },
   "agent": {
     "brand": "Grain Assist",
+    "notchListening": "Listening…",
+    "notchSubmit": "Submit recording",
+    "notchCancel": "Cancel Agent",
+    "notchClose": "Close Agent",
     "selectionChip": "SELECTION · {{count}} CHARS",
     "noSelection": "NO SELECTION",
     "placeholderListening": "Listening… speak then press ↵, or start typing",
@@ -969,10 +973,6 @@
         "group": "Agent",
         "enabled": "Enable Agent",
         "enabledDescription": "Use the Agent shortcut to speak a request.",
-        "replyLayout": "Reply layout",
-        "replyLayoutDescription": "Choose where Agent replies appear.",
-        "sideCard": "Side card",
-        "centerPanel": "Center panel (beta)",
         "screenImage": "See my screen",
         "screenImageDescription": "Send an image of the active window to the selected AI model when you summon Agent. Grain keeps it only for the conversation."
       },

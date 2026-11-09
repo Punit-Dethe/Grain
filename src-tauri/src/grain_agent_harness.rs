@@ -223,7 +223,6 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     settings.start_hidden = false;
     settings.agent_enabled = true;
     settings.agent_screen_image = false;
-    settings.agent_panel_position = crate::settings::AgentPanelPosition::Center;
     settings.extension_developer_mode = true;
     // Preserve only exact anonymous records belonging to this isolated peer.
     // A prefix alone would also retain unrelated/custom remote destinations.

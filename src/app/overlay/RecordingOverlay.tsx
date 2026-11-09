@@ -1,21 +1,12 @@
 import { type UnlistenFn } from "@tauri-apps/api/event";
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   commands,
   events,
   type OverlayPresentation,
   type StreamTextEvent,
 } from "@/bindings";
-import {
-  audioAmplitude,
-  barCount,
-  WaveField,
-  WAVE_WIDTH,
-  WAVE_HEIGHT,
-  WAVE_BAR_WIDTH,
-  waveBarX,
-  waveBarHalfLength,
-} from "./wave";
+import { CaptureWaveform } from "./CaptureWaveform";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { getLanguageDirection } from "@/lib/utils/rtl";
@@ -25,7 +16,6 @@ const empty: OverlayPresentation = {
   state: "recording",
   ready: false,
   session_id: 0,
-  agent: false,
   prompt_recording: false,
   app_icon_enabled: true,
   icon: null,
@@ -35,136 +25,6 @@ const empty: OverlayPresentation = {
   working: false,
   work_kind: "transcribing",
 };
-
-const workingPhraseKeys = [
-  "agent.workingPhrases.acknowledged",
-  "agent.workingPhrases.working",
-  "agent.workingPhrases.thinking",
-  "agent.workingPhrases.continuing",
-] as const;
-
-/** Lives only inside a visible working pill; no timer survives that surface. */
-function AgentWorkingLabel() {
-  const { t } = useTranslation();
-  const [phrase, setPhrase] = useState(0);
-  useEffect(() => {
-    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const update = () => {
-      clearInterval(timer);
-      timer = undefined;
-      if (!document.hidden && !reducedMotion.matches) {
-        timer = setInterval(
-          () => setPhrase((value) => (value + 1) % workingPhraseKeys.length),
-          3800,
-        );
-      }
-    };
-    update();
-    document.addEventListener("visibilitychange", update);
-    reducedMotion.addEventListener("change", update);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", update);
-      reducedMotion.removeEventListener("change", update);
-    };
-  }, []);
-  return (
-    <>
-      <span className="agent-working-status" role="status">
-        {t("agent.thinking")}
-      </span>
-      <span className="agent-working-phrases" aria-hidden="true">
-        {workingPhraseKeys.map((key, index) => (
-          <span key={key} className={index === phrase ? "active" : ""}>
-            {t(key)}
-          </span>
-        ))}
-      </span>
-    </>
-  );
-}
-
-const Waveform = memo(function Waveform({
-  ready,
-  session,
-}: {
-  ready: boolean;
-  session: number;
-}) {
-  const row = useRef<HTMLDivElement>(null);
-  const amplitude = useRef(0);
-  // Original compact icon slot leaves ~50.75px for 13 bars; use it in both forms.
-  const count = barCount(WAVE_WIDTH);
-  const [field] = useState(() => new WaveField());
-  useEffect(() => {
-    let disposed = false;
-    let release: UnlistenFn | undefined;
-    void events.micLevel
-      .listen(({ payload }) => {
-        if (!disposed) amplitude.current = audioAmplitude(payload);
-      })
-      .then((fn) => {
-        if (disposed) fn();
-        else release = fn;
-      })
-      .catch(console.error);
-    return () => {
-      disposed = true;
-      release?.();
-    };
-  }, []);
-  useEffect(() => {
-    field.reset();
-    amplitude.current = 0;
-  }, [session, field]);
-  useEffect(() => {
-    const element = row.current;
-    if (!element) return;
-    const bars = element.querySelectorAll("line");
-    let frame = 0;
-    let previous = performance.now();
-    const animate = (now: number) => {
-      const dt = (now - previous) / 1000;
-      field.advance(dt, ready ? amplitude.current : 0, count);
-      previous = now;
-      for (let i = 0; i < bars.length; i++) {
-        const half = waveBarHalfLength(field.bars[i]);
-        bars[i].setAttribute("y1", String(WAVE_HEIGHT / 2 - half));
-        bars[i].setAttribute("y2", String(WAVE_HEIGHT / 2 + half));
-      }
-      frame = requestAnimationFrame(animate);
-    };
-    frame = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(frame);
-  }, [count, ready, field]);
-  return (
-    <div
-      ref={row}
-      className={`swave grain-wave ${ready ? "ready" : "arming"}`}
-      aria-hidden="true"
-    >
-      <svg
-        width={WAVE_WIDTH}
-        height={WAVE_HEIGHT}
-        viewBox={`0 0 ${WAVE_WIDTH} ${WAVE_HEIGHT}`}
-        stroke="currentColor"
-        strokeWidth={WAVE_BAR_WIDTH}
-        strokeLinecap="round"
-      >
-        {Array.from({ length: count }, (_, i) => (
-          <line
-            key={i}
-            x1={waveBarX(i, count)}
-            x2={waveBarX(i, count)}
-            y1={WAVE_HEIGHT / 2}
-            y2={WAVE_HEIGHT / 2}
-          />
-        ))}
-      </svg>
-    </div>
-  );
-});
 
 export function RecordingOverlay() {
   const { t } = useTranslation();
@@ -434,13 +294,9 @@ export function RecordingOverlay() {
   ]);
 
   if (!presentation.visible) return null;
-  const agentWorking = presentation.agent && presentation.work_kind === "agent";
   const showClose =
-    agentWorking ||
-    !hideCompactClose ||
-    (presentation.state === "streaming" && hasText);
+    !hideCompactClose || (presentation.state === "streaming" && hasText);
   const closeClass = showClose ? "" : "no-close";
-  const agentClass = presentation.agent ? "agent" : "";
   const promptClass = presentation.prompt_recording ? "prompt-recording" : "";
   const direction = getLanguageDirection(i18n.language);
   const handleScroll = () => {
@@ -478,7 +334,7 @@ export function RecordingOverlay() {
           )}
         </div>
       )}
-      <Waveform ready={presentation.ready} session={session} />
+      <CaptureWaveform ready={presentation.ready} session={session} />
       {showClose && (
         <div className="sbase-r">
           {showTimer && (
@@ -497,9 +353,7 @@ export function RecordingOverlay() {
         <span className="sspinner" />
       </div>
       <span className="swork-label">
-        <span ref={workText}>
-          {agentWorking ? <AgentWorkingLabel /> : label}
-        </span>
+        <span ref={workText}>{label}</span>
       </span>
       {showClose && <div className="sbase-r">{cancelBtn}</div>}
     </div>
@@ -526,7 +380,7 @@ export function RecordingOverlay() {
       <div dir={direction} className={`ov-stage ${position}`}>
         <div
           key={session}
-          className={`scard ${agentClass} ${promptClass} ${closeClass} ${iconClass} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
+          className={`scard ${promptClass} ${closeClass} ${iconClass} ${open ? "open" : ""} ${collapsed ? "working" : ""}`}
         >
           <div className="stext">
             <div className="stext-clip">
@@ -575,7 +429,7 @@ export function RecordingOverlay() {
   return (
     <div dir={direction} className={`ov-stage ${position} ov-fade show`}>
       <div
-        className={`scard compact ${agentClass} ${promptClass} ${closeClass} ${iconClass} ${busy ? "cworking" : ""} ${agentWorking ? "agent-working" : ""}`}
+        className={`scard compact ${promptClass} ${closeClass} ${iconClass} ${busy ? "cworking" : ""}`}
       >
         {busy ? workingRow(workLabel) : listeningRow(false)}
       </div>

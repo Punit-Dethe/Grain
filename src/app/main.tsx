@@ -18,11 +18,8 @@ const root = ReactDOM.createRoot(
 );
 
 // [GRAIN] One Vite entry serves every window; we branch on the window label. The
-// Agent's reply surface (`agent-panel`) is frameless, transparent, summoned on
-// demand and DESTROYED on close, so it skips the main app's heavy init (UI
-// scaling, model store) and drops the beige page background the main window
-// paints behind its webview. (The summon INPUT is native — it lives in the pill
-// process, not a webview.)
+// Agent's notch (`agent-panel`) is frameless, transparent and destroyed on
+// close. It skips the main app's UI scaling and model store initialization.
 const winLabel = getCurrentWindow().label;
 if (winLabel === "agent-panel") {
   document.documentElement.dataset.window = winLabel;
