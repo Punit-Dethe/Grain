@@ -13,6 +13,7 @@
   --agc-muted: #b4b3c2;
   --notch-line: #ffffff21;
   --notch-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --notch-reply-header: 43px;
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -79,6 +80,7 @@
 }
 
 .agent-notch-header {
+  box-sizing: border-box;
   flex: 0 0 min(37px, 100vh);
   min-width: 0;
   display: flex;
@@ -88,7 +90,7 @@
 }
 
 .is-reply .agent-notch-header {
-  flex-basis: min(43px, 100vh);
+  flex-basis: min(var(--notch-reply-header), 100vh);
   padding-inline: 19px;
   border-bottom: 1px solid var(--notch-line);
 }
@@ -196,8 +198,14 @@
 }
 
 .agent-notch-reply {
+  /* Lay out the reply at its final size. The shell clips it as it grows. */
+  position: absolute;
+  top: var(--notch-reply-header);
+  left: 50%;
+  width: calc(100vw - 2px);
+  height: max(0px, calc(100vh - var(--notch-reply-header) - 1px));
+  transform: translateX(-50%);
   display: flex;
-  flex: 1;
   min-height: 0;
   flex-direction: column;
   animation: agent-notch-reply 220ms ease 110ms both;
@@ -206,11 +214,9 @@
 @keyframes agent-notch-reply {
   from {
     opacity: 0;
-    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 

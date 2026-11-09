@@ -349,6 +349,8 @@ pub struct AgentState {
     reply_visible: AtomicBool,
     draining_voice: AtomicBool,
     notch_generation: AtomicU64,
+    #[cfg(windows)]
+    notch_clipped: AtomicBool,
 }
 
 /// One conversation turn from the frontend.
@@ -588,70 +590,6 @@ fn start_dictation(
     }
 }
 
-/// Show + reliably grab keyboard focus. A hotkey-summoned, always-on-top, frameless
-/// window is subject to Windows' foreground lock: it appears on top but keyboard
-/// focus stays with the previous app, so typing/Enter/Esc go nowhere. We bridge the
-/// foreground thread's input queue to ours, force the window foreground, then detach.
-fn show_and_focus(win: &tauri::WebviewWindow) {
-    let _ = win.show();
-    focus_now(win);
-
-    // Hotkey-summoned windows can briefly lose focus again while the previous
-    // foreground app processes the key release. Re-focus shortly after first
-    // paint. A SINGLE retry task handles every delay (instead of one detached
-    // thread per delay), and each step re-resolves the window by label and runs
-    // the focus work on the main thread â€” so a window closed in the meantime
-    // (e.g. the palette being handed off to the panel) is a no-op rather than a
-    // focus call racing `close()`.
-    let app = win.app_handle().clone();
-    let label = win.label().to_string();
-    let generation = app
-        .state::<AgentState>()
-        .notch_generation
-        .load(Ordering::SeqCst);
-    std::thread::spawn(move || {
-        for delay_ms in [60_u64, 180] {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            let app = app.clone();
-            let label = label.clone();
-            let _ = app.clone().run_on_main_thread(move || {
-                if app.state::<AgentState>().summon_gen.load(Ordering::SeqCst) != generation
-                    || ordinary_dictation_live(&app)
-                {
-                    return;
-                }
-                if let Some(w) = app.get_webview_window(&label) {
-                    // Only if focus was actually lost. `focus_now` re-runs
-                    // ShowWindow + BringWindowToTop + SetForegroundWindow, and on
-                    // a transparent always-on-top window that is a z-order change
-                    // and a full recomposite. Firing it unconditionally landed two
-                    // of those 60ms and 180ms into the 440ms entrance â€” the panel
-                    // visibly hitching twice mid-animation, which read as it
-                    // opening, stopping, and opening again.
-                    if w.is_focused().unwrap_or(false) {
-                        return;
-                    }
-                    focus_now(&w);
-                }
-            });
-        }
-    });
-}
-
-/// Pull a window to the foreground and grab keyboard focus right now (on the
-/// calling thread). On Windows this also bridges the foreground input queue.
-fn focus_now(win: &tauri::WebviewWindow) {
-    let _ = win.set_focus();
-    #[cfg(windows)]
-    force_foreground(win);
-}
-
-#[cfg(windows)]
-fn force_foreground(win: &tauri::WebviewWindow) {
-    let Ok(raw) = win.hwnd() else { return };
-    force_foreground_raw(raw.0 as isize);
-}
-
 /// The current foreground window, as a raw HWND â€” the paste target snapshot
 /// taken at summon. `None` off Windows (macOS restores focus to the previous
 /// app by itself when our window closes).
@@ -809,32 +747,17 @@ fn monitor_work_logical(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64,
     ))
 }
 
-/// Move AND resize in a single step when bounds really change.
-///
-/// `set_size` + `set_position` are two window operations, and between them the
-/// window exists at the new size in the OLD place. For a surface anchored to its
-/// bottom-right corner, resizing with the top-left pinned pushes the card off
-/// screen. Windows keeps the SIDE viewport fixed during expansion; this atomic
-/// path still serves initial placement, CENTER, and the fallback without a
-/// native window region.
-///
-/// `SWP_NOCOPYBITS` matters here too: without it Windows blits the old client
-/// bits into the top-left of the larger window, leaving a stale copy of the
-/// compact card sitting in the wrong corner until the webview repaints over it.
+/// Place the native host before showing it. Windows moves and sizes in one step.
 fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
     #[cfg(windows)]
     if bounds_match_win32(window, x, y, w, h) || set_bounds_win32(window, x, y, w, h) {
         return;
     }
-    // Position first, then size: the fallback still shows an intermediate, but
-    // moving the small window to the final top-left keeps it on screen, whereas
-    // sizing first throws the anchored corner off the edge.
     let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     let _ = window.set_size(tauri::LogicalSize::new(w, h));
 }
 
-/// Avoid a redundant SetWindowPos during compact â†’ expanded on Windows. Even a
-/// no-op bounds update can make WebView2 present an intermediate frame.
+/// Avoid asking WebView2 to recompose for unchanged bounds.
 #[cfg(windows)]
 fn bounds_match_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> bool {
     let (Ok(scale), Ok(pos), Ok(size)) = (
@@ -886,6 +809,88 @@ fn place_notch(window: &tauri::WebviewWindow, size: (f64, f64)) {
     }
 }
 
+/// Windows accessibility text size (Settings > Accessibility > Text size), a
+/// separate axis from display scaling that WebView2 applies as a document zoom.
+#[cfg(target_os = "windows")]
+fn windows_notch_text_scale() -> f64 {
+    // Absent until the user moves the slider off 100%; stored as a percentage.
+    winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Accessibility")
+        .and_then(|key| key.get_value::<u32, _>("TextScaleFactor"))
+        .map(|percent| (percent as f64 / 100.0).clamp(1.0, 2.25))
+        .unwrap_or(1.0)
+}
+
+/// Limit the compact notch's hit area without moving or sizing its WebView.
+#[cfg(windows)]
+fn clip_capture_notch(window: &tauri::WebviewWindow, text_scale: f64) -> bool {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        ClientToScreen, CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
+
+    let (Ok(hwnd), Ok(dpi_scale)) = (window.hwnd(), window.scale_factor()) else {
+        return false;
+    };
+    unsafe {
+        let mut outer = RECT::default();
+        let mut client = RECT::default();
+        let mut origin = POINT::default();
+        if GetWindowRect(hwnd, &mut outer).is_err()
+            || GetClientRect(hwnd, &mut client).is_err()
+            || !ClientToScreen(hwnd, &mut origin).as_bool()
+        {
+            return false;
+        }
+        let client_w = client.right - client.left;
+        let client_h = client.bottom - client.top;
+        if client_w < 1 || client_h < 1 {
+            return false;
+        }
+        let scale = dpi_scale * text_scale;
+        let width = ((NOTCH_CAPTURE.0 * scale).round() as i32).clamp(1, client_w);
+        let height = ((NOTCH_CAPTURE.1 * scale).round() as i32).clamp(1, client_h);
+        let left = origin.x - outer.left + (client_w - width) / 2;
+        let top = origin.y - outer.top;
+        let region = CreateRectRgn(left, top, left + width, top + height);
+        if region.0.is_null() {
+            return false;
+        }
+        // Windows owns the region after a successful call.
+        if SetWindowRgn(hwnd, Some(region), false) == 0 {
+            let _ = DeleteObject(HGDIOBJ(region.0));
+            return false;
+        }
+        true
+    }
+}
+
+fn prepare_reply_viewport(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Gdi::SetWindowRgn;
+
+        let state = window.app_handle().state::<AgentState>();
+        if state.notch_clipped.load(Ordering::SeqCst) {
+            if let Ok(hwnd) = window.hwnd() {
+                if unsafe { SetWindowRgn(hwnd, None, false) } != 0 {
+                    return;
+                }
+            }
+            warn!("[GRAIN] agent: could not release the compact notch region");
+            return;
+        }
+        let text_scale = windows_notch_text_scale();
+        place_notch(
+            window,
+            (NOTCH_REPLY.0 * text_scale, NOTCH_REPLY.1 * text_scale),
+        );
+    }
+    #[cfg(not(windows))]
+    place_notch(window, NOTCH_REPLY);
+}
+
 fn ensure_capture_notch(app: &AppHandle, generation: u64) {
     let state = app.state::<AgentState>();
     if state.summon_gen.load(Ordering::SeqCst) != generation
@@ -901,9 +906,31 @@ fn ensure_capture_notch(app: &AppHandle, generation: u64) {
             return Ok(());
         }
         state.notch_generation.store(generation, Ordering::SeqCst);
-        let window = build_window(app, PANEL_LABEL, NOTCH_CAPTURE.0, NOTCH_CAPTURE.1)
-            .map_err(|error| error.to_string())?;
-        place_notch(&window, NOTCH_CAPTURE);
+        let size = if cfg!(windows) {
+            NOTCH_REPLY
+        } else {
+            NOTCH_CAPTURE
+        };
+        let window =
+            build_window(app, PANEL_LABEL, size.0, size.1).map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        {
+            let text_scale = windows_notch_text_scale();
+            place_notch(&window, (size.0 * text_scale, size.1 * text_scale));
+            let clipped = clip_capture_notch(&window, text_scale);
+            state.notch_clipped.store(clipped, Ordering::SeqCst);
+            if !clipped {
+                warn!("[GRAIN] agent: compact notch region unavailable, using native resize");
+                // A compact native window still preserves desktop hit testing
+                // if Windows refuses the region.
+                place_notch(
+                    &window,
+                    (NOTCH_CAPTURE.0 * text_scale, NOTCH_CAPTURE.1 * text_scale),
+                );
+            }
+        }
+        #[cfg(not(windows))]
+        place_notch(&window, size);
         window.show().map_err(|error| error.to_string())?;
         Ok(())
     };
@@ -1295,12 +1322,12 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
             return;
         };
-        place_notch(&window, NOTCH_REPLY);
+        prepare_reply_viewport(&window);
         state.reply_visible.store(true, Ordering::SeqCst);
-        let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
         if !ordinary_dictation_live(&handle) {
-            show_and_focus(&window);
+            let _ = window.set_focus();
         }
+        let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
     })
     .map_err(|error| error.to_string())
 }

@@ -53,3 +53,15 @@ nonempty draft when Agent is ready. Shift+Enter inserts a newline.
 
 Removed the follow-up shortcut and its temporary ownership of other chords.
 The composer is available as soon as the first reply is shown.
+
+## Windows expansion flash
+
+The notch opens with its reply-sized WebView viewport on Windows. A native
+region limits drawing and mouse input to the compact notch during capture and
+the first reply wait. At reveal, Grain releases the region and lets CSS grow
+the shell around an already sized reply. Grain focuses the visible window once
+before the transition when dictation is idle.
+
+Live check: submit an Agent request, watch the first reply expansion, and
+confirm you can click the app under the area beside or below the compact notch
+while Agent is working.
