@@ -489,7 +489,7 @@ export function AgentPanel() {
     void win
       .listen<string>("agent-panel-dictation", (e) => {
         const dictated = (e.payload || "").trim();
-        if (!dictated || busyRef.current) return;
+        if (!dictated) return;
         const append = (el: HTMLTextAreaElement | HTMLInputElement | null) => {
           if (!el) return;
           const sep = el.value && !el.value.endsWith(" ") ? " " : "";
@@ -745,6 +745,7 @@ export function AgentPanel() {
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
+        if (busyRef.current) return;
         const el = centerInputRef.current;
         const text = el?.value.trim() ?? "";
         if (text) {

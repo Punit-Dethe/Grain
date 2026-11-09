@@ -636,12 +636,10 @@ pub fn panel_dictation_target(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-/// While the Agent card or reply panel is open, ordinary dictation shortcuts
-/// must leave its recording and conversation surface alone.
+/// Agent input owns the capture slot even if it has released the mic for typing.
 pub(crate) fn blocks_dictation(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
-        || app.get_webview_window(PANEL_LABEL).is_some()
 }
 
 /// Pre-create the reply panel HIDDEN (the webview loads in the background) so

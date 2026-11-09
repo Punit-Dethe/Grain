@@ -19,3 +19,8 @@ but shortcut registration synchronously waits for that manager's response.
 Queue the working-state shortcut update on the existing main loop, guarded by
 summon generation and shortcut ownership, so the callback can return and the
 manager can process registration and subsequent dictation hotkeys.
+
+Dictation with Agent open: only active Agent input or a busy recorder blocks
+dictation startup. An Agent reply window can stay open while dictating into
+another app. In the focused, expanded panel, dictated text appends to the
+follow-up draft while a reply is running. Sending waits for that reply to finish.

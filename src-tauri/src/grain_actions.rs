@@ -123,7 +123,7 @@ pub(crate) async fn paste_transcription(
 
 /// One capture owns the shared recorder at a time. The coordinator checks this
 /// before starting any dictation engine, including when Agent has released its
-/// microphone for typing but still owns the input card or reply panel.
+/// microphone for typing but still owns the input card.
 pub(crate) fn dictation_start_blocked(app: &AppHandle) -> bool {
     crate::agent::blocks_dictation(app)
         || app
