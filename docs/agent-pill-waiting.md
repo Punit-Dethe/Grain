@@ -87,10 +87,9 @@ resize before CSS starts the expansion.
 
 ## Windows fixed viewport with measured bounds
 
-The native WebView opens at reply size. The capture document measures its
-compact shell using the renderer's pixel ratio before the window is shown.
-Win32 centers that size within the actual client area and clips to it while
-the notch is compact. The first reply widens the region without moving or
-resizing the WebView. The existing shell then expands with its normal CSS
-transition. The live check is whether the compact notch holds its size
-through the first frame of reply expansion.
+The fixed-viewport experiment measured the compact shell in the renderer
+before applying a Win32 region. The upper section of the compact notch was
+still cut off in live testing, and the reply glitch persisted. Restored the
+compact native window and removed the experimental region and startup command.
+A recording from summon through the first reply will help separate a
+startup artifact from the reply handoff.

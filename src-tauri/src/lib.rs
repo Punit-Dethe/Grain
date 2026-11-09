@@ -1430,7 +1430,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_run,
             agent::agent_confirm_action,
             agent::agent_notch_status,
-            agent::agent_show_notch,
             agent::agent_cancel_notch,
             agent::agent_confirm_paste,
             commands::cancel_operation,

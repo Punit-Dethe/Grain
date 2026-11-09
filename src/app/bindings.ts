@@ -1025,14 +1025,6 @@ async agentConfirmAction(token: string, approve: boolean) : Promise<Result<Agent
 async agentNotchStatus() : Promise<AgentNotchStatus> {
     return await TAURI_INVOKE("agent_notch_status");
 },
-async agentShowNotch(compactSize: [number, number]) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_show_notch", { compactSize }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async agentCancelNotch(generation: number) : Promise<void> {
     await TAURI_INVOKE("agent_cancel_notch", { generation });
 },
