@@ -538,14 +538,17 @@ pub fn change_overlay_style_setting(
 #[tauri::command]
 #[specta::specta]
 pub fn overlay_cancel(app: AppHandle) {
-    if crate::agent::waiting_for_reply(&app) {
+    if agent_owns_pill(&app) {
         crate::agent::global_close(&app);
-    } else if crate::agent::input_is_active(&app) {
-        crate::agent::input_cancel(&app);
     } else {
         crate::utils::cancel_current_operation(&app);
         crate::grain_actions::cancel_session(&app);
     }
+}
+
+pub(crate) fn agent_owns_pill(app: &AppHandle) -> bool {
+    app.try_state::<OverlayContext>()
+        .is_some_and(|ctx| ctx.presentation.lock().unwrap().agent)
 }
 
 static LAST_PUBLIC_LEVEL: AtomicU64 = AtomicU64::new(0);

@@ -421,3 +421,12 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   follow-ups. The pill still shows progress until the first reply is ready.
 - Passed desktop, core, frontend and harness tests, TypeScript, scoped lint,
   the frontend build and settings parity. Real-app visual acceptance is pending.
+
+### Pre-merge Agent and MCP pass
+
+- Fixed cancellation when dictation takes over the pill during Agent's first
+  reply wait. The pill routes Stop to its owner, Escape prioritizes live
+  dictation, and a delayed Agent submit can release only its original capture.
+- Passed 683 desktop tests, 153 core and SDK tests, 90 frontend tests, the
+  focused harness tests, TypeScript, scoped ESLint, the frontend build, settings
+  parity, and the upstream ratchet. The live hotkey overlap remains a manual check.

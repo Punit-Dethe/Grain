@@ -382,8 +382,7 @@ pub struct AgentState {
     /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
-    /// The model chosen when the current voice capture started.
-    dictation_model: Mutex<Option<String>>,
+    dictation_capture: Mutex<Option<AgentCapture>>,
     /// First turn executing behind the pill, before a reply/error is rendered.
     waiting_for_reply: AtomicBool,
     /// [GRAIN] True while the reply panel is in its EXPANDED conversation stage
@@ -639,11 +638,6 @@ pub fn panel_dictation_target(app: &AppHandle) -> bool {
 
 /// While the Agent card or reply panel is open, ordinary dictation shortcuts
 /// must leave its recording and conversation surface alone.
-pub(crate) fn input_is_active(app: &AppHandle) -> bool {
-    app.try_state::<AgentState>()
-        .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
-}
-
 pub(crate) fn blocks_dictation(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
@@ -662,6 +656,11 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
     place_panel(&w); // placed but NOT shown
     info!("[GRAIN] agent: panel pre-created (hidden, warming)");
     Ok(())
+}
+
+struct AgentCapture {
+    model: String,
+    readiness_generation: u64,
 }
 
 /// Warm the selected model and VAD while the Agent records.
@@ -690,7 +689,10 @@ fn start_dictation(
     // Its pill stays compact, independent of the model's streaming capability.
     match rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
         Ok(readiness) => {
-            *state.dictation_model.lock().unwrap() = Some(model);
+            *state.dictation_capture.lock().unwrap() = Some(AgentCapture {
+                model,
+                readiness_generation: readiness.generation(),
+            });
             Some(readiness)
         }
         Err(e) => {
@@ -1508,7 +1510,7 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn waiting_for_reply(app: &AppHandle) -> bool {
+fn waiting_for_reply(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.waiting_for_reply.load(Ordering::SeqCst))
 }
@@ -1649,7 +1651,7 @@ pub fn input_submit_text(app: &AppHandle, text: String) {
     }
     let generation = state.summon_gen.load(Ordering::SeqCst);
     // Typed text wins â€” abandon the voice capture and release the mic.
-    state.dictation_model.lock().unwrap().take();
+    state.dictation_capture.lock().unwrap().take();
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
 
     let text = text.trim().to_string();
@@ -1675,24 +1677,40 @@ pub fn input_submit_voice(app: &AppHandle) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
-    let model = state.dictation_model.lock().unwrap().take();
+    let capture = state.dictation_capture.lock().unwrap().take();
     let generation = state.summon_gen.load(Ordering::SeqCst);
     begin_reply_wait(app);
 
     let app = app.clone();
     std::thread::spawn(move || {
         let current = |app: &AppHandle| reply_wait_is_current(app, generation);
-        if !current(&app) {
-            return;
-        }
         let no_speech = |app: &AppHandle, msg: &str| {
             if current(app) {
                 deliver_agent_error(app, msg, generation);
             }
         };
-        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-        let cancel_generation = rm.cancel_generation();
-        let samples = match rm.stop_recording(AGENT_BINDING, cancel_generation) {
+        let Some(capture) = capture else {
+            no_speech(&app, "No speech model was selected for this recording.");
+            return;
+        };
+        let samples = {
+            // Release the original capture even if Stop already dismissed the pill.
+            // Never stop a newer capture with the same binding.
+            let _start = crate::grain_actions::capture_start_guard();
+            let rm = app.state::<Arc<AudioRecordingManager>>();
+            if !rm.is_recording_readiness_current(capture.readiness_generation) {
+                None
+            } else if !current(&app) {
+                rm.cancel_recording();
+                None
+            } else {
+                rm.stop_recording(AGENT_BINDING, rm.cancel_generation())
+            }
+        };
+        if !current(&app) {
+            return;
+        }
+        let samples = match samples {
             Some(s) if !s.is_empty() => s,
             _ => {
                 no_speech(&app, "Nothing was heard â€” try again.");
@@ -1703,12 +1721,8 @@ pub fn input_submit_voice(app: &AppHandle) {
             "[GRAIN] agent: transcribing dictation ({} samples)",
             samples.len()
         );
-        let Some(model) = model else {
-            no_speech(&app, "No speech model was selected for this recording.");
-            return;
-        };
         let tm = app.state::<Arc<TranscriptionManager>>();
-        let text = match tm.grain_transcribe_with_model(samples, &model) {
+        let text = match tm.grain_transcribe_with_model(samples, &capture.model) {
             Ok(t) => t.trim().to_string(),
             Err(e) => {
                 warn!("[GRAIN] agent: dictation transcription failed: {e}");
@@ -1739,7 +1753,7 @@ pub fn input_cancel(app: &AppHandle) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
-    state.dictation_model.lock().unwrap().take();
+    state.dictation_capture.lock().unwrap().take();
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     crate::bridge::emit(app, DaemonEvent::AgentInputHide);
     input_cancel_cleanup(app);
@@ -1748,25 +1762,29 @@ pub fn input_cancel(app: &AppHandle) {
 /// Destroy the pre-warmed hidden panel and release the transient shortcuts â€”
 /// Esc during input means "never mind" ("destroy if not in use").
 fn input_cancel_cleanup(app: &AppHandle) {
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Some(panel) = app2.get_webview_window(PANEL_LABEL) {
-            let _ = panel.close();
-        }
-    });
-    // The Destroyed handler also triggers this, but a failed pre-create means
-    // no window (and no Destroyed) â€” release explicitly either way.
-    unregister_transient_shortcuts_deferred(app);
     // Bump BEFORE clearing: a screen capture started by this summon may still be
     // encoding, and would otherwise store its frame into the session the user
     // just cancelled â€” leaving a picture of their screen resident with no
     // conversation left to end it.
-    if let Some(state) = app.try_state::<AgentState>() {
-        state.summon_gen.fetch_add(1, Ordering::SeqCst);
-    }
+    let generation = app
+        .state::<AgentState>()
+        .summon_gen
+        .fetch_add(1, Ordering::SeqCst)
+        + 1;
     clear_screen_image(app);
     clear_pending_action(app);
     crate::capability::prefetch::clear();
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if app2.state::<AgentState>().summon_gen.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        if let Some(panel) = app2.get_webview_window(PANEL_LABEL) {
+            let _ = panel.close();
+        }
+    });
+    // A failed pre-create has no Destroyed event to release the shortcuts.
+    unregister_transient_shortcuts_deferred(app);
 }
 
 /// Pill â†’ core: typing started (`true` â†’ drop the voice capture) or the user
@@ -1780,7 +1798,7 @@ pub fn input_typing(app: &AppHandle, active: bool) {
         return;
     }
     if active {
-        state.dictation_model.lock().unwrap().take();
+        state.dictation_capture.lock().unwrap().take();
         app.state::<Arc<AudioRecordingManager>>().cancel_recording();
     } else {
         if let Some(readiness) = start_dictation(app, &state) {
@@ -2103,14 +2121,17 @@ fn refocus_target(app: &AppHandle) {
 enum EscapeTarget {
     AgentInput,
     Dictation,
+    AgentWaiting,
     AgentPanel,
 }
 
-fn escape_target(input_live: bool, dictation_live: bool) -> EscapeTarget {
+fn escape_target(input_live: bool, dictation_live: bool, waiting: bool) -> EscapeTarget {
     if input_live {
         EscapeTarget::AgentInput
     } else if dictation_live {
         EscapeTarget::Dictation
+    } else if waiting {
+        EscapeTarget::AgentWaiting
     } else {
         EscapeTarget::AgentPanel
     }
@@ -2137,21 +2158,15 @@ pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
 /// panel). During ordinary dictation it delegates to the existing cancel
 /// pipeline and keeps Agent open; only an idle Agent consumes Escape itself.
 pub fn global_close(app: &AppHandle) {
-    if waiting_for_reply(app) {
-        // Invalidate blocking transcription too, before it can dispatch a turn.
-        clear_pending_action(app);
-        app.state::<Arc<AudioRecordingManager>>().cancel_recording();
-        input_cancel_cleanup(app);
-        return;
-    }
     let input_live = app
         .try_state::<AgentState>()
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
     let dictation_live = app
         .try_state::<Arc<AudioRecordingManager>>()
-        .is_some_and(|audio| audio.is_recording());
-    match escape_target(input_live, dictation_live) {
+        .is_some_and(|audio| audio.is_recording())
+        && !crate::grain_overlay::agent_owns_pill(app);
+    match escape_target(input_live, dictation_live, waiting_for_reply(app)) {
         EscapeTarget::AgentInput => {
             input_cancel(app);
             return;
@@ -2162,6 +2177,10 @@ pub fn global_close(app: &AppHandle) {
             // Returning keeps the Agent panel alive for another dictation.
             crate::utils::cancel_current_operation(app);
             crate::grain_actions::cancel_session(app);
+            return;
+        }
+        EscapeTarget::AgentWaiting => {
+            input_cancel_cleanup(app);
             return;
         }
         EscapeTarget::AgentPanel => {}
@@ -2271,13 +2290,22 @@ mod escape_priority_tests {
 
     #[test]
     fn agent_input_has_first_escape_priority() {
-        assert_eq!(escape_target(true, true), EscapeTarget::AgentInput);
+        assert_eq!(escape_target(true, true, false), EscapeTarget::AgentInput);
     }
 
     #[test]
     fn normal_dictation_precedes_agent_panel_close() {
-        assert_eq!(escape_target(false, true), EscapeTarget::Dictation);
-        assert_eq!(escape_target(false, false), EscapeTarget::AgentPanel);
+        assert_eq!(escape_target(false, true, false), EscapeTarget::Dictation);
+        assert_eq!(escape_target(false, false, false), EscapeTarget::AgentPanel);
+    }
+
+    #[test]
+    fn normal_dictation_precedes_cancelling_a_pending_agent_reply() {
+        assert_eq!(escape_target(false, true, true), EscapeTarget::Dictation);
+        assert_eq!(
+            escape_target(false, false, true),
+            EscapeTarget::AgentWaiting
+        );
     }
 }
 
