@@ -21,6 +21,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),
+        agentNotch: resolve(__dirname, "agent-notch.html"),
         recordingOverlay: resolve(__dirname, "recording-overlay.html"),
       },
     },

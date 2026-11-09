@@ -349,8 +349,6 @@ pub struct AgentState {
     reply_visible: AtomicBool,
     draining_voice: AtomicBool,
     notch_generation: AtomicU64,
-    #[cfg(windows)]
-    notch_clipped: AtomicBool,
 }
 
 /// One conversation turn from the frontend.
@@ -424,73 +422,51 @@ pub fn summon(app: &AppHandle) {
 fn summon_inner(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        if blocks_dictation(&app) {
-            return;
-        }
-
-        // The recorder is shared with every dictation mode. Reject a summon
-        // before capturing context or showing an input card when one owns it.
-        if app
-            .try_state::<Arc<AudioRecordingManager>>()
-            .is_some_and(|audio| audio.is_recording())
-        {
-            log::debug!("[GRAIN] agent: summon ignored while dictation is recording");
-            return;
-        }
-
-        let hwnd = foreground_hwnd();
-        let c = capture_selection(&app);
-        let start_guard = crate::grain_actions::capture_start_guard();
-        // Capturing the selection can take long enough for another shortcut to
-        // start dictation. The audio manager decides ownership atomically; a
-        // competing capture must not change Agent state or present its card.
         let state = app.state::<AgentState>();
-        let Some(readiness) = start_dictation(&app, &state) else {
-            return;
-        };
-        clear_pending_action(&app);
-        // Identifies THIS summon. The screen frame is taken at the end (below),
-        // after the user already has their listening card, so it needs a way to
-        // know whether the session it belongs to is still the current one.
-        let mut summon_gen = 0u64;
-        if let Some(state) = app.try_state::<AgentState>() {
-            if let Ok(mut g) = state.context.lock() {
-                *g = c;
-            }
-            if let Ok(mut g) = state.target_hwnd.lock() {
-                *g = hwnd;
-            }
-            // Unconditional: the previous session's frame is erased here, before
-            // this one has taken (or declined to take) its own. A summon that
-            // photographs nothing must never inherit an older picture.
-            if let Ok(mut g) = state.screen_image.lock() {
-                *g = None;
-            }
-            summon_gen = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
-            state.input_active.store(true, Ordering::SeqCst);
-            state.reply_visible.store(false, Ordering::SeqCst);
-        }
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            let state = handle.state::<AgentState>();
-            if state.summon_gen.load(Ordering::SeqCst) != summon_gen
-                || (!state.input_active.load(Ordering::SeqCst) && !waiting_for_reply(&handle))
-            {
+        let rm = app.state::<Arc<AudioRecordingManager>>();
+        let hwnd = foreground_hwnd();
+        let start_guard = crate::grain_actions::capture_start_guard();
+        let summon_gen = {
+            if blocks_dictation(&app) || rm.is_recording() {
                 return;
             }
-            ensure_capture_notch(&handle, summon_gen);
-        });
-        // The capture notch keeps the source app focused.
+
+            clear_pending_action(&app);
+            *state.context.lock().unwrap() = None;
+            *state.target_hwnd.lock().unwrap() = hwnd;
+            *state.screen_image.lock().unwrap() = None;
+            let generation = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
+            state.reply_visible.store(false, Ordering::SeqCst);
+            state.input_active.store(true, Ordering::SeqCst);
+            generation
+        };
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || ensure_capture_notch(&handle, summon_gen));
+        // The non-activating notch can load while the source selection is copied.
         register_transient_shortcuts(&app);
-        // Fetch enabled extensions' tool catalogues while the user speaks, so
-        // the request does not open those connections after submit.
-        crate::capability::prefetch::start(&app);
-        crate::grain_capture::announce_agent_ready(
-            &app,
-            &app.state::<Arc<AudioRecordingManager>>(),
-            readiness,
-        );
+        let selection = capture_selection(&app);
+        {
+            if !input_is_current(&state, summon_gen) {
+                return;
+            }
+            *state.context.lock().unwrap() = selection;
+            let Some(readiness) = start_dictation(&app, &state) else {
+                input_cancel(&app);
+                return;
+            };
+            if !input_is_current(&state, summon_gen) {
+                // A dismissal can race opening the microphone. Release it
+                // before another capture can take the slot.
+                if state.dictation_capture.lock().unwrap().take().is_some() {
+                    rm.cancel_recording();
+                }
+                return;
+            }
+            let _ = app.emit_to(PANEL_LABEL, "agent-listening", summon_gen);
+            crate::grain_capture::announce_agent_ready(&app, &rm, readiness);
+        }
         drop(start_guard);
+        crate::capability::prefetch::start(&app);
 
         // [GRAIN] The screen frame comes LAST, and deliberately so. `PrintWindow`
         // plus a downscale and a PNG encode is a few hundred milliseconds on a
@@ -536,6 +512,11 @@ pub fn panel_dictation_target(app: &AppHandle) -> bool {
 }
 
 /// Agent input owns the capture slot even if it has released the mic for typing.
+fn input_is_current(state: &AgentState, generation: u64) -> bool {
+    state.summon_gen.load(Ordering::SeqCst) == generation
+        && state.input_active.load(Ordering::SeqCst)
+}
+
 pub(crate) fn blocks_dictation(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
@@ -651,18 +632,22 @@ fn build_window(
     w: f64,
     h: f64,
 ) -> tauri::Result<tauri::WebviewWindow> {
-    let mut builder =
-        tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("/".into()))
-            .title("Grain Assist")
-            .inner_size(w, h)
-            .resizable(false)
-            .decorations(false)
-            .transparent(true)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .focused(false)
-            .shadow(false)
-            .visible(false);
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        label,
+        tauri::WebviewUrl::App("agent-notch.html".into()),
+    )
+    .title("Grain Assist")
+    .inner_size(w, h)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    .focusable(false)
+    .shadow(false)
+    .visible(false);
 
     if let Some(data_dir) = crate::portable::data_dir() {
         builder = builder.data_directory(data_dir.join("webview"));
@@ -821,74 +806,13 @@ fn windows_notch_text_scale() -> f64 {
         .unwrap_or(1.0)
 }
 
-/// Limit the compact notch's hit area without moving or sizing its WebView.
-#[cfg(windows)]
-fn clip_capture_notch(window: &tauri::WebviewWindow, text_scale: f64) -> bool {
-    use windows::Win32::Foundation::{POINT, RECT};
-    use windows::Win32::Graphics::Gdi::{
-        ClientToScreen, CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
-
-    let (Ok(hwnd), Ok(dpi_scale)) = (window.hwnd(), window.scale_factor()) else {
-        return false;
-    };
-    unsafe {
-        let mut outer = RECT::default();
-        let mut client = RECT::default();
-        let mut origin = POINT::default();
-        if GetWindowRect(hwnd, &mut outer).is_err()
-            || GetClientRect(hwnd, &mut client).is_err()
-            || !ClientToScreen(hwnd, &mut origin).as_bool()
-        {
-            return false;
-        }
-        let client_w = client.right - client.left;
-        let client_h = client.bottom - client.top;
-        if client_w < 1 || client_h < 1 {
-            return false;
-        }
-        let scale = dpi_scale * text_scale;
-        let width = ((NOTCH_CAPTURE.0 * scale).round() as i32).clamp(1, client_w);
-        let height = ((NOTCH_CAPTURE.1 * scale).round() as i32).clamp(1, client_h);
-        let left = origin.x - outer.left + (client_w - width) / 2;
-        let top = origin.y - outer.top;
-        let region = CreateRectRgn(left, top, left + width, top + height);
-        if region.0.is_null() {
-            return false;
-        }
-        // Windows owns the region after a successful call.
-        if SetWindowRgn(hwnd, Some(region), false) == 0 {
-            let _ = DeleteObject(HGDIOBJ(region.0));
-            return false;
-        }
-        true
-    }
-}
-
-fn prepare_reply_viewport(window: &tauri::WebviewWindow) {
+fn place_notch_at_text_scale(window: &tauri::WebviewWindow, (width, height): (f64, f64)) {
     #[cfg(windows)]
-    {
-        use windows::Win32::Graphics::Gdi::SetWindowRgn;
-
-        let state = window.app_handle().state::<AgentState>();
-        if state.notch_clipped.load(Ordering::SeqCst) {
-            if let Ok(hwnd) = window.hwnd() {
-                if unsafe { SetWindowRgn(hwnd, None, false) } != 0 {
-                    return;
-                }
-            }
-            warn!("[GRAIN] agent: could not release the compact notch region");
-            return;
-        }
-        let text_scale = windows_notch_text_scale();
-        place_notch(
-            window,
-            (NOTCH_REPLY.0 * text_scale, NOTCH_REPLY.1 * text_scale),
-        );
-    }
-    #[cfg(not(windows))]
-    place_notch(window, NOTCH_REPLY);
+    let (width, height) = {
+        let scale = windows_notch_text_scale();
+        (width * scale, height * scale)
+    };
+    place_notch(window, (width, height));
 }
 
 fn ensure_capture_notch(app: &AppHandle, generation: u64) {
@@ -906,31 +830,9 @@ fn ensure_capture_notch(app: &AppHandle, generation: u64) {
             return Ok(());
         }
         state.notch_generation.store(generation, Ordering::SeqCst);
-        let size = if cfg!(windows) {
-            NOTCH_REPLY
-        } else {
-            NOTCH_CAPTURE
-        };
-        let window =
-            build_window(app, PANEL_LABEL, size.0, size.1).map_err(|error| error.to_string())?;
-        #[cfg(windows)]
-        {
-            let text_scale = windows_notch_text_scale();
-            place_notch(&window, (size.0 * text_scale, size.1 * text_scale));
-            let clipped = clip_capture_notch(&window, text_scale);
-            state.notch_clipped.store(clipped, Ordering::SeqCst);
-            if !clipped {
-                warn!("[GRAIN] agent: compact notch region unavailable, using native resize");
-                // A compact native window still preserves desktop hit testing
-                // if Windows refuses the region.
-                place_notch(
-                    &window,
-                    (NOTCH_CAPTURE.0 * text_scale, NOTCH_CAPTURE.1 * text_scale),
-                );
-            }
-        }
-        #[cfg(not(windows))]
-        place_notch(&window, size);
+        let window = build_window(app, PANEL_LABEL, NOTCH_CAPTURE.0, NOTCH_CAPTURE.1)
+            .map_err(|error| error.to_string())?;
+        place_notch_at_text_scale(&window, NOTCH_CAPTURE);
         window.show().map_err(|error| error.to_string())?;
         Ok(())
     };
@@ -1267,6 +1169,7 @@ pub fn agent_take_instruction(app: AppHandle, generation: u64) -> Option<AgentIn
 #[derive(Serialize, Type)]
 pub struct AgentNotchStatus {
     generation: u64,
+    listening: bool,
     working: bool,
 }
 
@@ -1277,6 +1180,8 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
     let generation = state.notch_generation.load(Ordering::SeqCst);
     AgentNotchStatus {
         generation,
+        listening: input_is_current(&state, generation)
+            && state.dictation_capture.lock().unwrap().is_some(),
         working: reply_wait_is_current(&app, generation),
     }
 }
@@ -1322,8 +1227,9 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
             return;
         };
-        prepare_reply_viewport(&window);
+        place_notch_at_text_scale(&window, NOTCH_REPLY);
         state.reply_visible.store(true, Ordering::SeqCst);
+        let _ = window.set_focusable(true);
         if !ordinary_dictation_live(&handle) {
             let _ = window.set_focus();
         }
@@ -1397,18 +1303,23 @@ pub fn input_submit_text(app: &AppHandle, text: String) {
     dispatch_instruction(app.clone(), text, generation);
 }
 
+fn take_voice_capture(state: &AgentState) -> Option<AgentCapture> {
+    let mut pending_capture = state.dictation_capture.lock().unwrap();
+    if pending_capture.is_none() || !state.input_active.swap(false, Ordering::SeqCst) {
+        return None;
+    }
+    pending_capture.take()
+}
+
 /// Submit voice capture and keep the notch compact until the first reply.
 pub fn input_submit_voice(app: &AppHandle) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
     };
-    if !state.input_active.swap(false, Ordering::SeqCst) {
+    let Some(capture) = take_voice_capture(&state) else {
         return;
-    }
-    let capture = state.dictation_capture.lock().unwrap().take();
-    state
-        .draining_voice
-        .store(capture.is_some(), Ordering::SeqCst);
+    };
+    state.draining_voice.store(true, Ordering::SeqCst);
     let generation = state.summon_gen.load(Ordering::SeqCst);
     begin_reply_wait(app);
 
@@ -1419,10 +1330,6 @@ pub fn input_submit_voice(app: &AppHandle) {
             if current(app) {
                 deliver_agent_error(app, msg, generation);
             }
-        };
-        let Some(capture) = capture else {
-            no_speech(&app, "No speech model was selected for this recording.");
-            return;
         };
         let samples = {
             // Release the original capture even if Stop already dismissed the pill.
@@ -1488,8 +1395,9 @@ pub fn input_cancel(app: &AppHandle) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
-    state.dictation_capture.lock().unwrap().take();
-    app.state::<Arc<AudioRecordingManager>>().cancel_recording();
+    if state.dictation_capture.lock().unwrap().take().is_some() {
+        app.state::<Arc<AudioRecordingManager>>().cancel_recording();
+    }
     input_cancel_cleanup(app);
 }
 
@@ -1922,6 +1830,21 @@ mod escape_priority_tests {
 #[cfg(test)]
 mod first_reply_handoff_tests {
     use super::*;
+
+    #[test]
+    fn enter_during_startup_leaves_capture_active() {
+        let state = AgentState::default();
+        state.input_active.store(true, Ordering::SeqCst);
+        assert!(take_voice_capture(&state).is_none());
+        assert!(state.input_active.load(Ordering::SeqCst));
+
+        *state.dictation_capture.lock().unwrap() = Some(AgentCapture {
+            model: "selected-model".into(),
+            readiness_generation: 7,
+        });
+        assert_eq!(take_voice_capture(&state).unwrap().readiness_generation, 7);
+        assert!(take_voice_capture(&state).is_none());
+    }
 
     #[test]
     fn late_transcription_cannot_queue_work_after_stop_or_into_a_new_summon() {

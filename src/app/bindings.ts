@@ -1769,7 +1769,7 @@ export type AgentMessage = {
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
 role: string; content: string }
-export type AgentNotchStatus = { generation: number; working: boolean }
+export type AgentNotchStatus = { generation: number; listening: boolean; working: boolean }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */

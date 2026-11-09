@@ -65,3 +65,13 @@ before the transition when dictation is idle.
 Live check: submit an Agent request, watch the first reply expansion, and
 confirm you can click the app under the area beside or below the compact notch
 while Agent is working.
+
+## Compact notch startup
+
+The fixed Windows region above was retired after it clipped the compact notch
+on the user's machine. The native window starts at the compact dimensions
+again, with a transparent entry document that paints the shell before React
+loads. The shell is queued before selection and microphone setup. It shows
+Starting until the microphone opens, and Enter leaves startup alone until
+there is a capture to submit. At reply time, one native bounds change
+precedes the CSS expansion. The window is shown once and uses no shadow.

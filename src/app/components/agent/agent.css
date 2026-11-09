@@ -1,3 +1,10 @@
+html[data-window="agent-panel"],
+html[data-window="agent-panel"] body {
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
 .agent-panel-root {
   width: 100vw;
   height: 100vh;
@@ -29,7 +36,6 @@
   border-top: 0;
   border-radius: 0 0 17px 17px;
   font-family: "IBM Plex Sans Variable", "Segoe UI", system-ui, sans-serif;
-  animation: agent-notch-enter 240ms var(--notch-ease) both;
   transition:
     width 420ms var(--notch-ease),
     height 420ms var(--notch-ease),
@@ -59,15 +65,6 @@
 .agent-notch.is-reply::before {
   opacity: 0;
   animation: none;
-}
-
-@keyframes agent-notch-enter {
-  from {
-    transform: translateY(-100%);
-  }
-  to {
-    transform: translateY(0);
-  }
 }
 
 @keyframes agent-notch-color {

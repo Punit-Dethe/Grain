@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AudioLines, Copy, RotateCcw, X, Check } from "lucide-react";
 import {
   commands,
+  type AgentNotchStatus,
   type AgentMessage,
   type AgentConfirm,
   type AgentReply,
@@ -11,7 +12,6 @@ import {
 import { AgentMarkdown } from "../markdown/Markdown";
 import { CaptureWaveform } from "../../overlay/CaptureWaveform";
 import { AgentWorkingLabel } from "./AgentWorkingLabel";
-import "./agent.css";
 
 type Role = "user" | "assistant";
 interface ChatMessage {
@@ -50,10 +50,7 @@ export function AgentPanel() {
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const revealedRef = useRef(false);
-  const [capture, setCapture] = useState<{
-    generation: number;
-    working: boolean;
-  } | null>(null);
+  const [capture, setCapture] = useState<AgentNotchStatus | null>(null);
   const generationRef = useRef<number | null>(null);
   const contextRef = useRef<string | null>(null);
   const instructionRef = useRef<string>("");
@@ -222,6 +219,8 @@ export function AgentPanel() {
         return;
       }
       instructionRef.current = instruction.text.trim();
+      firstRunStartedRef.current = true;
+      contextRef.current = await commands.agentGetContext().catch(() => null);
       await runFirst(instructionRef.current);
     }
   }, [runFirst]);
@@ -233,8 +232,19 @@ export function AgentPanel() {
       if (dead) release();
       else unlisten.push(release);
     };
+    let listeningGeneration: number | null = null;
     let workingGeneration: number | null = null;
     void Promise.all([
+      win
+        .listen<number>("agent-listening", ({ payload }) => {
+          listeningGeneration = payload;
+          setCapture((current) =>
+            current?.generation === payload
+              ? { ...current, listening: true }
+              : current,
+          );
+        })
+        .then(track),
       win
         .listen<number>("agent-working", ({ payload }) => {
           workingGeneration = payload;
@@ -248,7 +258,16 @@ export function AgentPanel() {
       win
         .listen("agent-instruction", () => void startFirstIfQueued())
         .then(track),
-      win.listen("agent-reveal", reveal).then(track),
+      win
+        .listen("agent-reveal", () => {
+          // Give the WebView a compact paint after the native bounds change.
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (!dead) reveal();
+            });
+          });
+        })
+        .then(track),
       win
         .listen<string>("agent-panel-dictation", ({ payload }) => {
           const dictated = payload.trim();
@@ -263,15 +282,13 @@ export function AgentPanel() {
         .then(track),
     ])
       .then(async () => {
-        const [status, context] = await Promise.all([
-          commands.agentNotchStatus(),
-          commands.agentGetContext(),
-        ]);
+        const status = await commands.agentNotchStatus();
         if (dead) return;
         generationRef.current = status.generation;
-        contextRef.current = context;
         setCapture({
           ...status,
+          listening:
+            status.listening || listeningGeneration === status.generation,
           working: status.working || workingGeneration === status.generation,
         });
         await startFirstIfQueued();
@@ -493,10 +510,16 @@ export function AgentPanel() {
             ) : capture?.working ? (
               <AgentWorkingLabel />
             ) : (
-              <span role="status">{t("agent.notchListening")}</span>
+              <span role="status">
+                {t(
+                  capture?.listening
+                    ? "agent.notchListening"
+                    : "agent.notchStarting",
+                )}
+              </span>
             )}
           </span>
-          {!revealed && !capture?.working && (
+          {!revealed && capture?.listening && !capture.working && (
             <div className="agent-notch-wave">
               <CaptureWaveform ready session={capture?.generation ?? 0} />
             </div>

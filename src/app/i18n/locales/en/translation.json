@@ -13,6 +13,7 @@
   },
   "agent": {
     "brand": "Grain Assist",
+    "notchStarting": "Starting…",
     "notchListening": "Listening…",
     "notchPaste": "Paste",
     "notchCancel": "Cancel Agent",

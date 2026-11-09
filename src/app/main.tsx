@@ -1,8 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { platform } from "@tauri-apps/plugin-os";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AgentPanel } from "./components/agent/AgentPanel";
 import { initUiScale } from "./lib/utils/uiScale";
 
 // Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
@@ -17,44 +15,29 @@ const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement,
 );
 
-// [GRAIN] One Vite entry serves every window; we branch on the window label. The
-// Agent's notch (`agent-panel`) is frameless, transparent and destroyed on
-// close. It skips the main app's UI scaling and model store initialization.
-const winLabel = getCurrentWindow().label;
-if (winLabel === "agent-panel") {
-  document.documentElement.dataset.window = winLabel;
-  document.documentElement.style.background = "transparent";
-  document.body.style.background = "transparent";
+// [GRAIN] The main window is opaque + OS-rounded (DWM corner preference in
+// lib.rs). Unlike the Agent branch it is NOT transparent, so the page keeps
+// its background to fill client area outside the rounded React card.
+//
+// Pin the rem baseline to a FIXED 16px — deliberately NOT driven by the
+// screen. (This comment used to claim the opposite, that the UI scales to the
+// display; it has said so since before the scaled canvas was removed, and
+// uiScale.ts explains at length why viewport-driven rem is exactly what that
+// removal was undoing. Left uncorrected it would have talked the UI 2.0
+// rewrite into putting the behaviour back.) Run before render so the first
+// paint is already correct.
+initUiScale();
+
+// Initialize model store (loads models and sets up event listeners)
+useModelStore.getState().initialize();
+
+// [GRAIN] UI 2.0 is the only tree. The pre-2.0 tree and its `VITE_GRAIN_UI`
+// switch are gone — a fallback nobody can reach is just a second UI to keep
+// compiling. Still a dynamic import so the shell stays out of the entry chunk.
+void import("./GrainApp").then(({ default: MainApp }) => {
   root.render(
     <React.StrictMode>
-      <AgentPanel />
+      <MainApp />
     </React.StrictMode>,
   );
-} else {
-  // [GRAIN] The main window is opaque + OS-rounded (DWM corner preference in
-  // lib.rs). Unlike the Agent branch it is NOT transparent, so the page keeps
-  // its background to fill client area outside the rounded React card.
-  //
-  // Pin the rem baseline to a FIXED 16px — deliberately NOT driven by the
-  // screen. (This comment used to claim the opposite, that the UI scales to the
-  // display; it has said so since before the scaled canvas was removed, and
-  // uiScale.ts explains at length why viewport-driven rem is exactly what that
-  // removal was undoing. Left uncorrected it would have talked the UI 2.0
-  // rewrite into putting the behaviour back.) Run before render so the first
-  // paint is already correct.
-  initUiScale();
-
-  // Initialize model store (loads models and sets up event listeners)
-  useModelStore.getState().initialize();
-
-  // [GRAIN] UI 2.0 is the only tree. The pre-2.0 tree and its `VITE_GRAIN_UI`
-  // switch are gone — a fallback nobody can reach is just a second UI to keep
-  // compiling. Still a dynamic import so the shell stays out of the entry chunk.
-  void import("./GrainApp").then(({ default: MainApp }) => {
-    root.render(
-      <React.StrictMode>
-        <MainApp />
-      </React.StrictMode>,
-    );
-  });
-}
+});
