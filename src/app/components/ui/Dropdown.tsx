@@ -29,6 +29,7 @@ interface DropdownProps {
   disabled?: boolean;
   onRefresh?: () => void;
   ariaLabel?: string;
+  pagination?: { label: string; loading: boolean; onLoadMore: () => void };
 }
 
 /** Tallest the menu may get before it scrolls internally (px). */
@@ -72,6 +73,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
   disabled = false,
   onRefresh,
   ariaLabel,
+  pagination,
 }) => {
   const { t } = useTranslation();
   const menuId = useId();
@@ -211,9 +213,18 @@ export const Dropdown: React.FC<DropdownProps> = ({
 
   const menu = box && (
     <div
-      id={menuId}
       ref={menuRef}
       onKeyDown={handleMenuKeyDown}
+      onScroll={
+        pagination && !pagination.loading
+          ? (event) => {
+              const menu = event.currentTarget;
+              if (menu.scrollHeight - menu.scrollTop - menu.clientHeight < 8) {
+                pagination.onLoadMore();
+              }
+            }
+          : undefined
+      }
       className="fixed bg-paper-raised border border-line rounded-lg overflow-y-auto overscroll-contain"
       style={{
         left: box.left,
@@ -226,42 +237,56 @@ export const Dropdown: React.FC<DropdownProps> = ({
         // dropdown opened from inside a modal is never behind it.
         zIndex: 1000,
       }}
-      role="listbox"
-      aria-label={ariaLabel}
     >
-      {options.length === 0 ? (
-        <div className="px-2 py-1 text-sm text-ink-soft">
-          {t("common.noOptionsFound")}
-        </div>
-      ) : (
-        options.map((option, i) => (
-          <React.Fragment key={option.value}>
-            {/* A heading whenever the group changes — so a list assembled
+      <div id={menuId} role="listbox" aria-label={ariaLabel}>
+        {options.length === 0 ? (
+          <div className="px-2 py-1 text-sm text-ink-soft">
+            {t("common.noOptionsFound")}
+          </div>
+        ) : (
+          options.map((option, i) => (
+            <React.Fragment key={option.value}>
+              {/* A heading whenever the group changes — so a list assembled
                 from several sources says which is which, without every
                 entry having to repeat it in its own label. */}
-            {option.group && option.group !== options[i - 1]?.group && (
-              <div className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-                {option.group}
-              </div>
-            )}
-            <button
-              type="button"
-              role="option"
-              aria-selected={selectedValue === option.value}
-              className={`w-full px-2 py-1 text-sm text-start hover:bg-[var(--accent-tint)] transition-colors duration-150 ${
-                selectedValue === option.value
-                  ? "bg-[var(--accent-tint)] text-accent font-semibold"
-                  : ""
-              } ${option.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-              onClick={(event) => handleSelect(option.value, event)}
-              disabled={option.disabled}
-            >
-              <span className="whitespace-normal break-words">
-                {option.label}
-              </span>
-            </button>
-          </React.Fragment>
-        ))
+              {option.group && option.group !== options[i - 1]?.group && (
+                <div className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
+                  {option.group}
+                </div>
+              )}
+              <button
+                type="button"
+                role="option"
+                aria-selected={selectedValue === option.value}
+                className={`w-full px-2 py-1 text-sm text-start hover:bg-[var(--accent-tint)] transition-colors duration-150 ${
+                  selectedValue === option.value
+                    ? "bg-[var(--accent-tint)] text-accent font-semibold"
+                    : ""
+                } ${option.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                onClick={(event) => handleSelect(option.value, event)}
+                disabled={option.disabled}
+              >
+                <span className="whitespace-normal break-words">
+                  {option.label}
+                </span>
+              </button>
+            </React.Fragment>
+          ))
+        )}
+      </div>
+      {pagination && (
+        <button
+          type="button"
+          className="w-full px-2 py-1 text-sm text-start text-ink-soft hover:bg-[var(--accent-tint)]"
+          aria-disabled={pagination.loading}
+          onClick={() => {
+            if (!pagination.loading) pagination.onLoadMore();
+          }}
+        >
+          {pagination.loading
+            ? t("settings.history.loading")
+            : pagination.label}
+        </button>
       )}
     </div>
   );

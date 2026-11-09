@@ -50,7 +50,6 @@ const IconButton: React.FC<{
 );
 
 const PAGE_SIZE = 30;
-const RECENT_DATE_COUNT = 30;
 
 interface OpenRecordingsButtonProps {
   onClick: () => void;
@@ -184,6 +183,15 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     loadPage();
   }, [controller, loadPage]);
 
+  const loadNextPage = useCallback(() => {
+    if (controller) {
+      void controller.loadMore();
+      return;
+    }
+    const lastEntry = entriesRef.current[entriesRef.current.length - 1];
+    if (lastEntry) void loadPage(lastEntry.id);
+  }, [controller, loadPage]);
+
   // Infinite scroll via IntersectionObserver
   useEffect(() => {
     if (activeLoading || activeLoadingMore) return;
@@ -192,25 +200,15 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     if (!sentinel || !activeHasMore) return;
 
     const observer = new IntersectionObserver(
-      (observerEntries) => {
-        const first = observerEntries[0];
-        if (first.isIntersecting) {
-          if (controller) {
-            void controller.loadMore();
-            return;
-          }
-          const lastEntry = entriesRef.current[entriesRef.current.length - 1];
-          if (lastEntry) {
-            loadPage(lastEntry.id);
-          }
-        }
+      ([entry]) => {
+        if (entry.isIntersecting) loadNextPage();
       },
       { threshold: 0 },
     );
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [activeHasMore, activeLoading, activeLoadingMore, controller, loadPage]);
+  }, [activeHasMore, activeLoading, activeLoadingMore, loadNextPage]);
 
   // Listen for new entries added from the transcription pipeline
   useEffect(() => {
@@ -326,48 +324,45 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayTime = yesterday.setHours(0, 0, 0, 0);
-  const selectedDay =
-    dateFilter === "today"
-      ? today
-      : dateFilter === "yesterday"
-        ? yesterdayTime
-        : Number(dateFilter);
-
   const dateOptions = useMemo(() => {
     const days = new Set<number>();
-    const day = new Date(yesterdayTime);
-    for (let offset = 2; offset < RECENT_DATE_COUNT; offset += 1) {
-      day.setDate(day.getDate() - 1);
-      days.add(day.setHours(0, 0, 0, 0));
-    }
     for (const entry of activeEntries) {
-      const entryDay = getEntryDay(entry.timestamp);
-      if (entryDay < yesterdayTime) days.add(entryDay);
+      const day = getEntryDay(entry.timestamp);
+      if (Number.isFinite(day)) days.add(day);
     }
-    // Keep the selected date available if its last entry is deleted.
-    if (selectedDay < yesterdayTime) days.add(selectedDay);
     const formatter = new Intl.DateTimeFormat(i18n.language, {
       dateStyle: "medium",
     });
     return [
       { value: "all", label: t("ui2.history.filters.all") },
-      { value: "today", label: t("ui2.history.filters.today") },
-      { value: "yesterday", label: t("ui2.history.filters.yesterday") },
       ...[...days]
         .sort((a, b) => b - a)
         .map((date) => ({
           value: String(date),
-          label: formatter.format(date),
+          label:
+            date === today
+              ? t("ui2.history.filters.today")
+              : date === yesterdayTime
+                ? t("ui2.history.filters.yesterday")
+                : formatter.format(date),
         })),
     ];
-  }, [activeEntries, i18n.language, selectedDay, t, yesterdayTime]);
+  }, [activeEntries, i18n.language, t, today, yesterdayTime]);
+
+  const selectedDate = dateOptions.some(({ value }) => value === dateFilter)
+    ? dateFilter
+    : "all";
+
+  useEffect(() => {
+    if (selectedDate !== dateFilter) setDateFilter(selectedDate);
+  }, [dateFilter, selectedDate]);
 
   const baseEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     return activeEntries.filter((entry) => {
       if (
-        dateFilter !== "all" &&
-        getEntryDay(entry.timestamp) !== selectedDay
+        selectedDate !== "all" &&
+        getEntryDay(entry.timestamp) !== Number(selectedDate)
       ) {
         return false;
       }
@@ -376,7 +371,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
         `${entry.title} ${entry.transcription_text} ${entry.post_processed_text ?? ""}`.toLocaleLowerCase();
       return searchableText.includes(normalizedQuery);
     });
-  }, [activeEntries, dateFilter, query, selectedDay]);
+  }, [activeEntries, query, selectedDate]);
 
   // The AI view is a request view, not a success-only view. Failed calls must
   // stay visible so the raw fallback cannot masquerade as a standard capture.
@@ -414,7 +409,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
         <div className="history-state">
           {viewMode === "processed"
             ? t("ui2.history.noProcessedInView")
-            : dateFilter !== "all"
+            : selectedDate !== "all"
               ? t("ui2.history.noTranscriptsForDate")
               : t("settings.history.empty")}
         </div>
@@ -481,8 +476,17 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
               className="history-date-filter"
               ariaLabel={t("ui2.history.filterByDate")}
               options={dateOptions}
-              selectedValue={dateFilter}
+              selectedValue={selectedDate}
               onSelect={setDateFilter}
+              pagination={
+                activeHasMore && !activeLoading
+                  ? {
+                      label: t("ui2.history.loadOlderDates"),
+                      loading: activeLoadingMore,
+                      onLoadMore: loadNextPage,
+                    }
+                  : undefined
+              }
             />
             <span className="toolbar-spacer" />
             <div
