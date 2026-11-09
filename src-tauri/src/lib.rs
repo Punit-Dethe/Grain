@@ -1431,7 +1431,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_confirm_action,
             agent::agent_notch_status,
             agent::agent_cancel_notch,
-            agent::agent_confirm_paste,
             commands::cancel_operation,
             commands::is_portable,
             commands::get_app_dir_path,

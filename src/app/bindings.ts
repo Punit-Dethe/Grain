@@ -1028,19 +1028,6 @@ async agentNotchStatus() : Promise<AgentNotchStatus> {
 async agentCancelNotch(generation: number) : Promise<void> {
     await TAURI_INVOKE("agent_cancel_notch", { generation });
 },
-/**
- * Confirm (âŽ on the reply card): close the panel, refocus the summon target,
- * and paste `text` â€” the latest assistant reply â€” at the cursor. A selection
- * still held in the target app is replaced by the paste.
- */
-async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_confirm_paste", { text }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
 },

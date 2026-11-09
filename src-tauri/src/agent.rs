@@ -19,8 +19,8 @@ use std::{
 };
 
 use futures_util::future::{AbortHandle, AbortRegistration, Abortable};
-use grain_core::{DaemonEvent, PostProcessProvider};
-use log::{error, info, warn};
+use grain_core::PostProcessProvider;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
@@ -316,9 +316,6 @@ pub struct AgentState {
     pub pending_instruction: Mutex<Option<AgentInstruction>>,
     /// Run cancellation and exact host-held confirmation belong to this session.
     execution: AgentRunControl,
-    /// Foreground window at summon â€” the paste target for Confirm.
-    /// Raw HWND as isize on Windows; unused elsewhere.
-    pub target_hwnd: Mutex<Option<isize>>,
     /// [GRAIN] Screen frame captured at summon (per `agent_screen_image`), held
     /// for the life of ONE session so follow-up turns can still see the window
     /// the user asked about â€” the request is stateless, so a frame that is not
@@ -428,7 +425,6 @@ fn summon_inner(app: &AppHandle) {
 
             clear_pending_action(&app);
             *state.context.lock().unwrap() = None;
-            *state.target_hwnd.lock().unwrap() = hwnd;
             let generation = {
                 let mut image = state.screen_image.lock().unwrap();
                 let generation = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
@@ -562,10 +558,8 @@ fn start_dictation(
     }
 }
 
-/// The current foreground window, as a raw HWND â€” the paste target snapshot
-/// taken at summon. `None` off Windows (macOS restores focus to the previous
-/// app by itself when our window closes).
-pub(crate) fn foreground_hwnd() -> Option<isize> {
+/// Snapshot the foreground window for the optional screen attachment.
+fn foreground_hwnd() -> Option<isize> {
     #[cfg(windows)]
     unsafe {
         let h = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
@@ -578,39 +572,6 @@ pub(crate) fn foreground_hwnd() -> Option<isize> {
     #[cfg(not(windows))]
     {
         None
-    }
-}
-
-/// Bring an arbitrary window (by raw HWND) back to the foreground so a
-/// synthesised paste lands in it. Same input-queue bridge as `force_foreground`.
-#[cfg(windows)]
-pub(crate) fn force_foreground_raw(raw: isize) {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-    use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
-        SetForegroundWindow, ShowWindow, SW_SHOW,
-    };
-
-    let hwnd = HWND(raw as _);
-    unsafe {
-        if !IsWindow(Some(hwnd)).as_bool() {
-            return; // target app closed since summon â€” paste lands wherever focus is.
-        }
-        let fg = GetForegroundWindow();
-        let our_tid = GetCurrentThreadId();
-        let fg_tid = GetWindowThreadProcessId(fg, None);
-        // Attaching a thread to itself is an error; only bridge across processes.
-        let attached =
-            fg_tid != 0 && fg_tid != our_tid && AttachThreadInput(fg_tid, our_tid, true).as_bool();
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = BringWindowToTop(hwnd);
-        let _ = SetForegroundWindow(hwnd);
-        let _ = SetFocus(Some(hwnd));
-        if attached {
-            let _ = AttachThreadInput(fg_tid, our_tid, false);
-        }
     }
 }
 
@@ -1576,24 +1537,6 @@ pub fn global_submit(app: &AppHandle) {
     }
 }
 
-/// Refocus the window that was foreground at summon so a synthesised paste
-/// lands where the user was working.
-fn refocus_target(app: &AppHandle) {
-    #[cfg(windows)]
-    {
-        let hwnd = app
-            .try_state::<AgentState>()
-            .and_then(|s| s.target_hwnd.lock().ok().and_then(|g| *g));
-        if let Some(raw) = hwnd {
-            force_foreground_raw(raw);
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = app;
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EscapeTarget {
     AgentInput,
@@ -2089,34 +2032,6 @@ pub fn agent_copy(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard()
         .write_text(text)
         .map_err(|e| format!("Failed to copy to clipboard: {e}"))
-}
-
-/// Confirm (âŽ on the reply card): close the panel, refocus the summon target,
-/// and paste `text` â€” the latest assistant reply â€” at the cursor. A selection
-/// still held in the target app is replaced by the paste.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_confirm_paste(app: AppHandle, text: String) -> Result<(), String> {
-    if text.trim().is_empty() {
-        return Err("Nothing to paste yet".to_string());
-    }
-    std::thread::spawn(move || {
-        let close_handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if let Some(panel) = close_handle.get_webview_window(PANEL_LABEL) {
-                let _ = panel.close();
-            }
-        });
-        // Let the close land and focus settle, then force our summon target.
-        std::thread::sleep(Duration::from_millis(120));
-        refocus_target(&app);
-        std::thread::sleep(Duration::from_millis(140));
-        if let Err(e) = crate::clipboard::paste(text, app.clone()) {
-            error!("[GRAIN] agent: confirm paste failed: {e}");
-            crate::bridge::emit(&app, DaemonEvent::PasteError { error: e });
-        }
-    });
-    Ok(())
 }
 
 /// Run the conversation against the configured AI and return the assistant reply.

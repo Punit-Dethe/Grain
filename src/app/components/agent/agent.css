@@ -261,7 +261,25 @@ html[data-window="agent-panel"] body {
   min-width: 0;
 }
 
-.agc-c-tools,
+.agc-c-tools {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+@media (hover: hover) {
+  .agc-c-tools {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .agc-c-turn:hover .agc-c-tools,
+  .agc-c-turn:focus-within .agc-c-tools {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .agc-confirm-actions {
   display: flex;
   gap: 4px;
@@ -274,10 +292,7 @@ html[data-window="agent-panel"] body {
 
 .agc-c-compose {
   position: relative;
-  display: flex;
   flex: none;
-  align-items: flex-end;
-  gap: 12px;
   padding: 4px 16px 7px 19px;
   background: var(--agc-bg);
 }
@@ -291,14 +306,6 @@ html[data-window="agent-panel"] body {
   pointer-events: none;
 }
 
-.agc-c-compose-actions {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-}
-
-.agc-c-insert,
 .agc-action-btn,
 .agc-cancel-btn {
   display: inline-flex;
@@ -316,17 +323,6 @@ html[data-window="agent-panel"] body {
   cursor: pointer;
 }
 
-.agc-c-insert {
-  min-height: 28px;
-  background: #d6d5d8;
-  color: #1c1b1e;
-}
-
-.agc-c-compose-actions .agc-c-tool {
-  width: 28px;
-  height: 28px;
-}
-
 .agc-action-btn {
   background: #e7ebff;
   color: #171933;
@@ -335,9 +331,6 @@ html[data-window="agent-panel"] body {
 .agc-cancel-btn:hover:not(:disabled) {
   background: #ffffff1b;
 }
-.agc-c-insert:hover:not(:disabled) {
-  background: #ededee;
-}
 .agc-action-btn:hover:not(:disabled) {
   background: #fff;
 }
@@ -345,8 +338,7 @@ html[data-window="agent-panel"] body {
 .agc-c-textarea {
   box-sizing: border-box;
   display: block;
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   min-height: 28px;
   max-height: min(76px, 24vh);
   resize: none;

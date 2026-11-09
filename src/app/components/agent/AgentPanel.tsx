@@ -68,20 +68,6 @@ export function AgentPanel() {
   hasFollowupsRef.current = hasFollowups;
   busyRef.current = busy;
 
-  const lastReplyOf = (msgs: ChatMessage[]) =>
-    [...msgs].reverse().find((m) => m.role === "assistant")?.content ?? "";
-
-  const displayedReply = hasFollowups
-    ? lastReplyOf(messages)
-    : (firstReply?.text ?? "");
-  const compactConfirmAction = firstReply?.confirm_action ?? null;
-  const expandedConfirmAction = [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant")?.confirmAction;
-  const displayedConfirmAction = hasFollowups
-    ? expandedConfirmAction
-    : compactConfirmAction;
-
   const reveal = useCallback(() => {
     revealedRef.current = true;
     setRevealed(true);
@@ -159,22 +145,6 @@ export function AgentPanel() {
     },
     [t],
   );
-
-  /** Confirm: paste the displayed reply back into the source app (backend
-   * closes this window, refocuses the target, and pastes). */
-  const confirm = useCallback(() => {
-    const pending = hasFollowupsRef.current
-      ? [...messagesRef.current]
-          .reverse()
-          .find((message) => message.role === "assistant")?.confirmAction
-      : firstReplyRef.current?.confirm_action;
-    if (pending) return;
-    const text = hasFollowupsRef.current
-      ? lastReplyOf(messagesRef.current)
-      : (firstReplyRef.current?.text ?? "");
-    if (!text.trim() || busyRef.current) return;
-    void commands.agentConfirmPaste(text).catch(() => {});
-  }, []);
 
   const retry = useCallback(() => {
     if (
@@ -363,13 +333,16 @@ export function AgentPanel() {
     if (!text.trim()) return;
     commands
       .agentCopy(text)
-      .then(() => {
+      .then((result) => {
+        if (result.status !== "ok") return;
         setFlashedId(id);
         window.clearTimeout(flashTimer.current);
         flashTimer.current = window.setTimeout(() => setFlashedId(null), 1600);
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => () => window.clearTimeout(flashTimer.current), []);
 
   useEffect(() => {
     if (!revealed) return;
@@ -448,25 +421,22 @@ export function AgentPanel() {
 
   // Selected source text is separate from the submitted message below.
   const quoteText = contextRef.current?.trim() || "";
-  const canConfirm =
-    !busy && !displayedConfirmAction && displayedReply.trim().length > 0;
   const thread: ChatMessage[] = hasFollowups
     ? messages
     : [
         ...messages,
-        ...(!busy && !error && displayedReply
+        ...(!busy && firstReply?.text
           ? [
               {
                 id: "a0",
                 role: "assistant" as const,
-                content: displayedReply,
-                confirmAction: compactConfirmAction,
+                content: firstReply.text,
+                confirmAction: firstReply.confirm_action,
               },
             ]
           : []),
       ];
-  const canRedo =
-    !hasFollowups && !busy && !displayedConfirmAction && firstReply !== null;
+  const canRetry = !hasFollowups && !busy && !firstReply?.confirm_action;
 
   return (
     <div className="agent-panel-root">
@@ -540,7 +510,7 @@ export function AgentPanel() {
                         <AgentMarkdown markdown={m.content} />
                       </div>
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
-                      {hasFollowups && (
+                      {m.content.trim() && (
                         <div className="agc-c-tools">
                           <button
                             type="button"
@@ -555,6 +525,17 @@ export function AgentPanel() {
                               <Copy size={13} />
                             )}
                           </button>
+                          {canRetry && (
+                            <button
+                              type="button"
+                              className="agc-c-tool"
+                              onClick={retry}
+                              aria-label={t("agent.retry")}
+                              title={t("agent.retry")}
+                            >
+                              <RotateCcw size={13} />
+                            </button>
+                          )}
                         </div>
                       )}
                     </>
@@ -583,47 +564,6 @@ export function AgentPanel() {
                 onInput={(event) => resizeComposer(event.currentTarget)}
                 onKeyDown={onComposerKey}
               />
-              {displayedReply && (
-                <div className="agc-c-compose-actions">
-                  <button
-                    type="button"
-                    className={
-                      flashedId === "latest"
-                        ? "agc-c-tool is-flash"
-                        : "agc-c-tool"
-                    }
-                    onClick={() => copyOne("latest", displayedReply)}
-                    aria-label={t("agent.copyReply")}
-                    title={t("agent.copyReply")}
-                  >
-                    {flashedId === "latest" ? (
-                      <Check size={13} />
-                    ) : (
-                      <Copy size={13} />
-                    )}
-                  </button>
-                  {canRedo && (
-                    <button
-                      type="button"
-                      className="agc-c-tool"
-                      onClick={retry}
-                      aria-label={t("agent.retry")}
-                      title={t("agent.retry")}
-                    >
-                      <RotateCcw size={13} />
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="agc-c-insert"
-                    disabled={!canConfirm}
-                    onClick={confirm}
-                    title={t("agent.notchPaste")}
-                  >
-                    {t("agent.notchPaste")}
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         )}

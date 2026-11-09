@@ -110,3 +110,9 @@ Agent was summoned, including while that capture is transcribing. Closing the
 notch retires its screen capture generation so a late frame cannot restore
 the cleared attachment. Removed the unused typed-summon path and retry history
 from the retired Agent UI. The composer still supports typed follow-ups.
+
+## Reply controls
+
+The composer is text-only. Each reply has its own Copy control below the
+text, revealed on hover or keyboard focus. The first reply retains Retry in
+that same row. Removed Agent's direct paste command and foreground restore.
