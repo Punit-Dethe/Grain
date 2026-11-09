@@ -115,8 +115,6 @@ export function McpPresets({
     (rows ?? []).filter((row) => browse || row.connected),
     query,
   );
-  if (!browse && !visible.length && !error && !message) return null;
-
   return (
     <section
       className="mcp-connections"
@@ -142,8 +140,14 @@ export function McpPresets({
         </div>
       )}
       {!rows && !error && <p role="status">Loading connections…</p>}
-      {rows && !visible.length && browse && (
-        <p>No connections match your search.</p>
+      {rows && !visible.length && (
+        <p>
+          {query.trim()
+            ? "No connections match your search."
+            : browse
+              ? "No preconfigured connections are available."
+              : "No apps connected yet. Open Browse extensions to connect an app."}
+        </p>
       )}
       <div className="installed-extension-list">
         {visible.map((row) => (

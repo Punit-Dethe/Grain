@@ -65,7 +65,7 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash(hashForRoute(route))).toEqual(route);
   });
 
-  it.each(["installed", "browse"] as const)(
+  it.each(["installed", "browse", "configure"] as const)(
     "round-trips the %s extension view",
     (view) => {
       const route = { page: "extensions", view } as const;

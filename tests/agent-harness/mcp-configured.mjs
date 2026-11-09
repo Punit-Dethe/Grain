@@ -70,6 +70,9 @@ export function configuredMcpHandlers(ctx) {
           await page.evaluate(() => {
             window.location.hash = "#/extensions/installed";
           });
+          await page
+            .getByRole("link", { name: "Configure MCP", exact: true })
+            .click();
           const panel = page.getByRole("region", {
             name: "Your MCP connections",
           });

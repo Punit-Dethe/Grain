@@ -21,7 +21,7 @@ export const TOOL_SECTION_IDS = ["dictionary", "snippets", "context"] as const;
 
 export type ToolSectionId = (typeof TOOL_SECTION_IDS)[number];
 
-export const EXTENSION_VIEW_IDS = ["installed", "browse"] as const;
+export const EXTENSION_VIEW_IDS = ["installed", "browse", "configure"] as const;
 
 export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
 

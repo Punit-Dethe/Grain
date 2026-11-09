@@ -19,4 +19,5 @@
 | Tools      | Snippets and Context                           | Complete          | Working             | Real feature switches, editors, controls, and anchors.    |
 | Settings   | AI dictation cleanup and Agent                        | Complete          | Working             | Groups capture processing and Agent preferences.         |
 | Extensions | Browse extensions                                      | Complete          | Working             | Shows bundled GitHub and Notion MCP presets.              |
-| Extensions | My connections                                         | Complete          | Working             | Adds and manages custom remote MCP connections.            |
+| Extensions | My connections                                         | Complete          | Working             | Shows connected apps from the bundled presets.             |
+| Extensions | Configure MCP                                          | Complete          | Working             | Adds and manages custom remote MCP connections.            |

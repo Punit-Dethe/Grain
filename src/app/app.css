@@ -4646,6 +4646,7 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
 
 .extensions-workspace-page .header-actions .button {
   flex: none;
+  text-decoration: none;
   white-space: nowrap;
 }
 
