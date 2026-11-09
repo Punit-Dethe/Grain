@@ -76,9 +76,11 @@ Starting until the microphone opens, and Enter leaves startup alone until
 there is a capture to submit. At reply time, one native bounds change
 precedes the CSS expansion. The window is shown once and uses no shadow.
 
-## Windows focus test
+## Windows reply handoff tests
 
-Preserving Windows client pixels during the reply resize did not eliminate
-the flash in the user's live test. Restored the original resize flags for
-this comparison. The Windows reply remains focusable, with activation left
-to the user's click. CSS timing stays the same. Visual confirmation is pending.
+Preserving Windows client pixels and disabling automatic reply focus both
+left the glitch visible in live testing. Restored the original resize flags
+and automatic focus. The user saw the compact notch appear to shrink or
+disappear before the reply expanded. React retains the same shell across
+the handoff. The remaining transition to isolate is the native viewport
+resize before CSS starts the expansion.

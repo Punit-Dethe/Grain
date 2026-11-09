@@ -1230,9 +1230,6 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         place_notch_at_text_scale(&window, NOTCH_REPLY);
         state.reply_visible.store(true, Ordering::SeqCst);
         let _ = window.set_focusable(true);
-        // Let the user's click activate the Windows notch. Keep activation
-        // separate from the native resize and the reply animation.
-        #[cfg(not(windows))]
         if !ordinary_dictation_live(&handle) {
             let _ = window.set_focus();
         }
