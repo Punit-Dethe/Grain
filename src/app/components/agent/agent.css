@@ -26,7 +26,7 @@ html[data-window="agent-panel"] body {
   display: flex;
   flex-direction: column;
   width: min(300px, 100vw);
-  height: min(38px, 100vh);
+  height: min(30px, 100vh);
   margin-inline: auto;
   overflow: hidden;
   isolation: isolate;
@@ -34,7 +34,7 @@ html[data-window="agent-panel"] body {
   background: var(--agc-bg);
   border: 1px solid var(--notch-line);
   border-top: 0;
-  border-radius: 0 0 17px 17px;
+  border-radius: 0 0 14px 14px;
   font-family: "IBM Plex Sans Variable", "Segoe UI", system-ui, sans-serif;
   transition:
     width 420ms var(--notch-ease),
@@ -78,7 +78,7 @@ html[data-window="agent-panel"] body {
 
 .agent-notch-header {
   box-sizing: border-box;
-  flex: 0 0 min(37px, 100vh);
+  flex: 0 0 min(29px, 100vh);
   min-width: 0;
   display: flex;
   align-items: center;

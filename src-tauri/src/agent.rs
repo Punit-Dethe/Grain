@@ -46,7 +46,7 @@ const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
 const NOTCH_REPLY: (f64, f64) = (680.0, 384.0);
 // Keep the Windows host's left edge fixed when it grows downward. The compact
 // shell still draws at 300px and stays centered in the wider viewport.
-const NOTCH_CAPTURE: (f64, f64) = (if cfg!(windows) { NOTCH_REPLY.0 } else { 300.0 }, 38.0);
+const NOTCH_CAPTURE: (f64, f64) = (if cfg!(windows) { NOTCH_REPLY.0 } else { 300.0 }, 30.0);
 
 /// The Agent's system instruction. The user's dictated/typed instruction is the
 /// task; the selected text (if any) is supplied as context separately.
