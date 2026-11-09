@@ -42,3 +42,14 @@ notch releases the Agent capture or request independently of dictation.
 Visual handoff: use `bun run dev:asr` and check the top-edge entry, the
 recording-to-working handoff, the reply expansion and scrolling, and dismissal
 from capture and working states.
+
+## Notch refinement
+
+The recording notch is 300 × 38 logical pixels and submits with Enter. The
+reply notch is 680 × 360, with a borderless composer below the scrolling
+conversation and reply actions aligned to its right. The composer stays
+available for typing or dictation while Agent is replying. Enter sends a
+nonempty draft when Agent is ready. Shift+Enter inserts a newline.
+
+Removed the follow-up shortcut and its temporary ownership of other chords.
+The composer is available as soon as the first reply is shown.

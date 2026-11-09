@@ -28,12 +28,6 @@ export function AgentSection() {
             descriptionMode="tooltip"
           />
 
-          <ShortcutInput
-            shortcutId="agent_followup"
-            grouped
-            descriptionMode="tooltip"
-          />
-
           <ToggleSwitch
             label={t("ui2.settings.agent.screenImage")}
             description={t("ui2.settings.agent.screenImageDescription")}

@@ -14,7 +14,7 @@
   "agent": {
     "brand": "Grain Assist",
     "notchListening": "Listening…",
-    "notchSubmit": "Submit recording",
+    "notchPaste": "Paste",
     "notchCancel": "Cancel Agent",
     "notchClose": "Close Agent",
     "selectionChip": "SELECTION · {{count}} CHARS",

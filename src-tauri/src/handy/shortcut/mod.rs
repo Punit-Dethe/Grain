@@ -543,8 +543,7 @@ fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementat
 
     for (id, binding) in bindings {
         // Skip cancel shortcut as it's dynamically registered
-        // Skip dynamically registered shortcuts
-        if id == "cancel" || id == "agent_followup" {
+        if id == "cancel" {
             continue;
         }
 

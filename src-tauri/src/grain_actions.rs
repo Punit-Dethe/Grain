@@ -223,18 +223,6 @@ impl ShortcutAction for AgentCloseAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
-// Ask a follow-up on the Agent's latest reply. Registered transiently by
-// agent.rs while an Agent surface (panel / pill offer) is live — never global.
-struct AgentFollowupAction;
-
-impl ShortcutAction for AgentFollowupAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        crate::agent::open_followup(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
 // Deliver a transcript whose paste missed the text field. Registered
 // transiently by paste_catch.rs while a hold is armed — never global. All work
 // (including releasing this very shortcut) happens off the input thread inside
@@ -540,10 +528,6 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "agent_close".to_string(),
         Arc::new(AgentCloseAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "agent_followup".to_string(),
-        Arc::new(AgentFollowupAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "paste_catch_deliver".to_string(),

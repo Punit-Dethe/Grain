@@ -51,7 +51,6 @@ pub fn supports_prompt_record(action_id: &str) -> bool {
 ///
 /// - `cancel` — while a recording is running.
 /// - `prompt_record` — while a dictation recording is running.
-/// - `agent_followup` — while an Agent surface (panel / pill offer) is open.
 /// - `paste_catch_deliver` — while Grain is holding a transcript whose paste
 ///   missed the text field.
 ///
@@ -59,10 +58,7 @@ pub fn supports_prompt_record(action_id: &str) -> bool {
 /// binding is a change here and nowhere else. Registering one of these globally
 /// would squat on the user's keys for a surface that is not on screen.
 pub fn is_dynamic_binding(id: &str) -> bool {
-    matches!(
-        id,
-        "cancel" | "prompt_record" | "agent_followup" | "paste_catch_deliver"
-    )
+    matches!(id, "cancel" | "prompt_record" | "paste_catch_deliver")
 }
 
 /// Whether a shortcut id should hold a global hotkey at registration time,
@@ -269,7 +265,6 @@ mod tests {
         assert!(!shortcut_holds_hotkey(&s, "summon_agent"));
         // Dynamic keys are never held at registration time.
         assert!(!shortcut_holds_hotkey(&s, "cancel"));
-        assert!(!shortcut_holds_hotkey(&s, "agent_followup"));
         assert!(!shortcut_holds_hotkey(&s, "paste_catch_deliver"));
         // An unrelated shortcut is untouched.
         assert!(shortcut_holds_hotkey(&s, "custom_binding"));
@@ -284,12 +279,7 @@ mod tests {
         s.post_process_enabled = true;
         s.agent_enabled = true;
         s.paste_catch_enabled = true;
-        for id in [
-            "cancel",
-            "prompt_record",
-            "agent_followup",
-            "paste_catch_deliver",
-        ] {
+        for id in ["cancel", "prompt_record", "paste_catch_deliver"] {
             assert!(is_dynamic_binding(id));
             assert!(!shortcut_holds_hotkey(&s, id));
         }

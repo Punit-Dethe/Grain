@@ -1336,12 +1336,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 
     // [GRAIN] Seed Agent bindings for installs that predate them.
     let defaults = get_default_settings();
-    for id in [
-        "summon_agent",
-        "agent_followup",
-        "transcribe_send_to_ai",
-        "prompt_record",
-    ] {
+    for id in ["summon_agent", "transcribe_send_to_ai", "prompt_record"] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
                 settings.bindings.insert(id.to_string(), binding.clone());
@@ -1466,28 +1461,8 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // [GRAIN] Ask a follow-up on the Agent's latest reply. Only registered as a
-    // GLOBAL shortcut while an Agent surface (reply card / pill offer) is live —
-    // and in that window it OVERRIDES any other Grain binding using the same keys.
-    #[cfg(target_os = "macos")]
-    let default_agent_followup_shortcut = "option+f";
-    #[cfg(not(target_os = "macos"))]
-    let default_agent_followup_shortcut = "alt+f";
-    bindings.insert(
-        "agent_followup".to_string(),
-        ShortcutBinding {
-            id: "agent_followup".to_string(),
-            name: "Agent Follow-up".to_string(),
-            description:
-                "Ask a follow-up on the Agent's latest reply. Active only while the Agent is open."
-                    .to_string(),
-            default_binding: default_agent_followup_shortcut.to_string(),
-            current_binding: default_agent_followup_shortcut.to_string(),
-        },
-    );
-
     // [GRAIN] Paste Catch: deliver a transcript whose paste missed the text
-    // field. Like `agent_followup`, this is registered as a GLOBAL shortcut only
+    // field. This is registered as a global shortcut only
     // while an offer is live — outside that window the keys belong to whatever
     // else the user has bound them to.
     #[cfg(target_os = "macos")]

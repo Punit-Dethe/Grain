@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ArrowUp, AudioLines, Copy, RotateCcw, X, Check } from "lucide-react";
+import { AudioLines, Copy, RotateCcw, X, Check } from "lucide-react";
 import {
   commands,
   type AgentMessage,
@@ -23,34 +23,9 @@ interface ChatMessage {
 }
 
 const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const ENTER_GLYPH = "⏎";
-
-/** Pretty-print one part of a shortcut binding for the keycap chips. */
-function keycapLabel(part: string): string {
-  const p = part.trim().toLowerCase();
-  switch (p) {
-    case "ctrl":
-    case "control":
-      return "Ctrl";
-    case "alt":
-      return "Alt";
-    case "option":
-      return "⌥";
-    case "shift":
-      return "⇧";
-    case "meta":
-    case "cmd":
-    case "command":
-      return "⌘";
-    case "enter":
-      return ENTER_GLYPH;
-    case "space":
-      return "Space";
-    case "escape":
-      return "Esc";
-    default:
-      return p.length === 1 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1);
-  }
+function resizeComposer(input: HTMLTextAreaElement) {
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 76)}px`;
 }
 
 export function AgentPanel() {
@@ -63,13 +38,12 @@ export function AgentPanel() {
   // each one handled the same event again (one dictation pasted N times).
   const win = useMemo(() => getCurrentWindow(), []);
 
-  // Conversation (expanded stage). In the compact stage this holds only the
-  // first user turn; the assistant replies live in `versions`.
+  // Until the first follow-up, the assistant reply lives in the retry history.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Retry versions of the FIRST reply (compact stage), and which one is shown.
   const [versions, setVersions] = useState<AgentReply[]>([]);
   const [versionIdx, setVersionIdx] = useState(0);
-  const [expanded, setExpanded] = useState(false);
+  const [hasFollowups, setHasFollowups] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [flashedId, setFlashedId] = useState<string | null>(null);
@@ -81,19 +55,14 @@ export function AgentPanel() {
     working: boolean;
   } | null>(null);
   const generationRef = useRef<number | null>(null);
-  const [followupShortcut, setFollowupShortcut] = useState("");
-  const [composing, setComposing] = useState(false);
-  const composingRef = useRef(false);
-  composingRef.current = composing;
-
   const contextRef = useRef<string | null>(null);
   const instructionRef = useRef<string>("");
   const messagesRef = useRef<ChatMessage[]>([]);
   const versionsRef = useRef<AgentReply[]>([]);
   const versionIdxRef = useRef(0);
-  const expandedRef = useRef(false);
+  const hasFollowupsRef = useRef(false);
   const busyRef = useRef(false);
-  const centerInputRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const flashTimer = useRef<number | undefined>(undefined);
   // Guards the first LLM run so the mount-take and the `agent-instruction`
@@ -103,21 +72,21 @@ export function AgentPanel() {
   messagesRef.current = messages;
   versionsRef.current = versions;
   versionIdxRef.current = versionIdx;
-  expandedRef.current = expanded;
+  hasFollowupsRef.current = hasFollowups;
   busyRef.current = busy;
 
   const lastReplyOf = (msgs: ChatMessage[]) =>
     [...msgs].reverse().find((m) => m.role === "assistant")?.content ?? "";
 
   /** The reply the surface currently presents (pager-aware in compact). */
-  const displayedReply = expanded
+  const displayedReply = hasFollowups
     ? lastReplyOf(messages)
     : (versions[versionIdx]?.text ?? "");
   const compactConfirmAction = versions[versionIdx]?.confirm_action ?? null;
   const expandedConfirmAction = [...messages]
     .reverse()
     .find((message) => message.role === "assistant")?.confirmAction;
-  const displayedConfirmAction = expanded
+  const displayedConfirmAction = hasFollowups
     ? expandedConfirmAction
     : compactConfirmAction;
 
@@ -164,7 +133,7 @@ export function AgentPanel() {
     [t],
   );
 
-  /** Run the whole conversation — expanded stage. */
+  /** Run the conversation with its existing turns. */
   const runConversation = useCallback(
     async (history: ChatMessage[]) => {
       setBusy(true);
@@ -205,23 +174,16 @@ export function AgentPanel() {
     [t],
   );
 
-  /** Open the CENTER follow-up field (button click or the continuation
-   * shortcut). Once open it stays open for the session. */
-  const startCompose = useCallback(() => {
-    setComposing(true);
-    requestAnimationFrame(() => centerInputRef.current?.focus());
-  }, []);
-
   /** Confirm: paste the displayed reply back into the source app (backend
    * closes this window, refocuses the target, and pastes). */
   const confirm = useCallback(() => {
-    const pending = expandedRef.current
+    const pending = hasFollowupsRef.current
       ? [...messagesRef.current]
           .reverse()
           .find((message) => message.role === "assistant")?.confirmAction
       : versionsRef.current[versionIdxRef.current]?.confirm_action;
     if (pending) return;
-    const text = expandedRef.current
+    const text = hasFollowupsRef.current
       ? lastReplyOf(messagesRef.current)
       : (versionsRef.current[versionIdxRef.current]?.text ?? "");
     if (!text.trim() || busyRef.current) return;
@@ -231,7 +193,7 @@ export function AgentPanel() {
   const retry = useCallback(() => {
     if (
       busyRef.current ||
-      expandedRef.current ||
+      hasFollowupsRef.current ||
       !instructionRef.current ||
       versionsRef.current[versionIdxRef.current]?.confirm_action
     )
@@ -271,15 +233,6 @@ export function AgentPanel() {
       if (dead) release();
       else unlisten.push(release);
     };
-    void (async () => {
-      const settings = await commands.getAppSettings();
-      if (!dead && settings.status === "ok") {
-        setFollowupShortcut(
-          settings.data.bindings.agent_followup?.current_binding ?? "",
-        );
-      }
-    })().catch(console.error);
-
     let workingGeneration: number | null = null;
     void Promise.all([
       win
@@ -296,25 +249,16 @@ export function AgentPanel() {
         .listen("agent-instruction", () => void startFirstIfQueued())
         .then(track),
       win.listen("agent-reveal", reveal).then(track),
-      win.listen("agent-followup", startCompose).then(track),
       win
         .listen<string>("agent-panel-dictation", ({ payload }) => {
           const dictated = payload.trim();
           if (!dictated || !revealedRef.current) return;
-          const append = () => {
-            const el = centerInputRef.current;
-            if (dead || !el) return;
-            const sep = el.value && !el.value.endsWith(" ") ? " " : "";
-            el.value += sep + dictated;
-            el.style.height = "auto";
-            el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
-            el.focus();
-          };
-          if (composingRef.current) append();
-          else {
-            startCompose();
-            requestAnimationFrame(append);
-          }
+          const input = composerRef.current;
+          if (!input) return;
+          const separator = input.value && !/\s$/.test(input.value) ? " " : "";
+          input.value += separator + dictated;
+          resizeComposer(input);
+          input.focus();
         })
         .then(track),
     ])
@@ -337,7 +281,7 @@ export function AgentPanel() {
       dead = true;
       unlisten.forEach((release) => release());
     };
-  }, [reveal, startCompose, startFirstIfQueued, win]);
+  }, [reveal, startFirstIfQueued, win]);
 
   // Reveal only after reply/error state has committed. The host verifies that
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
@@ -354,14 +298,15 @@ export function AgentPanel() {
   }, [busy, error, revealed, versions.length]);
 
   useEffect(() => {
-    if (revealed && expanded) endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, expanded, busy, revealed]);
+    if (revealed && hasFollowups)
+      endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, hasFollowups, busy, revealed]);
 
   const runFollowup = useCallback(
     async (text: string) => {
       if (!text.trim() || busyRef.current) return;
       let base = messagesRef.current;
-      if (!expandedRef.current) {
+      if (!hasFollowupsRef.current) {
         const seed: ChatMessage[] = [];
         if (instructionRef.current) {
           seed.push({
@@ -380,8 +325,7 @@ export function AgentPanel() {
           });
         }
         base = seed;
-        setMessages(seed);
-        setExpanded(true);
+        setHasFollowups(true);
       }
       const next: ChatMessage[] = [
         ...base,
@@ -389,39 +333,27 @@ export function AgentPanel() {
       ];
       setMessages(next);
       await runConversation(next);
-      centerInputRef.current?.focus();
     },
     [runConversation],
   );
 
-  /** Grow the follow-up textarea with its content (capped, then it scrolls). */
-  const autoGrowTextarea = useCallback(() => {
-    const el = centerInputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
-  }, []);
-
-  const onCenterKey = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        if (busyRef.current) return;
-        const el = centerInputRef.current;
-        const text = el?.value.trim() ?? "";
-        if (text) {
-          if (el) {
-            el.value = "";
-            el.style.height = "auto";
-          }
-          void runFollowup(text);
-        } else {
-          // Enter on an empty field = insert the shown answer into the app.
-          confirm();
-        }
-      }
+  const onComposerKey = useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (
+        event.key !== "Enter" ||
+        event.shiftKey ||
+        event.nativeEvent.isComposing
+      )
+        return;
+      event.preventDefault();
+      const input = event.currentTarget;
+      const text = input.value.trim();
+      if (!text || busyRef.current) return;
+      input.value = "";
+      resizeComposer(input);
+      void runFollowup(text);
     },
-    [runFollowup, confirm],
+    [runFollowup],
   );
 
   /** Copy one specific answer (the per-reply copy affordance). Only the copied
@@ -438,34 +370,17 @@ export function AgentPanel() {
       .catch(() => {});
   }, []);
 
-  // CENTER: "just start typing" opens the follow-up field, seeded with the key —
-  // the same type-to-expand feel as the summon pill. Only while the panel is
-  // focused (global keydown), not composing, and idle.
   useEffect(() => {
     if (!revealed) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (composingRef.current || busyRef.current) return;
-      if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return;
-      const target = e.target as HTMLElement | null;
-      if (
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLInputElement
-      )
-        return;
-      e.preventDefault();
-      const ch = e.key;
-      startCompose();
-      requestAnimationFrame(() => {
-        const el = centerInputRef.current;
-        if (!el) return;
-        el.value = ch;
-        el.style.height = "auto";
-        el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
-      });
+    const focusComposer = () => {
+      if (document.hasFocus() && document.activeElement === document.body) {
+        composerRef.current?.focus();
+      }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [revealed, startCompose]);
+    focusComposer();
+    window.addEventListener("focus", focusComposer);
+    return () => window.removeEventListener("focus", focusComposer);
+  }, [revealed]);
 
   /** Resume exactly the host-held action shown in this reply. The model is not
    * called again and cannot substitute a provider, tool, or argument. */
@@ -534,12 +449,9 @@ export function AgentPanel() {
 
   // Selected source text is separate from the submitted message below.
   const quoteText = contextRef.current?.trim() || "";
-  const shortcutParts = followupShortcut
-    ? followupShortcut.split("+").map(keycapLabel)
-    : [];
   const canConfirm =
     !busy && !displayedConfirmAction && displayedReply.trim().length > 0;
-  const thread: ChatMessage[] = expanded
+  const thread: ChatMessage[] = hasFollowups
     ? messages
     : [
         ...messages,
@@ -554,13 +466,10 @@ export function AgentPanel() {
             ]
           : []),
       ];
-  const hasAnswer = thread.some((m) => m.role === "assistant");
   // Redo re-runs the first instruction only (there are no versions once the
   // conversation branches), so it lives under the sole pre-follow-up answer.
   const canRedo =
-    !expanded && !busy && !displayedConfirmAction && versions.length > 0;
-  // The shortcut reads as one unit, e.g. "Alt Q" — never split into chips.
-  const shortcutLabel = shortcutParts.join(" ");
+    !hasFollowups && !busy && !displayedConfirmAction && versions.length > 0;
 
   return (
     <div className="agent-panel-root">
@@ -569,11 +478,15 @@ export function AgentPanel() {
         aria-label={t("agent.brand")}
       >
         <header className="agent-notch-header">
-          <AudioLines
-            size={16}
-            className="agent-notch-mark"
-            aria-hidden="true"
-          />
+          {revealed ? (
+            <AudioLines
+              size={15}
+              className="agent-notch-mark"
+              aria-hidden="true"
+            />
+          ) : (
+            <span className="agent-notch-indicator" aria-hidden="true" />
+          )}
           <span className="agent-notch-label">
             {revealed ? (
               t("agent.brand")
@@ -588,19 +501,6 @@ export function AgentPanel() {
               <CaptureWaveform ready session={capture?.generation ?? 0} />
             </div>
           )}
-          {!revealed && capture && !capture.working && (
-            <button
-              type="button"
-              className="agent-notch-control agent-notch-submit"
-              title={t("agent.notchSubmit")}
-              aria-label={t("agent.notchSubmit")}
-              onClick={() =>
-                void commands.agentNotchAction(capture.generation, true)
-              }
-            >
-              <ArrowUp size={15} />
-            </button>
-          )}
           <button
             type="button"
             className="agent-notch-control agent-notch-close"
@@ -612,7 +512,7 @@ export function AgentPanel() {
             onClick={() => {
               if (revealed) void win.close();
               else if (capture)
-                void commands.agentNotchAction(capture.generation, false);
+                void commands.agentCancelNotch(capture.generation);
             }}
           >
             <X size={15} />
@@ -622,7 +522,7 @@ export function AgentPanel() {
         {revealed && (
           <div className="agent-notch-reply">
             <div className="agc-c-scroll">
-              {quoteText && !expanded && (
+              {quoteText && !hasFollowups && (
                 <button
                   className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
                   onClick={() => setQuoteOpen((v) => !v)}
@@ -643,7 +543,7 @@ export function AgentPanel() {
                         <AgentMarkdown markdown={m.content} />
                       </div>
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
-                      {expanded && (
+                      {hasFollowups && (
                         <div className="agc-c-tools">
                           <button
                             type="button"
@@ -676,76 +576,58 @@ export function AgentPanel() {
               <div ref={endRef} />
             </div>
 
-            {/* Bottom: JUST the text field once composing; otherwise the quiet
-              follow-up + shortcut (left) and Confirm on the first reply (right). */}
-            {composing ? (
-              <div className="agc-c-compose">
-                {/* Enabled while busy, so users can draft a follow-up. */}
-                <textarea
-                  ref={centerInputRef}
-                  rows={1}
-                  className="agc-c-textarea"
-                  placeholder={
-                    busy
-                      ? t("agent.followupWaiting")
-                      : t("agent.followupPlaceholder")
-                  }
-                  onInput={autoGrowTextarea}
-                  onKeyDown={onCenterKey}
-                />
-              </div>
-            ) : hasAnswer ? (
-              <div className="agc-c-bar">
-                <button
-                  type="button"
-                  className="agc-c-followup"
-                  disabled={busy}
-                  onClick={startCompose}
-                >
-                  {t("agent.askFollowup")}
-                  {shortcutLabel && (
-                    <span className="agc-c-kbd">{shortcutLabel}</span>
-                  )}
-                </button>
-                <span className="agc-spacer" />
-                {!expanded && (
-                  <>
-                    <button
-                      type="button"
-                      className={`agc-c-tool agc-c-bar-tool ${flashedId === "a0" ? "is-flash" : ""}`}
-                      onClick={() => copyOne("a0", displayedReply)}
-                      title={t("agent.copyReply")}
-                    >
-                      {flashedId === "a0" ? (
-                        <Check size={13} />
-                      ) : (
-                        <Copy size={13} />
-                      )}
-                    </button>
-                    {canRedo && (
-                      <button
-                        type="button"
-                        className="agc-c-tool agc-c-bar-tool"
-                        onClick={retry}
-                        aria-label={t("agent.retry")}
-                        title={t("agent.retry")}
-                      >
-                        <RotateCcw size={13} />
-                      </button>
+            <div className="agc-c-compose">
+              <textarea
+                ref={composerRef}
+                rows={1}
+                className="agc-c-textarea"
+                aria-label={t("agent.placeholderAsk")}
+                placeholder={t("agent.placeholderAsk")}
+                onInput={(event) => resizeComposer(event.currentTarget)}
+                onKeyDown={onComposerKey}
+              />
+              {displayedReply && (
+                <div className="agc-c-compose-actions">
+                  <button
+                    type="button"
+                    className={
+                      flashedId === "latest"
+                        ? "agc-c-tool is-flash"
+                        : "agc-c-tool"
+                    }
+                    onClick={() => copyOne("latest", displayedReply)}
+                    aria-label={t("agent.copyReply")}
+                    title={t("agent.copyReply")}
+                  >
+                    {flashedId === "latest" ? (
+                      <Check size={13} />
+                    ) : (
+                      <Copy size={13} />
                     )}
+                  </button>
+                  {canRedo && (
                     <button
                       type="button"
-                      className="agc-c-insert"
-                      disabled={!canConfirm}
-                      onClick={confirm}
-                      title={t("agent.confirmHint")}
+                      className="agc-c-tool"
+                      onClick={retry}
+                      aria-label={t("agent.retry")}
+                      title={t("agent.retry")}
                     >
-                      {t("agent.confirm")}
+                      <RotateCcw size={13} />
                     </button>
-                  </>
-                )}
-              </div>
-            ) : null}
+                  )}
+                  <button
+                    type="button"
+                    className="agc-c-insert"
+                    disabled={!canConfirm}
+                    onClick={confirm}
+                    title={t("agent.notchPaste")}
+                  >
+                    {t("agent.notchPaste")}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </section>

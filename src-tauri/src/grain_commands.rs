@@ -118,14 +118,9 @@ mod capture_shortcut_conflict_tests {
                 "transcribe",
                 &settings.bindings["transcribe"].current_binding
             ));
-            assert!(!capture_shortcut_conflicts(
-                &settings,
-                "agent_followup",
-                &settings.bindings["transcribe"].current_binding
-            ));
             settings
                 .bindings
-                .get_mut("agent_followup")
+                .get_mut("paste_catch_deliver")
                 .unwrap()
                 .current_binding = "alt+ctrl+f9".into();
             assert!(!capture_shortcut_conflicts(

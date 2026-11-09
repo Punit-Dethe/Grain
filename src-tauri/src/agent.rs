@@ -50,14 +50,9 @@ pub const PANEL_LABEL: &str = "agent-panel";
 const AGENT_BINDING: &str = "agent";
 const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
-/// The user-configurable "ask follow-up" binding id (seeded in settings). Only
-/// ever registered TRANSIENTLY while an Agent surface (reply panel) is
-/// live â€” and in that window it overrides any other Grain binding on the same
-/// keys (suppressed at register, restored at teardown).
-const AGENT_FOLLOWUP_BINDING: &str = "agent_followup";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-const NOTCH_CAPTURE: (f64, f64) = (300.0, 54.0);
-const NOTCH_REPLY: (f64, f64) = (580.0, 460.0);
+const NOTCH_CAPTURE: (f64, f64) = (300.0, 38.0);
+const NOTCH_REPLY: (f64, f64) = (680.0, 360.0);
 
 /// The Agent's system instruction. The user's dictated/typed instruction is the
 /// task; the selected text (if any) is supplied as context separately.
@@ -340,8 +335,6 @@ pub struct AgentState {
     /// ends ("destroy if not in use"); [`CapturedImage`] zeroes its buffer on the
     /// way out, so ending a session actually erases the picture.
     pub screen_image: Mutex<Option<CapturedImage>>,
-    /// Grain bindings suppressed while the follow-up shortcut overrides them.
-    pub suppressed_bindings: Mutex<Vec<ShortcutBinding>>,
     /// [GRAIN] Bumped on every summon. Work that finishes AFTER the summon
     /// returns (the screen capture) compares against it before writing, so a
     /// slow capture can never land in the session that superseded it.
@@ -1263,16 +1256,12 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn agent_notch_action(app: AppHandle, generation: u64, submit: bool) {
+pub async fn agent_cancel_notch(app: AppHandle, generation: u64) {
     let state = app.state::<AgentState>();
     if state.summon_gen.load(Ordering::SeqCst) != generation {
         return;
     }
-    if submit {
-        input_submit_voice(&app);
-    } else {
-        cancel_notch_capture(&app);
-    }
+    cancel_notch_capture(&app);
 }
 
 fn cancel_notch_capture(app: &AppHandle) {
@@ -1308,7 +1297,6 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         };
         place_notch(&window, NOTCH_REPLY);
         state.reply_visible.store(true, Ordering::SeqCst);
-        register_followup_shortcut(&handle);
         let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
         if !ordinary_dictation_live(&handle) {
             show_and_focus(&window);
@@ -1606,81 +1594,6 @@ fn transient_bindings() -> [ShortcutBinding; 2] {
     [submit_binding(), close_binding()]
 }
 
-/// The user-configured follow-up binding (falls back to the seeded default).
-fn followup_binding(app: &AppHandle) -> ShortcutBinding {
-    get_settings(app)
-        .bindings
-        .get(AGENT_FOLLOWUP_BINDING)
-        .cloned()
-        .unwrap_or_else(|| {
-            crate::settings::get_default_settings()
-                .bindings
-                .get(AGENT_FOLLOWUP_BINDING)
-                .cloned()
-                .expect("agent_followup default binding exists")
-        })
-}
-
-/// Register the follow-up shortcut for the lifetime of the Agent surface. It
-/// OVERRIDES any other Grain binding on the same keys: conflicting bindings are
-/// unregistered and remembered, then restored at [`unregister_followup_shortcut`]
-/// â€” so the user can share one accelerator between a global action and the
-/// Agent, with the Agent winning while it is open.
-fn register_followup_shortcut(app: &AppHandle) {
-    if let Some(state) = app.try_state::<AgentState>() {
-        state
-            .transient_shortcuts
-            .claim(|| register_followup_shortcut_inner(app));
-    }
-}
-
-fn register_followup_shortcut_inner(app: &AppHandle) {
-    let binding = followup_binding(app);
-    let accel = binding.current_binding.trim().to_ascii_lowercase();
-    if accel.is_empty() {
-        return;
-    }
-    let settings = get_settings(app);
-    if let Some(state) = app.try_state::<AgentState>() {
-        if let Ok(mut suppressed) = state.suppressed_bindings.lock() {
-            for (id, b) in settings.bindings.iter() {
-                // Dynamic bindings are never globally registered â€” nothing to
-                // suppress. [GRAIN] `transcribe_send_to_ai` left this list when
-                // it became a first-class shortcut; it is globally registered
-                // now, so a conflict with it is real and must be suppressed.
-                if grain_core::capture::is_dynamic_binding(id) {
-                    continue;
-                }
-                if b.current_binding.trim().eq_ignore_ascii_case(&accel)
-                    && !suppressed.iter().any(|s| s.id == b.id)
-                {
-                    let _ = crate::shortcut::unregister_shortcut(app, b.clone());
-                    suppressed.push(b.clone());
-                }
-            }
-        }
-    }
-    register_one_transient_inner(app, binding);
-}
-
-/// Release the transient follow-up shortcut and restore any Grain bindings it
-/// suppressed while overriding them.
-fn unregister_followup_shortcut(app: &AppHandle) {
-    let _ = crate::shortcut::unregister_shortcut(app, followup_binding(app));
-    if let Some(state) = app.try_state::<AgentState>() {
-        if let Ok(mut suppressed) = state.suppressed_bindings.lock() {
-            for b in suppressed.drain(..) {
-                if let Err(e) = crate::shortcut::register_shortcut(app, b.clone()) {
-                    warn!(
-                        "[GRAIN] agent: failed to restore suppressed binding '{}': {e}",
-                        b.id
-                    );
-                }
-            }
-        }
-    }
-}
-
 /// Register temporary global Enter/Escape while the Agent is visible. This
 /// mirrors the old QML assist workflow and covers Windows focus loss, where the
 /// palette is on screen but ordinary webview keydown events never arrive.
@@ -1737,7 +1650,6 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
                 return;
             }
             unregister_transient_shortcuts(&app);
-            unregister_followup_shortcut(&app);
             // [GRAIN] A normal dictation may have started while the Agent panel owned
             // Escape. Its cancel registration is deliberately skipped in that case
             // (one accelerator can have only one owner). If the panel was closed by
@@ -1761,17 +1673,6 @@ pub fn global_submit(app: &AppHandle) {
         .unwrap_or(false);
     if input_live {
         input_submit_voice(app);
-    }
-}
-
-/// Expand the visible reply panel for a follow-up.
-pub fn open_followup(app: &AppHandle) {
-    if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
-        if !blocks_dictation(app) && !waiting_for_reply(app) && panel.is_visible().unwrap_or(false)
-        {
-            let _ = app.emit_to(PANEL_LABEL, "agent-followup", ());
-            show_and_focus(&panel);
-        }
     }
 }
 

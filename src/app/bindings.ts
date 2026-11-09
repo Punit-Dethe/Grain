@@ -1025,8 +1025,8 @@ async agentConfirmAction(token: string, approve: boolean) : Promise<Result<Agent
 async agentNotchStatus() : Promise<AgentNotchStatus> {
     return await TAURI_INVOKE("agent_notch_status");
 },
-async agentNotchAction(generation: number, submit: boolean) : Promise<void> {
-    await TAURI_INVOKE("agent_notch_action", { generation, submit });
+async agentCancelNotch(generation: number) : Promise<void> {
+    await TAURI_INVOKE("agent_cancel_notch", { generation });
 },
 /**
  * Confirm (âŽ on the reply card): close the panel, refocus the summon target,
