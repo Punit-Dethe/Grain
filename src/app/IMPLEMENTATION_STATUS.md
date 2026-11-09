@@ -7,7 +7,6 @@
 | Overview   | Studio shortcut                                        | Complete          | Working             | Opens the Dictionary section in Studio.                   |
 | Overview   | Standard capture                                       | Visible, disabled | Intentionally inert | Shortcut exists, no renderer-callable capture command.    |
 | Overview   | Flow capture                                           | Visible, disabled | Intentionally inert | Shortcut exists, no renderer-callable capture command.    |
-| Overview   | Quick Agent                                            | Visible, disabled | Intentionally inert | Agent summon is not renderer-callable.                    |
 | Overview   | Edit actions                                           | Visible, disabled | Intentionally inert | No customization API.                                     |
 | Overview   | Design panel                                           | Visible, disabled | Intentionally inert | Prototype-only design tool.                               |
 | Shell      | Quick panel                                            | Visible, disabled | Deferred            | Deferred to Overview/cutover consolidation.               |
@@ -17,6 +16,7 @@
 | Settings   | Appearance (system / light / dark)                     | Complete          | Working             | Three-mode row; the legacy two-state toggle is next-only. |
 | About      | Own tab: language, version, locations, acknowledgments | Complete          | Working             | Re-skins the real About surface; parity gap closed.       |
 | Tools      | Dictionary and automatic dictionary                    | Complete          | Working             | Real validation, persistence, and update states retained. |
-| Tools      | Snippets, Context, and Agent                           | Complete          | Working             | Real feature switches, editors, controls, and anchors.    |
+| Tools      | Snippets and Context                           | Complete          | Working             | Real feature switches, editors, controls, and anchors.    |
+| Settings   | AI dictation cleanup and Agent                        | Complete          | Working             | Groups capture processing and Agent preferences.         |
 | Extensions | Browse extensions                                      | Complete          | Working             | Shows bundled GitHub and Notion MCP presets.              |
 | Extensions | My connections                                         | Complete          | Working             | Adds and manages custom remote MCP connections.            |

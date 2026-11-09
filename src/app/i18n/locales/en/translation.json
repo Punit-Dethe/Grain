@@ -962,10 +962,24 @@
       "eyebrow": "Configuration",
       "localState": "Stored locally",
       "loading": "Loading settings",
+      "ai": {
+        "dictationCleanup": "Dictation cleanup"
+      },
+      "agent": {
+        "group": "Agent",
+        "enabled": "Enable Agent",
+        "enabledDescription": "Use the Agent shortcut to speak a request.",
+        "replyLayout": "Reply layout",
+        "replyLayoutDescription": "Choose where Agent replies appear.",
+        "sideCard": "Side card",
+        "centerPanel": "Center panel (beta)",
+        "screenImage": "See my screen",
+        "screenImageDescription": "Send an image of the active window to the selected AI model when you summon Agent. Grain keeps it only for the conversation."
+      },
       "sections": {
         "capture": {
           "label": "Transcription",
-          "description": "Models, recording shortcuts and AI processing."
+          "description": "Models, recording shortcuts and capture behavior."
         },
         "audio": {
           "label": "Audio",
@@ -978,6 +992,10 @@
         "application": {
           "label": "Application",
           "description": "Appearance, startup, the tray, what Grain keeps on disk, and experiments."
+        },
+        "ai": {
+          "label": "AI",
+          "description": "Dictation cleanup, Agent shortcuts and reply settings."
         },
         "post-processing": {
           "label": "Post-processing",

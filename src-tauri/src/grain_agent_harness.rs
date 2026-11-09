@@ -222,9 +222,7 @@ pub fn configure(app: &AppHandle) -> Result<(), String> {
     settings.always_on_microphone = false;
     settings.start_hidden = false;
     settings.agent_enabled = true;
-    settings.agent_autocopy = crate::settings::AgentAutocopy::Off;
     settings.agent_screen_image = false;
-    settings.agent_quick_enabled = false;
     settings.agent_panel_position = crate::settings::AgentPanelPosition::Center;
     settings.extension_developer_mode = true;
     // Preserve only exact anonymous records belonging to this isolated peer.

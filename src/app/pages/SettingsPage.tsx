@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { AboutSettings } from "@/components/settings/about/AboutSettings";
+import { AiPane } from "../settings/panes/AiPane";
 import { DebugSettings } from "@/components/settings/debug/DebugSettings";
 import { PostProcessingSettings } from "@/components/settings/post-processing/PostProcessingSettings";
 import { ApplicationPane } from "../settings/panes/ApplicationPane";
@@ -21,6 +22,7 @@ const sectionComponents: Record<SettingsSectionId, ComponentType> = {
   audio: AudioPane,
   output: OutputPane,
   application: ApplicationPane,
+  ai: AiPane,
   "post-processing": PostProcessingSettings,
   debug: DebugSettings,
   about: AboutSettings,

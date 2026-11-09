@@ -690,7 +690,6 @@ mod tests {
             legacy["agent_context_mode"] = serde_json::json!(mode);
             legacy["context_awareness_enabled"] = serde_json::json!(true);
             legacy["agent_screen_image"] = serde_json::json!(true);
-            legacy["agent_quick_enabled"] = serde_json::json!(true);
             legacy["selected_language"] = serde_json::json!("fr");
             fs::write(
                 data.join(SETTINGS_FILE),
@@ -704,7 +703,6 @@ mod tests {
             let settings = reloaded.settings();
             assert!(settings.context_awareness_enabled);
             assert!(settings.agent_screen_image);
-            assert!(settings.agent_quick_enabled);
             assert!(settings.agent_enabled);
             assert_eq!(settings.selected_language, "fr");
             let saved: serde_json::Value =

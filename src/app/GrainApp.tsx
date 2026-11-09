@@ -28,7 +28,6 @@ import {
 } from "./navigation";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ToolsPage } from "./pages/ToolsPage";
-import { AgentPage } from "./pages/AgentPage";
 import { MeetPage } from "./pages/MeetPage";
 import { ExtensionsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
@@ -261,7 +260,6 @@ const NAV_ITEMS = [
     icon: "zap",
     href: "#/tools/dictionary",
   },
-  { page: "agent", label: "Agent", icon: "agent", href: "#/agent" },
   {
     page: "extensions",
     label: "Extensions",
@@ -692,8 +690,6 @@ function NextShell() {
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (
           <ToolsPage section={route.section} />
-        ) : route.page === "agent" ? (
-          <AgentPage />
         ) : route.page === "extensions" ? (
           <ExtensionsPage view={route.view} />
         ) : (

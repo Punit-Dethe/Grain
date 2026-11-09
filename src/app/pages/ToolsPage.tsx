@@ -1,7 +1,6 @@
 /* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Bot,
   BookOpen,
   Code2,
   CornerDownRight,
@@ -12,7 +11,6 @@ import {
   X,
 } from "lucide-react";
 import { commands, type Snippet } from "@/bindings";
-import { AgentSection } from "@/components/settings/experimentations/AgentSection";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
@@ -22,21 +20,18 @@ import {
   TOOL_SECTION_IDS,
   type ToolSectionId,
 } from "../navigation";
-import studioFeatureAgentBg from "../overview/studio-feature-agent.webp";
 import studioFeatureBg from "../overview/studio-feature-bg.webp";
 import studioFeatureContextBg from "../overview/studio-feature-context.webp";
 import studioFeatureSnippetsBg from "../overview/studio-feature-snippets.webp";
-import { type ToolSection } from "../extensions/extensionRuntime";
 
-const STUDIO_FEATURE_IMAGES: Record<ToolSection, string> = {
+const STUDIO_FEATURE_IMAGES: Record<ToolSectionId, string> = {
   dictionary: studioFeatureBg,
   snippets: studioFeatureSnippetsBg,
   context: studioFeatureContextBg,
-  agent: studioFeatureAgentBg,
 };
 
 const TOOL_COPY: Record<
-  ToolSection,
+  ToolSectionId,
   { title: string; description: string; icon: typeof BookOpen }
 > = {
   dictionary: {
@@ -56,12 +51,6 @@ const TOOL_COPY: Record<
     description:
       "At Stop, Grain reads the active app and nearby caret text (Windows). With AI post-processing, your words and that short context go to your selected AI provider so the insertion fits.",
     icon: Sparkles,
-  },
-  agent: {
-    title: "Agent",
-    description:
-      "Configure Grain's local writing assistant and the actions available from selected text, without leaving your workspace.",
-    icon: Bot,
   },
 };
 
@@ -505,27 +494,6 @@ function ContextMasterToggle() {
   );
 }
 
-function AgentMasterToggle() {
-  const { getSetting, updateSetting, isUpdating } = useSettings();
-  const enabled = getSetting("agent_enabled") ?? false;
-  const busy = isUpdating("agent_enabled");
-
-  return (
-    <label className="tool-master-toggle" title="Turn Agent on or off">
-      <span className="sr-only">Enable Agent</span>
-      <input
-        type="checkbox"
-        checked={enabled}
-        disabled={busy}
-        onChange={(event) =>
-          void updateSetting("agent_enabled", event.target.checked)
-        }
-      />
-      <span className="tool-master-toggle-track" aria-hidden="true" />
-    </label>
-  );
-}
-
 function SnippetsTool() {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = getSetting("snippets_enabled") ?? false;
@@ -693,27 +661,7 @@ function ContextTool() {
   );
 }
 
-function AgentTool() {
-  const { getSetting } = useSettings();
-  const enabled = getSetting("agent_enabled") ?? false;
-
-  return (
-    <>
-      {/* The image card above owns the title and switch; only settings appear here. */}
-      {enabled && (
-        <>
-          <section className="agent-workspace tool-component-host studio-core-workspace">
-            <SettingsGroup>
-              <AgentSection />
-            </SettingsGroup>
-          </section>
-        </>
-      )}
-    </>
-  );
-}
-
-export function ToolCanvas({ section }: { section: ToolSection }) {
+function ToolCanvas({ section }: { section: ToolSectionId }) {
   const copy = TOOL_COPY[section];
   return (
     <section className="tools-canvas" aria-labelledby="next-tool-title">
@@ -729,11 +677,7 @@ export function ToolCanvas({ section }: { section: ToolSection }) {
             />
             <div className="studio-feature-copy">
               <h1 id="next-tool-title">
-                {section === "dictionary"
-                  ? "Personal Dictionary"
-                  : section === "agent"
-                    ? "Grain Agent"
-                    : copy.title}
+                {section === "dictionary" ? "Personal Dictionary" : copy.title}
               </h1>
               <p>{copy.description}</p>
             </div>
@@ -741,7 +685,6 @@ export function ToolCanvas({ section }: { section: ToolSection }) {
               <div className="studio-feature-toggle">
                 {section === "snippets" && <SnippetsMasterToggle />}
                 {section === "context" && <ContextMasterToggle />}
-                {section === "agent" && <AgentMasterToggle />}
               </div>
             )}
             <button type="button" className="studio-feature-learn" disabled>
@@ -752,10 +695,8 @@ export function ToolCanvas({ section }: { section: ToolSection }) {
             <DictionaryTool />
           ) : section === "snippets" ? (
             <SnippetsTool />
-          ) : section === "context" ? (
-            <ContextTool />
           ) : (
-            <AgentTool />
+            <ContextTool />
           )}
         </div>
       </div>

@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AgentAutocopy,
   AgentPanelPosition,
   ChineseScript,
   VadBackend,
@@ -243,10 +242,6 @@ const settingUpdaters: {
     commands.changeContextAwarenessEnabledSetting(value as boolean),
   scrap_that_enabled: (value) =>
     commands.changeScrapThatEnabledSetting(value as boolean),
-  agent_autocopy: (value) =>
-    commands.changeAgentAutocopySetting(value as AgentAutocopy),
-  agent_quick_enabled: (value) =>
-    commands.changeAgentQuickEnabledSetting(value as boolean),
   agent_screen_image: (value) =>
     commands.changeAgentScreenImageSetting(value as boolean),
   agent_panel_position: (value) =>

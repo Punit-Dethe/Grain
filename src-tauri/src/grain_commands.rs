@@ -583,29 +583,6 @@ pub fn change_snippets_enabled_setting(
     Ok(())
 }
 
-/// [GRAIN] Agent auto-copy policy (off / first reply / all replies).
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_autocopy_setting(
-    app: AppHandle,
-    mode: settings::AgentAutocopy,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_autocopy = mode;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Toggle Quick Agent (palette submit → headless AI run → paste at cursor).
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_quick_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_quick_enabled = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 /// [GRAIN] Agent screen vision: send a picture of the summoned-from window with
 /// the instruction. OFF by default; see `Settings::agent_screen_image`.
 #[tauri::command]

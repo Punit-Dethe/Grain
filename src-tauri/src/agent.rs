@@ -9,13 +9,7 @@
 //!   â€¢ PANEL â€” a bottom-right reply card webview (COMPACT: pager over retry
 //!     versions, the captured text, the reply, copy / retry / Confirm-âŽ-paste)
 //!     that grows into the EXPANDED conversation when the user asks a follow-up.
-//!     Revealed the instant the user submits (loading state), not when the
-//!     reply lands.
-//!
-//! QUICK AGENT (opt-in): submit runs the AI headlessly and pastes the reply at
-//! the cursor; the pill then briefly offers "ask follow-up" (â‰ˆ8s, Esc to
-//! dismiss), and the warm hidden panel lives exactly as long as the offer â€”
-//! reopening it expanded with the conversation restored is instant.
+//!     The pill shows progress until the first reply is ready.
 //!
 //! The conversation is sent to the SAME AI the post-processing layer uses (single
 //! provider, or the ordered fallback pool).
@@ -47,8 +41,7 @@ use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::{
-    get_settings, AgentAutocopy, AgentPanelPosition, ShortcutBinding,
-    APPLE_INTELLIGENCE_PROVIDER_ID,
+    get_settings, AgentPanelPosition, ShortcutBinding, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 
 /// Window label (matched by its capability + the frontend router in
@@ -63,16 +56,11 @@ const AGENT_BINDING: &str = "agent";
 const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
 /// The user-configurable "ask follow-up" binding id (seeded in settings). Only
-/// ever registered TRANSIENTLY while an Agent surface (panel / pill offer) is
+/// ever registered TRANSIENTLY while an Agent surface (reply panel) is
 /// live â€” and in that window it overrides any other Grain binding on the same
 /// keys (suppressed at register, restored at teardown).
 const AGENT_FOLLOWUP_BINDING: &str = "agent_followup";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-/// How long the Quick-Agent pill offer stays live before it is withdrawn (and
-/// the transient follow-up shortcut released) â€” "destroy if not in use". Short
-/// on purpose: the offer is a quick escape hatch, not a lingering surface.
-const FOLLOWUP_OFFER_TTL: Duration = Duration::from_secs(8);
-
 /// Panel geometry (logical px). The COMPACT reply card sits in the bottom-right
 /// corner; the EXPANDED conversation occupies the full side footprint.
 ///
@@ -372,7 +360,7 @@ pub struct AgentState {
     pub pending_instruction: Mutex<Option<AgentInstruction>>,
     /// Run cancellation and exact host-held confirmation belong to this session.
     execution: AgentRunControl,
-    /// Foreground window at summon â€” the paste target for Confirm / Quick Agent.
+    /// Foreground window at summon â€” the paste target for Confirm.
     /// Raw HWND as isize on Windows; unused elsewhere.
     pub target_hwnd: Mutex<Option<isize>>,
     /// [GRAIN] Screen frame captured at summon (per `agent_screen_image`), held
@@ -385,16 +373,8 @@ pub struct AgentState {
     /// ends ("destroy if not in use"); [`CapturedImage`] zeroes its buffer on the
     /// way out, so ending a session actually erases the picture.
     pub screen_image: Mutex<Option<CapturedImage>>,
-    /// Quick-Agent conversation retained so "ask follow-up" can reopen the panel
-    /// with history. Cleared on fresh summon and consumed by the panel on mount.
-    pub conversation: Mutex<Vec<AgentMessage>>,
     /// Grain bindings suppressed while the follow-up shortcut overrides them.
     pub suppressed_bindings: Mutex<Vec<ShortcutBinding>>,
-    /// True while a Quick-Agent pill offer is live (keeps the transient follow-up
-    /// shortcut registered even though no Agent window exists).
-    pub followup_offer_active: AtomicBool,
-    /// Bumped per offer so a stale TTL expiry never clears a newer offer.
-    pub followup_offer_gen: AtomicU64,
     /// [GRAIN] Bumped on every summon. Work that finishes AFTER the summon
     /// returns (the screen capture) compares against it before writing, so a
     /// slow capture can never land in the session that superseded it.
@@ -533,8 +513,6 @@ fn summon_inner(app: &AppHandle) {
         let Some(readiness) = start_dictation(&app, &state) else {
             return;
         };
-        // A fresh summon supersedes any lingering Quick-Agent offer.
-        clear_followup_offer(&app);
         clear_pending_action(&app);
         let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
         // Identifies THIS summon. The screen frame is taken at the end (below),
@@ -555,9 +533,6 @@ fn summon_inner(app: &AppHandle) {
                 *g = None;
             }
             summon_gen = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Ok(mut g) = state.conversation.lock() {
-                g.clear();
-            }
             if let Ok(mut g) = state.center_height.lock() {
                 *g = 0.0; // fresh session opens at the start height
             }
@@ -647,11 +622,8 @@ fn summon_inner(app: &AppHandle) {
     });
 }
 
-/// [GRAIN] True when a dictation transcript should be routed INTO the Agent
-/// conversation window instead of OS-pasted: the panel must be in its EXPANDED
-/// (follow-up field) stage AND be the focused window. Used by `clipboard::paste`
-/// to fix "dictating into the panel pastes the auto-copied AI reply" â€” scoped
-/// strictly to this window so upstream paste behavior is otherwise untouched.
+/// Route dictation into the follow-up field when the expanded Agent panel
+/// is focused.
 pub fn panel_dictation_target(app: &AppHandle) -> bool {
     let expanded = app
         .try_state::<AgentState>()
@@ -903,20 +875,12 @@ fn build_window(
                 && app.get_webview_window(PANEL_LABEL).is_none()
             {
                 unregister_transient_shortcuts_deferred(&app);
-                // [GRAIN] The session's screen frame dies with its last
-                // surface â€” unless the pill is still offering "ask
-                // follow-up", which reopens THIS conversation and would
-                // otherwise reopen it blind.
                 let state = app.try_state::<AgentState>();
-                let offered = state
-                    .as_ref()
-                    .map(|s| s.followup_offer_active.load(Ordering::SeqCst))
-                    .unwrap_or(false);
                 let still_ours = state
                     .as_ref()
                     .map(|s| s.summon_gen.load(Ordering::SeqCst) == built_for)
                     .unwrap_or(false);
-                if !offered && still_ours {
+                if still_ours {
                     clear_screen_image(&app);
                     clear_pending_action(&app);
                 }
@@ -1675,9 +1639,8 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
 // ============================================================================
 
 /// Pill â†’ core: the user submitted TYPED text from the expanded input card.
-/// `quick` selects paste in place when the user holds Shift.
 #[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
-pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
+pub fn input_submit_text(app: &AppHandle, text: String) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
     };
@@ -1695,21 +1658,17 @@ pub fn input_submit_text(app: &AppHandle, text: String, quick: bool) {
         input_cancel_cleanup(app);
         return;
     }
-    if quick {
-        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
-    } else {
-        begin_reply_wait(app);
-    }
+    begin_reply_wait(app);
     info!(
-        "[GRAIN] agent: typed instruction submitted ({} chars, quick: {quick})",
+        "[GRAIN] agent: typed instruction submitted ({} chars)",
         text.chars().count()
     );
-    dispatch_instruction(app.clone(), text, quick, generation);
+    dispatch_instruction(app.clone(), text, generation);
 }
 
 /// Submit voice capture. Keep the working pill through transcription and the
 /// first model turn; the warm reply panel executes that turn while hidden.
-pub fn input_submit_voice(app: &AppHandle, quick: bool) {
+pub fn input_submit_voice(app: &AppHandle) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
     };
@@ -1718,21 +1677,17 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
     }
     let model = state.dictation_model.lock().unwrap().take();
     let generation = state.summon_gen.load(Ordering::SeqCst);
-    if quick {
-        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
-    } else {
-        begin_reply_wait(app);
-    }
+    begin_reply_wait(app);
 
     let app = app.clone();
     std::thread::spawn(move || {
-        let current = |app: &AppHandle| quick || reply_wait_is_current(app, generation);
+        let current = |app: &AppHandle| reply_wait_is_current(app, generation);
         if !current(&app) {
             return;
         }
         let no_speech = |app: &AppHandle, msg: &str| {
             if current(app) {
-                deliver_agent_error(app, msg, if quick { None } else { Some(generation) });
+                deliver_agent_error(app, msg, generation);
             }
         };
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
@@ -1772,7 +1727,7 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
             "[GRAIN] agent: dictation transcript ready ({} chars)",
             text.chars().count()
         );
-        dispatch_instruction(app, text, quick, generation);
+        dispatch_instruction(app, text, generation);
     });
 }
 
@@ -1842,16 +1797,8 @@ pub fn input_typing(app: &AppHandle, active: bool) {
     }
 }
 
-/// Submit the first normal turn to the hidden renderer; Quick Agent retains
-/// its headless paste path. The renderer reveals only after applying its result.
-fn dispatch_instruction(app: AppHandle, text: String, quick: bool, generation: u64) {
-    if quick {
-        quick_run(app, text);
-        return;
-    }
-    // Queue first, then poke: the panel consumes via `agent_take_instruction`
-    // on BOTH the event and its mount, so delivery is race-free and deduped
-    // (take is consuming).
+/// Submit the first turn to the hidden reply panel.
+fn dispatch_instruction(app: AppHandle, text: String, generation: u64) {
     if !queue_first_message(
         &app.state::<AgentState>(),
         AgentInstruction {
@@ -1877,7 +1824,6 @@ pub(crate) fn harness_submit_instruction(app: &AppHandle, text: String) {
     dispatch_instruction(
         app.clone(),
         text,
-        false,
         app.state::<AgentState>().summon_gen.load(Ordering::SeqCst),
     );
 }
@@ -1895,10 +1841,7 @@ pub(crate) fn harness_snapshot(app: &AppHandle) -> serde_json::Value {
 fn prepare_panel_loading(app: &AppHandle) {
     let generation = app.state::<AgentState>().summon_gen.load(Ordering::SeqCst);
 
-    // CENTER always owns an in-window follow-up field, so mark the panel
-    // "expanded" now that the input phase is over (the pill has submitted). This
-    // routes app dictation INTO that field while the panel is focused, instead
-    // of OS-pasting the auto-copied reply â€” the SIDE card gets this on expand().
+    // The center panel starts expanded and owns an in-window follow-up field.
     if panel_position(app) == AgentPanelPosition::Center {
         if let Some(state) = app.try_state::<AgentState>() {
             state.panel_expanded.store(true, Ordering::SeqCst);
@@ -1926,66 +1869,19 @@ fn prepare_panel_loading(app: &AppHandle) {
     });
 }
 
-/// Surface an Agent failure on the panel (the only remaining Agent webview):
-/// reveal it (building it if needed) and hand it the message. The emit is
-/// slightly deferred so a freshly built webview has mounted its listener.
-fn deliver_agent_error(app: &AppHandle, message: &str, first_generation: Option<u64>) {
-    if let Some(generation) = first_generation {
-        if queue_first_message(
-            &app.state::<AgentState>(),
-            AgentInstruction {
-                text: message.into(),
-                generation,
-                is_error: true,
-            },
-        ) {
-            prepare_panel_loading(app);
-            let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
-        }
-        return;
+/// Queue a capture error for the same first-reply handoff.
+fn deliver_agent_error(app: &AppHandle, message: &str, generation: u64) {
+    if queue_first_message(
+        &app.state::<AgentState>(),
+        AgentInstruction {
+            text: message.into(),
+            generation,
+            is_error: true,
+        },
+    ) {
+        prepare_panel_loading(app);
+        let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
     }
-    warn!("[GRAIN] agent: {message}");
-    register_one_transient(app, close_binding());
-    let message = message.to_string();
-    let generation = app.state::<AgentState>().summon_gen.load(Ordering::SeqCst);
-    let app = app.clone();
-    let _ = app.clone().run_on_main_thread(move || {
-        let existed = app.get_webview_window(PANEL_LABEL).is_some();
-        if !existed {
-            let (sw, sh) = panel_start_size(&app);
-            match build_window(&app, PANEL_LABEL, sw, sh) {
-                Ok(w) => place_panel(&w),
-                Err(e) => {
-                    error!("[GRAIN] agent: failed to build panel for error: {e}");
-                    return;
-                }
-            }
-        }
-        // Hand the panel its message BEFORE showing it, same as every other
-        // reveal path â€” a freshly built webview needs the longer grace just to
-        // mount its listener.
-        let delay = if existed { 30 } else { 400 };
-        let app_for_emit = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(delay));
-            if app_for_emit
-                .state::<AgentState>()
-                .summon_gen
-                .load(Ordering::SeqCst)
-                != generation
-            {
-                return;
-            }
-            let _ = app_for_emit.emit_to(
-                PANEL_LABEL,
-                "agent-error",
-                serde_json::json!({"message": message, "generation": generation}),
-            );
-            if let Some(w) = app_for_emit.get_webview_window(PANEL_LABEL) {
-                reveal_panel(&w);
-            }
-        });
-    });
 }
 
 fn submit_binding() -> ShortcutBinding {
@@ -2143,6 +2039,7 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
                 return;
             }
             unregister_transient_shortcuts(&app);
+            unregister_followup_shortcut(&app);
             // [GRAIN] A normal dictation may have started while the Agent panel owned
             // Escape. Its cancel registration is deliberately skipped in that case
             // (one accelerator can have only one owner). If the panel was closed by
@@ -2153,12 +2050,6 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
                 .is_some_and(|audio| audio.is_recording())
             {
                 crate::shortcut::register_cancel_shortcut(&app);
-            }
-            // The follow-up shortcut outlives the windows ONLY while a Quick-Agent
-            // pill offer is live; otherwise release it (and restore suppressed keys).
-            let offer_live = state.followup_offer_active.load(Ordering::SeqCst);
-            if !offer_live {
-                unregister_followup_shortcut(&app);
             }
         });
     });
@@ -2174,151 +2065,20 @@ pub fn global_submit(app: &AppHandle) {
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
     if input_live {
-        input_submit_voice(app, get_settings(app).agent_quick_enabled);
+        input_submit_voice(app);
     } else if app.get_webview_window(PANEL_LABEL).is_some() {
         let _ = app.emit_to(PANEL_LABEL, "agent-global-enter", ());
     }
 }
 
-/// Called by the transient follow-up shortcut (and the pill's offer click):
-/// expand the VISIBLE panel in place; hand a HIDDEN (warm, quick-agent) panel
-/// the retained conversation and reveal it expanded; or rebuild from scratch.
+/// Expand the visible reply panel for a follow-up.
 pub fn open_followup(app: &AppHandle) {
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
         if panel.is_visible().unwrap_or(false) {
-            // The frontend expands itself (and calls `agent_set_panel_mode`).
             let _ = app.emit_to(PANEL_LABEL, "agent-followup", ());
             show_and_focus(&panel);
-            return;
         }
-
-        // Hidden warm panel (Quick Agent): only meaningful with history.
-        if !has_conversation(app) {
-            return;
-        }
-        clear_followup_offer(app);
-        register_one_transient(app, close_binding());
-        register_followup_shortcut(app);
-        // Expanded â†’ the global Enter must stay unregistered (in-window input).
-        let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
-        if let Some(state) = app.try_state::<AgentState>() {
-            state.panel_expanded.store(true, Ordering::SeqCst);
-        }
-
-        // Not on the main thread (we're on a shortcut/WS thread), so resizing
-        // the window here is safe (tauri#3990 only bites main-thread resizes).
-        place_panel(&panel);
-        // The panel is already mounted: it re-checks the retained conversation
-        // on this event (take is consuming, so double delivery is harmless).
-        let _ = app.emit_to(PANEL_LABEL, "agent-followup-open", ());
-        reveal_panel(&panel);
-        return;
     }
-
-    // Windowless path (the warm panel died): only meaningful with history.
-    if !has_conversation(app) {
-        return;
-    }
-    clear_followup_offer(app);
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if let Err(e) = show_panel(&app2, true) {
-            error!("[GRAIN] agent: failed to open follow-up panel: {e}");
-        }
-    });
-}
-
-fn has_conversation(app: &AppHandle) -> bool {
-    app.try_state::<AgentState>()
-        .map(|s| {
-            s.conversation
-                .lock()
-                .map(|g| !g.is_empty())
-                .unwrap_or(false)
-        })
-        .unwrap_or(false)
-}
-
-// ============================================================================
-// Quick Agent (headless run â†’ paste at cursor â†’ pill follow-up offer)
-// ============================================================================
-
-/// [GRAIN] Quick Agent: run the conversation headlessly, then refocus the
-/// summon target and paste the reply at the cursor. A selection still held in
-/// the target app is replaced by the paste â€” which is exactly the "rewrite the
-/// selected chunk" behavior, with no synthetic select-all/erase. Ends by
-/// offering "ask follow-up" through the pill; the warm hidden panel stays alive
-/// exactly as long as that offer does.
-fn quick_run(app: AppHandle, instruction: String) {
-    std::thread::spawn(move || {
-        // The input phase is over and the quick path never shows a compact card,
-        // so the global Enter has no meaning for the rest of this run. Release it
-        // NOW rather than at the offer's teardown: the alternative leaves a
-        // system-wide Enter hotkey swallowing the user's keystrokes for the whole
-        // LLM call plus the follow-up offer â€” precisely while they are back in
-        // their own app typing after our paste. The panel paths re-arm it via
-        // `arm_global_enter`; nothing here needs it.
-        let _ = crate::shortcut::unregister_shortcut(&app, submit_binding());
-
-        // Seed the retained conversation with the user's turn.
-        if let Some(state) = app.try_state::<AgentState>() {
-            if let Ok(mut g) = state.conversation.lock() {
-                g.clear();
-                g.push(AgentMessage {
-                    role: "user".to_string(),
-                    content: instruction.clone(),
-                });
-            }
-        }
-
-        let context = read_summon_context(&app);
-        let messages = vec![AgentMessage {
-            role: "user".to_string(),
-            content: instruction,
-        }];
-
-        // Blocking this detached thread on the shared runtime is fine â€” it is
-        // not a runtime worker.
-        let result =
-            tauri::async_runtime::block_on(run_conversation(&app, &messages, context.as_deref()));
-
-        match result {
-            Ok(reply) => {
-                if let Some(state) = app.try_state::<AgentState>() {
-                    if let Ok(mut g) = state.conversation.lock() {
-                        g.push(AgentMessage {
-                            role: "assistant".to_string(),
-                            content: reply.clone(),
-                        });
-                    }
-                }
-                // Auto-copy per policy (the sole reply is also the first reply).
-                if get_settings(&app).agent_autocopy != AgentAutocopy::Off {
-                    let _ = app.clipboard().write_text(reply.clone());
-                }
-
-                // Refocus the summon target, give it a beat, then paste.
-                refocus_target(&app);
-                std::thread::sleep(Duration::from_millis(160));
-                if let Err(e) = crate::clipboard::paste(reply, app.clone()) {
-                    error!("[GRAIN] agent: quick paste failed: {e}");
-                    crate::bridge::emit(&app, DaemonEvent::PasteError { error: e });
-                }
-                // Offer the follow-up either way â€” the panel is the retry path.
-                offer_followup(&app);
-            }
-            Err(e) => {
-                warn!("[GRAIN] agent: quick run failed: {e}");
-                deliver_agent_error(&app, &e, None);
-            }
-        }
-    });
-}
-
-/// Selected text captured at summon, cloned out of the state.
-fn read_summon_context(app: &AppHandle) -> Option<String> {
-    app.try_state::<AgentState>()
-        .and_then(|s| s.context.lock().ok().and_then(|g| g.clone()))
 }
 
 /// Refocus the window that was foreground at summon so a synthesised paste
@@ -2336,67 +2096,6 @@ fn refocus_target(app: &AppHandle) {
     #[cfg(not(windows))]
     {
         let _ = app;
-    }
-}
-
-/// Arm the pill's "ask follow-up" offer: keep the follow-up shortcut registered,
-/// tell the pill to show the affordance, and withdraw it after the TTL.
-fn offer_followup(app: &AppHandle) {
-    let Some(state) = app.try_state::<AgentState>() else {
-        return;
-    };
-    register_followup_shortcut(app);
-    // Escape dismisses the offer (the pill fades out) â€” registered transiently
-    // for the offer's short lifetime, released by the expiry/teardown paths.
-    register_one_transient(app, close_binding());
-    state.followup_offer_active.store(true, Ordering::SeqCst);
-    let gen = state.followup_offer_gen.fetch_add(1, Ordering::SeqCst) + 1;
-
-    let shortcut = followup_binding(app).current_binding;
-    crate::bridge::emit(app, DaemonEvent::AgentFollowupOffer { shortcut });
-
-    let app2 = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(FOLLOWUP_OFFER_TTL);
-        let Some(state) = app2.try_state::<AgentState>() else {
-            return;
-        };
-        // Only the newest offer may expire itself; a fresh offer or the panel
-        // taking over invalidates this timer.
-        if state.followup_offer_gen.load(Ordering::SeqCst) == gen
-            && state.followup_offer_active.load(Ordering::SeqCst)
-        {
-            clear_followup_offer(&app2);
-            // The warm panel dies with the offer ("destroy if not in use") â€”
-            // but only while still hidden; a visible panel belongs to the user.
-            let app3 = app2.clone();
-            let _ = app2.run_on_main_thread(move || {
-                if let Some(panel) = app3.get_webview_window(PANEL_LABEL) {
-                    if !panel.is_visible().unwrap_or(false) {
-                        let _ = panel.close();
-                    }
-                }
-            });
-            // Release the transients (slightly deferred so the close lands; the
-            // Destroyed teardown handles the rest, this covers no-window paths).
-            std::thread::sleep(Duration::from_millis(200));
-            if app2.get_webview_window(PANEL_LABEL).is_none() {
-                unregister_followup_shortcut(&app2);
-                let _ = crate::shortcut::unregister_shortcut(&app2, close_binding());
-                // The offer was the last thing keeping the frame alive.
-                clear_screen_image(&app2);
-            }
-        }
-    });
-}
-
-/// Withdraw the pill offer (if any). Does NOT touch the shortcut registration â€”
-/// callers decide whether a surface still needs it.
-fn clear_followup_offer(app: &AppHandle) {
-    if let Some(state) = app.try_state::<AgentState>() {
-        if state.followup_offer_active.swap(false, Ordering::SeqCst) {
-            crate::bridge::emit(app, DaemonEvent::AgentFollowupClear);
-        }
     }
 }
 
@@ -2428,9 +2127,7 @@ pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
         return true;
     }
     app.try_state::<AgentState>().is_some_and(|state| {
-        state.input_active.load(Ordering::SeqCst)
-            || state.waiting_for_reply.load(Ordering::SeqCst)
-            || state.followup_offer_active.load(Ordering::SeqCst)
+        state.input_active.load(Ordering::SeqCst) || state.waiting_for_reply.load(Ordering::SeqCst)
     })
 }
 
@@ -2484,10 +2181,6 @@ pub fn global_close(app: &AppHandle) {
         {
             return;
         }
-        // Withdrawing the offer FIRST means the window teardown below sees it
-        // inactive and releases the transient follow-up shortcut too.
-        clear_followup_offer(&app_for_main);
-
         if let Some(panel) = app_for_main.get_webview_window(PANEL_LABEL) {
             let _ = panel.close();
         }
@@ -2846,30 +2539,13 @@ mod agent_routing_tests {
     }
 }
 
-/// Copy text to the clipboard (used for the auto-copy of the first reply and the
-/// per-message copy buttons).
+/// Copy a reply on explicit user request.
 #[tauri::command]
 #[specta::specta]
 pub fn agent_copy(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard()
         .write_text(text)
         .map_err(|e| format!("Failed to copy to clipboard: {e}"))
-}
-
-/// Consume the retained Quick-Agent conversation (the panel calls this on
-/// mount). Non-empty only when the panel is reopening from a follow-up offer â€”
-/// in that case the panel starts EXPANDED with this history.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_take_conversation(app: AppHandle) -> Vec<AgentMessage> {
-    app.try_state::<AgentState>()
-        .and_then(|s| {
-            s.conversation
-                .lock()
-                .ok()
-                .map(|mut g| std::mem::take(&mut *g))
-        })
-        .unwrap_or_default()
 }
 
 /// Confirm (âŽ on the reply card): close the panel, refocus the summon target,
@@ -4283,28 +3959,6 @@ async fn drive_tool_turn_with<'a>(
             return Ok(AgentReply::plain(final_reply));
         }
     }
-}
-
-/// The Agent's LLM driver, shared by the panel (`agent_run`) and Quick Agent.
-pub async fn run_conversation(
-    app: &AppHandle,
-    messages: &[AgentMessage],
-    context: Option<&str>,
-) -> Result<String, String> {
-    info!(
-        "[GRAIN] agent: running AI request ({} messages, selection: {})",
-        messages.len(),
-        if context.map(|c| !c.trim().is_empty()).unwrap_or(false) {
-            "yes"
-        } else {
-            "no"
-        }
-    );
-    let full = build_messages(messages, context);
-    // Quick Agent answers the same question from the same summon, so it sees the
-    // same screen the panel path would.
-    let image = screen_attachment(app);
-    run_messages(app, full, image.as_ref()).await
 }
 
 /// Run an ALREADY-BUILT `(role, content)` message list through the configured

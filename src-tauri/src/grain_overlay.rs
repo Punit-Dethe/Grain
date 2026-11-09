@@ -26,7 +26,6 @@ pub struct OverlayPresentation {
     pub app_icon_enabled: bool,
     pub icon: Option<String>,
     pub notice: Option<String>,
-    pub followup: Option<String>,
     pub committed: String,
     pub tentative: String,
     pub working: bool,
@@ -70,7 +69,6 @@ impl OverlayPresentation {
         self.work_kind = "agent".into();
         self.working = true;
         self.notice = None;
-        self.followup = None;
     }
 
     fn mark_prompt_record(&mut self, session_id: u64) -> bool {
@@ -95,13 +93,8 @@ impl OverlayPresentation {
             return false;
         }
         self.clear_capture();
-        if self.notice.is_some() || self.followup.is_some() {
-            self.state = if self.followup.is_some() {
-                "followup"
-            } else {
-                "notice"
-            }
-            .into();
+        if self.notice.is_some() {
+            self.state = "notice".into();
             return false;
         }
         self.visible = false;
@@ -289,8 +282,6 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::SessionCancelled { .. }
             | DaemonEvent::AgentInputShow { .. }
             | DaemonEvent::AgentInputHide
-            | DaemonEvent::AgentFollowupOffer { .. }
-            | DaemonEvent::AgentFollowupClear
             | DaemonEvent::PasteMissed { .. }
             | DaemonEvent::PasteMissedClear
             | DaemonEvent::PasteCatchDisabled
@@ -346,8 +337,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::SessionCancelled { .. }
             | DaemonEvent::AgentInputShow { .. }
             | DaemonEvent::AgentInputHide
-            | DaemonEvent::AgentFollowupOffer { .. }
-            | DaemonEvent::AgentFollowupClear
             | DaemonEvent::PasteMissed { .. }
             | DaemonEvent::PasteMissedClear
             | DaemonEvent::PasteCatchDisabled
@@ -400,26 +389,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                     value.agent = false;
                     let session_id = value.session_id;
                     hide = value.complete(session_id);
-                }
-            }
-            DaemonEvent::AgentFollowupOffer { shortcut } => {
-                ctx.notice_generation.fetch_add(1, Ordering::AcqRel);
-                value.followup = Some(shortcut.clone());
-                value.notice = None;
-                value.state = "followup".into();
-                value.visible = crate::settings::get_settings(app).overlay_style
-                    != crate::settings::OverlayStyle::None;
-                show = Some("followup");
-            }
-            DaemonEvent::AgentFollowupClear => {
-                value.followup = None;
-                if value.state == "followup" {
-                    if value.notice.is_some() {
-                        value.state = "notice".into();
-                    } else {
-                        value.visible = false;
-                        hide = true;
-                    }
                 }
             }
             DaemonEvent::PasteMissed { .. } | DaemonEvent::PasteError { .. } => {
@@ -579,12 +548,6 @@ pub fn overlay_cancel(app: AppHandle) {
     }
 }
 
-#[tauri::command]
-#[specta::specta]
-pub fn overlay_followup(app: AppHandle) {
-    crate::agent::open_followup(&app);
-}
-
 static LAST_PUBLIC_LEVEL: AtomicU64 = AtomicU64::new(0);
 pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
     let now = std::time::SystemTime::now()
@@ -618,16 +581,13 @@ mod tests {
                 ready: true,
                 committed: "captured instruction".into(),
                 notice: Some("old notice".into()),
-                followup: Some("old offer".into()),
                 ..Default::default()
             };
             value.begin_agent_working(visible);
             assert_eq!(value.visible, visible);
             assert_eq!(value.state, "processing");
             assert!(value.agent && value.working && !value.ready);
-            assert!(
-                value.committed.is_empty() && value.notice.is_none() && value.followup.is_none()
-            );
+            assert!(value.committed.is_empty() && value.notice.is_none());
             // Both same-session audio teardown and old capture events are inert.
             assert!(!value.complete(6));
             assert!(!value.complete(7));
@@ -773,10 +733,5 @@ mod tests {
         assert_eq!(value.expire_notice(1, 1), Some(false));
         assert!(value.visible && value.ready && value.notice.is_none());
         assert_eq!(value.committed, "dictation continued");
-        value.followup = Some("Ctrl+Enter".into());
-        value.state = "followup".into();
-        value.notice = Some("Copied to clipboard".into());
-        assert_eq!(value.expire_notice(2, 2), Some(false));
-        assert!(value.visible && value.followup.is_some());
     }
 }

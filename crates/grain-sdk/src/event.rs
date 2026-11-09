@@ -114,17 +114,6 @@ pub enum DaemonEvent {
     AudioLevel {
         levels: Vec<f32>,
     },
-    /// [GRAIN] Quick Agent: a reply was just auto-pasted at the cursor. The pill
-    /// briefly reveals with an "ASK FOLLOW-UP · <shortcut>" affordance; clicking
-    /// it (or pressing the shortcut) reopens the Agent expanded with the
-    /// conversation restored. `shortcut` is the human-readable binding label.
-    AgentFollowupOffer {
-        shortcut: String,
-    },
-    /// [GRAIN] Withdraw the follow-up offer (panel opened, offer expired, or a
-    /// new session started).
-    AgentFollowupClear,
-
     /// [GRAIN] Show the NATIVE agent input (the summon surface): a bottom-center
     /// card that records by default and expands into a typing field the moment
     /// the user types. `selection_chars` feeds the selection chip;

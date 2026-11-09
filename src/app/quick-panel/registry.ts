@@ -92,9 +92,9 @@ const NAV_DEFS: NavDef[] = [
   },
   {
     id: "agent",
-    title: "Agent",
+    title: "AI settings",
     icon: "agent",
-    route: { page: "agent" },
+    route: { page: "settings", section: "ai" },
     keywords: ["assistant", "writing assistant", "selected text", "actions"],
   },
   {
@@ -152,13 +152,13 @@ const SETTING_DEFS: SettingDef[] = [
   {
     id: "ai-always",
     titleKey: "ui2.capture.ai.always.title",
-    section: "capture",
+    section: "ai",
     keywords: ["ai key", "post processing shortcut", "always process"],
   },
   {
     id: "ai-end",
     titleKey: "ui2.capture.ai.end.title",
-    section: "capture",
+    section: "ai",
     keywords: ["ai after recording", "refine on end"],
     enabled: (s) =>
       !s?.capture_always_ai && s?.shortcut_activation !== "push_to_talk",
@@ -166,14 +166,14 @@ const SETTING_DEFS: SettingDef[] = [
   {
     id: "ai-dictation",
     titleKey: "settings.general.shortcut.bindings.transcribe_send_to_ai.name",
-    section: "capture",
+    section: "ai",
     keywords: ["ai shortcut", "ai key", "cleanup"],
     enabled: (s) => !s?.capture_always_ai,
   },
   {
     id: "prompt-record",
     titleKey: "settings.general.shortcut.bindings.prompt_record.name",
-    section: "capture",
+    section: "ai",
     keywords: ["spoken instruction", "prompt record", "f8"],
   },
   {

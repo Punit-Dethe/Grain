@@ -279,9 +279,6 @@ async overlaySnapshot() : Promise<OverlaySnapshot> {
 async overlayCancel() : Promise<void> {
     await TAURI_INVOKE("overlay_cancel");
 },
-async overlayFollowup() : Promise<void> {
-    await TAURI_INVOKE("overlay_followup");
-},
 /**
  * [GRAIN] Pill identity: show the icon of the app being dictated into in place
  * of the pill's state dot. Takes effect on the next session — the icon is
@@ -588,28 +585,6 @@ async changeAgentEnabledSetting(enabled: boolean) : Promise<Result<null, string>
 async changeSnippetsEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_snippets_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Agent auto-copy policy (off / first reply / all replies).
- */
-async changeAgentAutocopySetting(mode: AgentAutocopy) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_autocopy_setting", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Toggle Quick Agent (palette submit → headless AI run → paste at cursor).
- */
-async changeAgentQuickEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_quick_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1019,8 +994,7 @@ async agentPresentReply(generation: number) : Promise<Result<null, string>> {
 }
 },
 /**
- * Copy text to the clipboard (used for the auto-copy of the first reply and the
- * per-message copy buttons).
+ * Copy a reply on explicit user request.
  */
 async agentCopy(text: string) : Promise<Result<null, string>> {
     try {
@@ -1106,14 +1080,6 @@ async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
-},
-/**
- * Consume the retained Quick-Agent conversation (the panel calls this on
- * mount). Non-empty only when the panel is reopening from a follow-up offer â€”
- * in that case the panel starts EXPANDED with this history.
- */
-async agentTakeConversation() : Promise<AgentMessage[]> {
-    return await TAURI_INVOKE("agent_take_conversation");
 },
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
@@ -1820,12 +1786,6 @@ updateDownloadProgress: "update-download-progress"
  */
 export type Activity = { slot: number; start_ns: number; end_ns: number }
 /**
- * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
- * clipboard automatically as they arrive. `First` (default) mirrors the
- * original behavior — only the first reply of a session is auto-copied.
- */
-export type AgentAutocopy = "off" | "first" | "all"
-/**
  * [GRAIN] A risky action awaiting the user's approval. Carries the exact
  * prepared-call `token` the host resumes on approval (`agent_confirm_action`),
  * plus everything the panel needs to show what will happen. `markdown` is the
@@ -1961,18 +1921,11 @@ context_profile_instructions?: ContextProfileInstruction[];
  */
 context_custom_profiles?: CustomContextProfile[];
 /**
- * [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
- * switch. OFF by default for NEW installs; the one-time import in
- * `load_settings` turns it on for existing users who already have snippets
- * (the upgrade rule — a working feature must not vanish on update).
+ * Enable spoken snippet expansion.
  */
 snippets_enabled?: boolean;
 /**
- * [GRAIN] Extension platform (SPEC §10.1): the Agent built-in extension's
- * switch — the on/off the Agent never had. Gates summoning and the
- * summon-agent binding. OFF by default for NEW installs; the one-time
- * import turns it on for existing users (the Agent was previously always
- * available).
+ * Enable the Agent and its summon shortcut.
  */
 agent_enabled?: boolean;
 /**
@@ -2008,17 +1961,6 @@ mcp_enabled_providers?: string[];
  * credential vault and never enter AppSettings.
  */
 mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
-/**
- * [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
- * reply only / every reply). Default `first` — the original behavior.
- */
-agent_autocopy?: AgentAutocopy;
-/**
- * [GRAIN] Quick Agent: when on, submitting an instruction from the palette
- * runs the AI headlessly and pastes the reply straight at the cursor instead
- * of opening the reply panel. The pill then briefly offers "ask follow-up".
- */
-agent_quick_enabled?: boolean;
 /**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it
@@ -2226,7 +2168,7 @@ export type McpProviderStatus = { id: string; name: string; description: string;
  */
 state: string }
 /**
- * Publisher-owned public registration. Grain discovers endpoints and keeps
+ * Public OAuth client registration. Grain discovers endpoints and keeps
  * account tokens; this never supplies a client secret or callback override.
  */
 export type McpPublicOAuthClient = { clientId: string; issuer: string }
@@ -2370,7 +2312,7 @@ export type OnboardingStep =
  * also the persisted `overlay_position` setting (grain-core re-exports it).
  */
 export type OverlayPosition = "top" | "bottom"
-export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; followup: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
+export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; agent: boolean; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
 export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
  * Handy's presentation contract. Position only selects an edge.

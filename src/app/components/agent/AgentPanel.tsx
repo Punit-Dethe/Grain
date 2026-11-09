@@ -19,7 +19,6 @@ import {
 import {
   commands,
   type AgentMessage,
-  type AgentAutocopy,
   type AgentConfirm,
   type AgentPanelPosition,
   type AgentReply,
@@ -95,11 +94,10 @@ function keycapLabel(part: string): string {
  *   retry · Confirm ⏎ (pastes the displayed reply into the source app).
  *
  *   EXPANDED (the conversation): grows to the sidebar footprint when the user
- *   asks a follow-up (button, shortcut, or the Quick-Agent pill offer). Retry
+ *   asks a follow-up (button or shortcut). Retry
  *   and the version pager disappear once a follow-up exists — versions belong
  *   to the first reply only. Esc closes either stage.
  *
- * Auto-copy honors the `agent_autocopy` setting: off / first reply / all.
  */
 export function AgentPanel() {
   const { t } = useTranslation();
@@ -156,8 +154,6 @@ export function AgentPanel() {
 
   const contextRef = useRef<string | null>(null);
   const instructionRef = useRef<string>("");
-  const autocopyRef = useRef<AgentAutocopy>("first");
-  const firstCopyDoneRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
   const versionsRef = useRef<AgentReply[]>([]);
   const versionIdxRef = useRef(0);
@@ -215,24 +211,6 @@ export function AgentPanel() {
     flashTimer.current = window.setTimeout(() => setCopyFlash(false), 1600);
   }, []);
 
-  /** Auto-copy per the user's policy (off / first / all). */
-  const maybeAutoCopy = useCallback(
-    (reply: string) => {
-      if (!reply.trim()) return;
-      const policy = autocopyRef.current;
-      const shouldCopy =
-        policy === "all" || (policy === "first" && !firstCopyDoneRef.current);
-      firstCopyDoneRef.current = true;
-      if (shouldCopy) {
-        commands
-          .agentCopy(reply)
-          .then(flashCopied)
-          .catch(() => {});
-      }
-    },
-    [flashCopied],
-  );
-
   /** Run the FIRST instruction (or a retry of it) — compact stage. */
   const runFirst = useCallback(
     async (instruction: string) => {
@@ -259,7 +237,6 @@ export function AgentPanel() {
             setVersionIdx(next.length - 1);
             return next;
           });
-          if (!reply.confirm_action) maybeAutoCopy(reply.text);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -269,7 +246,7 @@ export function AgentPanel() {
         setBusy(false);
       }
     },
-    [maybeAutoCopy, t],
+    [t],
   );
 
   /** Run the whole conversation — expanded stage. */
@@ -301,7 +278,6 @@ export function AgentPanel() {
               confirmAction: reply.confirm_action,
             },
           ]);
-          if (!reply.confirm_action) maybeAutoCopy(reply.text);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -312,7 +288,7 @@ export function AgentPanel() {
         followupRef.current?.focus();
       }
     },
-    [maybeAutoCopy, t],
+    [t],
   );
 
   /** Expand into the conversation stage (button / shortcut / pill offer). */
@@ -453,36 +429,6 @@ export function AgentPanel() {
     }
   }, [runFirst]);
 
-  /** Seed the EXPANDED conversation from the retained Quick-Agent history
-   * (reopen from a follow-up offer). No-op when there's nothing retained. */
-  const openRetainedConversation = useCallback(async () => {
-    if (firstRunStartedRef.current || expandedRef.current) return false;
-    let retained: AgentMessage[] = [];
-    try {
-      retained = await commands.agentTakeConversation();
-    } catch {
-      return false;
-    }
-    if (retained.length === 0) return false;
-    firstRunStartedRef.current = true;
-    instructionRef.current =
-      retained.find((m) => m.role === "user")?.content ?? "";
-    // Replies already delivered (pasted) count against the "first"-copy policy.
-    firstCopyDoneRef.current = retained.some((m) => m.role === "assistant");
-    setMessages(
-      retained.map((m) => ({
-        id: rid(),
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content,
-      })),
-    );
-    setBusy(false);
-    setExpanded(true);
-    void commands.agentSetPanelMode(true).catch(() => {});
-    window.setTimeout(() => followupRef.current?.focus(), 60);
-    return true;
-  }, []);
-
   // Mount: load settings + the summon context. The panel is pre-created HIDDEN,
   // so mount runs BEFORE the user submits — the first instruction usually
   // arrives later via the `agent-instruction` event (below). We still try a
@@ -494,7 +440,6 @@ export function AgentPanel() {
       try {
         const res = await commands.getAppSettings();
         if (res.status === "ok") {
-          autocopyRef.current = res.data.agent_autocopy ?? "first";
           setPosition(res.data.agent_panel_position ?? "side");
           const b = res.data.bindings["agent_followup"];
           if (b) setFollowupShortcut(b.current_binding);
@@ -507,11 +452,9 @@ export function AgentPanel() {
       } catch {
         /* no context is fine */
       }
-      // Quick-Agent reopen wins; otherwise pick up an already-queued instruction.
-      if (await openRetainedConversation()) return;
       await startFirstIfQueued();
     })();
-  }, [openRetainedConversation, startFirstIfQueued]);
+  }, [startFirstIfQueued]);
 
   // Backend → panel signals for the pre-created (warm) window lifecycle.
   useEffect(() => {
@@ -540,25 +483,9 @@ export function AgentPanel() {
         if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
       })
       .then(track);
-    // A backend-side failure (STT/LLM) with no reply to show.
-    void win
-      .listen<{ message: string; generation: number }>("agent-error", (e) => {
-        firstRunStartedRef.current = true;
-        firstTurnGenerationRef.current = e.payload.generation;
-        setBusy(false);
-        setError(e.payload.message || t("agent.error"));
-      })
-      .then(track);
-    // Follow-up offer opened the warm hidden panel → seed the conversation.
-    void win
-      .listen("agent-followup-open", () => {
-        void openRetainedConversation();
-      })
-      .then(track);
     // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
     // the expanded conversation was focused). Append the transcript to the
-    // follow-up field instead of it being OS-pasted (which would paste the
-    // auto-copied AI reply). Handled here, not by the OS clipboard.
+    // follow-up field without using the clipboard.
     void win
       .listen<string>("agent-panel-dictation", (e) => {
         const dictated = (e.payload || "").trim();
@@ -604,14 +531,7 @@ export function AgentPanel() {
       dead = true;
       uns.forEach((u) => u());
     };
-  }, [
-    openRetainedConversation,
-    reveal,
-    startCompose,
-    startFirstIfQueued,
-    t,
-    win,
-  ]);
+  }, [reveal, startCompose, startFirstIfQueued, t, win]);
 
   // Reveal only after reply/error state has committed. The host verifies that
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
@@ -951,14 +871,13 @@ export function AgentPanel() {
               : message,
           ),
         );
-        if (approve && !reply.confirm_action) maybeAutoCopy(reply.text);
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : t("agent.error"));
       } finally {
         setBusy(false);
       }
     },
-    [maybeAutoCopy, t],
+    [t],
   );
 
   const renderConfirmAction = (pending: AgentConfirm) => (

@@ -24,6 +24,7 @@ const SHORTCUTS = [
 ] as const;
 
 const CAPTURE_SETTINGS = hashForRoute({ page: "settings", section: "capture" });
+const AI_SETTINGS = hashForRoute({ page: "settings", section: "ai" });
 
 function go(hash: string) {
   window.location.hash = hash.slice(1);
@@ -65,7 +66,7 @@ export function OverviewCards() {
   const { t } = useTranslation();
   const { getSetting, isLoading } = useSettings();
   const bindings = getSetting("bindings") ?? {};
-  const agentEnabled = getSetting("agent_enabled") ?? false;
+  const agentEnabled = getSetting("agent_enabled") ?? true;
 
   return (
     <div className="overview-shortcut-strip">
@@ -114,11 +115,7 @@ export function OverviewCards() {
                     shortcut,
                   })}
                   onClick={() =>
-                    go(
-                      mode === "agent"
-                        ? hashForRoute({ page: "agent" })
-                        : CAPTURE_SETTINGS,
-                    )
+                    go(mode === "standard" ? CAPTURE_SETTINGS : AI_SETTINGS)
                   }
                 >
                   {isLoading ? (

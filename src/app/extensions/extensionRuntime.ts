@@ -1,7 +1,5 @@
 import type { Result } from "@/bindings";
 
-export type ToolSection = "dictionary" | "snippets" | "context" | "agent";
-
 export function signInCancelled(reason: unknown): boolean {
   return (
     (reason instanceof Error ? reason.message : reason) === "Sign-in cancelled."

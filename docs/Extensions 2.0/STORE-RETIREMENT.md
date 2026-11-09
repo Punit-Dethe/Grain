@@ -410,3 +410,14 @@ Packaged sign-in, discovery, and read results remain pending for both providers.
   non-owner consent, restart and custom-connection checks were not reported.
 - The in-repository cleanup is complete. The remaining acceptance, UI,
   harness coverage and external registry work are tracked separately above.
+
+### Agent and AI settings cleanup
+
+- Settings → AI groups Dictation cleanup and Agent. Moved the four AI
+  capture controls from Transcription and updated their navigation links.
+  Agent defaults on and respects explicit opt-outs.
+- Retired Quick Agent, its headless paste and follow-up offer, and automatic
+  reply copying. The regular reply panel supports manual Copy, Paste and
+  follow-ups. The pill still shows progress until the first reply is ready.
+- Passed desktop, core, frontend and harness tests, TypeScript, scoped lint,
+  the frontend build and settings parity. Real-app visual acceptance is pending.

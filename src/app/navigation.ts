@@ -7,6 +7,7 @@ export const SETTINGS_SECTION_IDS = [
   "audio",
   "output",
   "application",
+  "ai",
   "post-processing",
   "debug",
   // About sits last: it is the reference shelf of the settings pane, not a
@@ -28,7 +29,6 @@ export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
   | { page: "meet"; meeting?: string }
-  | { page: "agent" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
   | { page: "extensions"; view: ExtensionViewId };
@@ -44,7 +44,6 @@ export function routeFromHash(hash: string): AppRoute {
   if (path === "/meet") return { page: "meet" };
   const meetingMatch = path.match(/^\/meet\/([A-Za-z0-9-]+)$/);
   if (meetingMatch) return { page: "meet", meeting: meetingMatch[1] };
-  if (path === "/agent" || path === "/tools/agent") return { page: "agent" };
   // Legacy destination from the brief period About was its own tab.
   if (path === "/about") return { page: "settings", section: "about" };
   // Legacy destinations from before settings were split by subject.

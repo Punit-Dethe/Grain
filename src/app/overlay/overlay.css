@@ -552,8 +552,7 @@ body,
   font-weight: 500;
   font-display: swap;
 }
-.grain-notice,
-.grain-followup {
+.grain-notice {
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -570,12 +569,4 @@ body,
 }
 .grain-notice {
   width: 136px;
-}
-.grain-followup {
-  width: 250px;
-  gap: 10px;
-  cursor: pointer;
-}
-.grain-followup span {
-  color: var(--s-muted);
 }

@@ -10,7 +10,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { ModelPicker } from "@/components/settings/speech-to-text/ModelPicker";
 
 /**
- * [GRAIN] Transcription — model selection, capture keys and AI processing.
+ * [GRAIN] Transcription — model selection and capture keys.
  * The capture route stays stable for Overview and Quick Panel links.
  */
 export function CapturePane() {

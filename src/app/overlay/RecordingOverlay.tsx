@@ -30,7 +30,6 @@ const empty: OverlayPresentation = {
   app_icon_enabled: true,
   icon: null,
   notice: null,
-  followup: null,
   committed: "",
   tentative: "",
   working: false,
@@ -397,13 +396,7 @@ export function RecordingOverlay() {
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [
-    text,
-    presentation.visible,
-    presentation.notice,
-    presentation.followup,
-    session,
-  ]);
+  }, [text, presentation.visible, presentation.notice, session]);
 
   useLayoutEffect(() => {
     const row = workRow.current;
@@ -432,7 +425,6 @@ export function RecordingOverlay() {
     presentation.visible,
     presentation.state,
     presentation.notice,
-    presentation.followup,
     working,
     kind,
     hasText,
@@ -513,21 +505,12 @@ export function RecordingOverlay() {
     </div>
   );
 
-  if (presentation.notice || presentation.followup) {
+  if (presentation.notice) {
     return (
       <div dir={direction} className={`ov-stage ${position}`}>
-        {presentation.notice ? (
-          <div className="grain-notice" role="status">
-            {presentation.notice}
-          </div>
-        ) : (
-          <button
-            className="grain-followup"
-            onClick={() => void commands.overlayFollowup()}
-          >
-            {t("overlay.askFollowup")} <span>{presentation.followup}</span>
-          </button>
-        )}
+        <div className="grain-notice" role="status">
+          {presentation.notice}
+        </div>
       </div>
     );
   }

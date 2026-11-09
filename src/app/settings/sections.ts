@@ -1,5 +1,6 @@
 import {
   AudioLines,
+  Bot,
   Bug,
   Info,
   Mic,
@@ -22,6 +23,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: "audio", icon: Mic, enabled: () => true },
   { id: "output", icon: TextCursorInput, enabled: () => true },
   { id: "application", icon: MonitorCog, enabled: () => true },
+  { id: "ai", icon: Bot, enabled: () => true },
   {
     id: "post-processing",
     icon: Sparkles,

@@ -59,12 +59,10 @@ describe("UI 2.0 hash navigation", () => {
     },
   );
 
-  it("opens Agent as a standalone page, including the former Studio link", () => {
-    const route = { page: "agent" } as const;
-    expect(hashForRoute(route)).toBe("#/agent");
+  it("opens AI in Settings", () => {
+    const route = { page: "settings", section: "ai" } as const;
+    expect(hashForRoute(route)).toBe("#/settings/ai");
     expect(routeFromHash(hashForRoute(route))).toEqual(route);
-    expect(routeFromHash("#/tools/agent")).toEqual(route);
-    expect(routeFromHash("#/agent/?focus=shortcut")).toEqual(route);
   });
 
   it.each(["installed", "browse"] as const)(
@@ -124,6 +122,8 @@ describe("UI 2.0 hash navigation", () => {
       routeUsesCompactGlobalRail({ page: "extensions", view: "installed" }),
     ).toBe(false);
     expect(routeUsesCompactGlobalRail({ page: "overview" })).toBe(false);
-    expect(routeUsesCompactGlobalRail({ page: "agent" })).toBe(false);
+    expect(
+      routeUsesCompactGlobalRail({ page: "settings", section: "ai" }),
+    ).toBe(true);
   });
 });

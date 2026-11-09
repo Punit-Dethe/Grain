@@ -204,23 +204,6 @@ pub struct CustomContextProfile {
     pub targets: Vec<ContextProfileTarget>,
 }
 
-/// [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
-/// clipboard automatically as they arrive. `First` (default) mirrors the
-/// original behavior — only the first reply of a session is auto-copied.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentAutocopy {
-    Off,
-    First,
-    All,
-}
-
-impl Default for AgentAutocopy {
-    fn default() -> Self {
-        AgentAutocopy::First
-    }
-}
-
 /// [GRAIN] Where the Agent reply surface appears. `Side` (default) is the
 /// original bottom-right card that grows into a right-side conversation.
 /// `Center` is the sleek center-top panel that hugs its content and grows
@@ -785,18 +768,11 @@ pub struct AppSettings {
     /// everyone who has not made one, which is the default.
     #[serde(default)]
     pub context_custom_profiles: Vec<CustomContextProfile>,
-    /// [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
-    /// switch. OFF by default for NEW installs; the one-time import in
-    /// `load_settings` turns it on for existing users who already have snippets
-    /// (the upgrade rule — a working feature must not vanish on update).
+    /// Enable spoken snippet expansion.
     #[serde(default)]
     pub snippets_enabled: bool,
-    /// [GRAIN] Extension platform (SPEC §10.1): the Agent built-in extension's
-    /// switch — the on/off the Agent never had. Gates summoning and the
-    /// summon-agent binding. OFF by default for NEW installs; the one-time
-    /// import turns it on for existing users (the Agent was previously always
-    /// available).
-    #[serde(default)]
+    /// Enable the Agent and its summon shortcut.
+    #[serde(default = "default_true")]
     pub agent_enabled: bool,
     /// [GRAIN] Paste Catch: when a dictation paste provably misses the text
     /// field, hold the transcript on the clipboard behind a visible offer
@@ -826,15 +802,6 @@ pub struct AppSettings {
     /// credential vault and never enter AppSettings.
     #[serde(default)]
     pub mcp_oauth_client_ids: HashMap<String, String>,
-    /// [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
-    /// reply only / every reply). Default `first` — the original behavior.
-    #[serde(default)]
-    pub agent_autocopy: AgentAutocopy,
-    /// [GRAIN] Quick Agent: when on, submitting an instruction from the palette
-    /// runs the AI headlessly and pastes the reply straight at the cursor instead
-    /// of opening the reply panel. The pill then briefly offers "ask follow-up".
-    #[serde(default)]
-    pub agent_quick_enabled: bool,
     /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
     /// the window you were in and sends that frame with your instruction, so it
     /// can answer about what is actually on screen — a chart, a diff, an error
@@ -1666,17 +1633,13 @@ pub fn get_default_settings() -> AppSettings {
         context_awareness_enabled: false,
         context_profile_instructions: Vec::new(),
         context_custom_profiles: Vec::new(),
-        // [GRAIN] Built-in extensions default OFF for new installs (SPEC §10.1);
-        // the upgrade import in context.rs turns them on for existing users.
         snippets_enabled: false,
-        agent_enabled: false,
+        agent_enabled: true,
         paste_catch_enabled: default_paste_catch_enabled(),
         paste_catch_hold_ms: default_paste_catch_hold_ms(),
         extension_developer_mode: false,
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),
-        agent_autocopy: AgentAutocopy::default(),
-        agent_quick_enabled: false,
         agent_screen_image: false,
         scrap_that_enabled: false,
         agent_input_type_to_expand: true,
@@ -1710,6 +1673,26 @@ impl AppSettings {
         self.post_process_providers
             .iter_mut()
             .find(|provider| provider.id == provider_id)
+    }
+}
+
+#[cfg(test)]
+mod agent_settings_tests {
+    use super::AppSettings;
+
+    #[test]
+    fn agent_defaults_on_and_preserves_explicit_opt_out() {
+        let fresh = AppSettings::default();
+        assert!(fresh.agent_enabled);
+
+        let mut saved = serde_json::to_value(fresh).unwrap();
+        saved.as_object_mut().unwrap().remove("agent_enabled");
+        let without_preference: AppSettings = serde_json::from_value(saved.clone()).unwrap();
+        assert!(without_preference.agent_enabled);
+
+        saved["agent_enabled"] = serde_json::json!(false);
+        let opted_out: AppSettings = serde_json::from_value(saved).unwrap();
+        assert!(!opted_out.agent_enabled);
     }
 }
 
