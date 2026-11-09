@@ -93,3 +93,12 @@ still cut off in live testing, and the reply glitch persisted. Restored the
 compact native window and removed the experimental region and startup command.
 A recording from summon through the first reply will help separate a
 startup artifact from the reply handoff.
+
+## Frame-by-frame reply handoff
+
+The user's 60 fps recording shows the 300-pixel working notch move from x=810
+to x=620 for one frame at 11.50 seconds, then return to center before growing.
+That 190-pixel offset is half the change from 300 to 680 pixels. Windows
+briefly presents the old compact frame at the expanded window's left edge.
+The Windows host now starts at reply width and compact height. It grows down
+from the same origin, with the visible shell centered and no native region.
