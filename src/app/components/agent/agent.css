@@ -219,7 +219,7 @@ html[data-window="agent-panel"] body {
   scrollbar-color: #ffffff37 transparent;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   padding: 10px 19px 12px;
   font-size: 14px;
   line-height: 1.55;
@@ -264,7 +264,10 @@ html[data-window="agent-panel"] body {
 .agc-c-tools {
   display: flex;
   gap: 4px;
-  margin-top: 2px;
+}
+
+.agc-c-tool {
+  height: 24px;
 }
 
 @media (hover: hover) {
