@@ -761,7 +761,9 @@ fn bounds_match_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: 
 #[cfg(windows)]
 fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> bool {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOZORDER,
+    };
     let (Ok(raw), Ok(scale)) = (window.hwnd(), window.scale_factor()) else {
         return false;
     };
@@ -776,7 +778,7 @@ fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f6
             px(y),
             px(w),
             px(h),
-            SWP_NOZORDER | SWP_NOACTIVATE,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
         )
         .is_ok()
     }
@@ -1228,6 +1230,9 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         place_notch_at_text_scale(&window, NOTCH_REPLY);
         state.reply_visible.store(true, Ordering::SeqCst);
         let _ = window.set_focusable(true);
+        // Let the user's click activate the Windows notch. Keep activation
+        // separate from the native resize and the reply animation.
+        #[cfg(not(windows))]
         if !ordinary_dictation_live(&handle) {
             let _ = window.set_focus();
         }

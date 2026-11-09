@@ -76,8 +76,9 @@ Starting until the microphone opens, and Enter leaves startup alone until
 there is a capture to submit. At reply time, one native bounds change
 precedes the CSS expansion. The window is shown once and uses no shadow.
 
-## Windows resize test
+## Windows focus test
 
-The reply resize now allows Windows to preserve valid client pixels. It
-previously used `SWP_NOCOPYBITS`, which discards those pixels. Focus and CSS
-timing stay the same for this comparison. Visual confirmation is pending.
+Preserving Windows client pixels during the reply resize did not eliminate
+the flash in the user's live test. Restored the original resize flags for
+this comparison. The Windows reply remains focusable, with activation left
+to the user's click. CSS timing stays the same. Visual confirmation is pending.
