@@ -349,6 +349,8 @@ pub struct AgentState {
     reply_visible: AtomicBool,
     draining_voice: AtomicBool,
     notch_generation: AtomicU64,
+    #[cfg(windows)]
+    notch_has_region: AtomicBool,
 }
 
 /// One conversation turn from the frontend.
@@ -815,6 +817,52 @@ fn place_notch_at_text_scale(window: &tauri::WebviewWindow, (width, height): (f6
     place_notch(window, (width, height));
 }
 
+/// Win32 regions use window coordinates. The renderer measures the compact
+/// shell in client pixels using its actual zoom and display scale.
+#[cfg(windows)]
+fn set_notch_region(window: &tauri::WebviewWindow, compact_size: Option<[i32; 2]>) -> bool {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        ClientToScreen, CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
+
+    let Ok(hwnd) = window.hwnd() else {
+        return false;
+    };
+    unsafe {
+        let mut outer = RECT::default();
+        let mut client = RECT::default();
+        let mut origin = POINT::default();
+        if GetWindowRect(hwnd, &mut outer).is_err()
+            || GetClientRect(hwnd, &mut client).is_err()
+            || !ClientToScreen(hwnd, &mut origin).as_bool()
+        {
+            return false;
+        }
+        let client_width = client.right - client.left;
+        let client_height = client.bottom - client.top;
+        let [width, height] = compact_size.unwrap_or([client_width, client_height]);
+        if width < 1 || height < 1 || client_width < 1 || client_height < 1 {
+            return false;
+        }
+        // Keep one physical pixel for subpixel edges after centering.
+        let width = width.saturating_add(2).min(client_width);
+        let height = height.saturating_add(1).min(client_height);
+        let x = origin.x - outer.left + (client_width - width) / 2;
+        let y = origin.y - outer.top;
+        let region = CreateRectRgn(x, y, x + width, y + height);
+        if region.0.is_null() {
+            return false;
+        }
+        if SetWindowRgn(hwnd, Some(region), compact_size.is_none()) == 0 {
+            let _ = DeleteObject(HGDIOBJ(region.0));
+            return false;
+        }
+        true
+    }
+}
+
 fn ensure_capture_notch(app: &AppHandle, generation: u64) {
     let state = app.state::<AgentState>();
     if state.summon_gen.load(Ordering::SeqCst) != generation
@@ -830,9 +878,16 @@ fn ensure_capture_notch(app: &AppHandle, generation: u64) {
             return Ok(());
         }
         state.notch_generation.store(generation, Ordering::SeqCst);
-        let window = build_window(app, PANEL_LABEL, NOTCH_CAPTURE.0, NOTCH_CAPTURE.1)
-            .map_err(|error| error.to_string())?;
-        place_notch_at_text_scale(&window, NOTCH_CAPTURE);
+        let (width, height) = if cfg!(windows) {
+            NOTCH_REPLY
+        } else {
+            NOTCH_CAPTURE
+        };
+        let window =
+            build_window(app, PANEL_LABEL, width, height).map_err(|error| error.to_string())?;
+        place_notch_at_text_scale(&window, (width, height));
+        // On Windows the compact shell installs its region before first show.
+        #[cfg(not(windows))]
         window.show().map_err(|error| error.to_string())?;
         Ok(())
     };
@@ -1188,6 +1243,45 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
 
 #[tauri::command]
 #[specta::specta]
+pub fn agent_show_notch(
+    window: tauri::WebviewWindow,
+    compact_size: [i32; 2],
+) -> Result<(), String> {
+    if window.label() != PANEL_LABEL {
+        return Err("Only the Agent notch can show its surface".into());
+    }
+    #[cfg(windows)]
+    {
+        let app = window.app_handle();
+        let state = app.state::<AgentState>();
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+        if app
+            .get_webview_window(PANEL_LABEL)
+            .and_then(|current| current.hwnd().ok())
+            != Some(hwnd)
+            || state.notch_generation.load(Ordering::SeqCst)
+                != state.summon_gen.load(Ordering::SeqCst)
+            || window.is_visible().unwrap_or(false)
+        {
+            return Ok(());
+        }
+        let has_region = set_notch_region(&window, Some(compact_size));
+        state.notch_has_region.store(has_region, Ordering::SeqCst);
+        if !has_region {
+            warn!("[GRAIN] agent: could not set the measured notch region");
+            place_notch_at_text_scale(&window, NOTCH_CAPTURE);
+        }
+        return window.show().map_err(|error| error.to_string());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = compact_size;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn agent_cancel_notch(app: AppHandle, generation: u64) {
     let state = app.state::<AgentState>();
     if state.summon_gen.load(Ordering::SeqCst) != generation {
@@ -1227,6 +1321,18 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
             return;
         };
+        #[cfg(windows)]
+        if state.notch_has_region.load(Ordering::SeqCst) {
+            if !set_notch_region(&window, None) {
+                if let Ok(hwnd) = window.hwnd() {
+                    use windows::Win32::Graphics::Gdi::SetWindowRgn;
+                    let _ = unsafe { SetWindowRgn(hwnd, None, true) };
+                }
+            }
+        } else {
+            place_notch_at_text_scale(&window, NOTCH_REPLY);
+        }
+        #[cfg(not(windows))]
         place_notch_at_text_scale(&window, NOTCH_REPLY);
         state.reply_visible.store(true, Ordering::SeqCst);
         let _ = window.set_focusable(true);

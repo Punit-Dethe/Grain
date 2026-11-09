@@ -84,3 +84,13 @@ and automatic focus. The user saw the compact notch appear to shrink or
 disappear before the reply expanded. React retains the same shell across
 the handoff. The remaining transition to isolate is the native viewport
 resize before CSS starts the expansion.
+
+## Windows fixed viewport with measured bounds
+
+The native WebView opens at reply size. The capture document measures its
+compact shell using the renderer's pixel ratio before the window is shown.
+Win32 centers that size within the actual client area and clips to it while
+the notch is compact. The first reply widens the region without moving or
+resizing the WebView. The existing shell then expands with its normal CSS
+transition. The live check is whether the compact notch holds its size
+through the first frame of reply expansion.
