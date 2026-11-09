@@ -38,11 +38,9 @@ export function AgentPanel() {
   // each one handled the same event again (one dictation pasted N times).
   const win = useMemo(() => getCurrentWindow(), []);
 
-  // Until the first follow-up, the assistant reply lives in the retry history.
+  // The first reply can be retried until the conversation has a follow-up.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // Retry versions of the FIRST reply (compact stage), and which one is shown.
-  const [versions, setVersions] = useState<AgentReply[]>([]);
-  const [versionIdx, setVersionIdx] = useState(0);
+  const [firstReply, setFirstReply] = useState<AgentReply | null>(null);
   const [hasFollowups, setHasFollowups] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +53,7 @@ export function AgentPanel() {
   const contextRef = useRef<string | null>(null);
   const instructionRef = useRef<string>("");
   const messagesRef = useRef<ChatMessage[]>([]);
-  const versionsRef = useRef<AgentReply[]>([]);
-  const versionIdxRef = useRef(0);
+  const firstReplyRef = useRef<AgentReply | null>(null);
   const hasFollowupsRef = useRef(false);
   const busyRef = useRef(false);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -67,19 +64,17 @@ export function AgentPanel() {
   const firstRunStartedRef = useRef(false);
   const firstTurnGenerationRef = useRef<number | null>(null);
   messagesRef.current = messages;
-  versionsRef.current = versions;
-  versionIdxRef.current = versionIdx;
+  firstReplyRef.current = firstReply;
   hasFollowupsRef.current = hasFollowups;
   busyRef.current = busy;
 
   const lastReplyOf = (msgs: ChatMessage[]) =>
     [...msgs].reverse().find((m) => m.role === "assistant")?.content ?? "";
 
-  /** The reply the surface currently presents (pager-aware in compact). */
   const displayedReply = hasFollowups
     ? lastReplyOf(messages)
-    : (versions[versionIdx]?.text ?? "");
-  const compactConfirmAction = versions[versionIdx]?.confirm_action ?? null;
+    : (firstReply?.text ?? "");
+  const compactConfirmAction = firstReply?.confirm_action ?? null;
   const expandedConfirmAction = [...messages]
     .reverse()
     .find((message) => message.role === "assistant")?.confirmAction;
@@ -95,7 +90,6 @@ export function AgentPanel() {
   /** Run the FIRST instruction (or a retry of it) — compact stage. */
   const runFirst = useCallback(
     async (instruction: string) => {
-      firstRunStartedRef.current = true;
       // The panel may already be busy while speech is being transcribed. Seed
       // visible state now: updating instructionRef or busy=true alone need not
       // trigger another render before the model finishes.
@@ -112,12 +106,7 @@ export function AgentPanel() {
           revealedRef.current ? null : firstTurnGenerationRef.current,
         );
         if (res.status === "ok") {
-          const reply = res.data;
-          setVersions((prev) => {
-            const next = [...prev, reply];
-            setVersionIdx(next.length - 1);
-            return next;
-          });
+          setFirstReply(res.data);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -178,11 +167,11 @@ export function AgentPanel() {
       ? [...messagesRef.current]
           .reverse()
           .find((message) => message.role === "assistant")?.confirmAction
-      : versionsRef.current[versionIdxRef.current]?.confirm_action;
+      : firstReplyRef.current?.confirm_action;
     if (pending) return;
     const text = hasFollowupsRef.current
       ? lastReplyOf(messagesRef.current)
-      : (versionsRef.current[versionIdxRef.current]?.text ?? "");
+      : (firstReplyRef.current?.text ?? "");
     if (!text.trim() || busyRef.current) return;
     void commands.agentConfirmPaste(text).catch(() => {});
   }, []);
@@ -192,7 +181,7 @@ export function AgentPanel() {
       busyRef.current ||
       hasFollowupsRef.current ||
       !instructionRef.current ||
-      versionsRef.current[versionIdxRef.current]?.confirm_action
+      firstReplyRef.current?.confirm_action
     )
       return;
     void runFirst(instructionRef.current);
@@ -304,15 +293,10 @@ export function AgentPanel() {
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
   useEffect(() => {
     const generation = firstTurnGenerationRef.current;
-    if (
-      !busy &&
-      !revealed &&
-      generation !== null &&
-      (versions.length > 0 || error)
-    ) {
+    if (!busy && !revealed && generation !== null && (firstReply || error)) {
       void commands.agentPresentReply(generation).catch(console.error);
     }
-  }, [busy, error, revealed, versions.length]);
+  }, [busy, error, revealed, firstReply]);
 
   useEffect(() => {
     if (revealed && hasFollowups)
@@ -332,7 +316,7 @@ export function AgentPanel() {
             content: instructionRef.current,
           });
         }
-        const reply = versionsRef.current[versionIdxRef.current];
+        const reply = firstReplyRef.current;
         if (reply?.text) {
           seed.push({
             id: rid(),
@@ -415,10 +399,8 @@ export function AgentPanel() {
           throw new Error(response.error || t("agent.error"));
         }
         const reply = response.data;
-        setVersions((current) =>
-          current.map((version) =>
-            version.confirm_action?.token === pending.token ? reply : version,
-          ),
+        setFirstReply((current) =>
+          current?.confirm_action?.token === pending.token ? reply : current,
         );
         setMessages((current) =>
           current.map((message) =>
@@ -483,10 +465,8 @@ export function AgentPanel() {
             ]
           : []),
       ];
-  // Redo re-runs the first instruction only (there are no versions once the
-  // conversation branches), so it lives under the sole pre-follow-up answer.
   const canRedo =
-    !hasFollowups && !busy && !displayedConfirmAction && versions.length > 0;
+    !hasFollowups && !busy && !displayedConfirmAction && firstReply !== null;
 
   return (
     <div className="agent-panel-root">

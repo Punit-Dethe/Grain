@@ -102,3 +102,11 @@ That 190-pixel offset is half the change from 300 to 680 pixels. Windows
 briefly presents the old compact frame at the expanded window's left edge.
 The Windows host now starts at reply width and compact height. It grows down
 from the same origin, with the visible shell centered and no native region.
+
+## Pre-merge review
+
+Reply reveal leaves focus with ordinary dictation if a capture began after
+Agent was summoned, including while that capture is transcribing. Closing the
+notch retires its screen capture generation so a late frame cannot restore
+the cleared attachment. Removed the unused typed-summon path and retry history
+from the retired Agent UI. The composer still supports typed follow-ups.

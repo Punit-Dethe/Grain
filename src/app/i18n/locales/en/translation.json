@@ -46,8 +46,6 @@
     "confirm": "Confirm",
     "confirmHint": "Paste this reply into the app you came from (Enter)",
     "retry": "Retry — generate another version",
-    "prevVersion": "Previous version",
-    "nextVersion": "Next version",
     "more": "More"
   },
   "tray": {

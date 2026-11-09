@@ -1,15 +1,7 @@
-//! [GRAIN] The Agent â€” a summoned, voice-first AI scratchpad in its own
-//! destroyable windows ("if it's not in use, destroy it").
-//!
-//! Two surfaces (faithful to the reference design):
-//!   â€¢ INPUT â€” NATIVE (it lives in the pill process, shown instantly on summon):
-//!     records by default, expands into a typing card on the first keystroke.
-//!     The core captures the foreground selection at summon, starts dictation,
-//!     and pre-creates the reply panel HIDDEN so it is warm at submit.
-//!   â€¢ PANEL â€” a bottom-right reply card webview (COMPACT: pager over retry
-//!     versions, the captured text, the reply, copy / retry / Confirm-âŽ-paste)
-//!     that grows into the EXPANDED conversation when the user asks a follow-up.
-//!     The pill shows progress until the first reply is ready.
+//! [GRAIN] The Agent is a voice-first scratchpad in a top-edge notch. The host
+//! captures the foreground selection and starts dictation while the compact
+//! notch loads. The same window expands on the first reply or error and
+//! supports typed follow-ups until dismissed.
 //!
 //! The conversation is sent to the SAME AI the post-processing layer uses (single
 //! provider, or the ordered fallback pool).
@@ -349,6 +341,7 @@ pub struct AgentState {
     waiting_for_reply: AtomicBool,
     /// Dictation can target a focused notch once it shows a reply.
     reply_visible: AtomicBool,
+    dictation_session_at_summon: AtomicU64,
     draining_voice: AtomicBool,
     notch_generation: AtomicU64,
 }
@@ -436,9 +429,16 @@ fn summon_inner(app: &AppHandle) {
             clear_pending_action(&app);
             *state.context.lock().unwrap() = None;
             *state.target_hwnd.lock().unwrap() = hwnd;
-            *state.screen_image.lock().unwrap() = None;
-            let generation = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
+            let generation = {
+                let mut image = state.screen_image.lock().unwrap();
+                let generation = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
+                *image = None;
+                generation
+            };
             state.reply_visible.store(false, Ordering::SeqCst);
+            state
+                .dictation_session_at_summon
+                .store(crate::grain_actions::current_session_id(), Ordering::SeqCst);
             state.input_active.store(true, Ordering::SeqCst);
             generation
         };
@@ -481,19 +481,8 @@ fn summon_inner(app: &AppHandle) {
         // being in front by now changes nothing about which window is
         // photographed, and `capture_window` renders that window regardless of
         // z-order or focus.
-        {
-            if let Some(image) = capture_screen_image(&app, hwnd) {
-                if let Some(state) = app.try_state::<AgentState>() {
-                    // A newer summon may have started while this was encoding;
-                    // its (cleared) state wins. Storing here would hand the next
-                    // question a picture of the last question's screen.
-                    if state.summon_gen.load(Ordering::SeqCst) == summon_gen {
-                        if let Ok(mut g) = state.screen_image.lock() {
-                            *g = Some(image);
-                        }
-                    }
-                }
-            }
+        if let Some(image) = capture_screen_image(&app, hwnd) {
+            store_screen_image(&state, summon_gen, image);
         }
     });
 }
@@ -513,12 +502,12 @@ pub fn panel_dictation_target(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-/// Agent input owns the capture slot even if it has released the mic for typing.
 fn input_is_current(state: &AgentState, generation: u64) -> bool {
     state.summon_gen.load(Ordering::SeqCst) == generation
         && state.input_active.load(Ordering::SeqCst)
 }
 
+/// Agent input owns the capture slot while starting or recording.
 pub(crate) fn blocks_dictation(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.input_active.load(Ordering::SeqCst))
@@ -630,13 +619,13 @@ pub(crate) fn force_foreground_raw(raw: isize) {
 /// window's aspect-ratio lock and are destroyed on close.
 fn build_window(
     app: &AppHandle,
-    label: &str,
+    built_for: u64,
     w: f64,
     h: f64,
 ) -> tauri::Result<tauri::WebviewWindow> {
     let mut builder = tauri::WebviewWindowBuilder::new(
         app,
-        label,
+        PANEL_LABEL,
         tauri::WebviewUrl::App("agent-notch.html".into()),
     )
     .title("Grain Assist")
@@ -667,10 +656,6 @@ fn build_window(
         // The session this surface belongs to. A teardown can land well after a
         // NEWER summon has begun (closing the old panel is dispatched to the main
         // thread), and the cleanup below must then leave the new session alone.
-        let built_for = app
-            .try_state::<AgentState>()
-            .map(|s| s.summon_gen.load(Ordering::SeqCst))
-            .unwrap_or(0);
         window.on_window_event(move |event| {
             if !matches!(event, tauri::WindowEvent::Destroyed) {
                 return;
@@ -689,9 +674,26 @@ fn build_window(
             }
             unregister_transient_shortcuts_deferred(&app);
             if generation == built_for {
-                cancel_notch_capture(&app);
-                clear_screen_image(&app);
-                clear_pending_action(&app);
+                if blocks_dictation(&app) || waiting_for_reply(&app) {
+                    cancel_notch_capture(&app);
+                } else {
+                    let mut image = state.screen_image.lock().unwrap();
+                    if state
+                        .summon_gen
+                        .compare_exchange(
+                            built_for,
+                            built_for.wrapping_add(1),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        *image = None;
+                        state.reply_visible.store(false, Ordering::SeqCst);
+                        clear_pending_action(&app);
+                        crate::capability::prefetch::clear();
+                    }
+                }
             }
         });
     }
@@ -832,7 +834,7 @@ fn ensure_capture_notch(app: &AppHandle, generation: u64) {
             return Ok(());
         }
         state.notch_generation.store(generation, Ordering::SeqCst);
-        let window = build_window(app, PANEL_LABEL, NOTCH_CAPTURE.0, NOTCH_CAPTURE.1)
+        let window = build_window(app, generation, NOTCH_CAPTURE.0, NOTCH_CAPTURE.1)
             .map_err(|error| error.to_string())?;
         place_notch_at_text_scale(&window, NOTCH_CAPTURE);
         window.show().map_err(|error| error.to_string())?;
@@ -1080,6 +1082,14 @@ fn screen_attachment(app: &AppHandle) -> Option<ImageAttachment> {
     Some(ImageAttachment::new(image.mime, image.to_base64()))
 }
 
+fn store_screen_image(state: &AgentState, generation: u64, image: CapturedImage) {
+    if let Ok(mut current) = state.screen_image.lock() {
+        if state.summon_gen.load(Ordering::SeqCst) == generation {
+            *current = Some(image);
+        }
+    }
+}
+
 /// Drop the session's screen frame. Called from every path that ends a session,
 /// because a picture of the user's screen must not outlive the question it was
 /// taken to answer.
@@ -1232,7 +1242,11 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         place_notch_at_text_scale(&window, NOTCH_REPLY);
         state.reply_visible.store(true, Ordering::SeqCst);
         let _ = window.set_focusable(true);
-        if !ordinary_dictation_live(&handle) {
+        // Dictation may already be transcribing even though its microphone is idle.
+        if !ordinary_dictation_live(&handle)
+            && state.dictation_session_at_summon.load(Ordering::SeqCst)
+                == crate::grain_actions::current_session_id()
+        {
             let _ = window.set_focus();
         }
         let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
@@ -1277,33 +1291,6 @@ fn begin_reply_wait(app: &AppHandle) {
 // ============================================================================
 // Native input â†’ core (the pill's summon card talks back over the WS)
 // ============================================================================
-
-/// Pill â†’ core: the user submitted TYPED text from the expanded input card.
-#[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
-pub fn input_submit_text(app: &AppHandle, text: String) {
-    let Some(state) = app.try_state::<AgentState>() else {
-        return;
-    };
-    if !state.input_active.swap(false, Ordering::SeqCst) {
-        return; // stale double-submit (global Enter + window Enter, etc.)
-    }
-    let generation = state.summon_gen.load(Ordering::SeqCst);
-    // Typed text wins â€” abandon the voice capture and release the mic.
-    state.dictation_capture.lock().unwrap().take();
-    app.state::<Arc<AudioRecordingManager>>().cancel_recording();
-
-    let text = text.trim().to_string();
-    if text.is_empty() {
-        input_cancel_cleanup(app);
-        return;
-    }
-    begin_reply_wait(app);
-    info!(
-        "[GRAIN] agent: typed instruction submitted ({} chars)",
-        text.chars().count()
-    );
-    dispatch_instruction(app.clone(), text, generation);
-}
 
 fn take_voice_capture(state: &AgentState) -> Option<AgentCapture> {
     let mut pending_capture = state.dictation_capture.lock().unwrap();
@@ -1430,30 +1417,6 @@ fn input_cancel_cleanup(app: &AppHandle) {
     unregister_transient_shortcuts_deferred(app);
 }
 
-/// Pill â†’ core: typing started (`true` â†’ drop the voice capture) or the user
-/// tabbed back to voice (`false` â†’ restart dictation).
-#[allow(dead_code)] // Retained for the deferred expanded Agent input UI.
-pub fn input_typing(app: &AppHandle, active: bool) {
-    let Some(state) = app.try_state::<AgentState>() else {
-        return;
-    };
-    if !state.input_active.load(Ordering::SeqCst) {
-        return;
-    }
-    if active {
-        state.dictation_capture.lock().unwrap().take();
-        app.state::<Arc<AudioRecordingManager>>().cancel_recording();
-    } else {
-        if let Some(readiness) = start_dictation(app, &state) {
-            crate::grain_capture::announce_agent_ready(
-                app,
-                &app.state::<Arc<AudioRecordingManager>>(),
-                readiness,
-            );
-        }
-    }
-}
-
 /// Submit the first turn to the notch renderer.
 fn dispatch_instruction(app: AppHandle, text: String, generation: u64) {
     if !queue_first_message(
@@ -1473,11 +1436,11 @@ fn dispatch_instruction(app: AppHandle, text: String, generation: u64) {
 #[cfg(feature = "agent-harness")]
 pub(crate) fn harness_submit_instruction(app: &AppHandle, text: String) {
     clear_pending_action(app);
-    let generation = app
-        .state::<AgentState>()
-        .summon_gen
-        .fetch_add(1, Ordering::SeqCst)
-        + 1;
+    let state = app.state::<AgentState>();
+    let generation = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
+    state
+        .dictation_session_at_summon
+        .store(crate::grain_actions::current_session_id(), Ordering::SeqCst);
     begin_reply_wait(app);
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || ensure_capture_notch(&handle, generation));
@@ -1832,6 +1795,23 @@ mod escape_priority_tests {
 #[cfg(test)]
 mod first_reply_handoff_tests {
     use super::*;
+
+    #[test]
+    fn a_retired_summon_cannot_keep_a_late_screen_capture() {
+        let state = AgentState::default();
+        state.summon_gen.store(2, Ordering::SeqCst);
+        store_screen_image(
+            &state,
+            1,
+            CapturedImage {
+                width: 1,
+                height: 1,
+                mime: "image/png",
+                bytes: vec![1],
+            },
+        );
+        assert!(state.screen_image.lock().unwrap().is_none());
+    }
 
     #[test]
     fn enter_during_startup_leaves_capture_active() {

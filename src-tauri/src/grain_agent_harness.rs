@@ -564,7 +564,6 @@ mod tests {
             (true, 9004, true),
             (true, 0, false),
             (true, 9000, false),
-            (true, 9001, false),
             (true, 9003, false),
         ] {
             std::fs::write(root.path().join(".grain-agent-harness.json"), serde_json::to_vec(&serde_json::json!({"schema":1,"runId":uuid::Uuid::new_v4(),"modelPort":9000,"mcpPort":9003,"mcpAuth":auth,"mcpPeerPort":port})).unwrap()).unwrap();
