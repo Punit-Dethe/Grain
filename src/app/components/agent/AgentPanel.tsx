@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AudioLines, Copy, RotateCcw, X, Check } from "lucide-react";
+import { Copy, RotateCcw, X, Check } from "lucide-react";
 import {
   commands,
   type AgentNotchStatus,
@@ -495,13 +495,7 @@ export function AgentPanel() {
         aria-label={t("agent.brand")}
       >
         <header className="agent-notch-header">
-          {revealed ? (
-            <AudioLines
-              size={15}
-              className="agent-notch-mark"
-              aria-hidden="true"
-            />
-          ) : (
+          {!revealed && (
             <span className="agent-notch-indicator" aria-hidden="true" />
           )}
           <span className="agent-notch-label">
@@ -538,7 +532,7 @@ export function AgentPanel() {
                 void commands.agentCancelNotch(capture.generation);
             }}
           >
-            <X size={15} />
+            <X size={revealed ? 12 : 15} />
           </button>
         </header>
 

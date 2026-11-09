@@ -20,7 +20,7 @@ html[data-window="agent-panel"] body {
   --agc-muted: #b4b3c2;
   --notch-line: #ffffff21;
   --notch-ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --notch-reply-header: 43px;
+  --notch-reply-header: 32px;
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -89,12 +89,6 @@ html[data-window="agent-panel"] body {
 .is-reply .agent-notch-header {
   flex-basis: min(var(--notch-reply-header), 100vh);
   padding-inline: 19px;
-  border-bottom: 1px solid var(--notch-line);
-}
-
-.agent-notch-mark {
-  color: #a8baff;
-  flex: none;
 }
 
 .agent-notch-indicator {
@@ -150,7 +144,7 @@ html[data-window="agent-panel"] body {
   color: var(--agc-ink);
 }
 
-.agent-notch:not(.is-reply) .agent-notch-close {
+.agent-notch-close {
   width: 26px;
   height: 26px;
 }
@@ -226,7 +220,7 @@ html[data-window="agent-panel"] body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 15px 19px;
+  padding: 10px 19px 12px;
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
@@ -259,9 +253,7 @@ html[data-window="agent-panel"] body {
 
 .agc-c-user {
   max-width: 88%;
-  padding: 7px 11px;
-  border-radius: 13px 13px 4px 13px;
-  background: #262638;
+  color: var(--agc-muted);
   white-space: pre-wrap;
 }
 
@@ -281,13 +273,22 @@ html[data-window="agent-panel"] body {
 }
 
 .agc-c-compose {
+  position: relative;
   display: flex;
   flex: none;
   align-items: flex-end;
   gap: 12px;
-  padding: 7px 16px 10px 19px;
-  border-top: 1px solid var(--notch-line);
+  padding: 4px 16px 7px 19px;
   background: var(--agc-bg);
+}
+
+.agc-c-compose::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 100%;
+  height: 8px;
+  background: linear-gradient(to top, var(--agc-bg), transparent);
+  pointer-events: none;
 }
 
 .agc-c-compose-actions {
@@ -315,7 +316,17 @@ html[data-window="agent-panel"] body {
   cursor: pointer;
 }
 
-.agc-c-insert,
+.agc-c-insert {
+  min-height: 28px;
+  background: #d6d5d8;
+  color: #1c1b1e;
+}
+
+.agc-c-compose-actions .agc-c-tool {
+  width: 28px;
+  height: 28px;
+}
+
 .agc-action-btn {
   background: #e7ebff;
   color: #171933;
@@ -324,7 +335,9 @@ html[data-window="agent-panel"] body {
 .agc-cancel-btn:hover:not(:disabled) {
   background: #ffffff1b;
 }
-.agc-c-insert:hover:not(:disabled),
+.agc-c-insert:hover:not(:disabled) {
+  background: #ededee;
+}
 .agc-action-btn:hover:not(:disabled) {
   background: #fff;
 }
@@ -334,10 +347,10 @@ html[data-window="agent-panel"] body {
   display: block;
   flex: 1;
   min-width: 0;
-  min-height: 32px;
+  min-height: 28px;
   max-height: min(76px, 24vh);
   resize: none;
-  padding: 7px 0 6px;
+  padding: 5px 0 4px;
   border: 0;
   outline: none;
   background: transparent;
