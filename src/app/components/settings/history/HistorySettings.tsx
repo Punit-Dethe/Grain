@@ -22,7 +22,6 @@ import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
 import { HistoryCard, type HistoryViewMode } from "@/history/HistoryCard";
 import {
-  hasProcessedText,
   wasPostProcessRequested,
   type HistoryController,
 } from "@/history/useHistoryController";
@@ -77,15 +76,11 @@ interface HistorySettingsProps {
   controller?: HistoryController;
 }
 
-/** [GRAIN] Filters use persisted AI intent, not guessed capture mode. */
-type HistoryFilter = "all" | "today" | "processed" | "unprocessed";
-
-const HISTORY_FILTERS: readonly HistoryFilter[] = [
-  "all",
-  "today",
-  "processed",
-  "unprocessed",
-] as const;
+function getEntryDay(timestamp: number): number {
+  const milliseconds =
+    timestamp > 10_000_000_000 ? timestamp : timestamp * 1000;
+  return new Date(milliseconds).setHours(0, 0, 0, 0);
+}
 
 const PROTOTYPE_HISTORY_COPY = {
   eyebrow: "Local archive",
@@ -107,7 +102,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
   variant = "settings",
   controller,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,7 +113,8 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
   const entriesRef = useRef<HistoryEntry[]>([]);
   const loadingRef = useRef(false);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [today, setToday] = useState(() => new Date().setHours(0, 0, 0, 0));
   const [viewMode, setViewMode] = useState<HistoryViewMode>("original");
 
   const activeEntries = controller?.entries ?? entries;
@@ -126,6 +122,16 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
   const activeLoadingMore = controller?.loadingMore ?? loadingMore;
   const activeLoadError = controller?.loadError ?? loadError;
   const activeHasMore = controller?.hasMore ?? hasMore;
+
+  useEffect(() => {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const timer = window.setTimeout(
+      () => setToday(new Date().setHours(0, 0, 0, 0)),
+      tomorrow.setHours(0, 0, 0, 0) - Date.now(),
+    );
+    return () => window.clearTimeout(timer);
+  }, [today]);
 
   // Keep ref in sync for use in IntersectionObserver callback
   useEffect(() => {
@@ -315,28 +321,47 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     }
   };
 
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayTime = yesterday.setHours(0, 0, 0, 0);
+  const selectedDay =
+    dateFilter === "today"
+      ? today
+      : dateFilter === "yesterday"
+        ? yesterdayTime
+        : Number(dateFilter);
+
+  const olderDays = useMemo(() => {
+    const days = new Set<number>();
+    for (const entry of activeEntries) {
+      const day = getEntryDay(entry.timestamp);
+      if (day < yesterdayTime) days.add(day);
+    }
+    // Keep the selected date available if its last entry is deleted.
+    if (selectedDay < yesterdayTime) days.add(selectedDay);
+    return [...days].sort((a, b) => b - a);
+  }, [activeEntries, selectedDay, yesterdayTime]);
+
+  const dateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium" }),
+    [i18n.language],
+  );
+
   const baseEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-
     return activeEntries.filter((entry) => {
-      const searchableText =
-        `${entry.title} ${entry.transcription_text} ${entry.post_processed_text ?? ""}`.toLocaleLowerCase();
-      if (normalizedQuery && !searchableText.includes(normalizedQuery)) {
+      if (
+        dateFilter !== "all" &&
+        getEntryDay(entry.timestamp) !== selectedDay
+      ) {
         return false;
       }
-      if (filter === "processed") return wasPostProcessRequested(entry);
-      if (filter === "unprocessed") return !wasPostProcessRequested(entry);
-      if (filter !== "today") return true;
-
-      const timestamp =
-        entry.timestamp > 10_000_000_000
-          ? entry.timestamp
-          : entry.timestamp * 1000;
-      return timestamp >= startOfToday.getTime();
+      if (!normalizedQuery) return true;
+      const searchableText =
+        `${entry.title} ${entry.transcription_text} ${entry.post_processed_text ?? ""}`.toLocaleLowerCase();
+      return searchableText.includes(normalizedQuery);
     });
-  }, [activeEntries, filter, query]);
+  }, [activeEntries, dateFilter, query, selectedDay]);
 
   // The AI view is a request view, not a success-only view. Failed calls must
   // stay visible so the raw fallback cannot masquerade as a standard capture.
@@ -435,17 +460,23 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
                 placeholder="Search transcription history"
               />
             </label>
-            {HISTORY_FILTERS.map((item) => (
-              <button
-                className={`filter-pill${filter === item ? " active" : ""}`}
-                type="button"
-                key={item}
-                aria-pressed={filter === item}
-                onClick={() => setFilter(item)}
-              >
-                {t(`ui2.history.filters.${item}`)}
-              </button>
-            ))}
+            <select
+              className="history-date-filter"
+              aria-label={t("ui2.history.filterByDate")}
+              value={dateFilter}
+              onChange={(event) => setDateFilter(event.target.value)}
+            >
+              <option value="all">{t("ui2.history.filters.all")}</option>
+              <option value="today">{t("ui2.history.filters.today")}</option>
+              <option value="yesterday">
+                {t("ui2.history.filters.yesterday")}
+              </option>
+              {olderDays.map((day) => (
+                <option key={day} value={day}>
+                  {dateFormatter.format(day)}
+                </option>
+              ))}
+            </select>
             <span className="toolbar-spacer" />
             <div
               aria-label="History transcription view"

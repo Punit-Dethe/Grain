@@ -948,9 +948,11 @@
     },
     "history": {
       "eyebrow": "Archive 03",
+      "filterByDate": "Filter history by date",
       "filters": {
         "all": "All",
         "today": "Today",
+        "yesterday": "Yesterday",
         "processed": "AI processed",
         "unprocessed": "Unprocessed"
       },
