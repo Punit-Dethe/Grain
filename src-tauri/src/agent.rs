@@ -761,9 +761,7 @@ fn bounds_match_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: 
 #[cfg(windows)]
 fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> bool {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOZORDER,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
     let (Ok(raw), Ok(scale)) = (window.hwnd(), window.scale_factor()) else {
         return false;
     };
@@ -778,7 +776,7 @@ fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f6
             px(y),
             px(w),
             px(h),
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
+            SWP_NOZORDER | SWP_NOACTIVATE,
         )
         .is_ok()
     }

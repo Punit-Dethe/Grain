@@ -75,3 +75,9 @@ loads. The shell is queued before selection and microphone setup. It shows
 Starting until the microphone opens, and Enter leaves startup alone until
 there is a capture to submit. At reply time, one native bounds change
 precedes the CSS expansion. The window is shown once and uses no shadow.
+
+## Windows resize test
+
+The reply resize now allows Windows to preserve valid client pixels. It
+previously used `SWP_NOCOPYBITS`, which discards those pixels. Focus and CSS
+timing stay the same for this comparison. Visual confirmation is pending.
