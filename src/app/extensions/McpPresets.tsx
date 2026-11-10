@@ -43,7 +43,9 @@ export function McpPresets({
   const pending = useRef<string | null>(null);
   const mounted = useRef(false);
   const refresh = useCallback(async () => {
-    const status = unwrapResult(await commands.mcpProviderStatus(true));
+    // Development entries are listed only when the backend grants access
+    // (development build + Extension Developer Mode); releases see presets.
+    const status = unwrapResult(await commands.mcpProviderStatus(false));
     if (mounted.current) setRows(status);
   }, []);
 
@@ -110,8 +112,22 @@ export function McpPresets({
   };
 
   const visible = filterExtensions(rows ?? [], query);
-  const connected = visible.filter((row) => row.connected);
-  const available = visible.filter((row) => !row.connected);
+  // Local servers and no-account fixtures have no sign-in: a switch turns
+  // them on (installing a local server first) and off.
+  const noAccount = (row: McpProviderStatus) =>
+    row.state === "local" || row.state === "fixture_no_auth";
+  const isConnected = (row: McpProviderStatus) =>
+    row.connected || (noAccount(row) && row.enabled);
+  const connected = visible.filter(isConnected);
+  const available = visible.filter((row) => !isConnected(row));
+
+  const setEnabled = (row: McpProviderStatus, enabled: boolean) =>
+    run(row.id, async () => {
+      if (enabled && row.state === "local")
+        setMessage(`Installing ${row.name}… this can take a minute.`);
+      unwrapResult(await commands.mcpSetProviderEnabled(row.id, enabled));
+      if (mounted.current) setMessage(null);
+    });
 
   const signInButton = (row: McpProviderStatus) =>
     signingIn === row.id ? (
@@ -211,32 +227,28 @@ export function McpPresets({
               <article key={row.id} className="mcp-preset-connected">
                 {identity(row)}
                 <div className="mcp-preset-actions">
-                  <button
-                    className="button ghost"
-                    type="button"
-                    aria-label={`Disconnect ${row.name}`}
-                    disabled={busy !== null}
-                    onClick={() =>
-                      void run(row.id, async () => {
-                        unwrapResult(
-                          await commands.mcpDisconnectProvider(row.id),
-                        );
-                      })
-                    }
-                  >
-                    Disconnect
-                  </button>
+                  {!noAccount(row) && (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      aria-label={`Disconnect ${row.name}`}
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void run(row.id, async () => {
+                          unwrapResult(
+                            await commands.mcpDisconnectProvider(row.id),
+                          );
+                        })
+                      }
+                    >
+                      Disconnect
+                    </button>
+                  )}
                   <Switch
                     checked={row.enabled}
                     disabled={busy !== null}
                     ariaLabel={`Enable ${row.name}`}
-                    onChange={(enabled) =>
-                      void run(row.id, async () => {
-                        unwrapResult(
-                          await commands.mcpSetProviderEnabled(row.id, enabled),
-                        );
-                      })
-                    }
+                    onChange={(enabled) => void setEnabled(row, enabled)}
                   />
                 </div>
               </article>
@@ -262,7 +274,18 @@ export function McpPresets({
               {available.map((row) => (
                 <article key={row.id} className="mcp-preset-available">
                   {identity(row)}
-                  <div className="mcp-preset-connect">{signInButton(row)}</div>
+                  <div className="mcp-preset-connect">
+                    {noAccount(row) ? (
+                      <Switch
+                        checked={false}
+                        disabled={busy !== null}
+                        ariaLabel={`Enable ${row.name}`}
+                        onChange={(enabled) => void setEnabled(row, enabled)}
+                      />
+                    ) : (
+                      signInButton(row)
+                    )}
+                  </div>
                 </article>
               ))}
             </div>

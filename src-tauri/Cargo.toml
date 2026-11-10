@@ -66,7 +66,7 @@ anyhow = "1.0.95"
 hound = "3.5.1"
 log = "0.4.25"
 env_filter = "0.1.0"
-tokio = { version = "1.43.0", features = ["net", "io-util", "sync", "time"] }
+tokio = { version = "1.43.0", features = ["net", "io-util", "sync", "time", "process"] }
 enigo = "0.6.1"
 rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav", "flac", "mp3", "vorbis"] }
 # Decodes files for transcription. rodio's version, plus the M4A/MP4 (AAC,
@@ -82,7 +82,7 @@ reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "d
 # [GRAIN] Development-only remote MCP client. v3 is the first official Rust SDK
 # for the stateless 2026-07-28 lifecycle. Keep features client-only: no stdio,
 # child-process, server, or Dynamic UI surface is linked.
-rmcp = { version = "=3.5.0", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client-reqwest", "transport-async-rw"] }
 # [GRAIN] Standard native OAuth primitives; already locked through rmcp.
 # Use the bounded host HTTP adapter, no additional default HTTP client features.
 oauth2 = { version = "=5.0.0", default-features = false }
@@ -157,6 +157,10 @@ windows = { version = "0.61.3", features = [
   "Win32_System_Com_StructuredStorage",
   "Win32_System_DataExchange",
   "Win32_System_LibraryLoader",
+  # [GRAIN] Local MCP servers join a kill-on-close Job Object.
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Ole",
   "Win32_System_Memory",
   "Win32_System_Threading",
