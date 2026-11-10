@@ -2,7 +2,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -25,6 +24,8 @@ import type {
   TranscriptRevision,
 } from "@/bindings";
 import { hashForRoute } from "../navigation";
+import recallBubbleVideo from "../meet/recall-bubble.mp4";
+import recallBubblePoster from "../meet/recall-bubble.webp";
 import {
   buildTurns,
   filterTurns,
@@ -34,13 +35,7 @@ import {
   type Turn,
   type TurnWord,
 } from "../meet/transcriptTurns";
-import {
-  groupByDay,
-  highlightParts,
-  levelFraction,
-  turnAt,
-  wordAt,
-} from "../meet/meetFormat";
+import { groupByDay, highlightParts, turnAt, wordAt } from "../meet/meetFormat";
 import {
   useLiveRecording,
   useMeetController,
@@ -59,7 +54,6 @@ const STAGES: Stage[] = [
 ];
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
 const SKIP_MS = 10_000;
-const WAVE_NOISE_FLOOR = 0.25; // -45 dBFS on the live meter scale.
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -279,37 +273,40 @@ function SourceSetup({ meet }: { meet: MeetController }) {
   );
 }
 
-function StudioWave({ level }: { level: number }) {
-  const ink = useId();
-  return (
-    <svg
-      className="meet-studio-wave"
-      viewBox="0 0 600 112"
-      fill="none"
-      stroke={`url(#${ink})`}
-      data-moving={level > 0}
-      style={{ "--wave-level": level } as CSSProperties}
+const StudioBubble = memo(function StudioBubble({
+  recording,
+}: {
+  recording: boolean;
+}) {
+  const [canAnimate, setCanAnimate] = useState(false);
+  useEffect(() => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () =>
+      setCanAnimate(!reducedMotion.matches && !document.hidden);
+    update();
+    reducedMotion.addEventListener("change", update);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      reducedMotion.removeEventListener("change", update);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+
+  return recording && canAnimate ? (
+    <video
+      className="meet-studio-bubble"
+      src={recallBubbleVideo}
+      poster={recallBubblePoster}
+      autoPlay
+      loop
+      muted
+      playsInline
       aria-hidden="true"
-    >
-      <defs>
-        <linearGradient id={ink} gradientUnits="userSpaceOnUse" x2="600">
-          <stop stopColor="var(--text-3)" stopOpacity={0} />
-          <stop offset="23%" stopColor="var(--text-3)" />
-          <stop offset="50%" stopColor="var(--accent)" />
-          <stop offset="77%" stopColor="var(--text-3)" />
-          <stop offset="100%" stopColor="var(--text-3)" stopOpacity={0} />
-        </linearGradient>
-      </defs>
-      <path className="meet-wave-line" d="M0 56H600" />
-      <g className="meet-wave-ribbons">
-        <path d="M0 56H100C176 56 185 19 250 19S331 90 391 90 438 56 505 56H600" />
-        <path d="M0 56H108C162 56 202 83 257 83S334 27 392 27 435 56 502 56H600" />
-        <path d="M0 56H111C172 56 215 30 274 30S339 98 405 98 459 56 513 56H600" />
-        <path d="M0 56H109C177 56 203 95 277 95S339 17 397 17 441 56 505 56H600" />
-      </g>
-    </svg>
+    />
+  ) : (
+    <img className="meet-studio-bubble" src={recallBubblePoster} alt="" />
   );
-}
+});
 type RecordingAction = "start" | "stop";
 
 function Studio({
@@ -328,15 +325,6 @@ function Studio({
   const live = useLiveRecording(initial);
   const recording = live?.session_id === initial?.session_id ? live : initial;
 
-  const level =
-    recording?.sources.reduce(
-      (peak, source) => Math.max(peak, levelFraction(source.level)),
-      0,
-    ) ?? 0;
-  const motionLevel = Math.max(
-    0,
-    (level - WAVE_NOISE_FLOOR) / (1 - WAVE_NOISE_FLOOR),
-  );
   return (
     <section
       className="meet-studio"
@@ -345,7 +333,7 @@ function Studio({
       )}
     >
       <div className="meet-studio-stage">
-        <StudioWave level={motionLevel} />
+        <StudioBubble recording={Boolean(recording)} />
         <button
           className="button primary meet-record-action"
           type="button"

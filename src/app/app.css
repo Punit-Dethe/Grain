@@ -5090,63 +5090,12 @@ html[data-theme="light"] .grain-root {
   padding-bottom: 14px;
 }
 
-.meet-studio-wave {
-  width: min(100%, 720px);
-  height: clamp(64px, 12vw, 120px);
-}
-
-.meet-wave-line {
-  opacity: 0.4;
-}
-
-.meet-wave-ribbons {
-  opacity: calc(var(--wave-level) * 2);
-  transform-origin: center;
-  transform: scaleY(var(--wave-level));
-  transition:
-    transform 0.16s var(--ease-out),
-    opacity 0.18s var(--ease-out);
-}
-
-.meet-wave-ribbons path {
-  opacity: 0.8;
-  stroke-width: 1.6;
-  vector-effect: non-scaling-stroke;
-  transform-origin: center;
-  animation: meet-wave-flow 1.65s ease-in-out infinite alternate paused;
-}
-
-.meet-wave-ribbons path:nth-child(2) {
-  opacity: 0.48;
-  stroke-width: 3;
-  animation-duration: 2.05s;
-  animation-delay: -0.75s;
-}
-
-.meet-wave-ribbons path:nth-child(3) {
-  opacity: 0.62;
-  animation-duration: 1.9s;
-  animation-delay: -1.3s;
-}
-
-.meet-wave-ribbons path:nth-child(4) {
-  opacity: 0.32;
-  stroke-width: 4;
-  animation-duration: 2.2s;
-  animation-delay: -0.4s;
-}
-
-.meet-studio-wave[data-moving="true"] .meet-wave-ribbons path {
-  animation-play-state: running;
-}
-
-@keyframes meet-wave-flow {
-  from {
-    transform: translateX(-12px) scaleY(1);
-  }
-  to {
-    transform: translateX(12px) scaleY(-1);
-  }
+.meet-studio-bubble {
+  display: block;
+  width: clamp(84px, 12vh, 112px);
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 .meet-sources {
@@ -6203,10 +6152,6 @@ html[data-theme="light"] .grain-root {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .meet-wave-ribbons {
-    display: none;
-  }
-
   .meet-spinner {
     animation: none;
   }
