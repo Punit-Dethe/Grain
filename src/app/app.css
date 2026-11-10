@@ -5016,7 +5016,6 @@ html[data-theme="light"] .qp-overlay {
 
 /* [GRAIN] Meeting workspace (user-facing name from `ui2.meet.name`). */
 .grain-root {
-  --meet-live: #ff5f57;
   --meet-error-ink: color-mix(in srgb, var(--danger) 55%, var(--text-1));
   --meet-page: var(--bg-1);
   --meet-surface: #292929;
@@ -5029,7 +5028,6 @@ html[data-theme="light"] .qp-overlay {
 /* The light page is #fcfcfb, so surfaces sit a step darker instead of white
    on white, with no shadow. */
 html[data-theme="light"] .grain-root {
-  --meet-live: #e5484d;
   --meet-page: #fcfcfb;
   --meet-surface: #f3f1ec;
   --meet-surface-hover: #ebe8e1;
@@ -5203,16 +5201,12 @@ html[data-theme="light"] .meet-orb {
   overflow-wrap: anywhere;
 }
 
-.is-recording .meet-orb {
-  --orb-tint: var(--meet-live);
-}
-
 .is-recording .meet-orb::before {
   content: "";
   position: absolute;
   z-index: -1;
   inset: 0;
-  border: 1px solid var(--meet-live);
+  border: 1px solid var(--text-3);
   border-radius: inherit;
   opacity: calc(0.35 + var(--level) * 0.45);
   transform: scale(calc(1 + var(--level) * 0.11));
@@ -5239,21 +5233,6 @@ html[data-theme="light"] .meet-orb {
   font-size: 17px;
   font-weight: 630;
   font-variant-numeric: tabular-nums;
-}
-
-.meet-live-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--meet-live);
-  animation: meet-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes meet-pulse {
-  50% {
-    opacity: 0.3;
-  }
 }
 
 .meet-sources {
@@ -5574,7 +5553,7 @@ html[data-theme="light"] .meet-orb {
 }
 
 .meet-lead.is-live {
-  background: color-mix(in srgb, var(--meet-live) 14%, transparent);
+  background: var(--accent-soft-hover);
 }
 
 .meet-row-main {
@@ -5603,10 +5582,6 @@ html[data-theme="light"] .meet-orb {
 .meet-row-state {
   color: var(--text-3);
   font-size: 12px;
-}
-
-.meet-row[data-state="recording"] .meet-row-state {
-  color: var(--meet-error-ink);
 }
 
 .meet-row-go {
@@ -5721,11 +5696,10 @@ html[data-theme="light"] .meet-orb {
 .meet-live-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   padding: 6px 12px;
   border-radius: 999px;
   color: var(--text-2);
-  background: color-mix(in srgb, var(--meet-live) 12%, transparent);
+  background: var(--accent-soft);
   font-size: 12.5px;
   cursor: pointer;
 }
@@ -6066,17 +6040,16 @@ html[data-theme="light"] .meet-orb {
   transition: opacity 0.2s ease;
 }
 
-/* Live recording row: a soft red wash and moving level bars. */
+/* Live recording row and moving level bars. */
 .meet-row[data-state="recording"] {
-  background: color-mix(in srgb, var(--meet-live) 6%, transparent);
+  background: var(--accent-soft);
 }
 
 .meet-row[data-state="recording"]:hover {
-  background: color-mix(in srgb, var(--meet-live) 10%, transparent);
+  background: var(--accent-soft-hover);
 }
 
 .meet-row[data-state="recording"] .meet-row-duration {
-  color: var(--meet-error-ink);
   font-weight: 600;
 }
 
@@ -6091,7 +6064,7 @@ html[data-theme="light"] .meet-orb {
   width: 3px;
   height: 100%;
   border-radius: 2px;
-  background: var(--meet-live);
+  background: var(--text-2);
   transform-origin: center;
   animation: meet-bar 0.9s ease-in-out infinite alternate;
 }
@@ -6394,7 +6367,6 @@ html[data-theme="light"] .meet-orb {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .meet-live-dot,
   .meet-spinner,
   .meet-bars i {
     animation: none;

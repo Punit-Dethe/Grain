@@ -395,7 +395,6 @@ function Studio({
       {recording ? (
         <>
           <div className="meet-studio-status">
-            <span className="meet-live-dot" aria-hidden="true" />
             <span>{t("ui2.meet.live.recording")}</span>
             <strong className="meet-clock" role="timer">
               {formatClock(recording.elapsed_ms)}
@@ -1385,7 +1384,6 @@ function MeetingView({
                 type="button"
                 onClick={() => openMeeting(null)}
               >
-                <span className="meet-live-dot" aria-hidden="true" />
                 {t("ui2.meet.live.recording")}
               </button>
             )}
