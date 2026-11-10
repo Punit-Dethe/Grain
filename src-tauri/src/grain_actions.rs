@@ -52,6 +52,7 @@ pub(crate) fn next_session_id() -> u64 {
 /// `RecordingStarted`. Emitted only after capture actually starts, so a failed
 /// start never shows a pill that must be torn down.
 pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: SessionMode) {
+    crate::grain_dictionary::cancel_watch();
     crate::bridge::emit(
         app,
         DaemonEvent::OverlayConfig {
@@ -115,7 +116,14 @@ pub(crate) async fn paste_transcription(
     suppress_trailing_space: bool,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        utils::paste_with_options(text, app, suppress_trailing_space)
+        #[cfg(windows)]
+        let watch = crate::grain_dictionary::prepare(&app, &text, suppress_trailing_space);
+        let result = utils::paste_with_options(text, app.clone(), suppress_trailing_space);
+        #[cfg(windows)]
+        if let (Ok(()), Some(watch)) = (&result, watch) {
+            watch.start(app);
+        }
+        result
     })
     .await
     .map_err(|error| format!("Paste worker failed: {error}"))?

@@ -654,6 +654,9 @@ pub fn read_focus_probe() -> Option<FocusProbe> {
     }
 }
 
+#[cfg(windows)]
+pub(crate) use uia::dictionary_field;
+
 /// The decision table. Pure, so the whole matrix is unit-testable without COM.
 ///
 /// The governing rule is asymmetric on purpose: **only report `NotEditable` on
@@ -2126,6 +2129,74 @@ mod uia {
 
     unsafe fn is_password(el: &IUIAutomationElement) -> bool {
         el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false)
+    }
+
+    /// Read only a bounded, editable, non-password field. Runtime IDs distinguish
+    /// controls that share a process, HWND and control type (e.g. web inputs).
+    pub(crate) fn dictionary_field() -> Option<(Vec<i32>, String)> {
+        use windows::core::Interface;
+        use windows::Win32::System::Ole::{
+            SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound,
+        };
+        use windows::Win32::UI::Accessibility::IUIAutomation2;
+        const LIMIT: usize = 4096;
+        unsafe {
+            let _com = ComGuard::init();
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let limits = automation.cast::<IUIAutomation2>().ok()?;
+            limits.SetConnectionTimeout(200).ok()?;
+            limits.SetTransactionTimeout(200).ok()?;
+            let element = automation.GetFocusedElement().ok()?;
+            if element.CurrentIsPassword().ok()?.as_bool()
+                || element.CurrentProcessId().ok()? as u32 == std::process::id()
+            {
+                return None;
+            }
+            let value = if let Ok(pattern) =
+                element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            {
+                if pattern.CurrentIsReadOnly().ok()?.as_bool() {
+                    return None;
+                }
+                pattern.CurrentValue().ok()?
+            } else {
+                if element.CurrentControlType().ok() != Some(UIA_EditControlTypeId)
+                    && element
+                        .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
+                        .is_err()
+                {
+                    return None;
+                }
+                element
+                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                    .ok()?
+                    .DocumentRange()
+                    .ok()?
+                    .GetText((LIMIT + 1) as i32)
+                    .ok()?
+            };
+            if value.len() > LIMIT {
+                return None;
+            }
+            let array = element.GetRuntimeId().ok()?;
+            let id = (|| {
+                let lower = SafeArrayGetLBound(array, 1).ok()?;
+                let upper = SafeArrayGetUBound(array, 1).ok()?;
+                if !(0..32).contains(&upper.checked_sub(lower)?) {
+                    return None;
+                }
+                (lower..=upper)
+                    .map(|index| {
+                        let mut part = 0i32;
+                        SafeArrayGetElement(array, &index, (&mut part as *mut i32).cast()).ok()?;
+                        Some(part)
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })();
+            let _ = SafeArrayDestroy(array);
+            Some((id?, value.to_string().replace("\r\n", "\n")))
+        }
     }
 
     /// Control types that unambiguously accept no typed text.

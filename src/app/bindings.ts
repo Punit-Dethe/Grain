@@ -627,6 +627,22 @@ async changePasteCatchEnabledSetting(enabled: boolean) : Promise<Result<null, st
     else return { status: "error", error: e  as any };
 }
 },
+async setLearnFromEdits(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_learn_from_edits", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resolveDictionarySuggestion(id: number, save: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resolve_dictionary_suggestion", { id, save }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be
  * resolved (unsupported platform, no foreground window). Silent — no UI.
@@ -1819,6 +1835,10 @@ pill_show_app_icon?: boolean;
  */
 pill_hide_close_button?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
 /**
+ * Offer to save a spelling after a local edit to a recent dictation.
+ */
+learn_from_edits?: boolean;
+/**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
 snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap;
@@ -2038,6 +2058,7 @@ name: string;
  * URL reader resolved it. `None` otherwise.
  */
 url_host: string | null }
+export type DictionarySuggestion = { id: number; original: string; corrected: string }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
@@ -2240,7 +2261,7 @@ export type OnboardingStep =
  * also the persisted `overlay_position` setting (grain-core re-exports it).
  */
 export type OverlayPosition = "top" | "bottom"
-export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
+export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; dictionary: DictionarySuggestion | null; committed: string; tentative: string; working: boolean; work_kind: string }
 export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
  * Handy's presentation contract. Position only selects an edge.

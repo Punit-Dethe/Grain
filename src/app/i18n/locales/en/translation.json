@@ -1174,6 +1174,14 @@
       }
     }
   },
+  "dictionarySuggestion": {
+    "learn": "Learn from edits",
+    "description": "After you edit a recently dictated word, Grain can suggest adding it to your dictionary. It only saves words you approve.",
+    "title": "Add to dictionary?",
+    "accept": "Add to dictionary",
+    "dismiss": "Don’t save",
+    "error": "Couldn’t save this word"
+  },
   "overlay": {
     "askFollowup": "Ask follow-up",
     "transcribing": "Transcribing...",

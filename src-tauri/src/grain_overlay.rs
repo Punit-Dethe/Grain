@@ -15,6 +15,13 @@ pub const BOTTOM_RAISE: f64 = 16.0;
 // Leave a short gap after Handy's 300 ms recording-window hide delay.
 const CLIPBOARD_NOTICE_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 
+#[derive(Clone, Serialize, Deserialize, Type)]
+pub struct DictionarySuggestion {
+    pub id: u32,
+    pub original: String,
+    pub corrected: String,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
 pub struct OverlayPresentation {
     pub visible: bool,
@@ -25,6 +32,7 @@ pub struct OverlayPresentation {
     pub app_icon_enabled: bool,
     pub icon: Option<String>,
     pub notice: Option<String>,
+    pub dictionary: Option<DictionarySuggestion>,
     pub committed: String,
     pub tentative: String,
     pub working: bool,
@@ -76,6 +84,9 @@ impl OverlayPresentation {
             return false;
         }
         self.clear_capture();
+        if self.dictionary.is_some() {
+            return false;
+        }
         if self.notice.is_some() {
             self.state = "notice".into();
             return false;
@@ -317,6 +328,10 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
         let mut value = ctx.presentation.lock().unwrap();
         match event {
             DaemonEvent::RecordingStarted { session_id, .. } => {
+                if value.dictionary.take().is_some() {
+                    value.visible = false;
+                    hide = true;
+                }
                 value.session_id = *session_id;
             }
             DaemonEvent::RecordingStopped { session_id } if *session_id == value.session_id => {
@@ -392,8 +407,8 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
     }
     if let Some(generation) = expiry {
         let app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(3));
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
                 let Some(ctx) = handle.try_state::<OverlayContext>() else {
@@ -413,6 +428,113 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             });
         });
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn show_dictionary_suggestion(app: &AppHandle, suggestion: DictionarySuggestion) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let settings = crate::settings::get_settings(&handle);
+        let ctx = handle.state::<OverlayContext>();
+        let mut value = ctx.presentation.lock().unwrap();
+        if value.visible
+            || !settings.learn_from_edits
+            || settings.overlay_style == crate::settings::OverlayStyle::None
+            || !crate::grain_dictionary::is_current(suggestion.id)
+            || dictionary_contains(&settings.custom_words, &suggestion.corrected)
+        {
+            return;
+        }
+        let id = suggestion.id;
+        value.state = "dictionary".into();
+        value.visible = true;
+        value.dictionary = Some(suggestion);
+        publish(&handle, &value);
+        drop(value);
+        crate::overlay::show_overlay_state(&handle, "dictionary");
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            let app = handle.clone();
+            let _ = handle.run_on_main_thread(move || clear_dictionary_suggestion(&app, id));
+        });
+    });
+}
+
+fn dictionary_contains(words: &[String], candidate: &str) -> bool {
+    let candidate = candidate.to_lowercase();
+    words
+        .iter()
+        .any(|word| word.trim().to_lowercase() == candidate)
+}
+
+pub(crate) fn dismiss_dictionary_suggestion(app: &AppHandle) {
+    let ctx = app.state::<OverlayContext>();
+    let id = ctx
+        .presentation
+        .lock()
+        .unwrap()
+        .dictionary
+        .as_ref()
+        .map(|suggestion| suggestion.id);
+    if let Some(id) = id {
+        clear_dictionary_suggestion(app, id);
+    }
+}
+
+fn clear_dictionary_suggestion(app: &AppHandle, id: u32) {
+    let ctx = app.state::<OverlayContext>();
+    let mut value = ctx.presentation.lock().unwrap();
+    if value
+        .dictionary
+        .as_ref()
+        .is_none_or(|suggestion| suggestion.id != id)
+    {
+        return;
+    }
+    value.dictionary = None;
+    value.visible = false;
+    publish(app, &value);
+    drop(value);
+    crate::overlay::hide_recording_overlay(app);
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn resolve_dictionary_suggestion(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: u32,
+    save: bool,
+) -> Result<(), String> {
+    if window.label() != "recording_overlay" {
+        return Err("The suggestion belongs to the recording overlay.".into());
+    }
+    if save {
+        let ctx = app.state::<OverlayContext>();
+        let value = ctx.presentation.lock().unwrap();
+        let suggestion = value
+            .dictionary
+            .as_ref()
+            .filter(|suggestion| {
+                value.visible && suggestion.id == id && crate::grain_dictionary::is_current(id)
+            })
+            .ok_or("This suggestion has expired.")?;
+        app.state::<std::sync::Arc<grain_core::AppContext>>()
+            .update_public_settings(|settings| {
+                if settings.learn_from_edits
+                    && !dictionary_contains(&settings.custom_words, &suggestion.corrected)
+                {
+                    settings.custom_words.push(suggestion.corrected.clone());
+                }
+            })
+            .map_err(|error| error.to_string())?;
+        let _ = app.emit(
+            "settings-changed",
+            serde_json::json!({ "setting": "custom_words" }),
+        );
+    }
+    clear_dictionary_suggestion(&app, id);
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Type)]
@@ -471,11 +593,12 @@ pub fn change_overlay_style_setting(
         .map_err(|error| error.to_string())?;
     crate::overlay::update_overlay_enabled_cache(style != crate::settings::OverlayStyle::None);
     if style == crate::settings::OverlayStyle::None {
-        app.state::<OverlayContext>()
-            .presentation
-            .lock()
-            .unwrap()
-            .visible = false;
+        crate::grain_dictionary::cancel_watch();
+        let ctx = app.state::<OverlayContext>();
+        let mut value = ctx.presentation.lock().unwrap();
+        value.visible = false;
+        value.dictionary = None;
+        drop(value);
         crate::overlay::hide_recording_overlay(&app);
     }
     Ok(())

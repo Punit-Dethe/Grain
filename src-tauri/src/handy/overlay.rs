@@ -56,7 +56,8 @@ const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 /// Overlay window size (logical) for a given UI state.
 // [GRAIN] Report shared window bounds in the owned overlay snapshot.
 pub(crate) fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if state == "streaming" {
+    if matches!(state, "streaming" | "dictionary") {
+        // [GRAIN] Reuse the larger window for dictionary confirmation.
         (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
     } else {
         (OVERLAY_WIDTH, OVERLAY_HEIGHT)
@@ -542,7 +543,8 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
             let _ =
                 overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
             #[cfg(target_os = "windows")]
-            WINDOWS_OVERLAY_IS_STREAMING.store(state == "streaming", Ordering::Relaxed);
+            // [GRAIN] Reposition using the same bounds when the dictionary is open.
+            WINDOWS_OVERLAY_IS_STREAMING.store(width == OVERLAY_STREAM_WIDTH, Ordering::Relaxed);
             let size_elapsed = size_started.elapsed();
 
             let pos_started = std::time::Instant::now();

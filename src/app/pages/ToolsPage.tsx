@@ -1,5 +1,6 @@
 /* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   BookOpen,
   Code2,
@@ -13,6 +14,8 @@ import {
 import { commands, type Snippet } from "@/bindings";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { useOsType } from "@/hooks/useOsType";
 import { useSettings } from "@/hooks/useSettings";
 import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
 import {
@@ -222,6 +225,8 @@ function DictionaryTermDialog({
 }
 
 function DictionaryTool() {
+  const { t } = useTranslation();
+  const os = useOsType();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const [query, setQuery] = useState("");
   const [dialog, setDialog] = useState<DictionaryDialogState | null>(null);
@@ -301,6 +306,19 @@ function DictionaryTool() {
           Add term
         </button>
       </div>
+
+      {os === "windows" && (
+        <ToggleSwitch
+          checked={getSetting("learn_from_edits") ?? false}
+          isUpdating={isUpdating("learn_from_edits")}
+          onChange={(enabled) =>
+            void updateSetting("learn_from_edits", enabled)
+          }
+          label={t("dictionarySuggestion.learn")}
+          description={t("dictionarySuggestion.description")}
+          descriptionMode="inline"
+        />
+      )}
 
       {filteredWords.length > 0 ? (
         <div className="dictionary-term-grid" aria-label="Dictionary terms">

@@ -54,6 +54,7 @@ mod grain_anthropic;
 mod grain_audio;
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
 mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
+mod grain_dictionary;
 mod grain_engine;
 mod grain_history_audio;
 mod grain_llm_client;
@@ -1382,6 +1383,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_scrap_that_enabled_setting,
             grain_commands::change_paste_catch_enabled_setting,
+            grain_dictionary::set_learn_from_edits,
+            grain_overlay::resolve_dictionary_suggestion,
             grain_commands::detect_active_app,
             shortcut::suspend_binding,
             shortcut::resume_binding,

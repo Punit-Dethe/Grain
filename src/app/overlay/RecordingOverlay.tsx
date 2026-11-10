@@ -1,9 +1,10 @@
 import { type UnlistenFn } from "@tauri-apps/api/event";
-import { Clipboard } from "lucide-react";
+import { ArrowRight, Clipboard } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   commands,
   events,
+  type DictionarySuggestion,
   type OverlayPresentation,
   type StreamTextEvent,
 } from "@/bindings";
@@ -21,6 +22,7 @@ const empty: OverlayPresentation = {
   app_icon_enabled: true,
   icon: null,
   notice: null,
+  dictionary: null,
   committed: "",
   tentative: "",
   working: false,
@@ -30,6 +32,65 @@ const empty: OverlayPresentation = {
 // Fallback when the webview skips transitionend. Handy hides the native window
 // 300 ms after hide-overlay, leaving room for the 165 ms CSS exit.
 const NOTICE_EXIT_TIMEOUT_MS = 220;
+
+function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const resolve = async (save: boolean) => {
+    setBusy(true);
+    try {
+      const result = await commands.resolveDictionarySuggestion(
+        suggestion.id,
+        save,
+      );
+      if (result.status === "ok") return;
+    } catch {
+      // Keep the offer available for a retry if the command could not finish.
+    }
+    setBusy(false);
+    setFailed(true);
+  };
+
+  return (
+    <section
+      className="grain-dictionary-offer"
+      aria-labelledby="dictionary-offer-title"
+    >
+      <h2 id="dictionary-offer-title" role="status">
+        {t(
+          failed ? "dictionarySuggestion.error" : "dictionarySuggestion.title",
+        )}
+      </h2>
+      <div className="grain-dictionary-change" dir="ltr">
+        <del dir="auto" title={suggestion.original}>
+          {suggestion.original}
+        </del>
+        <ArrowRight size={14} aria-hidden="true" />
+        <strong dir="auto" title={suggestion.corrected}>
+          {suggestion.corrected}
+        </strong>
+      </div>
+      <div className="grain-dictionary-actions">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void resolve(true)}
+        >
+          {t("dictionarySuggestion.accept")}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void resolve(false)}
+        >
+          {t("dictionarySuggestion.dismiss")}
+        </button>
+      </div>
+    </section>
+  );
+}
 
 export function RecordingOverlay() {
   const { t } = useTranslation();
@@ -393,6 +454,17 @@ export function RecordingOverlay() {
       {showClose && <div className="sbase-r">{cancelBtn}</div>}
     </div>
   );
+
+  if (presentation.visible && presentation.dictionary) {
+    return (
+      <div dir={direction} className={`ov-stage ${position}`}>
+        <DictionaryOffer
+          key={presentation.dictionary.id}
+          suggestion={presentation.dictionary}
+        />
+      </div>
+    );
+  }
 
   if (notice) {
     return (

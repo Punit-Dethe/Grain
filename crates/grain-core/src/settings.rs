@@ -653,6 +653,9 @@ pub struct AppSettings {
     pub log_level: LogLevel,
     #[serde(default = "default_custom_words")]
     pub custom_words: Vec<String>,
+    /// Offer to save a spelling after a local edit to a recent dictation.
+    #[serde(default)]
+    pub learn_from_edits: bool,
     /// [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
     #[serde(default)]
     pub snippets: Vec<Snippet>,
@@ -1543,6 +1546,7 @@ pub fn get_default_settings() -> AppSettings {
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
+        learn_from_edits: false,
         snippets: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),

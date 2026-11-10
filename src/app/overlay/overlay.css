@@ -546,3 +546,82 @@ body,
     display: none;
   }
 }
+
+.grain-dictionary-offer {
+  box-sizing: border-box;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: min(328px, calc(100% - 16px));
+  padding: 10px 14px;
+  border: 1px solid #353535;
+  border-radius: 16px;
+  background: #0b0b0b;
+  color: #f4f4f2;
+  font: 14px/20px var(--s-font);
+}
+
+.grain-dictionary-offer h2 {
+  margin: 0;
+  color: #c6c6c3;
+  font: 500 12px/16px var(--s-font);
+}
+
+.grain-dictionary-change {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.grain-dictionary-change svg {
+  flex: none;
+  color: #a3a09a;
+}
+
+.grain-dictionary-change :is(del, strong) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grain-dictionary-change del {
+  color: #a3a09a;
+}
+
+.grain-dictionary-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.grain-dictionary-actions button {
+  min-height: 30px;
+  padding: 2px 10px;
+  border: 1px solid #424242;
+  border-radius: 8px;
+  background: #171717;
+  color: #f4f4f2;
+  font: 500 12px/16px var(--s-font);
+  cursor: pointer;
+}
+
+.grain-dictionary-actions button:first-child {
+  border-color: #f4f4f2;
+  background: #f4f4f2;
+  color: #0b0b0b;
+}
+
+.grain-dictionary-actions button:hover:enabled {
+  filter: brightness(0.85);
+}
+
+.grain-dictionary-actions button:focus-visible {
+  outline: 2px solid #f4f4f2;
+  outline-offset: 2px;
+}
+
+.grain-dictionary-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
