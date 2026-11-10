@@ -5160,7 +5160,7 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
   max-width: 100%;
   padding: 10px 12px;
   border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
+  border-radius: 22px;
   background-color: var(--bg-0);
   pointer-events: auto;
 }
