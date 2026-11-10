@@ -15,7 +15,6 @@ import {
   unwrapResult,
 } from "./extensionRuntime";
 import githubIcon from "./icons/github.svg";
-import googleCalendarIcon from "./icons/google-calendar.png";
 import linearIcon from "./icons/linear.svg";
 import linearDarkIcon from "./icons/linear-light.svg";
 import notionIcon from "./icons/notion.png";
@@ -23,7 +22,6 @@ import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["github", { src: githubIcon }],
-  ["google-calendar", { src: googleCalendarIcon }],
   ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
   ["notion", { src: notionIcon }],
 ]);

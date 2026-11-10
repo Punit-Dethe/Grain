@@ -13,20 +13,17 @@ catalog entry to include it in Extensions. The UI uses small provider marks
 where bundled and a generic icon otherwise.
 The catalog renders without fetching catalog data from the network.
 
-Google Workspace will use one preset per app. Google Calendar is the first
-preview preset and only appears in builds with the Google desktop OAuth
-registration. It supports event lookup and availability with read-only scopes.
-Gmail, Drive, Docs and Sheets remain separate follow-ups.
+Google Workspace uses the community `google_workspace_mcp` server instead of
+Google's Developer Preview MCP servers. The official Calendar preview preset
+was removed; swap back to official servers once they are generally available.
 
 ### Rollout checkpoint
 
 - **Slack is next.** Start with browser sign-in and read-only tool discovery in
   an internal Slack workspace. See [Slack pilot setup](#slack-pilot-setup).
-- **Google Workspace is deferred.** Keep the Calendar preview in place. Resume
-  once a managed Google Workspace account can enroll the Grain Cloud project.
-  Then configure the desktop OAuth client and verify sign-in, refresh and an
-  Agent read with an eligible tester account.
-  [Google preview enrollment](https://developers.google.com/workspace/preview#how_to_join_the_program)
+- **Google Workspace** moves to the community
+  [google_workspace_mcp](https://github.com/taylorwilsdon/google_workspace_mcp)
+  server, which needs no Developer Preview enrollment.
 - **Microsoft 365 is deferred** until its tenant and app setup are ready.
 
 ### Slack pilot setup
@@ -69,6 +66,5 @@ stay in the application so a catalog update cannot change where credentials
 are sent.
 
 Bundled marks are sourced from [GitHub’s Primer Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-24.svg),
-[Google’s Calendar icon](https://www.gstatic.com/images/branding/product/1x/calendar_48dp.png),
 [Linear’s Brand Guidelines](https://linear.app/brand), and the
 [Notion website favicon](https://www.notion.com/front-static/favicon.ico).

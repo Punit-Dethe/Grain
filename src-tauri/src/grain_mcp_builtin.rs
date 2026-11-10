@@ -7,35 +7,6 @@ pub(super) struct Client<'a> {
     pub secret: &'a str,
 }
 
-pub(super) const GOOGLE_CALENDAR_ID: &str = "google-calendar";
-pub(super) const GOOGLE_CALENDAR_ENDPOINT: &str = "https://calendarmcp.googleapis.com/mcp/v1";
-pub(super) const GOOGLE_CALENDAR_SCOPES: [&str; 3] = [
-    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
-    "https://www.googleapis.com/auth/calendar.events.freebusy",
-    "https://www.googleapis.com/auth/calendar.events.readonly",
-];
-
-pub(super) fn google_calendar(provider_id: &str, endpoint: &str) -> bool {
-    provider_id == GOOGLE_CALENDAR_ID && endpoint == GOOGLE_CALENDAR_ENDPOINT
-}
-
-pub(super) fn google_calendar_client() -> Option<Client<'static>> {
-    desktop_client(
-        option_env!("GRAIN_GOOGLE_OAUTH_CLIENT_ID"),
-        option_env!("GRAIN_GOOGLE_OAUTH_CLIENT_SECRET"),
-    )
-}
-
-pub(super) fn google_metadata(
-    issuer: Option<&str>,
-    authorization_endpoint: &str,
-    token_endpoint: &str,
-) -> bool {
-    issuer == Some("https://accounts.google.com")
-        && authorization_endpoint == "https://accounts.google.com/o/oauth2/v2/auth"
-        && token_endpoint == "https://oauth2.googleapis.com/token"
-}
-
 pub(super) fn github<'a>(
     provider_id: &str,
     endpoint: &str,

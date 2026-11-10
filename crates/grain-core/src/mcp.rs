@@ -526,7 +526,6 @@ mod tests {
             "atlassian",
             "github",
             "slack",
-            "google-calendar",
             "grain-harness-auth-peer",
         ] {
             let owner = ConnectionIdentity::catalog(provider).unwrap();

@@ -80,23 +80,6 @@ installer. For local development with GitHub, launch Cargo through the same
 terminal that supplies `GRAIN_GITHUB_OAUTH_CLIENT_ID` and
 `GRAIN_GITHUB_OAUTH_CLIENT_SECRET`. Notion uses dynamic registration.
 
-Google Calendar is a read-only internal preview. Join the [Google Workspace Developer
-Preview](https://developers.google.com/workspace/preview), enable Google
-Calendar API and Google Calendar MCP API in the same Cloud project, and create
-a Desktop app OAuth client marked **Use this client for an AI-powered agent**.
-Use the [Calendar MCP setup guide](https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server)
-for consent setup and add pilot accounts as test users when the consent screen
-is in Testing. Supply `GRAIN_GOOGLE_OAUTH_CLIENT_ID` and
-`GRAIN_GOOGLE_OAUTH_CLIENT_SECRET` in the terminal that runs
-`bun run tauri dev --no-watch`. Use only the desktop registration values.
-Keep this preset in internal builds while Google lists it as Developer Preview.
-Builds without both values hide Calendar.
-
-For the pilot, sign in with a tester account, ask the Agent to list this week's
-events, and repeat after restarting and after the access token expires. Turn
-Calendar off and confirm the Agent loses access. Turn it back on and confirm
-it can list events without another sign-in.
-
 Run scoped frontend tests and `cargo test --locked --lib grain_mcp::` from
 `src-tauri/`. On Windows, set the Cargo test runner to the absolute path of
 `scripts/run-rust-test.ps1` as documented in the
