@@ -14,7 +14,7 @@ import {
 import { commands, type Snippet } from "@/bindings";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
-import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { Switch } from "@/components/ui/Switch";
 import { useOsType } from "@/hooks/useOsType";
 import { useSettings } from "@/hooks/useSettings";
 import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
@@ -283,7 +283,13 @@ function DictionaryTool() {
 
   return (
     <section className="dictionary-workspace" aria-label="Personal dictionary">
-      <div className="dictionary-toolbar">
+      <div
+        className={
+          os === "windows"
+            ? "dictionary-toolbar dictionary-term-toolbar"
+            : "dictionary-toolbar"
+        }
+      >
         <label className="dictionary-search tool-search">
           <Search size={17} aria-hidden="true" />
           <span className="sr-only">Search dictionary</span>
@@ -297,6 +303,23 @@ function DictionaryTool() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
+        {os === "windows" && (
+          <div className="dictionary-learn-control">
+            <span>{t("dictionarySuggestion.learn")}</span>
+            <Switch
+              checked={getSetting("learn_from_edits") ?? false}
+              isUpdating={isUpdating("learn_from_edits")}
+              onChange={(enabled) =>
+                void updateSetting("learn_from_edits", enabled)
+              }
+              ariaLabel={t("dictionarySuggestion.learn")}
+              ariaDescribedBy="dictionary-learn-description"
+            />
+            <span id="dictionary-learn-description" role="tooltip">
+              {t("dictionarySuggestion.description")}
+            </span>
+          </div>
+        )}
         <button
           className="dictionary-add-button"
           type="button"
@@ -306,19 +329,6 @@ function DictionaryTool() {
           Add term
         </button>
       </div>
-
-      {os === "windows" && (
-        <ToggleSwitch
-          checked={getSetting("learn_from_edits") ?? false}
-          isUpdating={isUpdating("learn_from_edits")}
-          onChange={(enabled) =>
-            void updateSetting("learn_from_edits", enabled)
-          }
-          label={t("dictionarySuggestion.learn")}
-          description={t("dictionarySuggestion.description")}
-          descriptionMode="inline"
-        />
-      )}
 
       {filteredWords.length > 0 ? (
         <div className="dictionary-term-grid" aria-label="Dictionary terms">

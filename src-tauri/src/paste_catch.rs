@@ -15,7 +15,7 @@
 //!
 //! Two probes that fail differently, neither trusted alone:
 //!
-//! - **Pre-flight** ([`intercept`], top of `clipboard::paste`): classify the
+//! - **Pre-flight** ([`prepare`], top of `clipboard::paste`): classify the
 //!   focused element. Only `NotEditable` — positive evidence — takes ownership,
 //!   and then the OS paste is never sent at all, which also stops a stray
 //!   `Ctrl+V` from firing a real command in a game or a CAD app.
@@ -39,7 +39,7 @@
 //! transcript. `paste_tx` already does exactly that under `reliable_paste`, but
 //! it is upstream code held byte-identical, and it owns the clipboard for the
 //! whole transaction, so this module stands down entirely while it is on (see
-//! [`should_verify`]). Giving Paste Catch its own receipt would mean taking over
+//! [`can_probe`]). Giving Paste Catch its own receipt would mean taking over
 //! the paste path from `clipboard::paste` rather than bracketing it, which costs
 //! more upstream divergence than the remaining ambiguity is worth today.
 
@@ -52,7 +52,7 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::context_detect::{classify, FocusProbe, FocusTarget};
-use crate::settings::{get_settings, ClipboardHandling, PasteMethod, ShortcutBinding};
+use crate::settings::{get_settings, AppSettings, ClipboardHandling, PasteMethod, ShortcutBinding};
 
 /// Settings id of the deliver binding. Registered only while a hold is armed —
 /// see `grain_core::capture::is_dynamic_binding`.
@@ -99,7 +99,6 @@ pub struct PasteCatchState {
     pending: Mutex<Option<PendingCopy>>,
     gen: AtomicU32,
     deliver_registration: Mutex<()>,
-    before: Mutex<Option<(u32, FocusProbe)>>,
 }
 
 // -- Pure logic (unit-tested; no COM, no Tauri) --------------------------------
@@ -175,22 +174,9 @@ fn landed_in(observed: &str, transcript: &str) -> bool {
     normalized.ends_with(&tail) || normalized.contains(&tail)
 }
 
-/// Whether a paste is worth verifying at all.
-///
-/// `auto_submit` is the notable exclusion: a successful paste *clears* the
-/// field, which is indistinguishable from a miss, so verification would report
-/// a false miss on every successful send. `reliable_paste` is excluded because
-/// `paste_tx` still owns the clipboard as a delayed-render promise — reading it
-/// would return the transcript rather than the user's content AND forge a read
-/// receipt that makes `paste_tx` conclude the paste succeeded.
-fn should_verify(
-    enabled: bool,
-    reliable_paste: bool,
-    auto_submit: bool,
-    method_verifiable: bool,
-    has_text: bool,
-) -> bool {
-    enabled && !reliable_paste && !auto_submit && method_verifiable && has_text
+/// Leave receipt-based paste and delivery methods we cannot model alone.
+fn can_probe(enabled: bool, reliable_paste: bool, method: PasteMethod, text: &str) -> bool {
+    enabled && !reliable_paste && method_verifiable(method) && !text.trim().is_empty()
 }
 
 /// Paste methods whose outcome Grain can reason about. `None` pastes nothing by
@@ -207,49 +193,54 @@ fn method_verifiable(method: PasteMethod) -> bool {
 
 // -- The two hooks -------------------------------------------------------------
 
-/// Decide once for the entire paste, before either accessibility probe.
-pub(crate) fn probe_generation(app: &AppHandle) -> Option<u32> {
-    let id = supersede(app);
-    if !crate::agent::foreground_is_terminal() {
-        return Some(id);
-    }
-    log::debug!("[paste-catch] bypassing accessibility checks for terminal paste");
-    None
+pub(crate) enum Preparation {
+    Passthrough,
+    Held,
+    Verify(PasteProbe),
 }
 
-/// Pre-flight. Called at the top of `clipboard::paste`.
-///
-/// Returns `true` when Grain has taken ownership of the transcript — focus is
-/// provably not editable, so the caller must NOT paste.
-pub fn intercept(app: &AppHandle, id: u32, text: &str, may_intercept: bool) -> bool {
-    let settings = get_settings(app);
-    if !settings.paste_catch_enabled || text.trim().is_empty() {
-        return false;
+/// A before-image belongs to this paste call, including on an early return.
+pub(crate) struct PasteProbe {
+    id: u32,
+    before: FocusProbe,
+}
+
+/// Classify focus once, and reuse the same reading for post-paste verification.
+pub(crate) fn prepare(
+    app: &AppHandle,
+    settings: &AppSettings,
+    text: &str,
+    may_intercept: bool,
+) -> Preparation {
+    if !cfg!(windows) || !settings.paste_catch_enabled {
+        return Preparation::Passthrough;
     }
-    // Clipboard-only and external-script modes own their own delivery.
-    if !method_verifiable(settings.paste_method) {
-        return false;
+    let id = supersede(app);
+    if !can_probe(
+        settings.paste_catch_enabled,
+        settings.reliable_paste,
+        settings.paste_method,
+        text,
+    ) || crate::agent::foreground_is_terminal()
+    {
+        return Preparation::Passthrough;
     }
-    let sequence = clipboard_sequence();
-    // ONE focus read serving two purposes: the pre-flight verdict, and the
-    // before-image that post-flight differences against. Reading focus twice
-    // would cost a second cross-process round trip on the paste path and risk
-    // the two reads disagreeing.
-    let probe = crate::context_detect::read_focus_probe();
-    let target = probe
-        .as_ref()
-        .map(|p| classify(p.facts))
-        .unwrap_or(FocusTarget::Unknown);
-    if may_intercept && target == FocusTarget::NotEditable {
+    let sequence = may_intercept.then(clipboard_sequence);
+    let Some(before) = crate::context_detect::read_focus_probe() else {
+        return Preparation::Passthrough;
+    };
+    if let Some(sequence) = sequence.filter(|_| classify(before.facts) == FocusTarget::NotEditable)
+    {
         info!("[paste-catch] focus is not editable — holding the transcript instead of pasting");
         arm(app, id, text.to_owned(), sequence);
-        return true;
+        return Preparation::Held;
     }
-    let state = app.state::<PasteCatchState>();
-    *state.before.lock().unwrap() = probe
-        .filter(|probe| probe.identity.is_some())
-        .map(|probe| (id, probe));
-    false
+    // A successful auto-submit can clear the field, exactly like a miss.
+    if !settings.auto_submit && before.identity.is_some() {
+        Preparation::Verify(PasteProbe { id, before })
+    } else {
+        Preparation::Passthrough
+    }
 }
 
 /// Snapshot the last Windows input tick. Equality, not ordering, is meaningful.
@@ -271,28 +262,17 @@ pub(crate) fn input_tick() -> Option<u32> {
 
 /// Post-flight checks run on a worker. When verification is unavailable the
 /// caller retains its usual clipboard handling.
-pub fn verify(app: &AppHandle, id: u32, text: &str, copy: bool, input: Option<u32>) -> bool {
-    let state = app.state::<PasteCatchState>();
-    let mut slot = state.before.lock().unwrap();
-    if slot.as_ref().is_none_or(|(owner, _)| *owner != id) {
-        return false;
-    }
-    let (_, before) = slot.take().unwrap();
-    drop(slot);
-
-    let settings = get_settings(app);
-    if !should_verify(
-        settings.paste_catch_enabled,
-        settings.reliable_paste,
-        settings.auto_submit,
-        method_verifiable(settings.paste_method),
-        !text.trim().is_empty(),
-    ) {
-        return false;
-    }
+pub(crate) fn verify(
+    app: &AppHandle,
+    probe: PasteProbe,
+    text: &str,
+    copy: bool,
+    input: Option<u32>,
+) -> bool {
     let Some(input) = input else {
         return false;
     };
+    let PasteProbe { id, before } = probe;
     let sequence = clipboard_sequence();
     let app = app.clone();
     let text = text.to_owned();
@@ -500,7 +480,6 @@ pub fn supersede(app: &AppHandle) -> u32 {
     };
     let mut pending = state.pending.lock().unwrap();
     let id = state.gen.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-    state.before.lock().unwrap().take();
     if let Some(offer) = pending.take() {
         crate::bridge::emit(app, DaemonEvent::PasteMissedClear { id: offer.id });
         drop(pending);
@@ -524,8 +503,7 @@ fn restore(app: &AppHandle, saved: Snapshot) {
     }
 }
 
-/// Clipboard generation counter. `0` where the platform has no equivalent;
-/// [`still_ours`] does not consult it there.
+/// Clipboard generation counter. `0` where the platform has no equivalent.
 fn clipboard_sequence() -> u32 {
     #[cfg(windows)]
     {
@@ -857,27 +835,20 @@ mod tests {
     }
 
     #[test]
-    fn verification_is_skipped_for_auto_submit() {
-        // A successful send clears the field, which reads exactly like a miss.
-        assert!(!should_verify(true, false, true, true, true));
-    }
-
-    #[test]
-    fn verification_is_skipped_under_reliable_paste() {
-        // paste_tx still owns the clipboard as a delayed-render promise.
-        assert!(!should_verify(true, true, false, true, true));
+    fn reliable_paste_bypasses_both_accessibility_probes() {
+        assert!(!can_probe(true, true, PasteMethod::CtrlV, "Hi"));
     }
 
     #[test]
     fn verification_is_skipped_when_disabled_or_unverifiable() {
-        assert!(!should_verify(false, false, false, true, true));
-        assert!(!should_verify(true, false, false, false, true));
+        assert!(!can_probe(false, false, PasteMethod::CtrlV, "Hi"));
+        assert!(!can_probe(true, false, PasteMethod::None, "Hi"));
     }
 
     #[test]
     fn verification_checks_short_transcripts_but_skips_empty_ones() {
-        assert!(should_verify(true, false, false, true, true));
-        assert!(!should_verify(true, false, false, true, false));
+        assert!(can_probe(true, false, PasteMethod::CtrlV, "Hi"));
+        assert!(!can_probe(true, false, PasteMethod::CtrlV, " "));
     }
 
     #[test]

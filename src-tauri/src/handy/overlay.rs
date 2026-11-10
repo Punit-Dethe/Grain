@@ -56,10 +56,10 @@ const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 /// Overlay window size (logical) for a given UI state.
 // [GRAIN] Report shared window bounds in the owned overlay snapshot.
 pub(crate) fn overlay_dimensions(state: &str) -> (f64, f64) {
-    match state {
-        "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
-        "dictionary" | "copy" => (400.0, 176.0), // [GRAIN] Confirmation cards.
-        _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
+    if state == "streaming" {
+        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
+    } else {
+        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
     }
 }
 
@@ -288,8 +288,7 @@ fn current_overlay_logical_size(window: &tauri::webview::WebviewWindow) -> Optio
 }
 
 #[cfg(target_os = "windows")]
-static WINDOWS_OVERLAY_DIMENSIONS: std::sync::Mutex<(f64, f64)> =
-    std::sync::Mutex::new((OVERLAY_WIDTH, OVERLAY_HEIGHT));
+static WINDOWS_OVERLAY_IS_STREAMING: AtomicBool = AtomicBool::new(false);
 
 /// Windows accessibility text size (Settings > Accessibility > Text size), a
 /// separate axis from display scaling that WebView2 applies as a document zoom.
@@ -514,7 +513,9 @@ pub(crate) fn show_overlay_state(app_handle: &AppHandle, state: &str) {
 
 fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
     // Size the overlay for this state (compact vs. streaming), then position it.
-    let (width, height) = overlay_dimensions(state);
+    // [GRAIN] Grain-owned presentations supply their own bounds.
+    let (width, height) = crate::grain_overlay::confirmation_dimensions(state)
+        .unwrap_or_else(|| overlay_dimensions(state));
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         // Invalidate any delayed hide still in flight from a previous session
         // (see `hide_recording_overlay`).
@@ -543,10 +544,7 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
             let _ =
                 overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
             #[cfg(target_os = "windows")]
-            // [GRAIN] Reposition using the bounds of the active card.
-            {
-                *WINDOWS_OVERLAY_DIMENSIONS.lock().unwrap() = (width, height);
-            }
+            WINDOWS_OVERLAY_IS_STREAMING.store(state == "streaming", Ordering::Relaxed);
             let size_elapsed = size_started.elapsed();
 
             let pos_started = std::time::Instant::now();
@@ -661,7 +659,14 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
 
         #[cfg(target_os = "windows")]
         {
-            let (width, height) = *WINDOWS_OVERLAY_DIMENSIONS.lock().unwrap();
+            let state = if WINDOWS_OVERLAY_IS_STREAMING.load(Ordering::Relaxed) {
+                "streaming"
+            } else {
+                "recording"
+            };
+            // [GRAIN] Keep confirmation bounds when the overlay position changes.
+            let (width, height) = crate::grain_overlay::active_confirmation_dimensions(app_handle)
+                .unwrap_or_else(|| overlay_dimensions(state));
             if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
                 log::error!("Failed to update recording overlay position: {error}");
             }

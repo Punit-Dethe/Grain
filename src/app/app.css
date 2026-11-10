@@ -4084,6 +4084,46 @@ html[data-theme="light"] .context-profile-mode {
   gap: 16px;
 }
 
+.dictionary-term-toolbar {
+  flex-wrap: wrap;
+}
+
+.dictionary-term-toolbar .dictionary-search {
+  flex: 1 0 min(100%, 180px);
+  max-width: 320px;
+}
+
+.dictionary-learn-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+  min-height: 40px;
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.dictionary-learn-control [role="tooltip"] {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 100%;
+  inset-inline-end: 0;
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 12px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 8px;
+  background: var(--bg-2);
+  box-shadow: var(--shadow-float);
+  visibility: hidden;
+}
+
+.dictionary-learn-control:hover [role="tooltip"],
+.dictionary-learn-control:focus-within [role="tooltip"] {
+  visibility: visible;
+}
+
 .dictionary-search {
   width: min(320px, 52%);
   height: 40px;

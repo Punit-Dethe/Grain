@@ -12,6 +12,17 @@ use tauri::{AppHandle, Emitter, Manager};
 /// Grain's visual clearance above Handy's platform-specific bottom placement.
 pub const BOTTOM_RAISE: f64 = 16.0;
 
+pub(crate) fn confirmation_dimensions(state: &str) -> Option<(f64, f64)> {
+    matches!(state, "dictionary" | "copy").then_some((400.0, 176.0))
+}
+
+#[cfg(windows)]
+pub(crate) fn active_confirmation_dimensions(app: &AppHandle) -> Option<(f64, f64)> {
+    let ctx = app.try_state::<OverlayContext>()?;
+    let value = ctx.presentation.lock().unwrap();
+    confirmation_dimensions(&value.state)
+}
+
 #[cfg(windows)]
 const DICTIONARY_NOTICE_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -128,6 +139,13 @@ impl OverlayPresentation {
             self.visible = false;
         }
         Some(hide)
+    }
+
+    fn show_clipboard_offer(&mut self, offer: ClipboardOffer, visible: bool) {
+        self.dictionary = None;
+        self.clipboard_offer = Some(offer);
+        self.state = "copy".into();
+        self.visible = visible;
     }
 
     /// A click and its timeout share the same pending offer. Only the first
@@ -372,13 +390,15 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             DaemonEvent::PasteMissed {
                 id, expires_at_ms, ..
             } => {
-                value.clipboard_offer = Some(ClipboardOffer {
-                    id: *id,
-                    expires_at_ms: *expires_at_ms,
-                });
-                value.state = "copy".into();
-                value.visible = crate::settings::get_settings(app).overlay_style
+                let visible = crate::settings::get_settings(app).overlay_style
                     != crate::settings::OverlayStyle::None;
+                value.show_clipboard_offer(
+                    ClipboardOffer {
+                        id: *id,
+                        expires_at_ms: *expires_at_ms,
+                    },
+                    visible,
+                );
                 show = Some("copy");
             }
             DaemonEvent::PasteMissedClear { id }
@@ -685,7 +705,7 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DictionaryResolution, DictionarySuggestion, OverlayPresentation};
+    use super::{ClipboardOffer, DictionaryResolution, DictionarySuggestion, OverlayPresentation};
     use crate::settings::OverlayStyle;
 
     #[test]
@@ -814,6 +834,24 @@ mod tests {
             }),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn copy_offer_replaces_dictionary_and_cancels_its_timeout() {
+        let mut value = dictionary_offer();
+        value.show_clipboard_offer(
+            ClipboardOffer {
+                id: 8,
+                expires_at_ms: 20_000,
+            },
+            true,
+        );
+
+        assert!(!value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| panic!("replaced"))
+            .unwrap());
+        assert!(value.visible && value.dictionary.is_none());
+        assert_eq!(value.clipboard_offer.unwrap().id, 8);
     }
 
     #[test]
