@@ -1112,6 +1112,8 @@
         "empty": "Start a recording to see it here.",
         "today": "Today",
         "yesterday": "Yesterday",
+        "speakers_one": "{{count}} speaker",
+        "speakers_other": "{{count}} speakers",
         "state": {
           "recording": "Recording now…",
           "processing": "Transcribing…",
@@ -1132,6 +1134,8 @@
         "back": "Recordings",
         "backToRecorder": "Back to the recorder",
         "missing": "This recording no longer exists.",
+        "editTitle": "Edit meeting title",
+        "meetingTitle": "Meeting title",
         "process": "Transcribe",
         "reprocess": "Transcribe again",
         "cancel": "Cancel",

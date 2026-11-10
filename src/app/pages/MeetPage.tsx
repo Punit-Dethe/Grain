@@ -13,7 +13,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { FileText, MicOff, VolumeOff } from "lucide-react";
+import { FileText, MicOff, Pencil, VolumeOff } from "lucide-react";
 import { toast } from "sonner";
 import type {
   MeetingSummary,
@@ -364,9 +364,11 @@ function SpeakerModelNotice({ meet }: { meet: MeetController }) {
 function RecordingLead({
   meeting,
   state,
+  t,
 }: {
   meeting: MeetingSummary;
   state: string;
+  t: T;
 }) {
   if (state === "recording") {
     return (
@@ -389,20 +391,22 @@ function RecordingLead({
   }
   if (meeting.speaker_count > 0) {
     const shown = Math.min(meeting.speaker_count, 3);
-    const extra = meeting.speaker_count - shown;
     return (
-      <span className="meet-lead-stack" aria-hidden="true">
+      <span
+        className="meet-lead-stack"
+        role="img"
+        aria-label={t("ui2.meet.list.speakers", {
+          count: meeting.speaker_count,
+        })}
+      >
         {Array.from({ length: shown }, (_, index) => (
           <span
             key={index}
-            className={`meet-avatar is-stack tone-${SPEAKER_TONES[index % SPEAKER_TONES.length]}`}
+            className={`meet-avatar is-stack tone-${SPEAKER_TONES[index]}`}
           >
-            {index + 1}
+            {index === shown - 1 && meeting.speaker_count}
           </span>
         ))}
-        {extra > 0 && (
-          <span className="meet-avatar is-stack is-more">+{extra}</span>
-        )}
       </span>
     );
   }
@@ -506,7 +510,7 @@ function Recordings({
                   data-state={state}
                   onClick={() => openMeeting(meeting.id)}
                 >
-                  <RecordingLead meeting={meeting} state={state} />
+                  <RecordingLead meeting={meeting} state={state} t={t} />
                   <span className="meet-row-main">
                     <span className="meet-row-top">
                       <span className="meet-row-title">{meeting.title}</span>
@@ -1059,6 +1063,121 @@ function isTyping(target: EventTarget | null): boolean {
   );
 }
 
+function EditableMeetingTitle({
+  title,
+  onRename,
+}: {
+  title: string;
+  onRename: (title: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  const editing = draft !== null;
+
+  useLayoutEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    } else if (restoreFocus.current) {
+      restoreFocus.current = false;
+      buttonRef.current?.focus();
+    }
+  }, [editing]);
+
+  const close = () => {
+    restoreFocus.current = true;
+    setDraft(null);
+  };
+
+  if (draft === null) {
+    return (
+      <h1 id="meet-view-title">
+        <button
+          ref={buttonRef}
+          className="meet-title-edit"
+          type="button"
+          title={t("ui2.meet.detail.editTitle")}
+          onClick={() => setDraft(title)}
+        >
+          <span>{title}</span>
+          <Pencil size={15} aria-hidden="true" />
+        </button>
+      </h1>
+    );
+  }
+
+  const nextTitle = draft.trim();
+  const save = async () => {
+    if (saving || !nextTitle) return;
+    if (nextTitle === title) {
+      close();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onRename(nextTitle);
+      close();
+    } catch (error) {
+      toast.error(errorText(error));
+      inputRef.current?.focus();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      className="meet-title-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+      onKeyDown={(event) => {
+        if (
+          event.key === "Escape" &&
+          !event.nativeEvent.isComposing &&
+          !saving
+        ) {
+          event.preventDefault();
+          close();
+        }
+      }}
+    >
+      <h1 id="meet-view-title" className="sr-only">
+        {title}
+      </h1>
+      <input
+        ref={inputRef}
+        className="meet-title-input"
+        type="text"
+        aria-label={t("ui2.meet.detail.meetingTitle")}
+        value={draft}
+        readOnly={saving}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <button
+        className="button primary"
+        type="submit"
+        disabled={saving || !nextTitle}
+      >
+        {t("common.save")}
+      </button>
+      <button
+        className="button"
+        type="button"
+        disabled={saving}
+        onClick={close}
+      >
+        {t("common.cancel")}
+      </button>
+    </form>
+  );
+}
+
 function MeetingView({
   meet,
   meeting,
@@ -1363,8 +1482,15 @@ function MeetingView({
             )}
           </div>
           <div className="meet-view-title">
-            <div>
-              <h1 id="meet-view-title">{meeting.title}</h1>
+            <div className="meet-view-heading">
+              {isRecording ? (
+                <h1 id="meet-view-title">{meeting.title}</h1>
+              ) : (
+                <EditableMeetingTitle
+                  title={meeting.title}
+                  onRename={(title) => meet.renameMeeting(meeting.id, title)}
+                />
+              )}
               <p className="meet-meta">
                 <span>{when}</span>
                 <span>{formatClock(meeting.duration_ms)}</span>

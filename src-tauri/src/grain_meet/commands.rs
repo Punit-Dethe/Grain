@@ -458,6 +458,14 @@ pub fn meet_transcript(
     transcript::latest(&storage::session_dir(&meetings_root(&app)?, &session_id)?)
 }
 
+/// Rename a saved meeting and return its updated title.
+#[tauri::command]
+#[specta::specta]
+pub fn meet_rename(app: AppHandle, session_id: String, title: String) -> Result<String, String> {
+    let dir = storage::session_dir(&meetings_root(&app)?, &session_id)?;
+    storage::rename_session(&dir, &title)
+}
+
 /// Delete a meeting's audio and transcripts. Refused while it is in use.
 #[tauri::command]
 #[specta::specta]
