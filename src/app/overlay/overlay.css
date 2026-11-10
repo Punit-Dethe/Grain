@@ -548,30 +548,32 @@ body,
 }
 
 .grain-dictionary-offer {
+  position: relative;
   box-sizing: border-box;
   display: grid;
   justify-items: center;
-  gap: 6px;
-  width: min(328px, calc(100% - 16px));
-  padding: 10px 14px;
+  gap: 8px;
+  width: min(356px, calc(100% - 16px));
+  padding: 20px 24px;
   border: 1px solid #353535;
   border-radius: 16px;
+  overflow: hidden;
   background: #0b0b0b;
   color: #f4f4f2;
-  font: 14px/20px var(--s-font);
+  font: 17px/24px var(--s-font);
 }
 
 .grain-dictionary-offer h2 {
   margin: 0;
   color: #c6c6c3;
-  font: 500 12px/16px var(--s-font);
+  font: 500 13px/18px var(--s-font);
 }
 
 .grain-dictionary-change {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 12px;
   max-width: 100%;
 }
 
@@ -592,12 +594,15 @@ body,
 
 .grain-dictionary-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-block-start: 10px;
 }
 
 .grain-dictionary-actions button {
-  min-height: 30px;
-  padding: 2px 10px;
+  min-height: 36px;
+  padding: 6px 14px;
   border: 1px solid #424242;
   border-radius: 8px;
   background: #171717;
@@ -624,4 +629,31 @@ body,
 .grain-dictionary-actions button:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.grain-dictionary-countdown {
+  position: absolute;
+  inset-inline: 16px;
+  inset-block-end: 0;
+  height: 2px;
+  background: #fff;
+  pointer-events: none;
+  transform-origin: left center;
+  animation: dictionary-countdown linear forwards;
+}
+
+.grain-dictionary-countdown:dir(rtl) {
+  transform-origin: right center;
+}
+
+@keyframes dictionary-countdown {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grain-dictionary-countdown {
+    animation-timing-function: steps(10, end);
+  }
 }

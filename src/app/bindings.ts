@@ -2058,7 +2058,11 @@ name: string;
  * URL reader resolved it. `None` otherwise.
  */
 url_host: string | null }
-export type DictionarySuggestion = { id: number; original: string; corrected: string }
+export type DictionarySuggestion = { id: number; original: string; corrected: string;
+/**
+ * Wall-clock deadline for the renderer's countdown. Cleared on save failure.
+ */
+expires_at_ms: number | null }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation

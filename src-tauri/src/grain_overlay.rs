@@ -14,12 +14,23 @@ pub const BOTTOM_RAISE: f64 = 16.0;
 
 // Leave a short gap after Handy's 300 ms recording-window hide delay.
 const CLIPBOARD_NOTICE_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
+#[cfg(windows)]
+const DICTIONARY_NOTICE_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Serialize, Deserialize, Type)]
 pub struct DictionarySuggestion {
     pub id: u32,
     pub original: String,
     pub corrected: String,
+    /// Wall-clock deadline for the renderer's countdown. Cleared on save failure.
+    pub expires_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DictionaryResolution {
+    Save,
+    Decline,
+    Timeout,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
@@ -112,6 +123,33 @@ impl OverlayPresentation {
             self.visible = false;
         }
         Some(hide)
+    }
+
+    /// A click and its timeout share the same pending offer. Only the first
+    /// successful resolution consumes it. A failed save permits a manual retry.
+    fn resolve_dictionary(
+        &mut self,
+        id: u32,
+        resolution: DictionaryResolution,
+        save: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let Some(suggestion) = self.dictionary.as_mut().filter(|suggestion| {
+            self.visible
+                && suggestion.id == id
+                && (resolution != DictionaryResolution::Timeout
+                    || suggestion.expires_at_ms.is_some())
+        }) else {
+            return Ok(false);
+        };
+        if resolution != DictionaryResolution::Decline {
+            if let Err(error) = save(&suggestion.corrected) {
+                suggestion.expires_at_ms = None;
+                return Err(error);
+            }
+        }
+        self.dictionary = None;
+        self.visible = false;
+        Ok(true)
     }
 }
 
@@ -431,7 +469,12 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
 }
 
 #[cfg(windows)]
-pub(crate) fn show_dictionary_suggestion(app: &AppHandle, suggestion: DictionarySuggestion) {
+pub(crate) fn show_dictionary_suggestion(
+    app: &AppHandle,
+    id: u32,
+    original: String,
+    corrected: String,
+) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let settings = crate::settings::get_settings(&handle);
@@ -440,22 +483,37 @@ pub(crate) fn show_dictionary_suggestion(app: &AppHandle, suggestion: Dictionary
         if value.visible
             || !settings.learn_from_edits
             || settings.overlay_style == crate::settings::OverlayStyle::None
-            || !crate::grain_dictionary::is_current(suggestion.id)
-            || dictionary_contains(&settings.custom_words, &suggestion.corrected)
+            || !crate::grain_dictionary::is_current(id)
+            || dictionary_contains(&settings.custom_words, &corrected)
         {
             return;
         }
-        let id = suggestion.id;
+        let deadline = tokio::time::Instant::now() + DICTIONARY_NOTICE_DURATION;
+        let expires_at_ms = (std::time::SystemTime::now() + DICTIONARY_NOTICE_DURATION)
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
         value.state = "dictionary".into();
         value.visible = true;
-        value.dictionary = Some(suggestion);
+        value.dictionary = Some(DictionarySuggestion {
+            id,
+            original,
+            corrected,
+            expires_at_ms: Some(expires_at_ms),
+        });
         publish(&handle, &value);
         drop(value);
         crate::overlay::show_overlay_state(&handle, "dictionary");
         tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            tokio::time::sleep_until(deadline).await;
             let app = handle.clone();
-            let _ = handle.run_on_main_thread(move || clear_dictionary_suggestion(&app, id));
+            let _ = handle.run_on_main_thread(move || {
+                if let Err(error) =
+                    finish_dictionary_suggestion(&app, id, DictionaryResolution::Timeout)
+                {
+                    log::warn!("Could not save dictionary suggestion: {error}");
+                }
+            });
         });
     });
 }
@@ -477,25 +535,47 @@ pub(crate) fn dismiss_dictionary_suggestion(app: &AppHandle) {
         .as_ref()
         .map(|suggestion| suggestion.id);
     if let Some(id) = id {
-        clear_dictionary_suggestion(app, id);
+        let _ = finish_dictionary_suggestion(app, id, DictionaryResolution::Decline);
     }
 }
 
-fn clear_dictionary_suggestion(app: &AppHandle, id: u32) {
+fn finish_dictionary_suggestion(
+    app: &AppHandle,
+    id: u32,
+    resolution: DictionaryResolution,
+) -> Result<(), String> {
     let ctx = app.state::<OverlayContext>();
     let mut value = ctx.presentation.lock().unwrap();
-    if value
-        .dictionary
-        .as_ref()
-        .is_none_or(|suggestion| suggestion.id != id)
-    {
-        return;
+    let mut saved = false;
+    let resolved = value.resolve_dictionary(id, resolution, |corrected| {
+        if !crate::grain_dictionary::is_current(id) {
+            return Ok(());
+        }
+        app.state::<std::sync::Arc<grain_core::AppContext>>()
+            .update_public_settings(|settings| {
+                if settings.learn_from_edits
+                    && !dictionary_contains(&settings.custom_words, corrected)
+                {
+                    settings.custom_words.push(corrected.to_owned());
+                    saved = true;
+                }
+            })
+            .map_err(|error| error.to_string())
+    });
+    if matches!(resolved, Ok(false)) {
+        return Ok(());
     }
-    value.dictionary = None;
-    value.visible = false;
     publish(app, &value);
     drop(value);
+    resolved?;
     crate::overlay::hide_recording_overlay(app);
+    if saved {
+        let _ = app.emit(
+            "settings-changed",
+            serde_json::json!({ "setting": "custom_words" }),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -509,32 +589,12 @@ pub fn resolve_dictionary_suggestion(
     if window.label() != "recording_overlay" {
         return Err("The suggestion belongs to the recording overlay.".into());
     }
-    if save {
-        let ctx = app.state::<OverlayContext>();
-        let value = ctx.presentation.lock().unwrap();
-        let suggestion = value
-            .dictionary
-            .as_ref()
-            .filter(|suggestion| {
-                value.visible && suggestion.id == id && crate::grain_dictionary::is_current(id)
-            })
-            .ok_or("This suggestion has expired.")?;
-        app.state::<std::sync::Arc<grain_core::AppContext>>()
-            .update_public_settings(|settings| {
-                if settings.learn_from_edits
-                    && !dictionary_contains(&settings.custom_words, &suggestion.corrected)
-                {
-                    settings.custom_words.push(suggestion.corrected.clone());
-                }
-            })
-            .map_err(|error| error.to_string())?;
-        let _ = app.emit(
-            "settings-changed",
-            serde_json::json!({ "setting": "custom_words" }),
-        );
-    }
-    clear_dictionary_suggestion(&app, id);
-    Ok(())
+    let resolution = if save {
+        DictionaryResolution::Save
+    } else {
+        DictionaryResolution::Decline
+    };
+    finish_dictionary_suggestion(&app, id, resolution)
 }
 
 #[derive(Serialize, Deserialize, Type)]
@@ -635,7 +695,7 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
 
 #[cfg(test)]
 mod tests {
-    use super::OverlayPresentation;
+    use super::{DictionaryResolution, DictionarySuggestion, OverlayPresentation};
     use crate::settings::OverlayStyle;
 
     #[test]
@@ -751,6 +811,75 @@ mod tests {
         value.state = "recording".into();
         assert_eq!(value.expire_notice(2, 2), None);
         assert!(value.visible);
+    }
+
+    fn dictionary_offer() -> OverlayPresentation {
+        OverlayPresentation {
+            visible: true,
+            dictionary: Some(DictionarySuggestion {
+                id: 7,
+                original: "Puneet".into(),
+                corrected: "Punit".into(),
+                expires_at_ms: Some(10_000),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn declining_a_dictionary_offer_cancels_its_timeout() {
+        let mut value = dictionary_offer();
+        assert!(!value
+            .resolve_dictionary(6, DictionaryResolution::Timeout, |_| panic!(
+                "stale timeout"
+            ))
+            .unwrap());
+        assert!(value
+            .resolve_dictionary(7, DictionaryResolution::Decline, |_| panic!("declined"))
+            .unwrap());
+        assert!(!value.visible);
+        assert!(!value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| panic!(
+                "dismissed offer"
+            ))
+            .unwrap());
+    }
+
+    #[test]
+    fn a_dictionary_timeout_and_an_explicit_save_each_save_once() {
+        for resolution in [DictionaryResolution::Timeout, DictionaryResolution::Save] {
+            let mut value = dictionary_offer();
+            assert!(value
+                .resolve_dictionary(7, resolution, |word| {
+                    assert_eq!(word, "Punit");
+                    Ok(())
+                })
+                .unwrap());
+            assert!(!value.visible && value.dictionary.is_none());
+            assert!(!value
+                .resolve_dictionary(7, resolution, |_| panic!("already saved"))
+                .unwrap());
+        }
+    }
+
+    #[test]
+    fn a_failed_dictionary_save_stops_the_countdown_and_allows_retry() {
+        let mut value = dictionary_offer();
+        assert!(value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| Err(
+                "disk error".into()
+            ))
+            .is_err());
+        assert!(value.visible);
+        assert!(value.dictionary.as_ref().unwrap().expires_at_ms.is_none());
+        assert!(!value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| panic!(
+                "countdown stopped"
+            ))
+            .unwrap());
+        assert!(value
+            .resolve_dictionary(7, DictionaryResolution::Save, |_| Ok(()))
+            .unwrap());
     }
 
     #[test]

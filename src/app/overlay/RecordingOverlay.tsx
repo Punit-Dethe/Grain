@@ -37,6 +37,9 @@ function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [countdownMs] = useState(() =>
+    Math.max(0, (suggestion.expires_at_ms ?? 0) - Date.now()),
+  );
 
   const resolve = async (save: boolean) => {
     setBusy(true);
@@ -60,7 +63,9 @@ function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
     >
       <h2 id="dictionary-offer-title" role="status">
         {t(
-          failed ? "dictionarySuggestion.error" : "dictionarySuggestion.title",
+          failed || suggestion.expires_at_ms === null
+            ? "dictionarySuggestion.error"
+            : "dictionarySuggestion.title",
         )}
       </h2>
       <div className="grain-dictionary-change" dir="ltr">
@@ -88,6 +93,13 @@ function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
           {t("dictionarySuggestion.dismiss")}
         </button>
       </div>
+      {suggestion.expires_at_ms !== null && (
+        <div
+          className="grain-dictionary-countdown"
+          style={{ animationDuration: `${countdownMs}ms` }}
+          aria-hidden="true"
+        />
+      )}
     </section>
   );
 }

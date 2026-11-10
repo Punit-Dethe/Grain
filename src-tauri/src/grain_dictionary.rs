@@ -39,7 +39,6 @@ pub(crate) use windows_watch::prepare;
 mod windows_watch {
     use super::*;
     use crate::context_detect::dictionary_field;
-    use crate::grain_overlay::DictionarySuggestion;
     use crate::settings::{OverlayStyle, PasteMethod};
     use std::time::Duration;
 
@@ -121,12 +120,7 @@ mod windows_watch {
                         if stable >= 3 {
                             if let Some((original, corrected)) = correction {
                                 crate::grain_overlay::show_dictionary_suggestion(
-                                    &app,
-                                    DictionarySuggestion {
-                                        id: self.id,
-                                        original,
-                                        corrected,
-                                    },
+                                    &app, self.id, original, corrected,
                                 );
                                 return;
                             }

@@ -1176,7 +1176,7 @@
   },
   "dictionarySuggestion": {
     "learn": "Learn from edits",
-    "description": "After you edit a recently dictated word, Grain can suggest adding it to your dictionary. It only saves words you approve.",
+    "description": "Suggests adding edited words to your dictionary. Suggestions are saved unless you decline.",
     "title": "Add to dictionary?",
     "accept": "Add to dictionary",
     "dismiss": "Don’t save",

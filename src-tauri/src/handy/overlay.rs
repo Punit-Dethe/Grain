@@ -56,11 +56,10 @@ const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 /// Overlay window size (logical) for a given UI state.
 // [GRAIN] Report shared window bounds in the owned overlay snapshot.
 pub(crate) fn overlay_dimensions(state: &str) -> (f64, f64) {
-    if matches!(state, "streaming" | "dictionary") {
-        // [GRAIN] Reuse the larger window for dictionary confirmation.
-        (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT)
-    } else {
-        (OVERLAY_WIDTH, OVERLAY_HEIGHT)
+    match state {
+        "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
+        "dictionary" => (400.0, 176.0), // [GRAIN] Dictionary confirmation.
+        _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }
 
@@ -289,7 +288,8 @@ fn current_overlay_logical_size(window: &tauri::webview::WebviewWindow) -> Optio
 }
 
 #[cfg(target_os = "windows")]
-static WINDOWS_OVERLAY_IS_STREAMING: AtomicBool = AtomicBool::new(false);
+static WINDOWS_OVERLAY_DIMENSIONS: std::sync::Mutex<(f64, f64)> =
+    std::sync::Mutex::new((OVERLAY_WIDTH, OVERLAY_HEIGHT));
 
 /// Windows accessibility text size (Settings > Accessibility > Text size), a
 /// separate axis from display scaling that WebView2 applies as a document zoom.
@@ -543,8 +543,10 @@ fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
             let _ =
                 overlay_window.set_size(tauri::Size::Logical(tauri::LogicalSize { width, height }));
             #[cfg(target_os = "windows")]
-            // [GRAIN] Reposition using the same bounds when the dictionary is open.
-            WINDOWS_OVERLAY_IS_STREAMING.store(width == OVERLAY_STREAM_WIDTH, Ordering::Relaxed);
+            // [GRAIN] Reposition using the bounds of the active card.
+            {
+                *WINDOWS_OVERLAY_DIMENSIONS.lock().unwrap() = (width, height);
+            }
             let size_elapsed = size_started.elapsed();
 
             let pos_started = std::time::Instant::now();
@@ -659,12 +661,7 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
 
         #[cfg(target_os = "windows")]
         {
-            let state = if WINDOWS_OVERLAY_IS_STREAMING.load(Ordering::Relaxed) {
-                "streaming"
-            } else {
-                "recording"
-            };
-            let (width, height) = overlay_dimensions(state);
+            let (width, height) = *WINDOWS_OVERLAY_DIMENSIONS.lock().unwrap();
             if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
                 log::error!("Failed to update recording overlay position: {error}");
             }
