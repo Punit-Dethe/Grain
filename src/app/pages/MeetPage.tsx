@@ -52,11 +52,8 @@ const STAGES: Stage[] = [
 ];
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
 const SKIP_MS = 10_000;
-const STUDIO_WAVE = [
-  4, 14, 28, 38, 26, 14, 36, 28, 14, 24, 32, 42, 20, 8, 30, 34, 20, 16, 26, 34,
-  28, 14, 4,
-]
-  .map((height, index) => `M${3 + index * 8} ${24 - height / 2}v${height}`)
+const STUDIO_WAVE = [5, 12, 21, 32, 42, 24, 10]
+  .map((height, index) => `M${4 + index * 9} ${24 - height / 2}v${height}`)
   .join("");
 
 function errorText(error: unknown): string {
@@ -279,6 +276,14 @@ function SourceSetup({ meet }: { meet: MeetController }) {
 
 type RecordingAction = "start" | "stop";
 
+function StudioWave() {
+  return (
+    <svg className="meet-studio-wave" viewBox="0 0 62 48" aria-hidden="true">
+      <path d={STUDIO_WAVE} />
+    </svg>
+  );
+}
+
 function Studio({
   meet,
   busy,
@@ -302,39 +307,39 @@ function Studio({
     peak === undefined ? 0.78 : 0.12 + 0.88 * Math.sqrt(Math.min(1, peak));
 
   return (
-    <section className="meet-studio" aria-labelledby="meet-studio-heading">
-      <h2 id="meet-studio-heading">
-        {t(recording ? "ui2.meet.live.label" : "ui2.meet.studio.label")}
-      </h2>
-      <svg
-        className="meet-studio-wave"
-        viewBox="0 0 182 48"
-        preserveAspectRatio="none"
-        aria-hidden="true"
+    <section
+      className="meet-studio"
+      aria-label={t(
+        recording ? "ui2.meet.live.label" : "ui2.meet.studio.label",
+      )}
+    >
+      <div
+        className="meet-studio-stage"
+        data-recording={Boolean(recording)}
+        style={{ "--meet-wave-level": waveLevel } as CSSProperties}
       >
-        <path
-          d={STUDIO_WAVE}
-          style={{ "--meet-wave-level": waveLevel } as CSSProperties}
-        />
-      </svg>
-      <button
-        className="button primary meet-record-action"
-        type="button"
-        disabled={busy || (!recording && !canStart)}
-        onClick={() => onAction(recording ? "stop" : "start")}
-      >
-        <Glyph name={recording ? "stop" : "mic"} />
-        <span>
-          {recording
-            ? t("ui2.meet.studio.stop")
-            : busy
-              ? t("ui2.meet.studio.starting")
-              : t("ui2.meet.studio.start")}
-        </span>
-      </button>
+        <StudioWave />
+        <div className="meet-record-orbit">
+          <button
+            className="meet-record-action"
+            type="button"
+            disabled={busy || (!recording && !canStart)}
+            onClick={() => onAction(recording ? "stop" : "start")}
+          >
+            <Glyph name={recording ? "stop" : "mic"} />
+            <span>
+              {recording
+                ? t("ui2.meet.studio.stop")
+                : busy
+                  ? t("ui2.meet.studio.starting")
+                  : t("ui2.meet.studio.start")}
+            </span>
+          </button>
+        </div>
+        <StudioWave />
+      </div>
       {!recording && (
-        <div className="meet-studio-sources">
-          <h3>{t("ui2.meet.sources.heading")}</h3>
+        <div role="group" aria-label={t("ui2.meet.sources.heading")}>
           <SourceSetup meet={meet} />
         </div>
       )}
@@ -509,16 +514,19 @@ function Recordings({
                           <span className="meet-row-title">
                             {meeting.title}
                           </span>
-                          <time
-                            className="meet-row-meta"
-                            dateTime={new Date(
-                              meeting.created_unix_ms,
-                            ).toISOString()}
-                          >
-                            {timeFormat.format(meeting.created_unix_ms)}
-                          </time>
-                          <span className="meet-row-state">
-                            {t(`ui2.meet.list.state.${state}`)}
+                          <span className="meet-row-meta">
+                            <time
+                              dateTime={new Date(
+                                meeting.created_unix_ms,
+                              ).toISOString()}
+                            >
+                              {timeFormat.format(meeting.created_unix_ms)}
+                            </time>
+                            {state !== "transcribed" && (
+                              <span className="meet-row-state">
+                                {t(`ui2.meet.list.state.${state}`)}
+                              </span>
+                            )}
                           </span>
                         </span>
                         <span className="meet-row-duration">
@@ -1419,16 +1427,11 @@ function RecallHome({ meet }: { meet: MeetController }) {
 
   return (
     <div className="page-wrap wide meet-home">
-      <header className="meet-head">
-        <span className="meet-head-icon">
-          <Glyph name="mic" />
-        </span>
-        <div>
+      <div ref={captureRef} className="meet-capture">
+        <header className="meet-head">
           <h1>{t("ui2.meet.name")}</h1>
           <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-        </div>
-      </header>
-      <div ref={captureRef} className="meet-capture">
+        </header>
         <Studio meet={meet} busy={busy} canStart={canStart} onAction={run} />
         {!meet.status.recording && <SpeakerModelNotice meet={meet} />}
         {meet.status.last_error && (
