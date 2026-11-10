@@ -5516,8 +5516,27 @@ html[data-theme="light"] .meet-orb {
   gap: 6px;
 }
 
-.meet-recordings-tools .meet-search {
-  width: min(240px, 100%);
+.meet-recordings-find {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meet-recordings-find .meet-search {
+  min-width: 0;
+  width: 240px;
+}
+
+.meet-recordings-find .meet-selection-toggle {
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent-soft);
+}
+
+.meet-recordings-find .meet-selection-toggle:hover:not(:disabled) {
+  background: var(--accent-soft-hover);
 }
 
 .meet-recording-list,
@@ -5569,15 +5588,33 @@ html[data-theme="light"] .meet-orb {
   cursor: inherit;
 }
 
-.meet-recording-item .meet-recording-transcribe {
+.meet-recording-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-end: 8px;
+}
+
+.meet-recording-actions .icon-button {
+  width: 30px;
+  height: 30px;
+}
+
+.meet-recording-actions .meet-recording-transcribe {
   min-height: 30px;
   max-width: 15ch;
-  margin-inline-end: 8px;
   padding: 4px 8px;
   white-space: normal;
 }
 
-.grain-root :is(.meet-recordings-tools, .meet-recording-item) .button:disabled {
+.meet-recording-list .meet-rename {
+  margin: 0;
+  padding: 0 10px 8px;
+}
+
+.grain-root
+  :is(.meet-recordings-tools, .meet-recording-item)
+  :is(.button, .icon-button):disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }

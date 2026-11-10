@@ -1106,7 +1106,7 @@
         "heading": "Recordings",
         "search": "Search meeting names",
         "noMatches": "No recordings match that name.",
-        "select": "Select",
+        "selectForDeletion": "Select recordings to delete",
         "deleteSelected": "Delete selected ({{count}})",
         "deleteConfirm_one": "Delete the selected recording? Its audio and transcripts will be removed permanently.",
         "deleteConfirm_other": "Delete {{count}} selected recordings? Their audio and transcripts will be removed permanently.",

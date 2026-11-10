@@ -13,6 +13,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { Pencil } from "lucide-react";
 import { toast } from "sonner";
 import type {
   MeetingSummary,
@@ -532,6 +533,82 @@ function RecallSearch({
   );
 }
 
+function MeetingRenameForm({
+  title,
+  onSave,
+  onClose,
+}: {
+  title: string;
+  onSave: (title: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState(title);
+  const [saving, setSaving] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const nextTitle = draft.trim();
+  const canSave =
+    !saving &&
+    nextTitle.length > 0 &&
+    nextTitle.length <= MAX_MEETING_TITLE_LENGTH &&
+    nextTitle !== title;
+
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+
+  const save = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      await onSave(nextTitle);
+      if (input.current) onClose();
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      className="meet-rename"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !saving) {
+          event.preventDefault();
+          onClose();
+        }
+      }}
+    >
+      <input
+        ref={input}
+        type="text"
+        aria-label={t("ui2.meet.detail.meetingName")}
+        maxLength={MAX_MEETING_TITLE_LENGTH}
+        value={draft}
+        disabled={saving}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <button className="button primary" type="submit" disabled={!canSave}>
+        {t("common.save")}
+      </button>
+      <button
+        className="button"
+        type="button"
+        onClick={onClose}
+        disabled={saving}
+      >
+        {t("common.cancel")}
+      </button>
+    </form>
+  );
+}
+
 function Recordings({
   meet,
   emptyAction,
@@ -549,6 +626,13 @@ function Recordings({
   const [selection, setSelection] = useState<Set<string> | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [startingTranscript, setStartingTranscript] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{
+    id: string;
+    button: HTMLButtonElement;
+  } | null>(null);
+  const selectionLabel = t(
+    selection ? "common.cancel" : "ui2.meet.list.selectForDeletion",
+  );
   const now = useSecondTick(Boolean(recordingId));
   const visibleMeetings = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase(i18n.language);
@@ -742,24 +826,54 @@ function Recordings({
                     >
                       {rowBody}
                     </button>
-                    <button
-                      className="button meet-recording-transcribe"
-                      type="button"
-                      aria-describedby={titleId}
-                      disabled={
-                        !canManage(meeting) ||
-                        processingId !== undefined ||
-                        startingTranscript
-                      }
-                      onClick={() => void transcribe(meeting.id)}
-                    >
-                      {t(
-                        meeting.transcript_revision == null
-                          ? "ui2.meet.detail.process"
-                          : "ui2.meet.detail.reprocess",
-                      )}
-                    </button>
+                    <div className="meet-recording-actions">
+                      <button
+                        className="button meet-recording-transcribe"
+                        type="button"
+                        aria-describedby={titleId}
+                        disabled={
+                          !canManage(meeting) ||
+                          processingId !== undefined ||
+                          startingTranscript
+                        }
+                        onClick={() => void transcribe(meeting.id)}
+                      >
+                        {t(
+                          meeting.transcript_revision == null
+                            ? "ui2.meet.detail.process"
+                            : "ui2.meet.detail.reprocess",
+                        )}
+                      </button>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label={t("ui2.meet.detail.rename")}
+                        aria-describedby={titleId}
+                        aria-expanded={renameTarget?.id === meeting.id}
+                        title={t("ui2.meet.detail.rename")}
+                        disabled={meeting.state !== "Recorded"}
+                        onClick={(event) =>
+                          setRenameTarget(
+                            renameTarget?.id === meeting.id
+                              ? null
+                              : { id: meeting.id, button: event.currentTarget },
+                          )
+                        }
+                      >
+                        <Pencil size={15} aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
+                )}
+                {!selection && renameTarget?.id === meeting.id && (
+                  <MeetingRenameForm
+                    title={meeting.title}
+                    onSave={(title) => meet.renameMeeting(meeting.id, title)}
+                    onClose={() => {
+                      setRenameTarget(null);
+                      renameTarget.button.focus();
+                    }}
+                  />
                 )}
               </li>
             );
@@ -775,27 +889,36 @@ function Recordings({
         <h2 id="meet-recordings">{t("ui2.meet.list.heading")}</h2>
         {!meet.loading && !meet.loadError && meet.meetings.length > 0 && (
           <div className="meet-recordings-tools">
-            <RecallSearch
-              label={t("ui2.meet.list.search")}
-              value={query}
-              disabled={deleting}
-              onChange={(value) => {
-                if (selection) setSelection(new Set());
-                onQueryChange(value);
-              }}
-            />
-            <button
-              className="button"
-              type="button"
-              disabled={
-                deleting ||
-                (!selection &&
-                  (startingTranscript || !visibleMeetings.some(canManage)))
-              }
-              onClick={() => setSelection(selection ? null : new Set())}
-            >
-              {t(selection ? "common.cancel" : "ui2.meet.list.select")}
-            </button>
+            <div className="meet-recordings-find">
+              <button
+                className="icon-button meet-selection-toggle"
+                type="button"
+                aria-label={selectionLabel}
+                aria-expanded={selection !== null}
+                title={selectionLabel}
+                disabled={
+                  deleting ||
+                  (!selection &&
+                    (startingTranscript || !visibleMeetings.some(canManage)))
+                }
+                onClick={() => {
+                  setRenameTarget(null);
+                  setSelection(selection ? null : new Set());
+                }}
+              >
+                <Glyph name={selection ? "close" : "trash"} />
+              </button>
+              <RecallSearch
+                label={t("ui2.meet.list.search")}
+                value={query}
+                disabled={deleting}
+                onChange={(value) => {
+                  setRenameTarget(null);
+                  if (selection) setSelection(new Set());
+                  onQueryChange(value);
+                }}
+              />
+            </div>
             {selection && (
               <button
                 className="button meet-delete"
@@ -1296,32 +1419,16 @@ function MeetingView({
   const [transcript, setTranscript] = useState<TranscriptRevision | null>(null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [draftTitle, setDraftTitle] = useState<string | null>(null);
-  const [savingTitle, setSavingTitle] = useState(false);
-  const titleInput = useRef<HTMLInputElement>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
   const renameButton = useRef<HTMLButtonElement>(null);
   const transcriptSearch = useRef<HTMLInputElement>(null);
-  const editingTitle = draftTitle !== null;
-  const nextTitle = draftTitle?.trim() ?? "";
   const canRename = meeting.state === "Recorded";
-  const canSaveTitle =
-    canRename &&
-    nextTitle.length > 0 &&
-    nextTitle.length <= MAX_MEETING_TITLE_LENGTH &&
-    nextTitle !== meeting.title &&
-    !savingTitle;
   const { loadTranscript } = meet;
   const processing = meet.status.processing;
   const isProcessing = processing?.session_id === meeting.id;
   const isRecording = meet.status.recording?.session_id === meeting.id;
   const otherRecording = Boolean(meet.status.recording) && !isRecording;
   const playback = usePlayback(meet, meeting.id);
-
-  useEffect(() => {
-    if (!editingTitle) return;
-    titleInput.current?.focus();
-    titleInput.current?.select();
-  }, [editingTitle]);
 
   useEffect(() => {
     let active = true;
@@ -1440,24 +1547,6 @@ function MeetingView({
       toast.success(t("ui2.meet.detail.copied"));
     } catch (error) {
       toast.error(errorText(error));
-    }
-  };
-
-  const closeRename = () => {
-    setDraftTitle(null);
-    renameButton.current?.focus();
-  };
-
-  const saveTitle = async () => {
-    if (!canSaveTitle) return;
-    setSavingTitle(true);
-    try {
-      await meet.renameMeeting(meeting.id, nextTitle);
-      closeRename();
-    } catch (error) {
-      toast.error(errorText(error));
-    } finally {
-      setSavingTitle(false);
     }
   };
 
@@ -1623,45 +1712,15 @@ function MeetingView({
           <div className="meet-view-title">
             <div>
               <h1 id="meet-view-title">{meeting.title}</h1>
-              {draftTitle !== null && (
-                <form
-                  className="meet-rename"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void saveTitle();
+              {editingTitle && canRename && (
+                <MeetingRenameForm
+                  title={meeting.title}
+                  onSave={(title) => meet.renameMeeting(meeting.id, title)}
+                  onClose={() => {
+                    setEditingTitle(false);
+                    renameButton.current?.focus();
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape" && !savingTitle) {
-                      event.preventDefault();
-                      closeRename();
-                    }
-                  }}
-                >
-                  <input
-                    ref={titleInput}
-                    type="text"
-                    aria-label={t("ui2.meet.detail.meetingName")}
-                    maxLength={MAX_MEETING_TITLE_LENGTH}
-                    value={draftTitle}
-                    disabled={savingTitle}
-                    onChange={(event) => setDraftTitle(event.target.value)}
-                  />
-                  <button
-                    className="button primary"
-                    type="submit"
-                    disabled={!canSaveTitle}
-                  >
-                    {t("common.save")}
-                  </button>
-                  <button
-                    className="button"
-                    type="button"
-                    onClick={closeRename}
-                    disabled={savingTitle}
-                  >
-                    {t("common.cancel")}
-                  </button>
-                </form>
+                />
               )}
               <p className="meet-meta">
                 <span>{when}</span>
@@ -1675,10 +1734,8 @@ function MeetingView({
                 className="button"
                 type="button"
                 disabled={!canRename}
-                onClick={() => {
-                  if (editingTitle) titleInput.current?.focus();
-                  else setDraftTitle(meeting.title);
-                }}
+                aria-expanded={editingTitle}
+                onClick={() => setEditingTitle((editing) => !editing)}
               >
                 {t("ui2.meet.detail.rename")}
               </button>
