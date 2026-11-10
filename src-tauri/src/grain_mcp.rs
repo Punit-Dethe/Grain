@@ -426,7 +426,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "linear",
-        bundled_preset: false,
+        bundled_preset: true,
         name: "Linear",
         description: "Issues, projects, cycles, and team workflows.",
         endpoint: "https://mcp.linear.app/mcp",
@@ -2934,13 +2934,17 @@ mod tests {
     fn bundled_presets_keep_the_expected_oauth_and_github_toolsets() {
         let notion = provider("notion").unwrap();
         let github = provider("github").unwrap();
+        let linear = provider("linear").unwrap();
         assert!(is_preset(notion));
         assert!(is_preset(github));
+        assert!(is_preset(linear));
         assert!(CATALOG
             .iter()
             .filter(|item| item.id.starts_with("grain-harness"))
             .all(|item| !is_preset(item)));
         assert!(notion.registration == Registration::Dynamic);
+        assert!(linear.registration == Registration::Dynamic);
+        assert_eq!(linear.endpoint, "https://mcp.linear.app/mcp");
         assert!(github.registration == Registration::PreRegistered);
         assert_eq!(github.headers()["x-mcp-toolsets"], "all");
     }

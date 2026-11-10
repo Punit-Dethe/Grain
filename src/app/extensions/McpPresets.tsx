@@ -15,12 +15,15 @@ import {
   unwrapResult,
 } from "./extensionRuntime";
 import githubIcon from "./icons/github.svg";
+import linearIcon from "./icons/linear.svg";
+import linearDarkIcon from "./icons/linear-light.svg";
 import notionIcon from "./icons/notion.png";
 import "./mcp-presets.css";
 
-const presetIcons = new Map([
-  ["github", githubIcon],
-  ["notion", notionIcon],
+const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
+  ["github", { src: githubIcon }],
+  ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
+  ["notion", { src: notionIcon }],
 ]);
 
 export function McpPresets({
@@ -136,14 +139,27 @@ export function McpPresets({
     return (
       <div className="mcp-preset-identity">
         {icon ? (
-          <img
-            className="mcp-brand-icon"
-            data-provider={row.id}
-            src={icon}
-            alt=""
-            width={24}
-            height={24}
-          />
+          <>
+            <img
+              className="mcp-brand-icon"
+              data-provider={row.id}
+              data-variant={icon.darkSrc ? "light" : undefined}
+              src={icon.src}
+              alt=""
+              width={24}
+              height={24}
+            />
+            {icon.darkSrc && (
+              <img
+                className="mcp-brand-icon"
+                data-variant="dark"
+                src={icon.darkSrc}
+                alt=""
+                width={24}
+                height={24}
+              />
+            )}
+          </>
         ) : (
           <span className="mcp-preset-icon" aria-hidden="true">
             <Box size={17} />

@@ -114,3 +114,12 @@
 html[data-theme="dark"] .mcp-brand-icon[data-provider="github"] {
   filter: invert(1);
 }
+
+.mcp-brand-icon[data-variant="dark"],
+html[data-theme="dark"] .mcp-brand-icon[data-variant="light"] {
+  display: none;
+}
+
+html[data-theme="dark"] .mcp-brand-icon[data-variant="dark"] {
+  display: block;
+}

@@ -23,5 +23,6 @@ with a bundled fallback. Endpoint and authentication definitions
 stay in the application so a catalog update cannot change where credentials
 are sent.
 
-Bundled marks are sourced from [GitHub’s Primer Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-24.svg)
-and the [Notion website favicon](https://www.notion.com/front-static/favicon.ico).
+Bundled marks are sourced from [GitHub’s Primer Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-24.svg),
+[Linear’s Brand Guidelines](https://linear.app/brand), and the
+[Notion website favicon](https://www.notion.com/front-static/favicon.ico).

@@ -13,6 +13,7 @@ export function mcpHandlers(ctx) {
       presetsOnly: true,
     });
     assert.ok(presets.some((item) => item.id === "github"));
+    assert.ok(presets.some((item) => item.id === "linear"));
     assert.ok(presets.some((item) => item.id === "notion"));
     assert.ok(presets.every((item) => !item.id.startsWith("grain-harness")));
     const fixture = status.find((item) => item.id === "grain-harness");
