@@ -535,10 +535,12 @@ function RecallSearch({
 
 function MeetingRenameForm({
   title,
+  inputId,
   onSave,
   onClose,
 }: {
   title: string;
+  inputId?: string;
   onSave: (title: string) => Promise<void>;
   onClose: () => void;
 }) {
@@ -586,6 +588,7 @@ function MeetingRenameForm({
       }}
     >
       <input
+        id={inputId}
         ref={input}
         type="text"
         aria-label={t("ui2.meet.detail.meetingName")}
@@ -594,16 +597,24 @@ function MeetingRenameForm({
         disabled={saving}
         onChange={(event) => setDraft(event.target.value)}
       />
-      <button className="button primary" type="submit" disabled={!canSave}>
-        {t("common.save")}
+      <button
+        className="icon-button"
+        type="submit"
+        aria-label={t("common.save")}
+        title={t("common.save")}
+        disabled={!canSave}
+      >
+        <Glyph name="check" />
       </button>
       <button
-        className="button"
+        className="icon-button"
         type="button"
+        aria-label={t("common.cancel")}
+        title={t("common.cancel")}
         onClick={onClose}
         disabled={saving}
       >
-        {t("common.cancel")}
+        <Glyph name="close" />
       </button>
     </form>
   );
@@ -771,13 +782,30 @@ function Recordings({
                     ? "transcribed"
                     : "new";
             const titleId = `meet-row-title-${meeting.id}`;
+            const editing =
+              !selection && renameTarget?.id === meeting.id
+                ? renameTarget
+                : null;
+            const RowMain = editing ? "div" : "span";
             const rowBody = (
               <>
                 <RecordingLead meeting={meeting} state={state} />
-                <span className="meet-row-main">
-                  <span id={titleId} className="meet-row-title">
-                    {meeting.title}
-                  </span>
+                <RowMain className="meet-row-main">
+                  {editing ? (
+                    <MeetingRenameForm
+                      title={meeting.title}
+                      inputId={titleId}
+                      onSave={(title) => meet.renameMeeting(meeting.id, title)}
+                      onClose={() => {
+                        setRenameTarget(null);
+                        editing.button.focus();
+                      }}
+                    />
+                  ) : (
+                    <span id={titleId} className="meet-row-title">
+                      {meeting.title}
+                    </span>
+                  )}
                   <time
                     className="meet-row-meta"
                     dateTime={new Date(meeting.created_unix_ms).toISOString()}
@@ -789,7 +817,7 @@ function Recordings({
                       {t(`ui2.meet.list.state.${state}`)}
                     </span>
                   )}
-                </span>
+                </RowMain>
                 <span className="meet-row-duration">
                   {formatClock(
                     state === "recording"
@@ -797,7 +825,7 @@ function Recordings({
                       : meeting.duration_ms,
                   )}
                 </span>
-                {!selection && (
+                {!selection && !editing && (
                   <span className="meet-row-go" aria-hidden="true">
                     <Glyph name="chev-right" />
                   </span>
@@ -818,32 +846,43 @@ function Recordings({
                   </label>
                 ) : (
                   <div className="meet-recording-item">
-                    <button
-                      type="button"
-                      className="meet-row"
-                      data-state={state}
-                      onClick={() => openMeeting(meeting.id)}
-                    >
-                      {rowBody}
-                    </button>
-                    <div className="meet-recording-actions">
+                    {editing ? (
+                      <div className="meet-row is-editing" data-state={state}>
+                        {rowBody}
+                      </div>
+                    ) : (
                       <button
-                        className="button meet-recording-transcribe"
                         type="button"
-                        aria-describedby={titleId}
-                        disabled={
-                          !canManage(meeting) ||
-                          processingId !== undefined ||
-                          startingTranscript
-                        }
-                        onClick={() => void transcribe(meeting.id)}
+                        className="meet-row"
+                        data-state={state}
+                        onClick={() => openMeeting(meeting.id)}
                       >
-                        {t(
-                          meeting.transcript_revision == null
-                            ? "ui2.meet.detail.process"
-                            : "ui2.meet.detail.reprocess",
-                        )}
+                        {rowBody}
                       </button>
+                    )}
+                    <div className="meet-recording-actions">
+                      {state === "transcribed" ? (
+                        <span className="meet-recording-transcribed">
+                          <Glyph name="check" />
+                          {t("ui2.meet.list.state.transcribed")}
+                        </span>
+                      ) : (
+                        meeting.transcript_revision == null && (
+                          <button
+                            className="button meet-recording-transcribe"
+                            type="button"
+                            aria-describedby={titleId}
+                            disabled={
+                              !canManage(meeting) ||
+                              processingId !== undefined ||
+                              startingTranscript
+                            }
+                            onClick={() => void transcribe(meeting.id)}
+                          >
+                            {t("ui2.meet.detail.process")}
+                          </button>
+                        )
+                      )}
                       <button
                         className="icon-button"
                         type="button"
@@ -864,16 +903,6 @@ function Recordings({
                       </button>
                     </div>
                   </div>
-                )}
-                {!selection && renameTarget?.id === meeting.id && (
-                  <MeetingRenameForm
-                    title={meeting.title}
-                    onSave={(title) => meet.renameMeeting(meeting.id, title)}
-                    onClose={() => {
-                      setRenameTarget(null);
-                      renameTarget.button.focus();
-                    }}
-                  />
                 )}
               </li>
             );
@@ -1711,7 +1740,12 @@ function MeetingView({
           </div>
           <div className="meet-view-title">
             <div>
-              <h1 id="meet-view-title">{meeting.title}</h1>
+              <h1
+                id="meet-view-title"
+                className={editingTitle && canRename ? "sr-only" : undefined}
+              >
+                {meeting.title}
+              </h1>
               {editingTitle && canRename && (
                 <MeetingRenameForm
                   title={meeting.title}
