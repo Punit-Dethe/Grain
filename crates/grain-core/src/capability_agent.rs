@@ -489,6 +489,7 @@ pub struct ExtensionExposure {
 pub struct LoadedAction {
     pub canonical_id: String,
     pub manifest_digest: String,
+    extension_id: String,
 }
 
 impl ExtensionExposure {
@@ -579,6 +580,7 @@ impl ExtensionExposure {
                 LoadedAction {
                     canonical_id: action.canonical_id.clone(),
                     manifest_digest: manifest_digest.to_string(),
+                    extension_id: extension_id.to_string(),
                 },
             );
         }
@@ -623,6 +625,14 @@ impl ExtensionExposure {
 
     pub fn contains_extension(&self, id: &str) -> bool {
         self.directory_ids.contains(id)
+    }
+
+    pub fn retain_extensions(&mut self, allowed: impl Fn(&str) -> bool) {
+        self.directory_ids.retain(|id| allowed(id));
+        self.loaded_extensions.retain(|id| allowed(id));
+        self.extension_digests.retain(|id, _| allowed(id));
+        self.tool_to_action
+            .retain(|_, action| allowed(&action.extension_id));
     }
 }
 

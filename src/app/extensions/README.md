@@ -2,8 +2,9 @@
 
 Extensions is one searchable list with connected presets first, custom MCP
 connections next, and available presets below. Custom connectors are added
-inline. The preset switch controls whether its tools are enabled. Disconnect
-removes its saved account.
+inline. Turning a preset off keeps its account signed in and removes its tools
+from Agent discovery and execution. An in-progress turn drops those tools on
+its next model round. Disconnect removes the saved account.
 
 Keep the first 30–40 presets in the Grain repository and ship them with the
 desktop app. The Rust catalog owns the provider name, description, endpoint,

@@ -171,71 +171,21 @@ export function mcpAuthHandlers(ctx) {
   async function state(id = MCP_AUTH_ID) {
     return (await ctx.invoke("mcp_provider_status")).find((x) => x.id === id);
   }
-  async function testInDeveloperPanel(expectedState, message) {
-    const main = ctx.main();
-    const click = async (locator) => {
-      let last;
-      try {
-        return await ctx.waitFor(
-          "Actual developer control unobstructed: " + locator.toString(),
-          async () => {
-            const updateClose = main.getByRole("button", {
-              name: "Close update details",
-              exact: true,
-            });
-            if (await updateClose.isVisible())
-              await updateClose.click({ timeout: 1000 });
-            try {
-              await locator.click({ timeout: 750 });
-              return true;
-            } catch (error) {
-              if (error.name === "TimeoutError") {
-                last = error.message;
-                return false;
-              }
-              throw error;
-            }
-          },
+  async function assertDiscoveryState(expectedState, message) {
+    await assert.rejects(
+      ctx.invoke("mcp_test_provider", { id: MCP_AUTH_ID }),
+      (error) => {
+        assert.equal(
+          String(error instanceof Error ? error.message : error).replace(
+            /^page\.evaluate: /,
+            "",
+          ),
+          message,
         );
-      } catch (error) {
-        throw new Error(error.message + "\n" + (last ?? ""));
-      }
-    };
-    await main.evaluate(() => {
-      window.location.hash = "#/extensions";
-    });
-    await click(main.getByRole("button", { name: "Developer", exact: true }));
-    const dialog = main.getByRole("dialog", {
-      name: "Extension developer tools",
-    });
-    try {
-      const row = dialog.locator(".divide-y > div").filter({
-        has: main.getByText("Harness MCP Account", { exact: true }),
-      });
-      await click(row.getByRole("button", { name: "Test", exact: true }));
-      await dialog
-        .getByText(message, { exact: true })
-        .waitFor({ state: "visible", timeout: 10000 });
-      await row
-        .getByText(expectedState.replace(/_/g, " "), { exact: true })
-        .waitFor({ state: "visible", timeout: 10000 });
-      assert.equal(
-        await row
-          .getByRole("button", { name: "Sign in again", exact: true })
-          .count(),
-        expectedState === "reconnect_required" ? 1 : 0,
-      );
-      evidence.push({
-        stage: `actual-developer-ui-${expectedState}`,
-        status: "Pass",
-        failedTestRefreshedStatus: true,
-        explicitSignInControl: expectedState === "reconnect_required",
-      });
-    } finally {
-      await click(
-        dialog.getByRole("button", { name: "Close developer tools" }),
-      );
-    }
+        return true;
+      },
+    );
+    assert.equal((await state()).state, expectedState);
   }
   async function begin(account, denied = false, target = "account") {
     provider().configure({
@@ -693,7 +643,7 @@ export function mcpAuthHandlers(ctx) {
                 mode === "server" &&
                 ctx.fault !== "missing-mcp-refresh-failure"
               ) {
-                await testInDeveloperPanel(
+                await assertDiscoveryState(
                   "temporarily_unavailable",
                   "MCP authentication is temporarily unavailable. Keep this connection and try again later.",
                 );
@@ -888,7 +838,7 @@ export function mcpAuthHandlers(ctx) {
             );
             const before = count("tools/call");
             if (!refreshable)
-              await testInDeveloperPanel(
+              await assertDiscoveryState(
                 "reconnect_required",
                 "The MCP account needs sign-in again. Reconnect in Grain Settings.",
               );

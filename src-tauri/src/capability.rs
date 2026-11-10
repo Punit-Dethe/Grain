@@ -136,6 +136,28 @@ pub fn specs(session: &CapabilitySession) -> Vec<ToolSpec> {
     specs
 }
 
+pub fn prune_disabled(app: &AppHandle, session: &mut CapabilitySession) {
+    retain_extensions(session, |id| {
+        crate::grain_mcp::is_enabled_extension(app, id)
+    });
+}
+
+fn retain_extensions(session: &mut CapabilitySession, enabled: impl Fn(&str) -> bool) {
+    let previous_count = session.directory_ids.len();
+    session.directory_ids.retain(|id| enabled(id));
+    if session.directory_ids.len() == previous_count {
+        return;
+    }
+    let allowed = |id: &str| session.directory_ids.iter().any(|current| current == id);
+    session.exposure.retain_extensions(allowed);
+    session.catalogs.retain(|id, _| allowed(id));
+    session.actions.retain(|id, _| {
+        id.split_once(':')
+            .is_some_and(|(extension, _)| allowed(extension))
+    });
+    session.index = None;
+}
+
 /// Dispatch one tool call if it belongs to the capability surface. Returns
 /// Dispatch every call of one model message. Returns one entry per call, in
 /// order: `Some(result)` when handled, `None` when the call is not ours (the
@@ -673,6 +695,7 @@ async fn handle_catalog(
         Ok(request) => request,
         Err(error) => return format!("Could not search tools: {error}"),
     };
+    prune_disabled(app, session);
     if request
         .extension_id
         .as_ref()
@@ -692,6 +715,7 @@ async fn handle_catalog(
         })
         .cloned()
         .collect();
+    let fetched = !missing.is_empty();
     let mut errors = Vec::new();
     let mut pending = stream::iter(missing.into_iter().map(|id| async move {
         let result = fetch_catalog(app, &id, None).await;
@@ -704,6 +728,9 @@ async fn handle_catalog(
         {
             errors.push(serde_json::json!({"extension_id": id, "reason": capability_agent::sanitize(&error, 240)}));
         }
+    }
+    if fetched {
+        prune_disabled(app, session);
     }
     let ids = ranked_ids(
         session,
@@ -948,6 +975,34 @@ mod tests {
                 tool_name: id.into(),
             },
         )
+    }
+
+    #[test]
+    fn disabling_an_extension_removes_its_cached_and_offered_tools() {
+        let mut session = session();
+        remember_catalog(
+            &mut session,
+            "com.example.github".into(),
+            Catalog {
+                digest: "digest".into(),
+                entries: vec![candidate("read", 0), candidate("write", 0)],
+            },
+        )
+        .unwrap();
+        let queries = vec!["write".into()];
+        let ids = ranked_ids(&mut session, &queries, None, false);
+        publish_ranked(&mut session, ids, 1);
+        let name = capability_agent::tool_name("com.example.github:write");
+        assert!(session.exposure.resolve(&name).is_some());
+        assert!(session.index.is_some());
+
+        retain_extensions(&mut session, |_| false);
+
+        assert!(specs(&session).is_empty());
+        assert!(session.exposure.resolve(&name).is_none());
+        assert!(session.catalogs.is_empty());
+        assert!(session.index.is_none());
+        assert!(ranked_ids(&mut session, &queries, None, false).is_empty());
     }
 
     #[test]

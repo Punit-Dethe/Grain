@@ -483,7 +483,7 @@ export function McpConnections({
                         {row.authentication === "oauth" &&
                           !row.account?.connected && (
                             <button
-                              className="button"
+                              className="button primary"
                               type="button"
                               disabled={busy !== null}
                               onClick={() => connect(row)}

@@ -4647,11 +4647,6 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   gap: 6px;
 }
 
-.button.developer-on {
-  color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent-focus);
-}
-
 .extension-toolbar {
   margin-bottom: 20px;
 }

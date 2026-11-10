@@ -169,7 +169,7 @@ cargo --config 'target.x86_64-pc-windows-msvc.runner=["powershell.exe","-NoProfi
 ## Installed GitHub MCP checkpoint
 
 Use the **Build Test** workflow with `github-mcp-test=true`. Open **Grain GitHub
-Test**, connect GitHub under **Browse extensions**, and enable it. Close that
+Test**, connect GitHub under **Extensions**, and make sure its switch is on. Close that
 app before running these discovery-only commands on Windows.
 
 ```powershell

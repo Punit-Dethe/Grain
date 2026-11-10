@@ -2449,6 +2449,7 @@ async fn drive_each<'a>(
     drive_tool_turn_with(
         turn,
         run,
+        |_| {},
         request,
         move |calls, _, offered| {
             let per_call = per_call.clone();
@@ -2764,6 +2765,7 @@ mod tool_continuation_tests {
                 drive_tool_turn_with(
                     turn(),
                     &run,
+                    |_| {},
                     move |entries, _| {
                         if round == 1 {
                             let results: Vec<_> = entries
@@ -2895,6 +2897,7 @@ mod tool_continuation_tests {
                 drive_tool_turn_with(
                     turn(),
                     &run,
+                    |_| {},
                     move |entries, tools| {
                         assert_eq!(tools.len(), 3, "tools remain offered on every round");
                         let results: Vec<_> = entries
@@ -3192,6 +3195,7 @@ async fn drive_tool_turn(
     drive_tool_turn_with(
         turn,
         run,
+        |session| crate::capability::prune_disabled(app, session),
         |entries, tools| Box::pin(run_messages_with_tools(app, entries, tools, image)),
         move |calls, session, offered| {
             let app = dispatch_app.clone();
@@ -3231,6 +3235,7 @@ fn tool_status(result: &Option<crate::capability::ToolResult>) -> &'static str {
 async fn drive_tool_turn_with<'a>(
     mut turn: ToolTurn,
     run: &AgentRun<'_>,
+    mut before_round: impl FnMut(&mut crate::capability::CapabilitySession) + Send,
     mut request: impl FnMut(Vec<crate::llm_client::ChatEntry>, Vec<crate::llm_client::ToolSpec>) -> ModelStep<'a>
         + Send,
     mut dispatch: impl for<'b> FnMut(
@@ -3242,6 +3247,7 @@ async fn drive_tool_turn_with<'a>(
     arm_expiry: impl Fn(String) + Send,
 ) -> Result<AgentReply, String> {
     loop {
+        before_round(&mut turn.session);
         let tools = crate::capability::specs(&turn.session);
         let offered: HashSet<_> = tools.iter().map(|tool| tool.name.clone()).collect();
         let entries = turn.entries.clone();

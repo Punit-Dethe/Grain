@@ -122,7 +122,7 @@ export function McpPresets({
       </button>
     ) : (
       <button
-        className="button"
+        className="button primary"
         type="button"
         disabled={busy !== null}
         onClick={() => void connect(row)}

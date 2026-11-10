@@ -34,9 +34,8 @@ const HARD_BREAK = /( {2,}|\\)$/;
 
 /**
  * [GRAIN] The app's ONE stateless, safe Markdown renderer. Written for Agent
- * replies, now shared by every surface that renders authored Markdown (Agent
- * panel, extension store READMEs) — one parser, one set of supported shapes, one
- * place a rendering bug gets fixed.
+ * replies, shared by the Agent panel and the other surfaces that render
+ * authored Markdown.
  *
  * It deliberately covers the shapes real documents use — GFM tables with
  * alignment, fenced code, nested emphasis, strikethrough — without adding a
