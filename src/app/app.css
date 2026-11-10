@@ -5050,7 +5050,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .page[data-page-panel="meet"]:has(> .meet-capture-dock) {
-  scroll-padding-block-end: 80px;
+  scroll-padding-block-end: 92px;
 }
 
 .meet-wrap {
@@ -5147,18 +5147,20 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
 }
 
 .meet-toolbar {
-  --meet-dock-button-bg: #0a0a0a;
-  --meet-dock-button-hover: #242424;
-  --meet-dock-button-active: #050505;
+  --meet-dock-button-bg: #303030;
+  --meet-dock-button-hover: #3c3c3c;
+  --meet-dock-button-active: #252525;
   --meet-dock-button-text: #fcfcfb;
+  --meet-dock-button-height: 48px;
+  --meet-dock-button-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 12px;
   max-width: 100%;
-  padding: 8px;
+  padding: 10px 12px;
   border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
+  border-radius: 16px;
   background-color: var(--bg-0);
   pointer-events: auto;
 }
@@ -5179,12 +5181,12 @@ html[data-theme="light"] .meet-toolbar {
 }
 
 .meet-source-control {
-  border-radius: 999px;
+  border-radius: var(--meet-dock-button-radius);
   background-color: var(--meet-dock-button-bg);
 }
 
 .meet-source-control button {
-  min-height: 42px;
+  min-height: var(--meet-dock-button-height);
   color: #d0ceca;
   background-color: var(--meet-dock-button-bg);
   cursor: pointer;
@@ -5212,10 +5214,10 @@ html[data-theme="light"] .meet-toolbar {
 
 .meet-source-toggle {
   display: grid;
-  width: 42px;
+  width: var(--meet-dock-button-height);
   place-items: center;
-  border-start-start-radius: 999px;
-  border-end-start-radius: 999px;
+  border-start-start-radius: var(--meet-dock-button-radius);
+  border-end-start-radius: var(--meet-dock-button-radius);
 }
 
 .meet-source-toggle .icon.sm {
@@ -5228,10 +5230,10 @@ html[data-theme="light"] .meet-toolbar {
 }
 
 .meet-source-control button[aria-haspopup="listbox"] {
-  width: 30px;
+  width: 34px;
   border-inline-start: 1px solid rgba(255, 255, 255, 0.1);
-  border-start-end-radius: 999px;
-  border-end-end-radius: 999px;
+  border-start-end-radius: var(--meet-dock-button-radius);
+  border-end-end-radius: var(--meet-dock-button-radius);
 }
 
 .meet-source-control button[aria-haspopup="listbox"] svg {
@@ -5322,10 +5324,10 @@ html[data-theme="light"] .dropdown-compact-menu {
 .grain-root .meet-toolbar .meet-record-action {
   min-width: 0;
   max-width: 100%;
-  min-height: 42px;
+  min-height: var(--meet-dock-button-height);
   padding-block: 6px;
-  padding-inline: 16px;
-  border-radius: 999px;
+  padding-inline: 18px;
+  border-radius: var(--meet-dock-button-radius);
   color: var(--meet-dock-button-text);
   background-color: var(--meet-dock-button-bg);
   box-shadow: none;
