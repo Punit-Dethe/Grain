@@ -58,7 +58,7 @@ use crate::settings::{get_settings, ClipboardHandling, PasteMethod, ShortcutBind
 /// see `grain_core::capture::is_dynamic_binding`.
 const BINDING_ID: &str = "paste_catch_deliver";
 const COPY_OFFER_DELAY: Duration = Duration::from_millis(400);
-const COPY_COUNTDOWN: Duration = Duration::from_secs(3);
+const COPY_COUNTDOWN: Duration = Duration::from_secs(4);
 
 /// How long to wait after the paste before asking the field what it holds.
 /// Applications process a paste asynchronously; this is measured from a point
