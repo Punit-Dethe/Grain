@@ -23,6 +23,9 @@ import notionIcon from "./icons/notion.png";
 import "./mcp-connections.css";
 import "./mcp-presets.css";
 
+// Providers whose sign-in client the user may replace with their own.
+const ownClientProviders = new Set(["google-workspace"]);
+
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["github", { src: githubIcon }],
   ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
@@ -150,20 +153,23 @@ export function McpPresets({
     });
   };
 
-  // Providers that sign in with the user's own OAuth client (Google
-  // Workspace) take its ID and secret here. Secrets go to the OS vault.
+  // Connect uses Grain's own sign-in. Using your own OAuth client is an
+  // advanced override (and required only in builds without Grain's).
+  // Secrets go to the OS vault.
   const clientSettings = (row: McpProviderStatus) =>
-    row.requires_client_credentials && (
+    ownClientProviders.has(row.id) && (
       <details
         className="mcp-client-settings mcp-preset-client"
         open={!row.client_id_configured}
       >
         <summary>
-          OAuth client {row.client_id_configured ? "(saved)" : "(required)"}
+          {row.client_id_configured
+            ? "Advanced: use your own OAuth client"
+            : "This build needs an OAuth client to sign in"}
         </summary>
         <p className="mcp-integration-feedback">
-          Create a Desktop app OAuth client for your own account, then paste its
-          ID and secret.{" "}
+          Create a Desktop app OAuth client in your own Google Cloud project,
+          then paste its ID and secret. Saving signs you out.{" "}
           <button
             className="button ghost"
             type="button"

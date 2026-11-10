@@ -270,6 +270,10 @@ jobs:
           # or the GitHub App private key. Used by the bundled GitHub MCP connection.
           GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID }}
           GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET }}
+          # Optional Google Desktop OAuth client for one-click Google Workspace.
+          # Without it, users must add their own client under Advanced.
+          GRAIN_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GOOGLE_OAUTH_CLIENT_ID }}
+          GRAIN_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GOOGLE_OAUTH_CLIENT_SECRET }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # CPU-compat: disable AVX/FMA/etc so CPUs lacking them don't SIGILL.
           # The Vulkan backend does the heavy compute, so the perf impact is negligible.

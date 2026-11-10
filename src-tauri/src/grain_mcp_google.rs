@@ -1,7 +1,9 @@
 //! Google sign-in for the local Google Workspace server (workspace-mcp).
 //!
-//! Grain owns the sign-in: the user's own Google "Desktop app" OAuth client,
-//! a loopback redirect with PKCE, and the grant kept in the OS vault. The
+//! Grain owns the sign-in: one click opens Google, the user signs in, and the
+//! grant is kept in the OS vault. Grain's own Desktop OAuth client (supplied
+//! at build time, like GitHub's) is the default; a user's own client is an
+//! advanced override. Loopback redirect with PKCE. The
 //! server never runs its own sign-in. It gets a token file only while it runs
 //! (see [`write_session`]); the file is deleted when the server stops.
 use super::session::Ticket;
@@ -38,13 +40,22 @@ pub(super) const SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/spreadsheets",
 ];
 
-#[derive(Serialize, Deserialize)]
+const SCHEMA: u8 = 2;
+
+#[derive(Serialize, Deserialize, Default)]
 struct Saved {
     schema: u8,
-    client_id: String,
-    client_secret: String,
+    /// The user's own client, overriding Grain's.
+    #[serde(default)]
+    custom: Option<Client>,
     #[serde(default)]
     account: Option<Account>,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+struct Client {
+    id: String,
+    secret: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -52,6 +63,25 @@ struct Account {
     email: String,
     refresh_token: String,
     scopes: Vec<String>,
+    /// The client the grant belongs to; refreshes must use the same one.
+    client: Client,
+}
+
+/// Grain's Desktop OAuth client. Google treats installed-app secrets as
+/// public; this is a registration, never an account token.
+fn builtin() -> Option<Client> {
+    let id = option_env!("GRAIN_GOOGLE_OAUTH_CLIENT_ID")?.trim();
+    let secret = option_env!("GRAIN_GOOGLE_OAUTH_CLIENT_SECRET")?.trim();
+    (!id.is_empty() && !secret.is_empty()).then(|| Client {
+        id: id.into(),
+        secret: secret.into(),
+    })
+}
+
+fn sign_in_client(saved: Option<&Saved>) -> Option<Client> {
+    saved
+        .and_then(|saved| saved.custom.clone())
+        .or_else(builtin)
 }
 
 // ---------------------------------------------------------------------------
@@ -62,9 +92,12 @@ async fn load() -> Result<Option<Saved>, String> {
         let entry = credential_entry(VAULT, PROVIDER_ID)
             .map_err(|_| "OS credential vault unavailable".to_string())?;
         match entry.get_password() {
-            Ok(value) if value.len() <= MAX_SAVED_BYTES => serde_json::from_str(&value)
-                .map(Some)
-                .map_err(|_| "Saved Google settings are unreadable. Add your client again.".into()),
+            // Earlier layouts are dropped: Grain is unreleased (clean break).
+            Ok(value) if value.len() <= MAX_SAVED_BYTES => {
+                Ok(serde_json::from_str::<Saved>(&value)
+                    .ok()
+                    .filter(|saved| saved.schema == SCHEMA))
+            }
             Ok(_) => Err("Saved Google settings are too large.".into()),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(_) => Err("OS credential vault read failed".into()),
@@ -91,8 +124,16 @@ async fn store(saved: Option<Saved>) -> Result<(), String> {
     .map_err(|_| "OS credential vault write failed".to_string())?
 }
 
+/// A client exists to sign in with: Grain's, or the user's own.
 pub(super) async fn client_configured() -> bool {
-    matches!(load().await, Ok(Some(_)))
+    builtin().is_some()
+        || matches!(
+            load().await,
+            Ok(Some(Saved {
+                custom: Some(_),
+                ..
+            }))
+        )
 }
 
 pub(super) async fn connected() -> Result<bool, String> {
@@ -106,8 +147,8 @@ fn printable(value: &str, max: usize) -> bool {
     !value.is_empty() && value.len() <= max && !value.chars().any(|c| c.is_control() || c == ' ')
 }
 
-/// Save the user's Desktop OAuth client. A new client ends any old sign-in:
-/// its grant belongs to the old client.
+/// Save the user's own Desktop OAuth client (advanced). A new client ends any
+/// old sign-in: its grant belongs to the old client.
 pub(super) async fn save_client(client_id: &str, client_secret: &str) -> Result<(), String> {
     let client_id = client_id.trim();
     let client_secret = client_secret.trim();
@@ -119,9 +160,11 @@ pub(super) async fn save_client(client_id: &str, client_secret: &str) -> Result<
     }
     revoke_saved().await;
     store(Some(Saved {
-        schema: 1,
-        client_id: client_id.into(),
-        client_secret: client_secret.into(),
+        schema: SCHEMA,
+        custom: Some(Client {
+            id: client_id.into(),
+            secret: client_secret.into(),
+        }),
         account: None,
     }))
     .await
@@ -221,9 +264,9 @@ pub(super) fn missing_scopes(granted: &[String]) -> Vec<&'static str> {
 /// owns cancellation, the timeout and the ticket.
 pub(super) async fn connect(app: &AppHandle, ticket: &Ticket) -> Result<(), String> {
     let _operation = ticket.acquire().await?;
-    let saved = load()
-        .await?
-        .ok_or("Add your Google OAuth client ID and secret first.")?;
+    let saved = load().await?;
+    let client = sign_in_client(saved.as_ref())
+        .ok_or("This build has no Google sign-in. Add your own OAuth client under Advanced.")?;
     let listener = bind_callback(false).await?;
     let redirect_uri = format!(
         "http://{}{CALLBACK_PATH}",
@@ -237,7 +280,7 @@ pub(super) async fn connect(app: &AppHandle, ticket: &Ticket) -> Result<(), Stri
     let url = reqwest::Url::parse_with_params(
         AUTH_URL,
         [
-            ("client_id", saved.client_id.as_str()),
+            ("client_id", client.id.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
             ("response_type", "code"),
             ("scope", scope.as_str()),
@@ -261,8 +304,8 @@ pub(super) async fn connect(app: &AppHandle, ticket: &Ticket) -> Result<(), Stri
             ("grant_type", "authorization_code"),
             ("code", callback.code.as_str()),
             ("redirect_uri", redirect_uri.as_str()),
-            ("client_id", saved.client_id.as_str()),
-            ("client_secret", saved.client_secret.as_str()),
+            ("client_id", client.id.as_str()),
+            ("client_secret", client.secret.as_str()),
             ("code_verifier", verifier.as_str()),
         ])
         .send()
@@ -319,7 +362,7 @@ pub(super) async fn connect(app: &AppHandle, ticket: &Ticket) -> Result<(), Stri
             iss: Some(iss),
             aud: Some(aud),
         } if (iss == ISSUER || iss == "accounts.google.com")
-            && aud == saved.client_id
+            && aud == client.id
             && printable(&email, 320)
             && email.contains('@') =>
         {
@@ -332,12 +375,14 @@ pub(super) async fn connect(app: &AppHandle, ticket: &Ticket) -> Result<(), Stri
         email,
         refresh_token,
         scopes: SCOPES.iter().map(|scope| scope.to_string()).collect(),
+        client,
     };
     // Only a current sign-in may replace the saved grant.
     ticket.commit(|| ())?;
     store(Some(Saved {
+        schema: SCHEMA,
+        custom: saved.and_then(|saved| saved.custom),
         account: Some(account),
-        ..saved
     }))
     .await
 }
@@ -357,8 +402,8 @@ pub(super) async fn write_session(dir: &Path) -> Result<Vec<(&'static str, Strin
         "token": null,
         "refresh_token": account.refresh_token,
         "token_uri": TOKEN_URL,
-        "client_id": saved.client_id,
-        "client_secret": saved.client_secret,
+        "client_id": account.client.id,
+        "client_secret": account.client.secret,
         "scopes": account.scopes,
         "expiry": null,
     });
@@ -377,8 +422,8 @@ pub(super) async fn write_session(dir: &Path) -> Result<Vec<(&'static str, Strin
             "WORKSPACE_MCP_CREDENTIALS_DIR",
             dir.to_string_lossy().into_owned(),
         ),
-        ("GOOGLE_OAUTH_CLIENT_ID", saved.client_id.clone()),
-        ("GOOGLE_OAUTH_CLIENT_SECRET", saved.client_secret.clone()),
+        ("GOOGLE_OAUTH_CLIENT_ID", account.client.id.clone()),
+        ("GOOGLE_OAUTH_CLIENT_SECRET", account.client.secret.clone()),
         ("USER_GOOGLE_EMAIL", account.email.clone()),
     ])
 }
