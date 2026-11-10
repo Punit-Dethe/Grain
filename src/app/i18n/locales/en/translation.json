@@ -1066,35 +1066,31 @@
     },
     "meet": {
       "name": "Recall",
-      "subtitle": "Record calls and meetings. Transcribed privately on this device.",
+      "subtitle": "Capture meetings with your microphone or system audio. Replay recordings and turn them into searchable transcripts whenever you’re ready.",
       "processFailed": "Transcription failed.",
       "studio": {
-        "label": "New recording",
+        "label": "Recording controls",
         "start": "Start recording",
         "starting": "Starting…",
-        "stop": "Stop recording",
-        "sourcesBoth": "Microphone and system audio",
-        "sourcesMic": "Microphone only",
-        "sourcesSystem": "System audio only"
+        "stop": "Stop recording"
       },
       "sources": {
+        "label": "Recording sources",
         "microphone": "Microphone",
-        "microphoneDevice": "Microphone for recordings",
+        "microphoneDevice": "Choose microphone",
         "systemAudio": "System audio",
-        "systemAudioDevice": "Output to record",
+        "systemAudioDevice": "Choose system audio device",
         "followDefault": "System default",
-        "followDefaultNamed": "{{name}}",
+        "followDefaultNamed": "System default ({{name}})",
         "disconnected": "Disconnected device",
-        "unsupported": "Not available on this system yet",
-        "keepOne": "Recordings need at least one source",
-        "headphones": "With both on, wear headphones so the microphone doesn't pick up the call twice."
+        "turnOn": "Turn on {{source}}",
+        "turnOff": "Turn off {{source}}",
+        "systemUnavailable": "System audio is unavailable on this platform",
+        "keepOne": "Keep at least one source on"
       },
       "live": {
         "label": "Recording in progress",
-        "recording": "Recording · transcribed on this device after you stop",
-        "level": "{{source}} level",
-        "micSilent": "No audio from the microphone. Reconnecting…",
-        "systemWaiting": "Waiting for sound"
+        "recording": "Recording · transcribed on this device after you stop"
       },
       "speakerModel": {
         "body": "Labelling who spoke needs a one-time 106 MB download. Recording works without it.",
@@ -1104,20 +1100,24 @@
       },
       "list": {
         "heading": "Recordings",
+        "search": "Search recordings",
+        "sortByDate": "Sort recordings by date",
+        "newestFirst": "Newest first",
+        "oldestFirst": "Oldest first",
+        "noMatches": "No recordings match your search.",
         "loading": "Loading recordings…",
         "loadError": "Recordings could not be loaded.",
         "retry": "Try again",
         "emptyTitle": "No recordings yet",
-        "empty": "Choose your sources above and start recording. Your recordings appear here.",
-        "speakers_one": "{{count}} speaker",
-        "speakers_other": "{{count}} speakers",
+        "empty": "Start a recording to see it here.",
         "today": "Today",
         "yesterday": "Yesterday",
+        "speakers_one": "{{count}} speaker",
+        "speakers_other": "{{count}} speakers",
         "state": {
           "recording": "Recording now…",
           "processing": "Transcribing…",
-          "transcribed": "Transcribed",
-          "new": "Not transcribed yet. Open it to transcribe."
+          "transcribed": "Transcribed"
         }
       },
       "player": {
@@ -1134,6 +1134,8 @@
         "back": "Recordings",
         "backToRecorder": "Back to the recorder",
         "missing": "This recording no longer exists.",
+        "editTitle": "Edit meeting title",
+        "meetingTitle": "Meeting title",
         "process": "Transcribe",
         "reprocess": "Transcribe again",
         "cancel": "Cancel",
@@ -1147,7 +1149,7 @@
         "noSpeech": "No speech was found in this recording.",
         "loading": "Loading transcript…",
         "noTranscriptTitle": "Not transcribed yet",
-        "noTranscript": "Transcribe it to see who said what. It runs on this device and you can keep using Grain meanwhile.",
+        "noTranscript": "Turn this recording into a searchable transcript on this device.",
         "recordingTitle": "Still recording",
         "recordingBody": "The transcript appears here after you stop and transcribe.",
         "unknownSpeaker": "Unknown speaker",

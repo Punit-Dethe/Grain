@@ -1,16 +1,6 @@
 import type { MeetingSummary } from "@/bindings";
 import type { Turn, TurnWord } from "./transcriptTurns";
 
-/** Quietest level the meter shows, in dBFS. */
-const METER_FLOOR_DB = -60;
-
-/** A peak sample level (0..1) as a meter fraction on a decibel scale. */
-export function levelFraction(peak: number): number {
-  if (!(peak > 0)) return 0;
-  const db = 20 * Math.log10(Math.min(1, peak));
-  return Math.max(0, Math.min(1, 1 - db / METER_FLOOR_DB));
-}
-
 export type DayKind = "today" | "yesterday" | "date";
 
 export interface DayGroup {
@@ -26,13 +16,30 @@ function localDay(ms: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-/** Meetings (already newest first) grouped by local calendar day. */
-export function groupByDay(meetings: MeetingSummary[], now: Date): DayGroup[] {
+export interface RecordingFilters {
+  query: string;
+  oldestFirst: boolean;
+}
+
+/** Filter meetings received newest first and group them by local calendar day. */
+export function groupByDay(
+  meetings: MeetingSummary[],
+  now: Date,
+  filters?: RecordingFilters,
+): DayGroup[] {
   const today = localDay(now.getTime()).getTime();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
+  const query = filters?.query.trim().toLowerCase();
   const groups: DayGroup[] = [];
   for (const meeting of meetings) {
+    if (
+      query &&
+      !meeting.title.toLowerCase().includes(query) &&
+      !meeting.preview?.toLowerCase().includes(query)
+    ) {
+      continue;
+    }
     const day = localDay(meeting.created_unix_ms);
     const key = String(day.getTime());
     let group = groups[groups.length - 1];
@@ -47,6 +54,10 @@ export function groupByDay(meetings: MeetingSummary[], now: Date): DayGroup[] {
       groups.push(group);
     }
     group.meetings.push(meeting);
+  }
+  if (filters?.oldestFirst) {
+    groups.reverse();
+    for (const group of groups) group.meetings.reverse();
   }
   return groups;
 }

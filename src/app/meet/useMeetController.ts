@@ -19,8 +19,8 @@ const IDLE: MeetStatus = {
   last_error: null,
 };
 
-/** How often the live recording panel refreshes its clock and meters. */
-const LIVE_POLL_MS = 100;
+/** The recording clock shows whole seconds. */
+const LIVE_POLL_MS = 1_000;
 
 function unwrap<T>(
   result: { status: "ok"; data: T } | { status: "error"; error: string },
@@ -45,6 +45,7 @@ export interface MeetController {
   stopRecording: () => Promise<MeetingSummary>;
   process: (sessionId: string) => Promise<void>;
   cancelProcessing: () => Promise<void>;
+  renameMeeting: (sessionId: string, title: string) => Promise<void>;
   deleteMeeting: (sessionId: string) => Promise<void>;
   downloadDiarizer: () => Promise<void>;
   loadTranscript: (sessionId: string) => Promise<TranscriptRevision | null>;
@@ -63,35 +64,47 @@ export function useMeetController(): MeetController {
   );
   const [diarizerProgress, setDiarizerProgress] = useState<number | null>(null);
   const mountedRef = useRef(false);
+  const reloadId = useRef(0);
   const sourcesRef = useRef<MeetSources | null>(null);
+  const sourceRefreshId = useRef(0);
+  const savingSources = useRef(false);
   useEffect(() => {
     sourcesRef.current = sources;
   }, [sources]);
 
   const reload = useCallback(async () => {
+    const requestId = ++reloadId.current;
     try {
       const [list, installed, current] = await Promise.all([
         commands.meetList().then(unwrap),
         commands.meetDiarizerInstalled().then(unwrap),
         commands.meetStatus(),
       ]);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || requestId !== reloadId.current) return;
       setMeetings(list);
       setDiarizerInstalled(installed);
       setStatus(current);
       setLoadError(null);
     } catch (error) {
       console.error("Failed to load meetings:", error);
-      if (mountedRef.current) setLoadError(String(error));
+      if (mountedRef.current && requestId === reloadId.current) {
+        setLoadError(String(error));
+      }
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && requestId === reloadId.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
   const refreshSources = useCallback(async () => {
+    if (savingSources.current) return;
+    const refreshId = ++sourceRefreshId.current;
     try {
       const next = unwrap(await commands.meetSources());
-      if (mountedRef.current) setSourcesState(next);
+      if (mountedRef.current && refreshId === sourceRefreshId.current) {
+        setSourcesState(next);
+      }
     } catch (error) {
       console.error("Failed to load meeting audio sources:", error);
     }
@@ -128,6 +141,9 @@ export function useMeetController(): MeetController {
   }, [reload, refreshSources]);
 
   const setSources = useCallback(async (settings: SourceSettings) => {
+    // A device refresh started before this write may have read the old settings.
+    savingSources.current = true;
+    sourceRefreshId.current += 1;
     const previous = sourcesRef.current;
     if (previous) setSourcesState({ ...previous, settings });
     try {
@@ -135,6 +151,8 @@ export function useMeetController(): MeetController {
     } catch (error) {
       if (mountedRef.current) setSourcesState(previous);
       throw error;
+    } finally {
+      savingSources.current = false;
     }
   }, []);
 
@@ -160,6 +178,22 @@ export function useMeetController(): MeetController {
   const cancelProcessing = useCallback(async () => {
     unwrap(await commands.meetCancelProcessing());
   }, []);
+
+  const renameMeeting = useCallback(
+    async (sessionId: string, title: string) => {
+      const savedTitle = unwrap(await commands.meetRename(sessionId, title));
+      if (!mountedRef.current) return;
+      setMeetings((current) =>
+        current.map((meeting) =>
+          meeting.id === sessionId
+            ? { ...meeting, title: savedTitle }
+            : meeting,
+        ),
+      );
+      await reload();
+    },
+    [reload],
+  );
 
   const deleteMeeting = useCallback(async (sessionId: string) => {
     unwrap(await commands.meetDelete(sessionId));
@@ -211,6 +245,7 @@ export function useMeetController(): MeetController {
     stopRecording,
     process,
     cancelProcessing,
+    renameMeeting,
     deleteMeeting,
     downloadDiarizer,
     loadTranscript,
@@ -219,9 +254,8 @@ export function useMeetController(): MeetController {
 }
 
 /**
- * The live recording status (clock, per-source levels), polled only while a
- * recording runs and only by the component that shows it, so the rest of the
- * page does not re-render ten times a second.
+ * Refresh the recording clock and capture error only while recording and only
+ * in the component that displays them.
  */
 export function useLiveRecording(
   initial: RecordingStatus | null,

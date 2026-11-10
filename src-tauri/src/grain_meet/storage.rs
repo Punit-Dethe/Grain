@@ -250,6 +250,26 @@ pub fn load_manifest(session: &Path) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
+// Recovery and title edits both replace the manifest of a saved session.
+static MANIFEST_EDIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub fn rename_session(session: &Path, title: &str) -> Result<String, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("Enter a meeting title".into());
+    }
+    let _guard = MANIFEST_EDIT.lock().unwrap_or_else(|e| e.into_inner());
+    let mut manifest = load_manifest(session)?;
+    if manifest.state != SessionState::Recorded {
+        return Err("Stop the recording before renaming it".into());
+    }
+    if manifest.title != title {
+        manifest.title = title.to_owned();
+        write_manifest(session, &manifest)?;
+    }
+    Ok(manifest.title)
+}
+
 /// Path of a chunk's audio file.
 pub fn chunk_path(session: &Path, track: &Track, chunk: &Chunk) -> PathBuf {
     track_dir(session, track.id).join(chunk.file_name())
@@ -541,6 +561,7 @@ pub struct RecoveryReport {
 /// only empty or unreadable chunk files are removed, and their intervals are
 /// recorded as `Missing` gaps.
 pub fn recover(session: &Path) -> Result<(Manifest, RecoveryReport), String> {
+    let _guard = MANIFEST_EDIT.lock().unwrap_or_else(|e| e.into_inner());
     let mut manifest = load_manifest(session)?;
     let mut report = RecoveryReport::default();
     let _ = fs::remove_file(session.join(MANIFEST_TMP));
@@ -681,6 +702,23 @@ mod tests {
         TrackSource::Microphone {
             device: "Test mic".into(),
         }
+    }
+
+    #[test]
+    fn renaming_updates_only_the_saved_title() {
+        let root = tempfile::tempdir().unwrap();
+        let mut writer = SessionWriter::create(root.path(), "Standup").unwrap();
+        let track = writer.add_track(mic()).unwrap();
+        writer.append(track, block(0, &[0.5; 8])).unwrap();
+        let dir = writer.dir().to_path_buf();
+        assert!(rename_session(&dir, "New title").is_err());
+
+        let mut expected = writer.finish().unwrap();
+        assert!(rename_session(&dir, "  ").is_err());
+        assert_eq!(load_manifest(&dir).unwrap(), expected);
+        assert_eq!(rename_session(&dir, "  Planning  ").unwrap(), "Planning");
+        expected.title = "Planning".into();
+        assert_eq!(load_manifest(&dir).unwrap(), expected);
     }
 
     #[test]
