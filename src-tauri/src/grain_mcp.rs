@@ -193,7 +193,7 @@ CatalogProvider {
     id: google::PROVIDER_ID,
     bundled_preset: true,
     name: "Google Workspace",
-    description: "Gmail, Calendar, Drive, Docs and Sheets, signed in with your own Google Cloud OAuth client.",
+    description: "Google Calendar, Docs and Sheets: check and plan your schedule, create and edit documents and spreadsheets.",
     endpoint: "local:google-workspace",
     // The user brings their own Desktop OAuth client; Grain runs the sign-in.
     registration: Registration::PreRegistered,

@@ -25,17 +25,17 @@ const REVOKE_URL: &str = "https://oauth2.googleapis.com/revoke";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_SAVED_BYTES: usize = 16 * 1024;
 
-/// Scopes for the services Grain launches the server with (gmail, calendar,
-/// drive, docs, sheets). Each broad scope covers the narrower ones the
-/// server checks per tool (workspace-mcp 2.2.1 `SCOPE_HIERARCHY`).
+/// Launch set (decided 2026-11-11): Google *sensitive* scopes only, so the
+/// app needs Google verification but not the yearly restricted-scope
+/// assessment. Gmail and Drive read/search are restricted and wait for that
+/// review. Each broad scope covers the narrower ones the server checks per
+/// tool (workspace-mcp 2.2.1 `SCOPE_HIERARCHY`). Must match the tools the
+/// server is launched with (grain_mcp_local.rs).
 pub(super) const SCOPES: &[&str] = &[
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/spreadsheets",
 ];
