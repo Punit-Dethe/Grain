@@ -5165,6 +5165,11 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
   pointer-events: auto;
 }
 
+html[data-theme="dark"] .meet-toolbar {
+  --meet-glass-button-edge: none;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 .meet-source-controls,
 .meet-source-control {
   display: flex;
@@ -5180,7 +5185,6 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
   --meet-source-active-bg: rgb(var(--meet-glass-tint) / 0.16);
   border-radius: 999px;
   background: rgb(var(--meet-glass-tint) / 0.09);
-  box-shadow: inset 0 0 0 1px rgb(var(--meet-glass-tint) / 0.12);
 }
 
 html[data-theme="light"] .meet-source-control {
@@ -5240,6 +5244,10 @@ html[data-theme="light"] .meet-source-control {
   border-inline-start: 1px solid rgb(var(--meet-glass-tint) / 0.12);
   border-start-end-radius: 999px;
   border-end-end-radius: 999px;
+}
+
+html[data-theme="dark"] .meet-source-control button[aria-haspopup="listbox"] {
+  border-inline-start-color: rgba(255, 255, 255, 0.07);
 }
 
 .meet-source-control button[aria-haspopup="listbox"] svg {
