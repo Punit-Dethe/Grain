@@ -10,6 +10,7 @@ import {
 import {
   commands,
   events,
+  type ClipboardOffer,
   type DictionarySuggestion,
   type OverlayPresentation,
   type StreamTextEvent,
@@ -39,6 +40,11 @@ const empty: OverlayPresentation = {
 // Fallback when the webview skips transitionend. Handy hides the native window
 // 300 ms after hide-overlay, leaving room for the 165 ms CSS exit.
 const NOTICE_EXIT_TIMEOUT_MS = 220;
+
+type OverlayNotice = (
+  | { kind: "status"; label: string }
+  | { kind: "clipboard"; offer: ClipboardOffer }
+) & { leaving: boolean };
 
 function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
   const { t } = useTranslation();
@@ -74,6 +80,7 @@ function ConfirmationOffer({
   error,
   resolve,
   children,
+  leaving = false,
 }: {
   expiresAt: number | null;
   title: string;
@@ -82,6 +89,7 @@ function ConfirmationOffer({
   error: string;
   resolve: (accept: boolean) => Promise<{ status: "ok" | "error" }>;
   children?: ReactNode;
+  leaving?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -105,18 +113,23 @@ function ConfirmationOffer({
     <section
       className="grain-confirmation-offer"
       aria-labelledby="confirmation-offer-title"
+      aria-busy={busy || undefined}
     >
       <h2 id="confirmation-offer-title" role="status">
         {failed || expiresAt === null ? error : title}
       </h2>
       {children}
       <div className="grain-confirmation-actions">
-        <button type="button" disabled={busy} onClick={() => void decide(true)}>
+        <button
+          type="button"
+          disabled={busy || leaving}
+          onClick={() => void decide(true)}
+        >
           {accept}
         </button>
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || leaving}
           onClick={() => void decide(false)}
         >
           {decline}
@@ -136,10 +149,7 @@ function ConfirmationOffer({
 export function RecordingOverlay() {
   const { t } = useTranslation();
   const [presentation, setPresentation] = useState(empty);
-  const [notice, setNotice] = useState<{
-    label: string;
-    leaving: boolean;
-  } | null>(null);
+  const [notice, setNotice] = useState<OverlayNotice | null>(null);
   const [position, setPosition] = useState("bottom");
   const [hideCompactClose, setHideCompactClose] = useState(false);
   const [text, setText] = useState<StreamTextEvent>({
@@ -171,10 +181,11 @@ export function RecordingOverlay() {
       close: false,
     };
     const releases: UnlistenFn[] = [];
-    const dismissNotice = () => {
-      setNotice((current) =>
-        current && !current.leaving ? { ...current, leaving: true } : current,
-      );
+    const dismissNotice = (replaced = false) => {
+      setNotice((current) => {
+        if (!current || (replaced && current.kind === "clipboard")) return null;
+        return current.leaving ? current : { ...current, leaving: true };
+      });
     };
     const register = async (promise: Promise<UnlistenFn>) => {
       const fn = await promise;
@@ -194,10 +205,16 @@ export function RecordingOverlay() {
       const apply = (value: OverlayPresentation) => {
         acceptsLiveText = value.visible && value.state === "streaming";
         setPresentation(value);
-        if (value.visible && value.notice) {
-          setNotice({ label: value.notice, leaving: false });
+        if (value.visible && value.clipboard_offer) {
+          setNotice({
+            kind: "clipboard",
+            offer: value.clipboard_offer,
+            leaving: false,
+          });
+        } else if (value.visible && value.notice) {
+          setNotice({ kind: "status", label: value.notice, leaving: false });
         } else {
-          dismissNotice();
+          dismissNotice(value.visible);
         }
         setText({ committed: value.committed, tentative: value.tentative });
         setWorking(value.working);
@@ -496,26 +513,11 @@ export function RecordingOverlay() {
     </div>
   );
 
-  const clipboardOffer = presentation.clipboard_offer;
-  if (presentation.visible && clipboardOffer) {
-    return (
-      <div dir={direction} className={`ov-stage ${position}`}>
-        <ConfirmationOffer
-          key={clipboardOffer.id}
-          expiresAt={clipboardOffer.expires_at_ms}
-          title={t("clipboardOffer.title")}
-          accept={t("clipboardOffer.accept")}
-          decline={t("clipboardOffer.decline")}
-          error={t("clipboardOffer.error")}
-          resolve={(copy) =>
-            commands.resolveClipboardOffer(clipboardOffer.id, copy)
-          }
-        />
-      </div>
-    );
-  }
-
-  if (presentation.visible && presentation.dictionary) {
+  if (
+    presentation.visible &&
+    presentation.dictionary &&
+    notice?.kind !== "clipboard"
+  ) {
     return (
       <div dir={direction} className={`ov-stage ${position}`}>
         <DictionaryOffer
@@ -527,11 +529,13 @@ export function RecordingOverlay() {
   }
 
   if (notice) {
+    const offer = notice.kind === "clipboard" ? notice.offer : null;
     return (
       <div dir={direction} className={`ov-stage ${position}`}>
         <div
-          className={`grain-notice${notice.leaving ? " leaving" : ""}`}
-          role="status"
+          key={offer?.id ?? "status"}
+          className={`grain-overlay-motion ${offer ? "grain-copy-motion" : "grain-notice"}${notice.leaving ? " leaving" : ""}`}
+          role={notice.kind === "status" ? "status" : undefined}
           aria-hidden={notice.leaving || undefined}
           onTransitionEnd={(event) => {
             if (
@@ -543,10 +547,25 @@ export function RecordingOverlay() {
             }
           }}
         >
-          <span className="grain-notice-icon" aria-hidden="true">
-            <Clipboard size={16} strokeWidth={1.6} />
-          </span>
-          <span dir="auto">{notice.label}</span>
+          {offer && (
+            <ConfirmationOffer
+              expiresAt={offer.expires_at_ms}
+              title={t("clipboardOffer.title")}
+              accept={t("clipboardOffer.accept")}
+              decline={t("clipboardOffer.decline")}
+              error={t("clipboardOffer.error")}
+              leaving={notice.leaving}
+              resolve={(copy) => commands.resolveClipboardOffer(offer.id, copy)}
+            />
+          )}
+          {notice.kind === "status" && (
+            <>
+              <span className="grain-notice-icon" aria-hidden="true">
+                <Clipboard size={16} strokeWidth={1.6} />
+              </span>
+              <span dir="auto">{notice.label}</span>
+            </>
+          )}
         </div>
       </div>
     );

@@ -482,7 +482,6 @@ body,
   font-display: swap;
 }
 .grain-notice {
-  --notice-resting-offset: -4px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -500,32 +499,43 @@ body,
     "Segoe UI",
     sans-serif;
   overflow-wrap: anywhere;
+}
+
+.grain-copy-motion {
+  display: grid;
+  justify-items: center;
+  width: 100%;
+}
+
+.grain-overlay-motion {
+  --notice-resting-offset: -4px;
   transition-property: opacity, transform;
   transition-duration: 240ms;
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.ov-stage.top .grain-notice {
+.ov-stage.top .grain-overlay-motion {
   --notice-resting-offset: 4px;
 }
 
-.grain-notice.leaving {
+.grain-overlay-motion.leaving {
   opacity: 0;
+  pointer-events: none;
   transform: translateY(var(--notice-resting-offset)) scale(0.92);
   transition-duration: 165ms;
   transition-timing-function: ease-in;
 }
 
 @starting-style {
-  .grain-notice {
+  .grain-overlay-motion {
     opacity: 0;
     transform: translateY(var(--notice-resting-offset)) scale(0.92);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .grain-notice,
-  .grain-notice.leaving {
+  .grain-overlay-motion,
+  .grain-overlay-motion.leaving {
     transition: none;
   }
 }
@@ -627,8 +637,11 @@ body,
 }
 
 .grain-confirmation-actions button:disabled {
-  opacity: 0.55;
   cursor: default;
+}
+
+.grain-confirmation-offer[aria-busy="true"] .grain-confirmation-actions button {
+  opacity: 0.55;
 }
 
 .grain-confirmation-countdown {
