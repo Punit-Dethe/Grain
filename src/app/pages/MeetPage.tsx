@@ -200,7 +200,7 @@ function SourceControl({
 
 type CaptureCommand = "sources" | "start" | "stop";
 
-function RecordingHeader({ meet }: { meet: MeetController }) {
+function CaptureDock({ meet }: { meet: MeetController }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState<CaptureCommand | null>(null);
   const commandInFlight = useRef(false);
@@ -235,89 +235,89 @@ function RecordingHeader({ meet }: { meet: MeetController }) {
   const recordDisabled =
     pending !== null || (!recording && (!settings || (!micOn && !systemOn)));
   return (
-    <>
-      <header className="meet-head">
-        <h1>{t("ui2.meet.name")}</h1>
-        <div className="meet-toolbar">
-          {recording ? (
-            <span
-              className="meet-record-clock"
-              role="timer"
-              aria-label={t("ui2.meet.live.label")}
-            >
-              {formatClock(recording.elapsed_ms)}
-            </span>
-          ) : (
-            <div
-              className="meet-source-controls"
-              role="group"
-              aria-busy={!sources}
-              aria-label={t("ui2.meet.sources.label")}
-            >
-              <SourceControl
-                kind="Microphone"
-                choice={settings?.microphone}
-                devices={sources?.microphones}
-                pending={pending !== null}
-                locked={micOn && !systemOn}
-                onChange={(microphone) => {
-                  if (settings)
-                    void run("sources", () =>
-                      meet.setSources({ ...settings, microphone }),
-                    );
-                }}
-              />
-              <SourceControl
-                kind="SystemAudio"
-                choice={settings?.system_audio}
-                devices={sources?.outputs}
-                pending={pending !== null}
-                locked={systemOn && !micOn}
-                unsupported={sources?.system_audio_supported === false}
-                onChange={(system_audio) => {
-                  if (settings)
-                    void run("sources", () =>
-                      meet.setSources({ ...settings, system_audio }),
-                    );
-                }}
-              />
-            </div>
-          )}
-          <button
-            className="button primary meet-record-action"
-            type="button"
-            aria-disabled={recordDisabled}
-            onClick={() => {
-              if (!recordDisabled) {
-                void run(
-                  recording ? "stop" : "start",
-                  recording
-                    ? meet.stopRecording
-                    : () => meet.startRecording(null),
-                );
-              }
-            }}
-          >
-            <span
-              className={
-                recording ? "meet-record-mark is-stop" : "meet-record-mark"
-              }
-              aria-hidden="true"
-            />
-            {recording
-              ? t("ui2.meet.studio.stop")
-              : pending === "start"
-                ? t("ui2.meet.studio.starting")
-                : t("ui2.meet.studio.start")}
-          </button>
-        </div>
-      </header>
+    <section
+      className="meet-capture-dock"
+      aria-label={t("ui2.meet.studio.label")}
+    >
       {recording?.error && (
         <p className="meet-inline-error" role="alert">
           {recording.error}
         </p>
       )}
-    </>
+      <div className="meet-toolbar">
+        {recording ? (
+          <span
+            className="meet-record-clock"
+            role="timer"
+            aria-label={t("ui2.meet.live.label")}
+          >
+            {formatClock(recording.elapsed_ms)}
+          </span>
+        ) : (
+          <div
+            className="meet-source-controls"
+            role="group"
+            aria-busy={!sources}
+            aria-label={t("ui2.meet.sources.label")}
+          >
+            <SourceControl
+              kind="Microphone"
+              choice={settings?.microphone}
+              devices={sources?.microphones}
+              pending={pending !== null}
+              locked={micOn && !systemOn}
+              onChange={(microphone) => {
+                if (settings)
+                  void run("sources", () =>
+                    meet.setSources({ ...settings, microphone }),
+                  );
+              }}
+            />
+            <SourceControl
+              kind="SystemAudio"
+              choice={settings?.system_audio}
+              devices={sources?.outputs}
+              pending={pending !== null}
+              locked={systemOn && !micOn}
+              unsupported={sources?.system_audio_supported === false}
+              onChange={(system_audio) => {
+                if (settings)
+                  void run("sources", () =>
+                    meet.setSources({ ...settings, system_audio }),
+                  );
+              }}
+            />
+          </div>
+        )}
+        <button
+          className="button primary meet-record-action"
+          type="button"
+          aria-disabled={recordDisabled}
+          onClick={() => {
+            if (!recordDisabled) {
+              void run(
+                recording ? "stop" : "start",
+                recording
+                  ? meet.stopRecording
+                  : () => meet.startRecording(null),
+              );
+            }
+          }}
+        >
+          <span
+            className={
+              recording ? "meet-record-mark is-stop" : "meet-record-mark"
+            }
+            aria-hidden="true"
+          />
+          {recording
+            ? t("ui2.meet.studio.stop")
+            : pending === "start"
+              ? t("ui2.meet.studio.starting")
+              : t("ui2.meet.studio.start")}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -530,11 +530,17 @@ function Recordings({
                         )}
                       </span>
                     </span>
-                    <span className="meet-row-preview">
-                      {state === "transcribed" && meeting.preview
-                        ? meeting.preview
-                        : t(`ui2.meet.list.state.${state}`)}
-                    </span>
+                    {state === "recording" ? (
+                      <span className="sr-only">
+                        {t("ui2.meet.list.state.recording")}
+                      </span>
+                    ) : (
+                      <span className="meet-row-preview">
+                        {state === "transcribed" && meeting.preview
+                          ? meeting.preview
+                          : t(`ui2.meet.list.state.${state}`)}
+                      </span>
+                    )}
                     <span className="meet-row-meta">
                       <time>{timeFormat.format(meeting.created_unix_ms)}</time>
                       {meeting.speaker_count > 0 && (
@@ -1475,23 +1481,28 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
     );
   } else {
     content = (
-      <div className="page-wrap meet-wrap">
-        <RecordingHeader meet={meet} />
-        <SpeakerModelNotice meet={meet} />
-        {meet.status.last_error && (
-          <div className="meet-callout is-error" role="alert">
-            <p>
-              <strong>{t("ui2.meet.processFailed")}</strong>{" "}
-              {meet.status.last_error}
-            </p>
-          </div>
-        )}
-        <Recordings
-          meet={meet}
-          filters={filters}
-          onFiltersChange={setFilters}
-        />
-      </div>
+      <>
+        <div className="page-wrap meet-wrap">
+          <header className="meet-head">
+            <h1>{t("ui2.meet.name")}</h1>
+          </header>
+          <SpeakerModelNotice meet={meet} />
+          {meet.status.last_error && (
+            <div className="meet-callout is-error" role="alert">
+              <p>
+                <strong>{t("ui2.meet.processFailed")}</strong>{" "}
+                {meet.status.last_error}
+              </p>
+            </div>
+          )}
+          <Recordings
+            meet={meet}
+            filters={filters}
+            onFiltersChange={setFilters}
+          />
+        </div>
+        <CaptureDock meet={meet} />
+      </>
     );
   }
 

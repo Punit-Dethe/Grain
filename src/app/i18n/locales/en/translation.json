@@ -1068,6 +1068,7 @@
       "name": "Recall",
       "processFailed": "Transcription failed.",
       "studio": {
+        "label": "Recording controls",
         "start": "Start recording",
         "starting": "Starting…",
         "stop": "Stop recording"
