@@ -486,16 +486,34 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
-  border: 1px solid #4b4b4d;
-  border-radius: 24px;
-  background: rgb(30 30 32 / 95%);
-  color: #eceff5;
+  gap: 10px;
+  width: min(228px, calc(100% - 16px));
+  min-height: 46px;
+  padding: 4px 12px;
+  border: 1px solid #353535;
+  border-radius: 12px;
+  background: #0b0b0b;
+  color: #f4f4f2;
   font:
-    11px "Grain Pill",
+    500 14px/18px "Grain Pill",
     "Segoe UI",
     sans-serif;
+  overflow-wrap: anywhere;
 }
-.grain-notice {
-  width: 136px;
+
+.grain-notice-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: #202020;
+  color: #d9d9d6;
+}
+
+@media (max-width: 176px) {
+  .grain-notice-icon {
+    display: none;
+  }
 }

@@ -1,4 +1,5 @@
 import { type UnlistenFn } from "@tauri-apps/api/event";
+import { Clipboard } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   commands,
@@ -363,7 +364,10 @@ export function RecordingOverlay() {
     return (
       <div dir={direction} className={`ov-stage ${position}`}>
         <div className="grain-notice" role="status">
-          {presentation.notice}
+          <span className="grain-notice-icon" aria-hidden="true">
+            <Clipboard size={16} strokeWidth={1.6} />
+          </span>
+          <span dir="auto">{presentation.notice}</span>
         </div>
       </div>
     );
