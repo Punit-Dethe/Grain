@@ -5044,8 +5044,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .page[data-page-panel="meet"]:has(> .meet-home) {
-  container: recall / inline-size;
-  padding: clamp(14px, 2.4vh, 22px) clamp(16px, 2.6vw, 38px) 0;
+  padding: clamp(16px, 3vh, 30px) clamp(20px, 4vw, 70px) 0;
 }
 
 .meet-wrap {
@@ -5055,146 +5054,59 @@ html[data-theme="light"] .grain-root {
 }
 
 .page-wrap.wide.meet-home {
-  --meet-panel-padding: clamp(12px, 1.8cqi, 22px);
   width: min(1320px, 100%);
   display: grid;
-  align-items: start;
-  gap: clamp(12px, 1.5cqi, 20px);
-  padding-bottom: 20px;
-}
-
-.meet-capture,
-.meet-recordings {
-  min-width: 0;
-  padding: var(--meet-panel-padding);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  background: var(--meet-surface);
-  box-shadow: var(--meet-lift);
+  gap: clamp(16px, 2.6vh, 24px);
+  padding-bottom: 24px;
 }
 
 .meet-capture {
   container: recall-capture / inline-size;
-}
-
-@container recall (min-width: 650px) {
-  .page-wrap.wide.meet-home {
-    grid-template-columns: minmax(0, 1.55fr) minmax(270px, 1fr);
-  }
+  min-width: 0;
 }
 
 .meet-head {
-  text-align: center;
+  margin-bottom: clamp(14px, 2.1vh, 20px);
 }
 
 .meet-head h1 {
-  font-size: clamp(26px, 3cqi, 32px);
+  font-size: clamp(30px, 3.3cqi, 44px);
 }
 
 .meet-head .page-subtitle {
-  margin: 4px auto 0;
+  margin-top: 4px;
 }
 
 /* --- Recording control and audio sources ----------------------------- */
 
+.meet-studio {
+  min-width: 0;
+}
+
 .meet-studio-stage {
-  --meet-orbit-level: 0;
   display: grid;
-  grid-template-columns: minmax(0, 70px) auto minmax(0, 70px);
-  align-items: center;
-  justify-content: center;
-  gap: clamp(12px, 4cqi, 22px);
-  padding: 18px 0;
-}
-
-.meet-studio-stage[data-recording="true"] {
-  --meet-orbit-level: var(--meet-wave-level);
-}
-
-.meet-studio-wave {
-  width: 100%;
-  height: 38px;
-  fill: none;
-  stroke: var(--text-3);
-  stroke-width: 2px;
-  stroke-linecap: round;
-  opacity: 0.5;
-}
-
-.meet-studio-wave:last-child {
-  transform: scaleX(-1);
-}
-
-.meet-studio-wave path {
-  vector-effect: non-scaling-stroke;
-  transform-origin: center;
-  transform: scaleY(var(--meet-wave-level));
-  transition: transform 0.15s var(--ease-out);
-}
-
-.meet-record-orbit {
-  position: relative;
-  isolation: isolate;
-}
-
-.meet-record-orbit::before,
-.meet-record-orbit::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  inset: -6px;
-  border: 1px solid var(--accent-soft-hover);
-  border-radius: 42% 58% 53% 47% / 52% 45% 55% 48%;
-  background: var(--accent-soft);
-  pointer-events: none;
-  transition: transform 0.18s var(--ease-out);
-}
-
-.meet-record-orbit::before {
-  transform: rotate(calc(14deg + 9deg * var(--meet-orbit-level)))
-    scale(calc(1 + 0.06 * var(--meet-orbit-level)));
-}
-
-.meet-record-orbit::after {
-  transform: rotate(calc(-24deg - 8deg * var(--meet-orbit-level)))
-    scale(calc(1 + 0.04 * var(--meet-orbit-level)));
-}
-
-.meet-record-action {
-  width: clamp(90px, 14vh, 112px);
-  aspect-ratio: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  place-content: center;
   justify-items: center;
   gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--hairline);
+  padding-bottom: 14px;
+}
+
+.meet-studio-bubble {
+  display: block;
+  width: clamp(84px, 12vh, 112px);
+  aspect-ratio: 1;
+  object-fit: cover;
   border-radius: 50%;
-  color: var(--text-1);
-  background: var(--meet-page);
-  text-align: center;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-
-.meet-record-action .icon.sm {
-  width: 25px;
-  height: 25px;
-}
-
-.meet-record-action:hover:not(:disabled) {
-  background: var(--meet-surface-hover);
 }
 
 .meet-sources {
+  width: min(100%, 760px);
+  margin-inline: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--meet-page);
+  border-radius: var(--radius-lg);
+  background: var(--meet-surface);
+  box-shadow: var(--meet-lift);
 }
 
 .meet-source {
@@ -5203,7 +5115,7 @@ html[data-theme="light"] .grain-root {
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px 8px;
-  padding: 8px 10px;
+  padding: 10px 12px;
 }
 
 .meet-source-body {
@@ -5219,8 +5131,14 @@ html[data-theme="light"] .grain-root {
 
 @container recall-capture (min-width: 390px) {
   .meet-sources {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: none;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
     border-radius: 999px;
+  }
+
+  .meet-source {
+    padding-inline: clamp(12px, 2cqi, 22px);
   }
 
   .meet-source + .meet-source {
@@ -5230,7 +5148,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-source.is-placeholder {
-  min-height: 50px;
+  min-height: 58px;
 }
 
 .meet-source-icon {
@@ -5321,6 +5239,7 @@ html[data-theme="light"] .grain-root {
 .meet-sources-hint {
   margin: 6px 0 0;
   color: var(--text-3);
+  text-align: center;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -5407,39 +5326,32 @@ html[data-theme="light"] .grain-root {
 
 /* --- Recordings list ------------------------------------------------- */
 
+.meet-recordings {
+  min-width: 0;
+}
+
 .meet-recordings > h2 {
-  font-size: 20px;
-}
-
-.meet-recording-groups {
-  display: grid;
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.meet-recording-group h3 {
-  margin-bottom: 6px;
-  color: var(--text-3);
-  font-size: 12px;
+  font-size: 22px;
 }
 
 .meet-recording-list,
 .meet-list-state,
 .meet-list-empty {
+  margin: 12px 0 0;
   border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--meet-page);
+  border-radius: var(--radius-lg);
+  background: var(--meet-surface);
+  box-shadow: var(--meet-lift);
 }
 
 .meet-recording-list {
-  margin: 0;
   padding: 0;
   overflow: hidden;
   list-style: none;
 }
 
 .meet-recording-list li + li {
-  border-top: 1px solid var(--hairline);
+  box-shadow: inset 0 1px var(--meet-line);
 }
 
 .meet-row {
@@ -5448,7 +5360,7 @@ html[data-theme="light"] .grain-root {
   grid-template-columns: 36px minmax(0, 1fr) auto 16px;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 14px;
   color: var(--text-1);
   background: transparent;
   text-align: start;
@@ -5469,7 +5381,7 @@ html[data-theme="light"] .grain-root {
   height: 36px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   color: var(--text-3);
   background: var(--accent-soft);
 }
@@ -5477,7 +5389,7 @@ html[data-theme="light"] .grain-root {
 .meet-row-main {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .meet-row-title {
@@ -5502,21 +5414,6 @@ html[data-theme="light"] .grain-root {
   font-size: 12px;
 }
 
-.meet-row-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2px 6px;
-}
-
-.meet-row-state {
-  width: fit-content;
-  max-width: 100%;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-}
-
 .meet-row-go {
   display: grid;
   color: var(--text-4);
@@ -5534,7 +5431,6 @@ html[data-theme="light"] .grain-root {
   display: grid;
   justify-items: start;
   gap: 12px;
-  margin: 10px 0 0;
   padding: 14px;
   color: var(--text-3);
   font-size: 13px;
@@ -5548,8 +5444,7 @@ html[data-theme="light"] .grain-root {
   display: grid;
   justify-items: center;
   gap: 6px;
-  margin-top: 10px;
-  padding: 14px;
+  padding: clamp(14px, 2.5vh, 22px);
   text-align: center;
 }
 
@@ -5581,10 +5476,14 @@ html[data-theme="light"] .grain-root {
   line-height: 1.55;
 }
 
+.meet-record-action.button,
 .meet-empty-action.button {
-  margin-top: 6px;
   padding-inline: 16px;
   border-radius: 999px;
+}
+
+.meet-empty-action.button {
+  margin-top: 6px;
 }
 
 .grain-root .meet-record-action:disabled,
@@ -6253,24 +6152,11 @@ html[data-theme="light"] .grain-root {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .meet-studio-stage[data-recording="true"] {
-    --meet-orbit-level: 0;
-  }
-
-  .meet-studio-wave path {
-    transform: scaleY(0.78);
-    transition: none;
-  }
-
-  .meet-record-orbit::before,
-  .meet-record-orbit::after {
-    transition: none;
-  }
-
   .meet-spinner {
     animation: none;
   }
 
+  .meet-record-action.button,
   .meet-progress i,
   .meet-row-go,
   .meet-underline {
