@@ -5341,6 +5341,8 @@ html[data-theme="light"] .meet-toolbar {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
+  padding-block-end: 20px;
+  border-block-end: 1px solid var(--hairline);
 }
 
 .grain-root .meet-recordings-controls .search-field {
