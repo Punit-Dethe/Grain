@@ -1078,6 +1078,7 @@
         "sourcesSystem": "System audio only"
       },
       "sources": {
+        "heading": "Audio sources",
         "microphone": "Microphone",
         "microphoneDevice": "Microphone for recordings",
         "systemAudio": "System audio",
@@ -1108,7 +1109,7 @@
         "loadError": "Recordings could not be loaded.",
         "retry": "Try again",
         "emptyTitle": "No recordings yet",
-        "empty": "Choose your sources above and start recording. Your recordings appear here.",
+        "empty": "Your recordings will appear here.",
         "speakers_one": "{{count}} speaker",
         "speakers_other": "{{count}} speakers",
         "today": "Today",
@@ -1117,7 +1118,7 @@
           "recording": "Recording now…",
           "processing": "Transcribing…",
           "transcribed": "Transcribed",
-          "new": "Not transcribed yet. Open it to transcribe."
+          "new": "Pending transcription"
         }
       },
       "player": {
