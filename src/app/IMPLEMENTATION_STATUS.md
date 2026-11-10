@@ -18,5 +18,5 @@
 | Tools      | Dictionary and automatic dictionary                    | Complete          | Working             | Real validation, persistence, and update states retained. |
 | Tools      | Snippets and Context                           | Complete          | Working             | Real feature switches, editors, controls, and anchors.    |
 | Settings   | AI dictation cleanup and Agent                        | Complete          | Working             | Groups capture processing and Agent preferences.         |
-| Integrations | Connected and available apps                         | Complete          | Working             | Lists bundled GitHub and Notion MCP presets by connection state. |
-| Integrations | Custom MCP                                           | Complete          | Working             | Adds and manages remote MCP connections inline.            |
+| Extensions | Connected and available apps                         | Complete          | Working             | Lists bundled GitHub and Notion MCP presets by connection state. |
+| Extensions | Custom MCP                                           | Complete          | Working             | Adds and manages remote MCP connections inline.            |

@@ -256,7 +256,7 @@ export async function runInstalledGitHub(mode) {
       );
     if (!github.connected || !github.enabled)
       throw new Blocked(
-        "Connect and enable GitHub from Integrations.",
+        "Connect and enable GitHub from Extensions.",
       );
     return {
       connected: github.connected,

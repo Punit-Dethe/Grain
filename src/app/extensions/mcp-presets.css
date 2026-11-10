@@ -6,15 +6,16 @@
 .mcp-integration-section h2,
 .mcp-custom-connections h2 {
   margin: 0 0 9px;
-  color: var(--text-2);
-  font-size: 12px;
+  color: var(--text-3);
+  font-size: 11px;
   font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
 }
 
 .mcp-integration-list {
   overflow: hidden;
-  border: 1px solid var(--hairline-soft);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--bg-2);
 }
 
@@ -27,9 +28,10 @@
   border-top: 1px solid var(--hairline-soft);
 }
 
+.mcp-preset-connected,
 .mcp-preset-available,
 .mcp-preset-identity,
-.mcp-preset-account,
+.mcp-preset-actions,
 .mcp-custom-heading {
   display: flex;
   align-items: center;
@@ -50,7 +52,6 @@
 }
 
 .mcp-preset-identity p,
-.mcp-preset-account p,
 .mcp-integration-feedback {
   margin: 3px 0 0;
   color: var(--text-3);
@@ -58,44 +59,29 @@
   line-height: 1.45;
 }
 
+.mcp-preset-actions,
+.mcp-preset-connect {
+  flex: none;
+}
+
+.mcp-preset-actions .button {
+  min-height: 30px;
+  font-size: 12px;
+}
+
 .mcp-preset-connect {
   display: grid;
   justify-items: end;
-  flex: none;
-  gap: 3px;
-  color: var(--text-3);
 }
 
 .mcp-preset-connect .button {
-  min-width: 84px;
-}
-
-.mcp-preset-account {
-  margin: 10px 0 0 43px;
-  padding: 9px 11px;
-  border: 1px solid var(--hairline-soft);
-  border-radius: 8px;
-  background: var(--bg-3);
-  color: var(--text-2);
-}
-
-.mcp-preset-account > svg {
-  flex: none;
-}
-
-.mcp-preset-account-copy {
-  flex: 1;
-  min-width: 0;
+  min-width: 76px;
+  min-height: 30px;
+  border-radius: 999px;
   font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.mcp-preset-account-copy strong {
-  color: var(--text-1);
 }
 
 .mcp-preset-settings {
-  margin: 8px 0 0 43px;
   color: var(--text-3);
   font-size: 12px;
 }
@@ -112,27 +98,19 @@
 .mcp-preset-icon {
   display: grid;
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   place-items: center;
-  border: 1px solid var(--hairline-soft);
-  border-radius: 8px;
-  background: var(--bg-3);
   color: var(--text-1);
 }
 
-.mcp-preset-notion-mark {
-  padding: 0 2px;
-  border: 1px solid currentColor;
-  border-radius: 2px;
-  font:
-    700 13px/1 Georgia,
-    serif;
+.mcp-brand-icon {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
 }
 
-@media (max-width: 760px) {
-  .mcp-preset-account,
-  .mcp-preset-settings {
-    margin-inline-start: 0;
-  }
+html[data-theme="dark"] .mcp-brand-icon[data-provider="github"] {
+  filter: invert(1);
 }

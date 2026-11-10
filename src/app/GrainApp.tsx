@@ -262,7 +262,7 @@ const NAV_ITEMS = [
   },
   {
     page: "extensions",
-    label: "Integrations",
+    label: "Extensions",
     icon: "box",
     href: "#/extensions",
   },

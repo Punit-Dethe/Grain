@@ -106,10 +106,10 @@ const NAV_DEFS: NavDef[] = [
   },
   {
     id: "extensions",
-    title: "Integrations",
+    title: "Extensions",
     icon: "box",
     route: { page: "extensions" },
-    keywords: ["extensions", "connections", "mcp", "connectors"],
+    keywords: ["integrations", "connections", "mcp", "connectors"],
   },
 ];
 

@@ -449,24 +449,24 @@ export function McpConnections({
                       <h3>{row.name}</h3>
                     </div>
                     <p className="mcp-connection-url">{row.url}</p>
-                    <p>
-                      {row.statusError ??
-                        (row.authentication === "none"
-                          ? "No account needed"
-                          : row.account?.state === "stored"
-                            ? "Account saved"
-                            : row.account?.state === "needs_client_credentials"
-                              ? "App setup required"
-                              : row.account?.state === "disconnected"
-                                ? "Sign in to connect your account"
-                                : row.account?.state.replace(/_/g, " "))}{" "}
-                      &middot;{" "}
-                      {row.account?.enabled
-                        ? "Enabled"
-                        : row.account
-                          ? "Disabled"
-                          : "Status unavailable"}
-                    </p>
+                    {(row.statusError || !row.account?.connected) && (
+                      <p>
+                        {row.statusError ??
+                          (row.authentication === "none"
+                            ? "No account needed"
+                            : row.account?.state ===
+                                  "needs_client_credentials" ||
+                                row.account?.state === "disconnected"
+                              ? "Sign in to connect your account"
+                              : row.account?.state.replace(/_/g, " "))}{" "}
+                        &middot;{" "}
+                        {row.account?.enabled
+                          ? "Enabled"
+                          : row.account
+                            ? "Disabled"
+                            : "Status unavailable"}
+                      </p>
+                    )}
                   </div>
                   <div className="mcp-connection-actions">
                     {connecting === row.id ? (

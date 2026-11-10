@@ -704,14 +704,6 @@ async mcpProviderStatus() : Promise<Result<McpProviderStatus[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async mcpPresetAccountLabel(id: string) : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("mcp_preset_account_label", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async mcpSetClientCredentials(id: string, clientId: string, clientSecret: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_set_client_credentials", { id, clientId, clientSecret }) };
