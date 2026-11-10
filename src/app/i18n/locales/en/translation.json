@@ -1098,15 +1098,6 @@
         "downloading": "Downloading speaker model, {{percent}}%",
         "ready": "Speaker model installed"
       },
-      "activity": {
-        "activeDays_one": "{{count}} day with recordings",
-        "activeDays_other": "{{count}} days with recordings",
-        "range": "Daily recording counts from {{start}} to {{end}}",
-        "day_one": "{{date}} · {{count}} recording",
-        "day_other": "{{date}} · {{count}} recordings",
-        "less": "Less",
-        "more": "More"
-      },
       "list": {
         "heading": "Recordings",
         "search": "Search recordings",

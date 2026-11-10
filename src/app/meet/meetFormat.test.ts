@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingSummary } from "@/bindings";
-import {
-  groupByDay,
-  highlightParts,
-  recordingActivity,
-  turnAt,
-  wordAt,
-} from "./meetFormat";
+import { groupByDay, highlightParts, turnAt, wordAt } from "./meetFormat";
 import type { Turn } from "./transcriptTurns";
 
 function meeting(id: string, created: Date): MeetingSummary {
@@ -81,40 +75,6 @@ describe("groupByDay", () => {
     expect(
       groupByDay(meetings, now, { query: "missing", oldestFirst: false }),
     ).toEqual([]);
-  });
-});
-
-describe("recordingActivity", () => {
-  it("counts saved recordings by local date and leaves future cells blank", () => {
-    const now = new Date(2026, 10, 2, 15);
-    const activity = recordingActivity(
-      [
-        meeting("before range", new Date(2026, 2, 7, 23, 59)),
-        meeting("first day", new Date(2026, 2, 8, 23, 59)),
-        meeting("Sunday", new Date(2026, 10, 1, 23, 59)),
-        meeting("Monday morning", new Date(2026, 10, 2, 0, 1)),
-        meeting("Monday afternoon", new Date(2026, 10, 2, 14)),
-        { ...meeting("live", now), state: "Recording" },
-        meeting("future", new Date(2026, 10, 3)),
-      ],
-      now,
-    );
-
-    expect(activity.weeks).toHaveLength(35);
-    expect(activity.weeks[0][0]).toEqual({
-      date: new Date(2026, 2, 8),
-      count: 1,
-    });
-    expect(activity.activeDays).toBe(3);
-    expect(activity.weeks[activity.weeks.length - 1]).toEqual([
-      { date: new Date(2026, 10, 1), count: 1 },
-      { date: new Date(2026, 10, 2), count: 2 },
-      null,
-      null,
-      null,
-      null,
-      null,
-    ]);
   });
 });
 
