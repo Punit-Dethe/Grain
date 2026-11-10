@@ -202,7 +202,7 @@ export function mcpAuthHandlers(ctx) {
       }
     };
     await main.evaluate(() => {
-      window.location.hash = "#/extensions/installed";
+      window.location.hash = "#/extensions";
     });
     await click(main.getByRole("button", { name: "Developer", exact: true }));
     const dialog = main.getByRole("dialog", {

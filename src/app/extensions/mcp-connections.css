@@ -74,6 +74,46 @@
   align-items: center;
   gap: 8px;
 }
+.mcp-inline-form {
+  max-width: none;
+  padding: 15px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 12px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 12px;
+}
+.mcp-inline-form h3 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 14px;
+}
+.mcp-inline-form :is(input:not([type="checkbox"]), textarea, select) {
+  background: var(--bg-3);
+}
+.mcp-inline-form .mcp-connection-actions {
+  justify-content: flex-end;
+}
+.mcp-custom-connections {
+  padding-top: 0;
+  border-top: 0;
+}
+.mcp-custom-connections .mcp-connections-heading {
+  margin-bottom: 0;
+}
+.mcp-custom-row {
+  padding: 12px 14px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 12px;
+  background: var(--bg-2);
+}
+.mcp-custom-row + .mcp-custom-row {
+  margin-top: 6px;
+}
+.mcp-custom-settings {
+  width: 100%;
+  margin: 0;
+}
 .mcp-connection-confirm,
 .mcp-client-settings {
   width: 100%;

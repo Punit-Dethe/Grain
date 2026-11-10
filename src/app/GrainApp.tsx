@@ -262,9 +262,9 @@ const NAV_ITEMS = [
   },
   {
     page: "extensions",
-    label: "Extensions",
+    label: "Integrations",
     icon: "box",
-    href: "#/extensions/installed",
+    href: "#/extensions",
   },
   // The meeting workspace's user-facing name is the one `ui2.meet.name` string.
   {
@@ -691,7 +691,7 @@ function NextShell() {
         ) : route.page === "tools" ? (
           <ToolsPage section={route.section} />
         ) : route.page === "extensions" ? (
-          <ExtensionsPage view={route.view} provider={route.provider} />
+          <ExtensionsPage />
         ) : (
           <OverviewPage history={history} />
         )}

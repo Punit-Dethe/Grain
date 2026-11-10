@@ -256,7 +256,7 @@ export async function runInstalledGitHub(mode) {
       );
     if (!github.connected || !github.enabled)
       throw new Blocked(
-        "Connect and enable the GitHub preset in Browse extensions.",
+        "Connect and enable GitHub from Integrations.",
       );
     return {
       connected: github.connected,

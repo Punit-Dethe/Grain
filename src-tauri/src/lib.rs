@@ -1390,6 +1390,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_mute_while_recording_setting,
             shortcut::change_append_trailing_space_setting,
             grain_mcp::mcp_provider_status,
+            grain_mcp::mcp_preset_account_label,
             grain_mcp::mcp_set_client_credentials,
             grain_mcp::mcp_set_provider_enabled,
             grain_mcp::mcp_connect_provider,

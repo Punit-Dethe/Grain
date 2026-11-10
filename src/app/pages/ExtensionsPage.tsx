@@ -1,25 +1,13 @@
+/* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Integrations surface. */
 import { useState } from "react";
 import { McpConnections } from "../extensions/McpConnections";
 import { McpPresets } from "../extensions/McpPresets";
-import { hashForRoute, type ExtensionViewId } from "../navigation";
 
-export function ExtensionsPage({
-  view,
-  provider,
-}: {
-  view: ExtensionViewId;
-  provider?: string;
-}) {
+export function ExtensionsPage() {
   const [query, setQuery] = useState(() => {
     const raw = window.location.hash.split("?", 2)[1] ?? "";
     return new URLSearchParams(raw).get("q") ?? "";
   });
-  const [customQuery, setCustomQuery] = useState("");
-  const browse = view === "browse";
-  const configure = view === "configure";
-  const searchLabel = configure
-    ? "Search MCP connections"
-    : "Search extensions";
 
   return (
     <section
@@ -27,77 +15,34 @@ export function ExtensionsPage({
       data-page-panel="extensions"
     >
       <div className="page-wrap extensions-page-wrap">
-        <div className="extensions-browse-view">
-          {!provider && (
-            <>
-              <div className="page-header">
-                <div className="extensions-page-heading">
-                  <h1>{configure ? "Configure MCP" : "Extensions"}</h1>
-                  <p className="page-subtitle">
-                    {configure
-                      ? "Add and manage your own remote MCP servers."
-                      : "Browse supported apps and manage your connections."}
-                  </p>
-                </div>
-                <div className="header-actions">
-                  <a
-                    className="button"
-                    href={hashForRoute({
-                      page: "extensions",
-                      view: configure ? "installed" : "configure",
-                    })}
-                  >
-                    {configure ? "Back to extensions" : "Configure MCP"}
-                  </a>
-                </div>
-              </div>
-              <div className="extension-toolbar">
-                {!configure && (
-                  <div className="segmented" aria-label="Extension collection">
-                    {(["installed", "browse"] as const).map((tab) => (
-                      <button
-                        key={tab}
-                        className={view === tab ? "active" : ""}
-                        aria-pressed={view === tab}
-                        type="button"
-                        onClick={() => {
-                          window.location.hash = hashForRoute({
-                            page: "extensions",
-                            view: tab,
-                          });
-                        }}
-                      >
-                        {tab === "installed"
-                          ? "My connections"
-                          : "Browse extensions"}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <label className="search-field">
-                  <svg className="icon sm" aria-hidden="true">
-                    <use href="#i-search" />
-                  </svg>
-                  <input
-                    aria-label={searchLabel}
-                    value={configure ? customQuery : query}
-                    onChange={(event) =>
-                      (configure ? setCustomQuery : setQuery)(
-                        event.target.value,
-                      )
-                    }
-                    placeholder={searchLabel}
-                  />
-                </label>
-              </div>
-            </>
+        <header className="page-header">
+          <div>
+            <h1>Integrations</h1>
+            <p className="page-subtitle">
+              Connect the apps and tools Grain can use.
+            </p>
+          </div>
+        </header>
+        <McpConnections
+          query={query}
+          search={
+            <label className="search-field">
+              <svg className="icon sm" aria-hidden="true">
+                <use href="#i-search" />
+              </svg>
+              <input
+                aria-label="Search integrations"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search integrations"
+              />
+            </label>
+          }
+        >
+          {(customConnections) => (
+            <McpPresets query={query} customConnections={customConnections} />
           )}
-          {configure ? (
-            <McpConnections query={customQuery} />
-          ) : (
-            <McpPresets query={query} browse={browse} provider={provider} />
-          )}
-        </div>
+        </McpConnections>
       </div>
     </section>
   );

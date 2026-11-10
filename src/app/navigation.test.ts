@@ -65,22 +65,11 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash(hashForRoute(route))).toEqual(route);
   });
 
-  it.each(["installed", "browse", "configure"] as const)(
-    "round-trips the %s extension view",
-    (view) => {
-      const route = { page: "extensions", view } as const;
-      expect(routeFromHash(hashForRoute(route))).toEqual(route);
-    },
-  );
-
-  it.each(["installed", "browse"] as const)(
-    "round-trips a preset detail from %s",
-    (view) => {
-      const route = { page: "extensions", view, provider: "github" } as const;
-      expect(hashForRoute(route)).toBe(`#/extensions/${view}/github`);
-      expect(routeFromHash(hashForRoute(route))).toEqual(route);
-    },
-  );
+  it("round-trips the unified integrations workspace", () => {
+    const route = { page: "extensions" } as const;
+    expect(hashForRoute(route)).toBe("#/extensions");
+    expect(routeFromHash(hashForRoute(route))).toEqual(route);
+  });
 
   it("resolves top-level Tools and Extensions to their default views", () => {
     expect(routeFromHash("#/tools")).toEqual({
@@ -89,7 +78,6 @@ describe("UI 2.0 hash navigation", () => {
     });
     expect(routeFromHash("#/extensions")).toEqual({
       page: "extensions",
-      view: "installed",
     });
   });
 
@@ -129,9 +117,7 @@ describe("UI 2.0 hash navigation", () => {
     expect(
       routeUsesCompactGlobalRail({ page: "tools", section: "dictionary" }),
     ).toBe(true);
-    expect(
-      routeUsesCompactGlobalRail({ page: "extensions", view: "installed" }),
-    ).toBe(false);
+    expect(routeUsesCompactGlobalRail({ page: "extensions" })).toBe(false);
     expect(routeUsesCompactGlobalRail({ page: "overview" })).toBe(false);
     expect(
       routeUsesCompactGlobalRail({ page: "settings", section: "ai" }),

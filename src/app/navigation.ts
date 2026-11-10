@@ -21,25 +21,16 @@ export const TOOL_SECTION_IDS = ["dictionary", "snippets", "context"] as const;
 
 export type ToolSectionId = (typeof TOOL_SECTION_IDS)[number];
 
-export const EXTENSION_VIEW_IDS = ["installed", "browse", "configure"] as const;
-
-export type ExtensionViewId = (typeof EXTENSION_VIEW_IDS)[number];
-
-export type ExtensionRoute =
-  | { page: "extensions"; view: ExtensionViewId; provider?: never }
-  | { page: "extensions"; view: "installed" | "browse"; provider: string };
-
 export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
   | { page: "meet"; meeting?: string }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
-  | ExtensionRoute;
+  | { page: "extensions" };
 
 const settingsSections = new Set<string>(SETTINGS_SECTION_IDS);
 const toolSections = new Set<string>(TOOL_SECTION_IDS);
-const extensionViews = new Set<string>(EXTENSION_VIEW_IDS);
 
 export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
@@ -59,31 +50,12 @@ export function routeFromHash(hash: string): AppRoute {
   }
   if (path === "/tools") return { page: "tools", section: "dictionary" };
   if (path === "/extensions") {
-    return { page: "extensions", view: "installed" };
+    return { page: "extensions" };
   }
 
   const toolsMatch = path.match(/^\/tools\/([^/]+)$/);
   if (toolsMatch && toolSections.has(toolsMatch[1])) {
     return { page: "tools", section: toolsMatch[1] as ToolSectionId };
-  }
-
-  const detailMatch = path.match(
-    /^\/extensions\/(installed|browse)\/([a-z0-9-]+)$/,
-  );
-  if (detailMatch) {
-    return {
-      page: "extensions",
-      view: detailMatch[1] === "browse" ? "browse" : "installed",
-      provider: detailMatch[2],
-    };
-  }
-
-  const extensionsMatch = path.match(/^\/extensions\/([^/]+)$/);
-  if (extensionsMatch && extensionViews.has(extensionsMatch[1])) {
-    return {
-      page: "extensions",
-      view: extensionsMatch[1] as ExtensionViewId,
-    };
   }
 
   const settingsMatch = path.match(/^\/settings\/([^/]+)$/);
@@ -100,10 +72,6 @@ export function routeFromHash(hash: string): AppRoute {
 export function hashForRoute(route: AppRoute): string {
   if (route.page === "settings") return `#/settings/${route.section}`;
   if (route.page === "tools") return `#/tools/${route.section}`;
-  if (route.page === "extensions") {
-    const path = `#/extensions/${route.view}`;
-    return route.provider ? `${path}/${route.provider}` : path;
-  }
   if (route.page === "meet" && route.meeting) return `#/meet/${route.meeting}`;
   return `#/${route.page}`;
 }

@@ -1,15 +1,19 @@
 /* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Extensions surface. */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Box, Github } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Box, Github, UserRound } from "lucide-react";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
-import { hashForRoute } from "../navigation";
 import {
   filterExtensions,
   signInCancelled,
   unwrapResult,
 } from "./extensionRuntime";
-import { presetArtwork } from "./presetArtwork";
 import "./mcp-presets.css";
 
 const presetIds = new Set(["github", "notion"]);
@@ -25,19 +29,6 @@ function PresetIcon({ id }: { id: string }) {
         <Box size={17} />
       )}
     </span>
-  );
-}
-
-function PresetBanner({ id, lazy }: { id: string; lazy?: boolean }) {
-  const artwork = presetArtwork.get(id);
-  return (
-    <div className="mcp-preset-banner" aria-hidden="true">
-      {artwork ? (
-        <img src={artwork} alt="" loading={lazy ? "lazy" : undefined} />
-      ) : (
-        <PresetIcon id={id} />
-      )}
-    </div>
   );
 }
 
@@ -62,14 +53,34 @@ function connectionStatus(row: McpProviderStatus) {
   }
 }
 
-export function McpPresets({
-  browse,
-  query,
-  provider,
+function PresetAccount({
+  id,
+  lookup,
 }: {
-  browse: boolean;
+  id: string;
+  lookup: (id: string) => Promise<string | null>;
+}) {
+  const [label, setLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void lookup(id).then((name) => {
+      if (active) setLabel(name);
+    });
+    return () => {
+      active = false;
+    };
+  }, [id, lookup]);
+
+  return <strong>{label ?? "Account connected"}</strong>;
+}
+
+export function McpPresets({
+  query,
+  customConnections,
+}: {
   query: string;
-  provider?: string;
+  customConnections: ReactNode;
 }) {
   const [rows, setRows] = useState<McpProviderStatus[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -77,11 +88,21 @@ export function McpPresets({
   const [cancelling, setCancelling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [feedbackProvider, setFeedbackProvider] = useState<string | null>(null);
   const operation = useRef(false);
   const pending = useRef<string | null>(null);
   const mounted = useRef(false);
-  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const accountLookups = useRef(new Map<string, Promise<string | null>>());
+
+  const lookupAccount = useCallback((id: string) => {
+    const cached = accountLookups.current.get(id);
+    if (cached) return cached;
+    const request = commands
+      .mcpPresetAccountLabel(id)
+      .then(unwrapResult)
+      .catch(() => null);
+    accountLookups.current.set(id, request);
+    return request;
+  }, []);
 
   const refresh = useCallback(async () => {
     const status = unwrapResult(await commands.mcpProviderStatus());
@@ -104,7 +125,6 @@ export function McpPresets({
     if (operation.current) return;
     operation.current = true;
     setBusy(id);
-    setFeedbackProvider(id === "refresh" ? null : id);
     setError(null);
     setMessage(null);
     try {
@@ -146,6 +166,7 @@ export function McpPresets({
       setMessage("Finish signing in in your browser…");
       try {
         unwrapResult(await commands.mcpConnectProvider(row.id));
+        accountLookups.current.delete(row.id);
       } catch (reason) {
         if (mounted.current) setMessage(null);
         if (signInCancelled(reason)) return;
@@ -154,7 +175,7 @@ export function McpPresets({
         pending.current = null;
         if (mounted.current) setSigningIn(null);
       }
-      if (mounted.current) await test(row);
+      if (mounted.current) setMessage(`${row.name} connected.`);
     });
 
   const cancel = async (id: string) => {
@@ -168,25 +189,53 @@ export function McpPresets({
     }
   };
 
-  const visible = filterExtensions(
-    (rows ?? []).filter((row) => browse || row.connected),
-    query,
-  );
-  const selected = provider
-    ? rows?.find((row) => row.id === provider)
-    : undefined;
-  const selectedId = selected?.id;
-  useEffect(() => {
-    if (selectedId) detailHeading.current?.focus();
-  }, [selectedId]);
+  const visible = filterExtensions(rows ?? [], query);
+  const connected = visible.filter((row) => row.connected);
+  const available = visible.filter((row) => !row.connected);
 
-  const view = browse ? "browse" : "installed";
-  const showFeedback =
-    !provider || !feedbackProvider || provider === feedbackProvider;
-  const feedback = (
+  const signInButton = (row: McpProviderStatus) =>
+    signingIn === row.id ? (
+      <button
+        className="button"
+        type="button"
+        disabled={cancelling}
+        onClick={() => void cancel(row.id)}
+      >
+        Cancel sign-in
+      </button>
+    ) : (
+      <button
+        className="button primary"
+        type="button"
+        disabled={busy !== null || row.state === "needs_client_credentials"}
+        onClick={() => void connect(row)}
+      >
+        {busy === row.id
+          ? "Connecting…"
+          : row.connected
+            ? "Reconnect"
+            : "Connect"}
+      </button>
+    );
+
+  const identity = (row: McpProviderStatus) => (
+    <div className="mcp-preset-identity">
+      <PresetIcon id={row.id} />
+      <div>
+        <h3>{row.name}</h3>
+        <p>{row.description}</p>
+      </div>
+    </div>
+  );
+
+  return (
     <>
-      {showFeedback && message && <p role="status">{message}</p>}
-      {showFeedback && error && (
+      {message && (
+        <p className="mcp-integration-feedback" role="status">
+          {message}
+        </p>
+      )}
+      {error && (
         <div className="extension-inline-error" role="alert">
           {error}
           {!rows && (
@@ -201,109 +250,67 @@ export function McpPresets({
           )}
         </div>
       )}
-      {!rows && !error && <p role="status">Loading connections…</p>}
-    </>
-  );
-
-  const primaryAction = (row: McpProviderStatus) => {
-    if (signingIn === row.id) {
-      return (
-        <button
-          className="button"
-          type="button"
-          disabled={cancelling}
-          onClick={() => void cancel(row.id)}
+      {!rows && !error && (
+        <p className="mcp-integration-feedback" role="status">
+          Loading integrations…
+        </p>
+      )}
+      {connected.length > 0 && (
+        <section
+          className="mcp-integration-section"
+          aria-label="Connected integrations"
         >
-          Cancel sign-in
-        </button>
-      );
-    }
-
-    const disabled = busy !== null || row.state === "needs_client_credentials";
-    if (row.connected) {
-      return (
-        <Switch
-          checked={row.enabled}
-          disabled={disabled}
-          ariaLabel={`Enable ${row.name}`}
-          onChange={(enabled) =>
-            void run(row.id, async () => {
-              unwrapResult(
-                await commands.mcpSetProviderEnabled(row.id, enabled),
-              );
-            })
-          }
-        />
-      );
-    }
-
-    return (
-      <button
-        className="button primary"
-        type="button"
-        disabled={disabled}
-        onClick={() => void connect(row)}
-      >
-        {busy === row.id ? "Connecting…" : "Connect"}
-      </button>
-    );
-  };
-
-  if (provider) {
-    return (
-      <div className="mcp-preset-detail">
-        <a
-          className="button mcp-preset-back"
-          href={hashForRoute({ page: "extensions", view })}
-        >
-          <ArrowLeft size={14} aria-hidden="true" />
-          {browse ? "Browse extensions" : "My connections"}
-        </a>
-        {selected ? (
-          <>
-            <PresetBanner id={selected.id} />
-            <div className="mcp-preset-detail-heading">
-              <PresetIcon id={selected.id} />
-              <h1 ref={detailHeading} tabIndex={-1}>
-                {selected.name}
-              </h1>
-            </div>
-            <p className="page-subtitle">{selected.description}</p>
-            <section
-              className="mcp-connections"
-              aria-label="Connection settings"
-            >
-              <header className="mcp-connections-heading">
-                <h2>Connection settings</h2>
-              </header>
-              <p>{connectionStatus(selected)}</p>
-              <div className="mcp-preset-detail-actions">
-                {primaryAction(selected)}
-                {selected.state === "reconnect_required" &&
-                  selected.connected &&
-                  signingIn !== selected.id && (
-                    <button
-                      className="button primary"
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() => void connect(selected)}
-                    >
-                      Reconnect
-                    </button>
+          <h2>Connected</h2>
+          <div className="mcp-integration-list">
+            {connected.map((row) => (
+              <article key={row.id} className="mcp-preset-connected">
+                {identity(row)}
+                <div className="mcp-preset-account">
+                  <UserRound size={16} aria-hidden="true" />
+                  <div className="mcp-preset-account-copy">
+                    {signingIn === row.id ? (
+                      <strong>Signing in…</strong>
+                    ) : (
+                      <PresetAccount id={row.id} lookup={lookupAccount} />
+                    )}
+                    <p>{connectionStatus(row)}</p>
+                  </div>
+                  {signingIn === row.id ||
+                  row.state === "reconnect_required" ? (
+                    signInButton(row)
+                  ) : (
+                    <Switch
+                      checked={row.enabled}
+                      disabled={
+                        busy !== null ||
+                        row.state === "needs_client_credentials"
+                      }
+                      ariaLabel={`Enable ${row.name}`}
+                      onChange={(enabled) =>
+                        void run(row.id, async () => {
+                          unwrapResult(
+                            await commands.mcpSetProviderEnabled(
+                              row.id,
+                              enabled,
+                            ),
+                          );
+                        })
+                      }
+                    />
                   )}
-                {selected.connected && (
-                  <>
+                </div>
+                <details className="mcp-preset-settings">
+                  <summary>Manage connection</summary>
+                  <div className="mcp-connection-actions">
                     <button
                       className="button"
                       type="button"
                       disabled={
                         busy !== null ||
-                        !selected.enabled ||
-                        selected.state === "needs_client_credentials"
+                        !row.enabled ||
+                        row.state === "needs_client_credentials"
                       }
-                      onClick={() =>
-                        void run(selected.id, () => test(selected))
-                      }
+                      onClick={() => void run(row.id, () => test(row))}
                     >
                       Check tools
                     </button>
@@ -312,73 +319,53 @@ export function McpPresets({
                       type="button"
                       disabled={busy !== null}
                       onClick={() =>
-                        void run(selected.id, async () => {
+                        void run(row.id, async () => {
                           unwrapResult(
-                            await commands.mcpDisconnectProvider(selected.id),
+                            await commands.mcpDisconnectProvider(row.id),
                           );
+                          accountLookups.current.delete(row.id);
                         })
                       }
                     >
                       Disconnect
                     </button>
-                  </>
-                )}
-              </div>
-              {feedback}
-            </section>
-          </>
-        ) : (
-          <>
-            {feedback}
-            {rows && <h1>Extension unavailable</h1>}
-          </>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <section
-      className="mcp-connections"
-      aria-label={browse ? "Preconfigured connections" : "Connected apps"}
-    >
-      <header className="mcp-connections-heading">
-        <h2>{browse ? "Preconfigured connections" : "Connected apps"}</h2>
-      </header>
-      {feedback}
-      {rows && !visible.length && (
-        <p>
-          {query.trim()
-            ? "No connections match your search."
-            : browse
-              ? "No preconfigured connections are available."
-              : "No apps connected yet. Open Browse extensions to connect an app."}
-        </p>
+                  </div>
+                </details>
+              </article>
+            ))}
+          </div>
+        </section>
       )}
-      <div className={browse ? "mcp-preset-grid" : "mcp-preset-list"}>
-        {visible.map((row) => (
-          <article
-            key={row.id}
-            className={browse ? "mcp-preset-card" : "mcp-preset-row"}
-          >
-            {browse && <PresetBanner id={row.id} lazy />}
-            <div className="mcp-preset-entry">
-              <a
-                className="mcp-preset-link"
-                href={hashForRoute({
-                  page: "extensions",
-                  view,
-                  provider: row.id,
-                })}
-              >
-                <PresetIcon id={row.id} />
-                <strong>{row.name}</strong>
-              </a>
-              <div className="mcp-preset-action">{primaryAction(row)}</div>
+      {customConnections}
+      {rows && (
+        <section
+          className="mcp-integration-section"
+          aria-label="Available integrations"
+        >
+          <h2>Available integrations</h2>
+          {available.length === 0 ? (
+            <p className="mcp-integration-feedback">
+              {query.trim()
+                ? "No available integrations match your search."
+                : "All bundled integrations are connected."}
+            </p>
+          ) : (
+            <div className="mcp-integration-list">
+              {available.map((row) => (
+                <article key={row.id} className="mcp-preset-available">
+                  {identity(row)}
+                  <div className="mcp-preset-connect">
+                    {signInButton(row)}
+                    {row.state === "needs_client_credentials" && (
+                      <small>Setup required</small>
+                    )}
+                  </div>
+                </article>
+              ))}
             </div>
-          </article>
-        ))}
-      </div>
-    </section>
+          )}
+        </section>
+      )}
+    </>
   );
 }

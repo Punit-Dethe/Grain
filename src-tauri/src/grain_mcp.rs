@@ -2858,6 +2858,94 @@ fn tool_set_digest(item: &Provider<'_>, tools: &[Tool]) -> Result<String, String
 
 #[tauri::command]
 #[specta::specta]
+pub async fn mcp_preset_account_label(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+) -> Result<Option<String>, String> {
+    crate::grain_commands::require_main_window(&window)?;
+    let (tool, fields): (&str, &[&str]) = match id.as_str() {
+        "github" => ("get_me", &["/login"]),
+        "notion" => (
+            "notion-get-self",
+            &[
+                "/user/name",
+                "/user_name",
+                "/workspace/name",
+                "/workspace_name",
+            ],
+        ),
+        _ => return Ok(None),
+    };
+    let item = provider(&id)?;
+    require_provider_access(&app, item)?;
+    let ticket = provider_control(&id).ticket();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+    let operation = tokio::time::timeout_at(deadline, ticket.acquire())
+        .await
+        .map_err(|_| "MCP account lookup timed out")??;
+    if !stored_connected(&id).await? {
+        return Ok(None);
+    }
+    let http = provider_http(&app, item)?;
+    let service = ticket
+        .run(open_service(
+            http, item, &app, &ticket, &operation, deadline,
+        ))
+        .await?
+        .map_err(|failure| failure.message)?;
+    let result = ticket
+        .run(async {
+            let tools = discover_on_service(&service, deadline).await?;
+            dispatch_on_service(
+                &service,
+                &tools,
+                item,
+                tool,
+                Default::default(),
+                deadline,
+                &|| ticket.commit(|| true).unwrap_or(false),
+                &service.dispatched,
+                0,
+            )
+            .await
+            .map_err(|failure| failure.message)
+        })
+        .await;
+    close_service(service).await;
+    let result = result??;
+    ticket.commit(|| account_label(&result, fields))
+}
+
+fn account_label(result: &McpCallOutput, fields: &[&str]) -> Option<String> {
+    if result.is_error {
+        return None;
+    }
+    let label = |value: &serde_json::Value| {
+        fields.iter().find_map(|field| {
+            let name = value.pointer(field)?.as_str()?.trim();
+            (!name.is_empty()
+                && name.len() <= 160
+                && !name.chars().any(|ch| {
+                    ch.is_control() || grain_core::execution::is_hidden_result_character(ch)
+                }))
+            .then(|| name.to_owned())
+        })
+    };
+    result
+        .structured_content
+        .as_ref()
+        .and_then(label)
+        .or_else(|| {
+            serde_json::from_str(&result.text)
+                .ok()
+                .as_ref()
+                .and_then(label)
+        })
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn mcp_test_provider(
     app: AppHandle,
     window: WebviewWindow,
@@ -2911,6 +2999,32 @@ pub(crate) fn directory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preset_account_labels_only_read_bounded_identity_fields() {
+        let mut result = McpCallOutput {
+            text: r#"{"login":"octocat","details":{"email":"ignored@example.com"}}"#.into(),
+            is_error: false,
+            structured_content: None,
+            truncated: false,
+            unsupported_content: Vec::new(),
+        };
+        assert_eq!(
+            account_label(&result, &["/login"]).as_deref(),
+            Some("octocat")
+        );
+        assert_eq!(account_label(&result, &["/workspace/name"]), None);
+        result.structured_content = Some(serde_json::json!({"workspace": {"name": "Team space"}}));
+        assert_eq!(
+            account_label(&result, &["/workspace/name"]).as_deref(),
+            Some("Team space")
+        );
+        result.structured_content =
+            Some(serde_json::json!({"workspace": {"name": "Hidden\nname"}}));
+        assert_eq!(account_label(&result, &["/workspace/name"]), None);
+        result.is_error = true;
+        assert_eq!(account_label(&result, &["/login"]), None);
+    }
 
     #[test]
     fn bundled_presets_keep_the_expected_oauth_and_github_toolsets() {
