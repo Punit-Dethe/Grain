@@ -548,18 +548,6 @@ function Recordings({
       aria-label={t("ui2.meet.list.heading")}
     >
       <div className="meet-recordings-controls">
-        <label className="search-field">
-          <Glyph name="search" />
-          <input
-            type="search"
-            value={filters.query}
-            onChange={(event) =>
-              onFiltersChange({ ...filters, query: event.target.value })
-            }
-            placeholder={t("ui2.meet.list.search")}
-            aria-label={t("ui2.meet.list.search")}
-          />
-        </label>
         <select
           className="select meet-recordings-sort"
           value={filters.oldestFirst ? "oldest" : "newest"}
@@ -574,6 +562,18 @@ function Recordings({
           <option value="newest">{t("ui2.meet.list.newestFirst")}</option>
           <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
         </select>
+        <label className="search-field">
+          <Glyph name="search" />
+          <input
+            type="search"
+            value={filters.query}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, query: event.target.value })
+            }
+            placeholder={t("ui2.meet.list.search")}
+            aria-label={t("ui2.meet.list.search")}
+          />
+        </label>
       </div>
       <SpeakerModelNotice meet={meet} />
       {meet.status.last_error && (

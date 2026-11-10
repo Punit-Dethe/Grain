@@ -5339,8 +5339,8 @@ html[data-theme="light"] .grain-root {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  padding-block-start: 20px;
-  border-block-start: 1px solid var(--hairline);
+  padding-block-end: 20px;
+  border-block-end: 1px solid var(--hairline);
 }
 
 .grain-root .meet-recordings-controls .search-field {
@@ -5352,7 +5352,6 @@ html[data-theme="light"] .grain-root {
 .grain-root .meet-recordings-sort {
   min-width: 0;
   max-width: 100%;
-  margin-inline-start: auto;
   border-radius: 9px;
   font-size: 12px;
   cursor: pointer;
