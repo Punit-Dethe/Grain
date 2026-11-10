@@ -486,6 +486,71 @@ pub struct McpHttpClient(pub reqwest_mcp::Client);
 #[path = "grain_mcp_destination.rs"]
 mod destination;
 
+#[path = "grain_mcp_tool_cache.rs"]
+mod tool_cache;
+
+const DEFINITIONS_CHANGED: &str = "MCP definitions changed after confirmation. Ask again.";
+
+/// Identity under which a connection's tool list is saved: vault account,
+/// endpoint and connection binding (revision stamp for configured connections).
+fn tool_cache_identity(
+    owner: &RuntimeProvider,
+    item: &Provider<'_>,
+) -> Option<(String, String, String)> {
+    let endpoint = provider_endpoint(item).ok()?.into_owned();
+    Some((provider_account(item), endpoint, owner.bind("")))
+}
+
+/// The saved tool list for an enabled connection, bound to the current
+/// generation like a live discovery. `None` means discover live. Calls still
+/// revalidate the live tool set before dispatch, so a stale copy can only
+/// cost a "definitions changed" refusal, never a wrong call.
+pub(crate) async fn cached_tools(app: &AppHandle, provider_id: &str) -> Option<McpToolSet> {
+    if cfg!(feature = "agent-harness") {
+        // Harness scenarios swap fixture catalogues; keep their discovery live.
+        return None;
+    }
+    let owner = runtime_provider(app, provider_id).ok()?;
+    let spec = owner.spec();
+    let item = &spec;
+    require_provider_access(app, item).ok()?;
+    if !owner.enabled(app) {
+        return None;
+    }
+    let (account, endpoint, binding) = tool_cache_identity(&owner, item)?;
+    let key = tool_cache::Key {
+        account: &account,
+        endpoint: &endpoint,
+        binding: &binding,
+    };
+    let ticket = owner.ticket();
+    let (raw_digest, tools) = tool_cache::load(app, &key).await?;
+    if validate_tools(&tools).is_err()
+        || tool_set_digest(item, &tools).ok().as_deref() != Some(raw_digest.as_str())
+    {
+        tool_cache::clear(app, &account).await;
+        return None;
+    }
+    let digest = ticket
+        .commit(|| ticket.bind_digest(&owner.bind(&raw_digest)))
+        .ok()?;
+    trace_mcp_timing(
+        provider_id,
+        "list_tools",
+        serde_json::json!({ "source": "cache", "tools": tools.len() }),
+    );
+    Some(McpToolSet {
+        provider_id: item.id.into(),
+        provider_name: item.name.into(),
+        digest,
+        tools,
+    })
+}
+
+async fn forget_tool_cache(app: &AppHandle, item: &Provider<'_>) {
+    tool_cache::clear(app, &provider_account(item)).await;
+}
+
 fn provider_destination_policy(item: &Provider<'_>) -> Result<destination::Policy, String> {
     #[cfg(feature = "agent-harness")]
     if let Some(endpoint) =
@@ -1598,6 +1663,8 @@ async fn connect_flow(
     };
     let ticket = owner.invalidate(app)?;
     guard.ticket = Some(ticket.clone());
+    // A new sign-in may be a different account with different tools.
+    forget_tool_cache(app, item).await;
     let window_label = window.label().to_string();
     let window_closed = async {
         loop {
@@ -1814,6 +1881,7 @@ pub async fn mcp_disconnect_provider(
         .clear()
         .await
         .map_err(|e| e.to_string())?;
+    forget_tool_cache(&app, item).await;
     Ok(())
 }
 
@@ -1996,6 +2064,16 @@ pub(crate) async fn list_tools_until(
     }
     let raw_digest = tool_set_digest(item, &tools)?;
     let digest = ticket.commit(|| ticket.bind_digest(&owner.bind(&raw_digest)))?;
+    if !cfg!(feature = "agent-harness") {
+        if let Some((account, endpoint, binding)) = tool_cache_identity(&owner, item) {
+            let key = tool_cache::Key {
+                account: &account,
+                endpoint: &endpoint,
+                binding: &binding,
+            };
+            tool_cache::store(app, &key, &raw_digest, &tools).await;
+        }
+    }
     Ok(McpToolSet {
         provider_id: item.id.into(),
         provider_name: item.name.into(),
@@ -2368,6 +2446,10 @@ pub(crate) async fn call_tool(
         .unwrap_or_else(|message| Err(session_cancelled(&service, message)));
     let called_ms = started.elapsed().as_millis();
     close_service(service).await;
+    if matches!(&result, Err(failure) if failure.message == DEFINITIONS_CHANGED) {
+        // The saved tool list is stale; the next turn rediscovers it live.
+        forget_tool_cache(app, item).await;
+    }
     trace_mcp_timing(
         provider_id,
         "call_tool",
@@ -2526,6 +2608,12 @@ async fn call_tools_batched(
     };
     let called_ms = started.elapsed().as_millis();
     close_service(service).await;
+    if results
+        .iter()
+        .any(|result| matches!(result, Err(failure) if failure.message == DEFINITIONS_CHANGED))
+    {
+        forget_tool_cache(app, item).await;
+    }
     trace_mcp_timing(
         provider_id,
         "call_tools",
@@ -2604,7 +2692,7 @@ async fn revalidate_on_service(
     if current_digest != expected_digest {
         return Err(before_dispatch(
             FailureClass::Cancelled,
-            "MCP definitions changed after confirmation. Ask again.",
+            DEFINITIONS_CHANGED,
         ));
     }
     Ok(tools)

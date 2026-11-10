@@ -508,7 +508,9 @@ pub async fn mcp_connection_disconnect(
             super::VaultCredentialStore::for_provider(&owner.spec(), &ticket, &operation)
                 .clear()
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string())?;
+            super::forget_tool_cache(&app, &owner.spec()).await;
+            Ok(())
         }),
     )
     .await;
@@ -681,6 +683,10 @@ pub async fn mcp_connection_remove(
         }
         state.invalidate(&id)?;
         prune_enabled(&view_app, &id, None)?;
+        super::tool_cache::clear_blocking(
+            &view_app,
+            lease.record().identity().vault_account().as_ref(),
+        );
         retire_account(lease.record())?;
         prune_client_ids(&view_app, &id)?;
         registry.remove(&lease).map_err(|error| error.to_string())?;

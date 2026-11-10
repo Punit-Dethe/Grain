@@ -261,9 +261,16 @@ async fn fetch_catalog(
     let provider_id = extension_id
         .strip_prefix("mcp.")
         .ok_or_else(|| "Only MCP connections provide Agent tools.".to_string())?;
-    let catalog = match deadline {
-        Some(deadline) => crate::grain_mcp::list_tools_until(app, provider_id, deadline).await?,
-        None => crate::grain_mcp::list_tools(app, provider_id).await?,
+    // The saved tool list avoids connecting to every server per turn; calls
+    // still revalidate the live tool set before dispatch.
+    let catalog = match crate::grain_mcp::cached_tools(app, provider_id).await {
+        Some(catalog) => catalog,
+        None => match deadline {
+            Some(deadline) => {
+                crate::grain_mcp::list_tools_until(app, provider_id, deadline).await?
+            }
+            None => crate::grain_mcp::list_tools(app, provider_id).await?,
+        },
     };
     let entries = catalog
         .tools
