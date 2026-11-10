@@ -203,7 +203,10 @@ struct Provider<'a> {
 type CatalogProvider = Provider<'static>;
 
 fn is_preset(item: &Provider<'_>) -> bool {
-    item.ownership.is_none() && item.bundled_preset
+    item.ownership.is_none()
+        && item.bundled_preset
+        && (!builtin::google_calendar(item.id, item.endpoint)
+            || builtin::google_calendar_client().is_some())
 }
 
 enum RuntimeProvider {
@@ -479,11 +482,11 @@ const CATALOG: &[CatalogProvider] = &[
         ownership: None,
     },
     CatalogProvider {
-        id: "google-calendar",
-        bundled_preset: false,
+        id: builtin::GOOGLE_CALENDAR_ID,
+        bundled_preset: true,
         name: "Google Calendar",
-        description: "Calendars, events, availability, and invitations.",
-        endpoint: "https://calendarmcp.googleapis.com/mcp/v1",
+        description: "Find events, list calendars, and check availability.",
+        endpoint: builtin::GOOGLE_CALENDAR_ENDPOINT,
         registration: Registration::PreRegistered,
         setup_url:
             "https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server",
@@ -559,6 +562,15 @@ fn validate_oauth_destinations(
     item: &Provider<'_>,
     metadata: &AuthorizationMetadata,
 ) -> Result<(), String> {
+    if builtin::google_calendar(item.id, item.endpoint)
+        && !builtin::google_metadata(
+            metadata.issuer.as_deref(),
+            &metadata.authorization_endpoint,
+            &metadata.token_endpoint,
+        )
+    {
+        return Err("Google Calendar returned unexpected OAuth endpoints.".into());
+    }
     let policy = provider_destination_policy(item)?;
     for uri in std::iter::once(metadata.authorization_endpoint.as_str())
         .chain(std::iter::once(metadata.token_endpoint.as_str()))
@@ -1008,6 +1020,9 @@ fn builtin_client(app: &AppHandle, item: &Provider<'_>) -> Option<builtin::Clien
     if item.ownership.is_some() {
         return None;
     }
+    if builtin::google_calendar(item.id, item.endpoint) {
+        return builtin::google_calendar_client();
+    }
     builtin::github(
         item.id,
         item.endpoint,
@@ -1038,11 +1053,12 @@ async fn provider_client_secret(
     }
     if let Some(client) = builtin_client(app, item) {
         if client.id != client_id
-            || !builtin::github_metadata(
-                metadata.issuer.as_deref(),
-                &metadata.authorization_endpoint,
-                &metadata.token_endpoint,
-            )
+            || (!builtin::google_calendar(item.id, item.endpoint)
+                && !builtin::github_metadata(
+                    metadata.issuer.as_deref(),
+                    &metadata.authorization_endpoint,
+                    &metadata.token_endpoint,
+                ))
         {
             return Err(Recovery::Registration);
         }
@@ -1712,6 +1728,10 @@ async fn connect_oauth(
     if let Some(metadata_url) = metadata_url {
         request = request.with_client_metadata_url(metadata_url);
     }
+    let google_calendar = builtin::google_calendar(item.id, item.endpoint);
+    if google_calendar {
+        request = request.with_scopes(builtin::GOOGLE_CALENDAR_SCOPES);
+    }
     #[cfg(feature = "agent-harness")]
     if item.id == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
         request = request
@@ -1729,16 +1749,23 @@ async fn connect_oauth(
     let oauth = AuthorizationSession::new(manager, request)
         .await
         .map_err(|_| "OAuth registration failed. Check the provider’s OAuth setup.")?;
-    let authorization_url = oauth.get_authorization_url();
-    let expected_state = reqwest_mcp::Url::parse(authorization_url)
-        .ok()
-        .and_then(|url| {
-            url.query_pairs()
-                .find(|(key, _)| key == "state")
-                .map(|(_, value)| value.into_owned())
-        })
+    let mut authorization_url = reqwest_mcp::Url::parse(oauth.get_authorization_url())
+        .map_err(|_| "OAuth provider did not return a valid authorization URL")?;
+    if google_calendar {
+        // Google needs these browser parameters to issue a refresh token,
+        // including when the same account previously granted access.
+        authorization_url
+            .query_pairs_mut()
+            .append_pair("access_type", "offline")
+            .append_pair("prompt", "consent");
+    }
+    let expected_state = authorization_url
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .map(|(_, value)| value.into_owned())
         .filter(|value| !value.is_empty() && value.len() <= 4096)
         .ok_or("OAuth provider did not return a valid state value")?;
+    let authorization_url = authorization_url.as_str();
     #[cfg(feature = "agent-harness")]
     let consent =
         crate::grain_agent_harness_mcp::capture_authorization(item.id, authorization_url)?;
@@ -2002,7 +2029,7 @@ pub(crate) async fn list_tools_until(
             "tools": match &result { Ok(Ok(tools)) => Some(tools.len()), _ => None },
         }),
     );
-    let tools = result??;
+    let tools = available_tools(item, result??);
     if !owner.enabled(app) {
         return Err("The MCP extension was disabled during discovery.".into());
     }
@@ -2607,6 +2634,7 @@ async fn revalidate_on_service(
     let tools = discover_on_service(service, deadline)
         .await
         .map_err(|message| before_dispatch(FailureClass::Network, message))?;
+    let tools = available_tools(item, tools);
     let current_digest = tool_set_digest(item, &tools).map_err(|_| {
         before_dispatch(
             FailureClass::Internal,
@@ -2844,6 +2872,20 @@ fn validate_tools(tools: &[Tool]) -> Result<(), String> {
     Ok(())
 }
 
+fn available_tools(item: &Provider<'_>, mut tools: Vec<Tool>) -> Vec<Tool> {
+    if builtin::google_calendar(item.id, item.endpoint) {
+        // Google lists write tools even before authorization. Keep discovery
+        // and dispatch aligned with the read-only scopes of this preset.
+        tools.retain(|tool| {
+            matches!(
+                tool.name.as_ref(),
+                "get_event" | "list_calendars" | "list_events" | "search_events" | "suggest_time"
+            )
+        });
+    }
+    tools
+}
+
 fn validate_tool_name(name: &str) -> Result<(), String> {
     if name.is_empty()
         || name.len() > 128
@@ -2947,6 +2989,36 @@ mod tests {
         assert_eq!(linear.endpoint, "https://mcp.linear.app/mcp");
         assert!(github.registration == Registration::PreRegistered);
         assert_eq!(github.headers()["x-mcp-toolsets"], "all");
+    }
+
+    #[test]
+    fn google_calendar_requires_build_registration_and_advertises_read_tools_only() {
+        let calendar = provider(builtin::GOOGLE_CALENDAR_ID).unwrap();
+        assert!(calendar.bundled_preset);
+        assert_eq!(
+            is_preset(calendar),
+            builtin::google_calendar_client().is_some()
+        );
+        assert!(calendar.registration == Registration::PreRegistered);
+
+        let tools: Vec<Tool> = ["list_events", "suggest_time", "create_event", "unknown"]
+            .into_iter()
+            .map(|name| {
+                serde_json::from_value(serde_json::json!({
+                    "name": name,
+                    "inputSchema": { "type": "object" },
+                }))
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(
+            available_tools(provider("linear").unwrap(), tools.clone()).len(),
+            4
+        );
+        let visible = available_tools(calendar, tools);
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].name, "list_events");
+        assert_eq!(visible[1].name, "suggest_time");
     }
 
     #[test]

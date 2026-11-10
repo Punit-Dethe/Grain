@@ -1,10 +1,39 @@
-//! Build-supplied public desktop OAuth identity for the supported GitHub MCP.
+//! Build-supplied public desktop OAuth identities for bundled MCP providers.
 //! This credential is extractable from the binary, not a confidential secret or
 //! an account token. Never use it as signing authority or for arbitrary servers.
 
 pub(super) struct Client<'a> {
     pub id: &'a str,
     pub secret: &'a str,
+}
+
+pub(super) const GOOGLE_CALENDAR_ID: &str = "google-calendar";
+pub(super) const GOOGLE_CALENDAR_ENDPOINT: &str = "https://calendarmcp.googleapis.com/mcp/v1";
+pub(super) const GOOGLE_CALENDAR_SCOPES: [&str; 3] = [
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.events.freebusy",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+];
+
+pub(super) fn google_calendar(provider_id: &str, endpoint: &str) -> bool {
+    provider_id == GOOGLE_CALENDAR_ID && endpoint == GOOGLE_CALENDAR_ENDPOINT
+}
+
+pub(super) fn google_calendar_client() -> Option<Client<'static>> {
+    desktop_client(
+        option_env!("GRAIN_GOOGLE_OAUTH_CLIENT_ID"),
+        option_env!("GRAIN_GOOGLE_OAUTH_CLIENT_SECRET"),
+    )
+}
+
+pub(super) fn google_metadata(
+    issuer: Option<&str>,
+    authorization_endpoint: &str,
+    token_endpoint: &str,
+) -> bool {
+    issuer == Some("https://accounts.google.com")
+        && authorization_endpoint == "https://accounts.google.com/o/oauth2/v2/auth"
+        && token_endpoint == "https://oauth2.googleapis.com/token"
 }
 
 pub(super) fn github<'a>(
@@ -16,6 +45,13 @@ pub(super) fn github<'a>(
     if provider_id != "github" || endpoint != "https://api.githubcopilot.com/mcp/" {
         return None;
     }
+    desktop_client(client_id, client_secret)
+}
+
+fn desktop_client<'a>(
+    client_id: Option<&'a str>,
+    client_secret: Option<&'a str>,
+) -> Option<Client<'a>> {
     let id = client_id?;
     let secret = client_secret?;
     if id.is_empty()
