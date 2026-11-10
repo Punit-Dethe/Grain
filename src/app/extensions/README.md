@@ -18,6 +18,19 @@ preview preset and only appears in builds with the Google desktop OAuth
 registration. It supports event lookup and availability with read-only scopes.
 Gmail, Drive, Docs and Sheets remain separate follow-ups.
 
+### Rollout checkpoint
+
+- **Slack is next.** Start with browser sign-in and read-only tool discovery in
+  an internal Slack workspace. Slack requires a registered app for its MCP
+  server. Distribution beyond the internal pilot requires a Marketplace listing.
+  [Slack MCP app requirements](https://docs.slack.dev/ai/slack-mcp-server/#app-identity)
+- **Google Workspace is deferred.** Keep the Calendar preview in place. Resume
+  once a managed Google Workspace account can enroll the Grain Cloud project.
+  Then configure the desktop OAuth client and verify sign-in, refresh and an
+  Agent read with an eligible tester account.
+  [Google preview enrollment](https://developers.google.com/workspace/preview#how_to_join_the_program)
+- **Microsoft 365 is deferred** until its tenant and app setup are ready.
+
 Publishing another preset requires a Grain release. The review for a new
 preset includes sign-in on a release build and tool discovery.
 Account credentials remain in the existing runtime credential storage.
