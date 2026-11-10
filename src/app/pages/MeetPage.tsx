@@ -571,7 +571,7 @@ function Recordings({
       aria-label={t("ui2.meet.list.heading")}
     >
       <div className="meet-recordings-controls">
-        <label className="meet-search">
+        <label className="search-field">
           <Glyph name="search" />
           <input
             type="search"
@@ -598,6 +598,15 @@ function Recordings({
           <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
         </select>
       </div>
+      <SpeakerModelNotice meet={meet} />
+      {meet.status.last_error && (
+        <div className="meet-callout is-error" role="alert">
+          <p>
+            <strong>{t("ui2.meet.processFailed")}</strong>{" "}
+            {meet.status.last_error}
+          </p>
+        </div>
+      )}
       {body}
     </section>
   );
@@ -1483,18 +1492,10 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
     content = (
       <>
         <div className="page-wrap meet-wrap">
-          <header className="meet-head">
+          <header>
             <h1>{t("ui2.meet.name")}</h1>
+            <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
           </header>
-          <SpeakerModelNotice meet={meet} />
-          {meet.status.last_error && (
-            <div className="meet-callout is-error" role="alert">
-              <p>
-                <strong>{t("ui2.meet.processFailed")}</strong>{" "}
-                {meet.status.last_error}
-              </p>
-            </div>
-          )}
           <Recordings
             meet={meet}
             filters={filters}

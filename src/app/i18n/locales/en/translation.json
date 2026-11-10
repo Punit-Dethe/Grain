@@ -1066,6 +1066,7 @@
     },
     "meet": {
       "name": "Recall",
+      "subtitle": "Record meetings and revisit their transcripts.",
       "processFailed": "Transcription failed.",
       "studio": {
         "label": "Recording controls",
