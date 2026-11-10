@@ -339,7 +339,11 @@ function Studio({
         <StudioWave />
       </div>
       {!recording && (
-        <div role="group" aria-label={t("ui2.meet.sources.heading")}>
+        <div
+          className="meet-studio-sources"
+          role="group"
+          aria-label={t("ui2.meet.sources.heading")}
+        >
           <SourceSetup meet={meet} />
         </div>
       )}
