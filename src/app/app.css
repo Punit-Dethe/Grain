@@ -5046,8 +5046,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .page[data-page-panel="meet"]:has(> .meet-home) {
-  container: recall / inline-size;
-  padding: clamp(16px, 3vh, 28px) clamp(16px, 2.5vw, 36px) 0;
+  padding: clamp(16px, 3vh, 30px) clamp(20px, 4vw, 70px) 0;
 }
 
 .meet-wrap {
@@ -5059,15 +5058,8 @@ html[data-theme="light"] .grain-root {
 .page-wrap.wide.meet-home {
   width: min(1320px, 100%);
   display: grid;
-  align-items: start;
-  gap: clamp(16px, 2.4cqi, 36px);
+  gap: clamp(20px, 3vh, 32px);
   padding-bottom: 24px;
-}
-
-@container recall (min-width: 690px) {
-  .page-wrap.wide.meet-home {
-    grid-template-columns: minmax(0, 1.65fr) minmax(250px, 1fr);
-  }
 }
 
 .meet-capture {
@@ -5076,16 +5068,15 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-head {
-  margin-bottom: clamp(16px, 3vh, 28px);
-  text-align: center;
+  margin-bottom: clamp(14px, 2.1vh, 20px);
 }
 
 .meet-head h1 {
-  font-size: clamp(30px, 6.5cqi, 48px);
+  font-size: clamp(30px, 3.3cqi, 44px);
 }
 
 .meet-head .page-subtitle {
-  margin: 4px auto 0;
+  margin-top: 4px;
 }
 
 /* --- Recording control and audio sources ----------------------------- */
@@ -5096,16 +5087,16 @@ html[data-theme="light"] .grain-root {
 
 .meet-studio-stage {
   display: grid;
-  grid-template-columns: minmax(0, 96px) minmax(0, auto) minmax(0, 96px);
+  grid-template-columns: minmax(0, 138px) minmax(0, auto) minmax(0, 138px);
   align-items: center;
   justify-content: center;
-  gap: clamp(10px, 3.2cqi, 28px);
-  margin-bottom: 18px;
+  gap: clamp(14px, 3cqi, 28px);
+  margin-bottom: clamp(18px, 3vh, 26px);
 }
 
 .meet-studio-wave {
   width: 100%;
-  max-height: 56px;
+  max-height: 66px;
   fill: none;
   stroke: var(--text-3);
   stroke-linecap: round;
@@ -5118,39 +5109,73 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-orb {
-  --orb-tint: var(--accent);
+  --orb-tint: var(--peach);
+  --orb-light: var(--accent);
+  --orb-shade: var(--bg-0);
   position: relative;
   isolation: isolate;
-  width: clamp(146px, min(48cqi, 36vh), 330px);
+  width: clamp(146px, min(55cqi, 32vh), 300px);
   max-width: 100%;
   aspect-ratio: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   padding: 18px;
-  border: 1px solid var(--hairline);
+  border: 1px solid color-mix(in srgb, var(--orb-tint) 44%, var(--hairline));
   border-radius: 50%;
   color: var(--text-1);
   background:
     radial-gradient(
-      ellipse at 29% 19%,
-      var(--glass-highlight),
-      transparent 45%
+      circle closest-side,
+      transparent 83%,
+      color-mix(in srgb, var(--orb-light) 48%, transparent) 96%,
+      transparent 100%
     ),
-    linear-gradient(
-      148deg,
-      color-mix(in srgb, var(--orb-tint) 22%, var(--meet-surface)),
-      var(--meet-surface) 60%,
-      color-mix(in srgb, var(--orb-tint) 16%, var(--bg-0))
+    radial-gradient(
+      ellipse at 58% 86%,
+      color-mix(in srgb, var(--orb-light) 35%, transparent),
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 46% 37%,
+      var(--meet-surface) 16%,
+      color-mix(in srgb, var(--orb-tint) 24%, var(--meet-surface)) 57%,
+      color-mix(in srgb, var(--orb-shade) 32%, var(--meet-surface)) 87%
     );
   box-shadow:
     0 0 0 7px var(--accent-soft),
-    0 14px 34px var(--accent-glow),
-    inset 0 1px var(--glass-highlight);
+    0 23px 25px -17px color-mix(in srgb, var(--orb-shade) 65%, transparent),
+    inset 0 1px var(--orb-light);
   cursor: pointer;
   transition: transform 0.25s var(--ease-out);
+}
+
+html[data-theme="light"] .meet-orb {
+  --orb-light: var(--bg-0);
+  --orb-shade: var(--accent);
+}
+
+/* Two angled reflections give the rim depth without covering the controls. */
+.meet-orb::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 2px;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      ellipse 22% 7% at 50% 17%,
+      var(--orb-light) 10%,
+      transparent 96%
+    ),
+    radial-gradient(
+      ellipse 25% 9% at 51% 86%,
+      color-mix(in srgb, var(--orb-light) 72%, transparent),
+      transparent 94%
+    );
+  transform: rotate(-42deg);
 }
 
 .meet-orb:hover:not(:disabled) {
@@ -5167,12 +5192,12 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-orb .icon.sm {
-  width: clamp(28px, 9cqi, 54px);
-  height: clamp(28px, 9cqi, 54px);
+  width: clamp(30px, 6.5vh, 56px);
+  height: clamp(30px, 6.5vh, 56px);
 }
 
 .meet-orb strong {
-  font-size: clamp(14px, 3.8cqi, 20px);
+  font-size: clamp(14px, 2.6vh, 21px);
   font-weight: 630;
   line-height: 1.25;
   overflow-wrap: anywhere;
@@ -5232,6 +5257,8 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-sources {
+  width: min(100%, 760px);
+  margin-inline: auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   border: 1px solid var(--hairline);
@@ -5265,7 +5292,11 @@ html[data-theme="light"] .grain-root {
     grid-template-columns: none;
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: column;
-    border-radius: 28px;
+    border-radius: 999px;
+  }
+
+  .meet-source {
+    padding-inline: clamp(12px, 2cqi, 22px);
   }
 
   .meet-source + .meet-source {
@@ -5484,22 +5515,25 @@ html[data-theme="light"] .grain-root {
 
 .meet-recordings {
   min-width: 0;
-  padding: clamp(12px, 1.65cqi, 22px);
+}
+
+.meet-recordings > h2 {
+  font-size: 22px;
+}
+
+.meet-recording-list,
+.meet-list-state,
+.meet-list-empty {
+  margin: 12px 0 0;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--meet-surface);
   box-shadow: var(--meet-lift);
 }
 
-.meet-recordings > h2 {
-  font-size: 20px;
-}
-
 .meet-recording-list {
-  margin: 8px 0 0;
   padding: 0;
   overflow: hidden;
-  border-radius: var(--radius-sm);
   list-style: none;
 }
 
@@ -5513,7 +5547,7 @@ html[data-theme="light"] .grain-root {
   grid-template-columns: 36px minmax(0, 1fr) auto 16px;
   align-items: center;
   gap: 10px;
-  padding: 8px 4px;
+  padding: 8px 14px;
   color: var(--text-1);
   background: transparent;
   text-align: start;
@@ -5592,8 +5626,7 @@ html[data-theme="light"] .grain-root {
   display: grid;
   justify-items: start;
   gap: 12px;
-  margin: 0;
-  padding: 12px 0 0;
+  padding: 14px;
   color: var(--text-3);
   font-size: 13px;
 }
@@ -5604,17 +5637,30 @@ html[data-theme="light"] .grain-root {
 
 .meet-list-empty {
   display: grid;
-  gap: 4px;
-  margin-top: 10px;
-  padding: 12px;
+  justify-items: center;
+  gap: 6px;
+  padding: clamp(14px, 2.5vh, 22px);
+  text-align: center;
+}
+
+.meet-empty-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
   border-radius: var(--radius-md);
+  color: var(--accent);
   background: var(--accent-soft);
 }
 
-.meet-list-empty strong {
-  color: var(--text-1);
-  font-size: 14px;
-  font-weight: 600;
+.meet-empty-icon .icon.sm {
+  width: 22px;
+  height: 22px;
+}
+
+.meet-list-empty h3 {
+  font-size: 17px;
 }
 
 .meet-list-empty p {
@@ -5623,6 +5669,17 @@ html[data-theme="light"] .grain-root {
   color: var(--text-3);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.meet-empty-action.button {
+  margin-top: 6px;
+  padding-inline: 16px;
+  border-radius: 999px;
+}
+
+.meet-empty-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* --- Recording view ------------------------------------------------------ */

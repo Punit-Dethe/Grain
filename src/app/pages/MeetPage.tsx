@@ -341,27 +341,23 @@ function StudioWave() {
   );
 }
 
-function Studio({ meet }: { meet: MeetController }) {
-  const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
-  const live = useLiveRecording(meet.status.recording);
-  const recording = live ?? meet.status.recording;
-  const settings = meet.sources?.settings;
-  const micOn = Boolean(settings?.microphone.enabled);
-  const systemOn = Boolean(
-    settings?.system_audio.enabled && meet.sources?.system_audio_supported,
-  );
+type RecordingAction = "start" | "stop";
 
-  const run = async (action: () => Promise<unknown>) => {
-    setBusy(true);
-    try {
-      await action();
-    } catch (error) {
-      toast.error(errorText(error));
-    } finally {
-      setBusy(false);
-    }
-  };
+function Studio({
+  meet,
+  busy,
+  canStart,
+  onAction,
+}: {
+  meet: MeetController;
+  busy: boolean;
+  canStart: boolean;
+  onAction: (action: RecordingAction) => void;
+}) {
+  const { t } = useTranslation();
+  const initial = meet.status.recording;
+  const live = useLiveRecording(initial);
+  const recording = live?.session_id === initial?.session_id ? live : initial;
 
   const level = recording?.sources.reduce(
     (peak, source) => Math.max(peak, levelFraction(source.level)),
@@ -379,17 +375,11 @@ function Studio({ meet }: { meet: MeetController }) {
         <button
           className="meet-orb"
           type="button"
-          disabled={
-            busy || (!recording && (!meet.sources || (!micOn && !systemOn)))
-          }
+          disabled={busy || (!recording && !canStart)}
           style={
             recording ? ({ "--level": level } as CSSProperties) : undefined
           }
-          onClick={() =>
-            void run(
-              recording ? meet.stopRecording : () => meet.startRecording(null),
-            )
-          }
+          onClick={() => onAction(recording ? "stop" : "start")}
         >
           <Glyph name={recording ? "stop" : "mic"} />
           <strong>
@@ -513,7 +503,13 @@ function useSecondTick(active: boolean): number {
   return now;
 }
 
-function Recordings({ meet }: { meet: MeetController }) {
+function Recordings({
+  meet,
+  emptyAction,
+}: {
+  meet: MeetController;
+  emptyAction: ReactNode;
+}) {
   const { t, i18n } = useTranslation();
   const recordingId = meet.status.recording?.session_id;
   const now = useSecondTick(Boolean(recordingId));
@@ -553,8 +549,12 @@ function Recordings({ meet }: { meet: MeetController }) {
   } else if (meet.meetings.length === 0) {
     body = (
       <div className="meet-list-empty">
-        <strong>{t("ui2.meet.list.emptyTitle")}</strong>
+        <span className="meet-empty-icon">
+          <Glyph name="mic" />
+        </span>
+        <h3>{t("ui2.meet.list.emptyTitle")}</h3>
         <p>{t("ui2.meet.list.empty")}</p>
+        {emptyAction}
       </div>
     );
   } else {
@@ -1470,6 +1470,71 @@ function MeetingView({
   );
 }
 
+function RecallHome({ meet }: { meet: MeetController }) {
+  const { t } = useTranslation();
+  const captureRef = useRef<HTMLDivElement>(null);
+  const [busy, setBusy] = useState(false);
+  const sources = meet.sources;
+  const canStart = Boolean(
+    sources &&
+    (sources.settings.microphone.enabled ||
+      (sources.settings.system_audio.enabled &&
+        sources.system_audio_supported)),
+  );
+
+  const run = async (action: RecordingAction) => {
+    setBusy(true);
+    try {
+      if (action === "start") await meet.startRecording(null);
+      else await meet.stopRecording();
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="page-wrap wide meet-home">
+      <div ref={captureRef} className="meet-capture">
+        <header className="meet-head">
+          <h1>{t("ui2.meet.name")}</h1>
+          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
+        </header>
+        <Studio meet={meet} busy={busy} canStart={canStart} onAction={run} />
+        <SpeakerModelNotice meet={meet} />
+        {meet.status.last_error && (
+          <div className="meet-callout is-error" role="alert">
+            <p>
+              <strong>{t("ui2.meet.processFailed")}</strong>{" "}
+              {meet.status.last_error}
+            </p>
+          </div>
+        )}
+      </div>
+      <Recordings
+        meet={meet}
+        emptyAction={
+          !meet.status.recording && (
+            <button
+              className="button primary meet-empty-action"
+              type="button"
+              disabled={busy || !canStart}
+              onClick={() => {
+                captureRef.current?.scrollIntoView({ block: "nearest" });
+                void run("start");
+              }}
+            >
+              <Glyph name="mic" />
+              {t(busy ? "ui2.meet.studio.starting" : "ui2.meet.studio.start")}
+            </button>
+          )
+        }
+      />
+    </div>
+  );
+}
+
 export function MeetPage({ meetingId }: { meetingId: string | null }) {
   const { t } = useTranslation();
   const meet = useMeetController();
@@ -1500,27 +1565,7 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
       </div>
     );
   } else {
-    content = (
-      <div className="page-wrap wide meet-home">
-        <div className="meet-capture">
-          <header className="meet-head">
-            <h1>{t("ui2.meet.name")}</h1>
-            <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-          </header>
-          <Studio meet={meet} />
-          <SpeakerModelNotice meet={meet} />
-          {meet.status.last_error && (
-            <div className="meet-callout is-error" role="alert">
-              <p>
-                <strong>{t("ui2.meet.processFailed")}</strong>{" "}
-                {meet.status.last_error}
-              </p>
-            </div>
-          )}
-        </div>
-        <Recordings meet={meet} />
-      </div>
-    );
+    content = <RecallHome meet={meet} />;
   }
 
   return (
