@@ -5184,9 +5184,9 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
 }
 
 html[data-theme="light"] .meet-source-control {
-  --meet-source-button-bg: #9f978a;
-  --meet-source-hover-bg: #958d80;
-  --meet-source-active-bg: #8a8275;
+  --meet-source-button-bg: var(--bg-3);
+  --meet-source-hover-bg: #e8e4da;
+  --meet-source-active-bg: #ded9ce;
   background-color: var(--meet-source-button-bg);
   box-shadow: var(--meet-glass-button-edge);
 }
@@ -5264,7 +5264,7 @@ html[data-theme="light"] .meet-source-control {
 }
 
 html[data-theme="light"] .dropdown-compact-menu {
-  background-color: var(--meet-glass-fallback);
+  background-color: var(--bg-3);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   animation: none;
