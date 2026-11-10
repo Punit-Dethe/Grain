@@ -5167,7 +5167,7 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
 
 html[data-theme="light"] .meet-toolbar {
   border-color: rgb(var(--meet-glass-tint) / 0.2);
-  background-color: #e6e2d8;
+  background-color: #d3d3d3;
 }
 
 .meet-source-controls,
