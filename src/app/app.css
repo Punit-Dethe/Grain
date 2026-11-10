@@ -4982,6 +4982,8 @@ html[data-theme="light"] .qp-overlay {
   --meet-page: var(--bg-1);
   --meet-surface: #292929;
   --meet-surface-hover: #313131;
+  --meet-row-bg: #282828;
+  --meet-row-hover: var(--bg-3);
   --meet-dock: #262626;
   --meet-line: rgba(255, 255, 255, 0.07);
   --meet-lift: inset 0 1px rgba(255, 255, 255, 0.035);
@@ -4994,6 +4996,8 @@ html[data-theme="light"] .grain-root {
   --meet-page: #fcfcfb;
   --meet-surface: #f3f1ec;
   --meet-surface-hover: #ebe8e1;
+  --meet-row-bg: #f8f7f4;
+  --meet-row-hover: var(--meet-surface);
   --meet-dock: #efece6;
   --meet-line: rgba(26, 26, 26, 0.08);
   --meet-lift: none;
@@ -5006,192 +5010,324 @@ html[data-theme="light"] .grain-root {
   padding: 26px var(--meet-pad-x) 0;
 }
 
+.page[data-page-panel="meet"]:has(> .meet-capture-dock) {
+  scroll-padding-block-end: 92px;
+}
+
 .meet-wrap {
   width: min(960px, 100%);
   flex: 1 0 auto;
   padding-bottom: 56px;
 }
 
-.meet-head {
-  margin-bottom: 20px;
+.studio-feature-hero.meet-hero {
+  --accent-focus: rgba(252, 252, 251, 0.65);
+  --accent-glow: transparent;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  margin-block-end: 0;
+  padding: 24px clamp(16px, 3vw, 28px) 16px;
+  color-scheme: dark;
+  background-color: #151515;
 }
 
-.meet-head .page-subtitle {
-  margin-top: 4px;
-  color: var(--text-3);
-  font-size: 13px;
+.meet-hero::before {
+  background:
+    linear-gradient(to top, #000, rgba(0, 0, 0, 0.84) 30px, transparent 88px),
+    linear-gradient(90deg, rgba(10, 11, 12, 0.82), rgba(10, 11, 12, 0.28));
 }
 
-/* --- Studio: one surface, the record control and the sources --------- */
+.grain-root .meet-hero-settings {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  min-height: 32px;
+  gap: 9px;
+  padding-inline: 11px;
+  border-radius: 9px;
+  font-size: 12px;
+}
 
-.meet-studio {
+.meet-capture-dock {
+  position: sticky;
+  z-index: 5;
+  inset-block-end: 18px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
-  align-items: center;
-  gap: 8px 32px;
-  padding: 22px 22px 22px 26px;
-  border-radius: 22px;
-  background: var(--meet-surface);
-  box-shadow: var(--meet-lift);
-  transition: box-shadow 0.4s var(--ease-out);
+  flex: 0 0 auto;
+  justify-items: center;
+  gap: 8px;
+  margin-block-end: 18px;
+  pointer-events: none;
 }
 
-.meet-studio.is-recording {
+.meet-capture-dock .meet-inline-error {
+  max-width: min(100%, 54ch);
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--meet-dock);
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+
+.meet-toolbar,
+.dropdown-compact-menu {
+  --meet-glass-base: 23 23 23;
+  --meet-glass-tint: 255 255 255;
+  --meet-glass-fallback: #252525;
+  --meet-glass-text: #fcfcfb;
+  --meet-glass-muted: #d0ceca;
+  --accent-focus: rgba(252, 252, 251, 0.65);
+  --accent-glow: transparent;
+  border: 1px solid rgb(var(--meet-glass-tint) / 0.2);
+  color: var(--meet-glass-text);
+  color-scheme: dark;
+  background-color: var(--meet-glass-fallback);
   box-shadow:
-    var(--meet-lift),
-    0 0 0 1px color-mix(in srgb, var(--meet-live) 30%, transparent),
-    0 14px 40px color-mix(in srgb, var(--meet-live) 10%, transparent);
+    0 10px 30px rgba(0, 0, 0, 0.26),
+    0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
-@media (max-width: 760px) {
-  .meet-studio {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 20px;
+html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
+  --meet-glass-tint: 38 35 31;
+  --meet-glass-text: #1a1815;
+  --meet-glass-muted: #403a32;
+  --accent-focus: rgba(38, 35, 31, 0.58);
+  color-scheme: light;
+  box-shadow:
+    0 10px 28px rgba(46, 38, 24, 0.15),
+    0 2px 6px rgba(46, 38, 24, 0.09);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+  .dropdown-compact-menu {
+    background-color: rgb(var(--meet-glass-base) / var(--meet-glass-opacity));
+    -webkit-backdrop-filter: blur(20px) saturate(1.35);
+    backdrop-filter: blur(20px) saturate(1.35);
   }
 }
 
-.meet-studio-main {
-  min-width: 0;
+.meet-toolbar {
+  --meet-dock-button-bg: #303030;
+  --meet-dock-button-hover: #3c3c3c;
+  --meet-dock-button-active: #252525;
+  --meet-dock-button-text: #fcfcfb;
+  --meet-dock-button-height: 48px;
+  --meet-dock-button-radius: 16px;
   display: flex;
   align-items: center;
-  gap: 20px;
+  justify-content: center;
+  gap: 12px;
+  max-width: 100%;
+  padding: 10px 12px;
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  background-color: var(--bg-0);
+  pointer-events: auto;
 }
 
-.meet-start {
-  min-width: 0;
+html[data-theme="light"] .meet-toolbar {
+  border-color: rgb(var(--meet-glass-tint) / 0.2);
+  background-color: #d3d3d3;
+}
+
+.meet-source-controls,
+.meet-source-control {
   display: flex;
-  align-items: center;
-  gap: 20px;
-  margin: -8px;
-  padding: 8px 18px 8px 8px;
-  border-radius: 999px;
-  color: inherit;
-  background: transparent;
-  text-align: start;
-  cursor: pointer;
-  transition: background 0.2s ease;
 }
 
-.meet-start:hover:not(:disabled) {
-  background: var(--accent-soft);
-}
-
-.meet-start:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-/* The record orb: a red dot that becomes a stop square while recording,
-   with a halo that follows the live input level. */
-.meet-orb {
-  --level: 0;
-  position: relative;
-  width: 64px;
-  height: 64px;
+.meet-source-controls {
   flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--meet-live) 14%, transparent);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--meet-live) 34%, transparent);
+  gap: 8px;
+}
+
+.meet-source-control {
+  border-radius: var(--meet-dock-button-radius);
+  background-color: var(--meet-dock-button-bg);
+}
+
+.meet-source-control button {
+  min-height: var(--meet-dock-button-height);
+  color: #d0ceca;
+  background-color: var(--meet-dock-button-bg);
   cursor: pointer;
   transition:
-    background 0.25s ease,
-    transform 0.3s var(--ease-out);
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms var(--ease-out);
 }
 
-.meet-orb::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--meet-live);
-  opacity: 0;
-  transform: scale(1);
-  transition:
-    transform 0.12s linear,
-    opacity 0.12s linear;
+.meet-source-control button:hover:not([aria-disabled="true"]),
+.meet-source-control button[aria-expanded="true"] {
+  color: var(--meet-dock-button-text);
+  background-color: var(--meet-dock-button-hover);
 }
 
-.meet-orb-core {
+.meet-source-control button:active:not([aria-disabled="true"]) {
+  background-color: var(--meet-dock-button-active);
+  transform: scale(0.96);
+}
+
+.meet-source-control button:focus-visible {
   position: relative;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--meet-live);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--meet-live) 40%, transparent);
-  transition:
-    width 0.35s var(--ease-out),
-    height 0.35s var(--ease-out),
-    border-radius 0.35s var(--ease-out),
-    background 0.25s ease,
-    transform 0.25s var(--ease-out);
+  z-index: 1;
 }
 
-.meet-start:hover:not(:disabled) .meet-orb-core {
-  transform: scale(1.1);
+.meet-source-toggle {
+  display: grid;
+  width: var(--meet-dock-button-height);
+  place-items: center;
+  border-start-start-radius: var(--meet-dock-button-radius);
+  border-end-start-radius: var(--meet-dock-button-radius);
 }
 
-.meet-start:active:not(:disabled) .meet-orb {
-  transform: scale(0.95);
-}
-
-.meet-orb.is-live {
-  background: var(--meet-live);
-  box-shadow: 0 6px 22px color-mix(in srgb, var(--meet-live) 35%, transparent);
-}
-
-.meet-orb.is-live::before {
-  opacity: calc(0.12 + var(--level) * 0.28);
-  transform: scale(calc(1 + var(--level) * 0.42));
-}
-
-.meet-orb.is-live .meet-orb-core {
+.meet-source-toggle .icon.sm {
   width: 18px;
   height: 18px;
-  border-radius: 5px;
-  background: #fff;
-  box-shadow: none;
 }
 
-.meet-orb.is-live:hover .meet-orb-core {
-  transform: scale(1.08);
+.meet-source-control .meet-source-toggle[aria-pressed="true"] {
+  color: var(--meet-dock-button-text);
 }
 
-.meet-orb.is-live:active {
-  transform: scale(0.95);
+.meet-source-control button[aria-haspopup="listbox"] {
+  width: 34px;
+  border-inline-start: 1px solid rgba(255, 255, 255, 0.1);
+  border-start-end-radius: var(--meet-dock-button-radius);
+  border-end-end-radius: var(--meet-dock-button-radius);
 }
 
-.meet-studio-copy {
-  min-width: 0;
+.meet-source-control button[aria-haspopup="listbox"] svg {
+  width: 12px;
+  height: 12px;
+}
+
+.meet-source-control button[aria-disabled="true"] {
+  cursor: default;
+}
+
+.meet-source-control button[aria-disabled="true"]:not([aria-pressed="true"]) {
+  color: #a8a5a0;
+}
+
+.dropdown-compact-menu {
+  --meet-glass-opacity: 0.86;
+  padding: 7px;
+  border-radius: 14px;
+  animation: meet-device-menu-in 150ms var(--ease-out) both;
+  scrollbar-width: none;
+}
+
+html[data-theme="light"] .dropdown-compact-menu {
+  background-color: var(--bg-3);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  animation: none;
+}
+
+.dropdown-compact-menu::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes meet-device-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.dropdown-compact-heading {
+  padding: 5px 10px 8px;
+  color: var(--meet-glass-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dropdown-compact-menu [role="listbox"] {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
-.meet-studio-copy strong {
-  color: var(--text-1);
-  font-size: 19px;
-  font-weight: 630;
-  letter-spacing: -0.02em;
-}
-
-.meet-studio-copy .meet-clock {
-  font-size: 34px;
-  font-weight: 560;
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.035em;
-}
-
-.meet-studio-hint {
-  display: inline-flex;
+.grain-root .dropdown-compact-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 15px;
   align-items: center;
-  gap: 8px;
-  color: var(--text-3);
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 8px;
   font-size: 13px;
   line-height: 1.4;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.grain-root
+  .dropdown-compact-option:hover:not(:disabled, [aria-selected="true"]) {
+  background-color: rgb(var(--meet-glass-tint) / 0.1);
+}
+
+.grain-root .dropdown-compact-option[aria-selected="true"] {
+  background-color: rgb(var(--meet-glass-tint) / 0.15);
+  font-weight: 620;
+}
+
+.grain-root .dropdown-compact-option:active:not(:disabled) {
+  background-color: rgb(var(--meet-glass-tint) / 0.23);
+}
+
+.grain-root .dropdown-compact-option:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+  box-shadow: none !important;
+}
+
+.grain-root .meet-toolbar .meet-record-action {
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--meet-dock-button-height);
+  padding-block: 6px;
+  padding-inline: 18px;
+  border-radius: var(--meet-dock-button-radius);
+  color: var(--meet-dock-button-text);
+  background-color: var(--meet-dock-button-bg);
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 610;
+}
+
+.grain-root .meet-record-action:hover:not([aria-disabled="true"]) {
+  background-color: var(--meet-dock-button-hover);
+}
+
+.grain-root .meet-record-action:active:not([aria-disabled="true"]) {
+  background-color: var(--meet-dock-button-active);
+}
+
+.grain-root .meet-toolbar .meet-record-action[aria-disabled="true"] {
+  color: #a8a5a0;
+  background-color: var(--meet-dock-button-bg);
+  cursor: default;
+  transform: none;
+}
+
+.meet-record-mark {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--meet-live);
+}
+
+.meet-record-mark.is-stop {
+  border-radius: 2px;
+}
+
+.meet-record-clock {
+  color: var(--meet-glass-text);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .meet-live-dot {
@@ -5209,161 +5345,14 @@ html[data-theme="light"] .grain-root {
   }
 }
 
-/* Sources: rows on the studio surface, separated by a hairline. */
-.meet-sources {
-  min-width: 0;
-  display: grid;
-  padding-inline-start: 26px;
-  box-shadow: inset 1px 0 var(--hairline);
-}
-
-@media (max-width: 760px) {
-  .meet-sources {
-    margin-top: 14px;
-    padding: 6px 0 0;
-    box-shadow: inset 0 1px var(--hairline);
-  }
-}
-
-.meet-source {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  column-gap: 14px;
-  padding: 11px 0;
-}
-
-.meet-source-body {
-  min-width: 0;
-  display: grid;
-  justify-items: start;
-  gap: 1px;
-  padding-inline-end: 12px;
-}
-
-.meet-source + .meet-source {
-  box-shadow: inset 0 1px var(--hairline-soft);
-}
-
-.meet-source.is-placeholder {
-  min-height: 58px;
-}
-
 .meet-source-icon {
-  width: 34px;
-  height: 34px;
   display: grid;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 10px;
-  color: var(--text-4);
+  border-radius: 8px;
+  color: var(--text-2);
   background: var(--accent-soft);
-  transition:
-    color 0.2s ease,
-    background 0.2s ease;
-}
-
-.meet-source.is-on .meet-source-icon {
-  color: var(--text-1);
-  background: var(--accent-soft-hover);
-}
-
-.meet-source-name {
-  color: var(--text-1);
-  font-size: 13.5px;
-  font-weight: 590;
-  transition: color 0.2s ease;
-}
-
-.meet-source:not(.is-on) .meet-source-name {
-  color: var(--text-3);
-}
-
-.meet-source-note {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Device picker: reads as text with a chevron, not as a box. */
-.meet-device {
-  width: auto;
-  max-width: min(100%, 230px);
-  margin-inline-start: -6px;
-  padding: 2px 22px 2px 6px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 6px;
-  outline: 0;
-  appearance: none;
-  color: var(--text-3);
-  background-color: transparent;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238d9295' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-  font: inherit;
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease;
-}
-
-.meet-device:hover:not(:disabled),
-.meet-device:focus-visible {
-  color: var(--text-1);
-  background-color: var(--accent-soft);
-}
-
-.meet-device:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-
-.meet-device option {
-  color: var(--text-1);
-  background: var(--bg-3);
-}
-
-.grain-root .meet-source .toggle:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.meet-sources-hint {
-  margin: 4px 0 0;
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-/* Live input meter: a row of ticks. */
-.meet-ticks {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 16px;
-}
-
-.meet-ticks i {
-  width: 3px;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent-soft-hover);
-  transition: background 0.08s linear;
-}
-
-.meet-ticks i.on {
-  background: color-mix(in srgb, var(--sage) 85%, var(--text-1));
-}
-
-.meet-ticks i.is-hot {
-  background: var(--peach);
 }
 
 /* --- Callouts and errors --------------------------------------------- */
@@ -5448,14 +5437,53 @@ html[data-theme="light"] .grain-root {
 /* --- Recordings list: one rounded group per day, rows divided by a hairline */
 
 .meet-recordings {
-  margin-top: 44px;
+  margin-block-start: 16px;
 }
 
-.meet-recordings > h2 {
-  margin-bottom: 4px;
+.meet-recordings-controls {
+  display: flex;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
 }
 
-.meet-day h3 {
+.grain-root .meet-hero .meet-hero-settings,
+.grain-root .meet-hero .meet-recordings-controls :is(.search-field, .select) {
+  color: #fcfcfb;
+  background-color: rgba(38, 38, 38, 0.65);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.grain-root .meet-hero .search-field input {
+  color: #fcfcfb;
+}
+
+.grain-root .meet-hero .search-field input::placeholder {
+  color: rgba(252, 252, 251, 0.78);
+}
+
+.grain-root .meet-recordings-controls .search-field {
+  flex: 1 1 160px;
+  min-width: min(160px, 100%);
+  height: 32px;
+}
+
+.grain-root .meet-recordings-sort {
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.meet-recordings-sort option {
+  color: #fcfcfb;
+  background: #222;
+}
+
+.meet-day h2 {
   margin: 20px 4px 8px;
   color: var(--text-3);
   font-size: 12px;
@@ -5467,7 +5495,7 @@ html[data-theme="light"] .grain-root {
   padding: 0;
   overflow: hidden;
   border-radius: 18px;
-  background: var(--meet-surface);
+  background: var(--meet-row-bg);
   box-shadow: var(--meet-lift);
   list-style: none;
 }
@@ -5491,7 +5519,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-row:hover {
-  background: var(--meet-surface-hover);
+  background: var(--meet-row-hover);
 }
 
 .grain-root .meet-row:focus-visible {
@@ -5513,15 +5541,6 @@ html[data-theme="light"] .grain-root {
   background: var(--accent-soft);
 }
 
-.meet-lead.is-live {
-  background: color-mix(in srgb, var(--meet-live) 14%, transparent);
-}
-
-.meet-lead .meet-live-dot {
-  width: 10px;
-  height: 10px;
-}
-
 .meet-lead-stack {
   display: flex;
   align-items: center;
@@ -5533,21 +5552,16 @@ html[data-theme="light"] .grain-root {
   height: 28px;
   flex: 0 0 auto;
   font-size: 11.5px;
-  box-shadow: 0 0 0 2px var(--meet-surface);
+  box-shadow: 0 0 0 2px var(--meet-row-bg);
   transition: box-shadow 0.15s ease;
 }
 
 .meet-avatar.is-stack + .meet-avatar.is-stack {
-  margin-inline-start: -10px;
+  margin-inline-start: -22px;
 }
 
 .meet-row:hover .meet-avatar.is-stack {
-  box-shadow: 0 0 0 2px var(--meet-surface-hover);
-}
-
-.meet-avatar.is-more {
-  color: var(--text-2);
-  font-size: 10.5px;
+  box-shadow: 0 0 0 2px var(--meet-row-hover);
 }
 
 .meet-row-main {
@@ -5593,24 +5607,6 @@ html[data-theme="light"] .grain-root {
   color: var(--text-3);
 }
 
-.meet-row[data-state="recording"] .meet-row-preview {
-  color: var(--meet-error-ink);
-}
-
-.meet-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  color: var(--text-4);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.meet-row-meta > * + *::before {
-  content: "·";
-  margin-inline: 7px;
-}
-
 .meet-row-go {
   display: grid;
   color: var(--text-4);
@@ -5640,11 +5636,17 @@ html[data-theme="light"] .grain-root {
 
 .meet-list-empty {
   display: grid;
-  gap: 6px;
-  margin-top: 14px;
-  padding: 28px 24px;
-  border-radius: 18px;
-  background: var(--meet-surface);
+  justify-items: center;
+  gap: 5px;
+  margin-block-start: 12px;
+  padding: 28px 20px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.meet-list-empty .meet-source-icon {
+  margin-block-end: 4px;
 }
 
 .meet-list-empty strong {
@@ -5719,6 +5721,37 @@ html[data-theme="light"] .grain-root {
 .meet-view-title h1 {
   overflow-wrap: anywhere;
   text-wrap: balance;
+}
+
+.meet-view-heading {
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
+}
+
+.meet-title-edit {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  border-radius: 6px;
+  text-align: start;
+  cursor: text;
+}
+
+.meet-title-edit span {
+  min-width: 0;
+}
+
+.meet-title-edit [contenteditable] {
+  min-width: 1ch;
+  outline: none;
+}
+
+.meet-title-edit svg {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--text-3);
 }
 
 .meet-meta {
@@ -6045,20 +6078,6 @@ html[data-theme="light"] .grain-root {
   transition: opacity 0.2s ease;
 }
 
-/* Live recording row: a soft red wash and moving level bars. */
-.meet-row[data-state="recording"] {
-  background: color-mix(in srgb, var(--meet-live) 6%, transparent);
-}
-
-.meet-row[data-state="recording"]:hover {
-  background: color-mix(in srgb, var(--meet-live) 10%, transparent);
-}
-
-.meet-row[data-state="recording"] .meet-row-duration {
-  color: var(--meet-error-ink);
-  font-weight: 600;
-}
-
 .meet-bars {
   height: 16px;
   display: flex;
@@ -6070,7 +6089,7 @@ html[data-theme="light"] .grain-root {
   width: 3px;
   height: 100%;
   border-radius: 2px;
-  background: var(--meet-live);
+  background: currentColor;
   transform-origin: center;
   animation: meet-bar 0.9s ease-in-out infinite alternate;
 }
@@ -6115,6 +6134,58 @@ html[data-theme="light"] .grain-root {
   color: var(--text-3);
   font-size: 13.5px;
   line-height: 1.55;
+}
+
+.meet-view:has(.meet-transcribe-empty) {
+  display: flex;
+  flex-direction: column;
+  padding-block-end: 0;
+}
+
+.meet-view-body:has(> .meet-transcribe-empty) {
+  display: grid;
+  flex: 1 0 auto;
+  place-items: center;
+}
+
+.meet-transcribe-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: min(100%, 36ch);
+  padding-block: 24px;
+  text-align: center;
+}
+
+.meet-transcribe-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  margin-block-end: 6px;
+  place-items: center;
+  border-radius: 16px;
+  color: var(--text-2);
+  background: var(--meet-surface);
+  box-shadow: inset 0 0 0 1px var(--meet-line);
+}
+
+.meet-transcribe-empty h2 {
+  font-size: 20px;
+}
+
+.meet-transcribe-empty p {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.meet-transcribe-empty .button {
+  margin-block-start: 8px;
+}
+
+.meet-transcribe-empty .button:disabled {
+  opacity: 0.55;
 }
 
 .meet-empty-line {
@@ -6375,21 +6446,19 @@ html[data-theme="light"] .grain-root {
 @media (prefers-reduced-motion: reduce) {
   .meet-live-dot,
   .meet-spinner,
-  .meet-bars i {
+  .meet-bars i,
+  .dropdown-compact-menu {
     animation: none;
   }
 
-  .meet-orb::before,
-  .meet-orb-core,
-  .meet-ticks i,
   .meet-progress i,
   .meet-row-go,
-  .meet-underline {
+  .meet-underline,
+  .meet-source-control button,
+  .meet-source-control button svg,
+  .meet-record-action,
+  .dropdown-compact-option {
     transition: none;
-  }
-
-  .meet-orb.is-live::before {
-    transform: none;
   }
 }
 
