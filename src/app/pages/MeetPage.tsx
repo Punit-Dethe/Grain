@@ -299,12 +299,12 @@ function Studio({
   const initial = meet.status.recording;
   const live = useLiveRecording(initial);
   const recording = live?.session_id === initial?.session_id ? live : initial;
-  const peak = recording?.sources.reduce(
-    (level, source) => Math.max(level, source.level),
-    0,
-  );
-  const waveLevel =
-    peak === undefined ? 0.78 : 0.12 + 0.88 * Math.sqrt(Math.min(1, peak));
+  const peak =
+    recording?.sources.reduce(
+      (level, source) => Math.max(level, source.level),
+      0,
+    ) ?? 0;
+  const waveLevel = 0.12 + 0.88 * Math.sqrt(Math.min(1, peak));
 
   return (
     <section
@@ -313,15 +313,18 @@ function Studio({
         recording ? "ui2.meet.live.label" : "ui2.meet.studio.label",
       )}
     >
-      <div
-        className="meet-studio-stage"
-        data-recording={Boolean(recording)}
-        style={{ "--meet-wave-level": waveLevel } as CSSProperties}
-      >
-        <StudioWave />
-        <div className="meet-record-orbit">
+      <header className="meet-head">
+        <div>
+          <h1>{t("ui2.meet.name")}</h1>
+          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
+        </div>
+        <div
+          className="meet-record-controls"
+          style={{ "--meet-wave-level": waveLevel } as CSSProperties}
+        >
+          {recording && <StudioWave />}
           <button
-            className="meet-record-action"
+            className="button primary meet-record-action"
             type="button"
             disabled={busy || (!recording && !canStart)}
             onClick={() => onAction(recording ? "stop" : "start")}
@@ -336,8 +339,7 @@ function Studio({
             </span>
           </button>
         </div>
-        <StudioWave />
-      </div>
+      </header>
       {!recording && (
         <div
           className="meet-studio-sources"
@@ -1432,10 +1434,6 @@ function RecallHome({ meet }: { meet: MeetController }) {
   return (
     <div className="page-wrap wide meet-home">
       <div ref={captureRef} className="meet-capture">
-        <header className="meet-head">
-          <h1>{t("ui2.meet.name")}</h1>
-          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-        </header>
         <Studio meet={meet} busy={busy} canStart={canStart} onAction={run} />
         {!meet.status.recording && <SpeakerModelNotice meet={meet} />}
         {meet.status.last_error && (
