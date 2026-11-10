@@ -5083,19 +5083,67 @@ html[data-theme="light"] .grain-root {
   min-width: 0;
 }
 
-.meet-studio-stage {
+.meet-record-action {
+  width: fit-content;
+  max-width: 100%;
   display: grid;
   justify-items: center;
-  gap: 6px;
-  padding-bottom: 14px;
+  gap: 8px;
+  margin: 0 auto 14px;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
-.meet-studio-bubble {
-  display: block;
-  width: clamp(84px, 12vh, 112px);
+.meet-record-face {
+  position: relative;
+  width: clamp(62px, 10vh, 78px);
   aspect-ratio: 1;
-  object-fit: cover;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
   border-radius: 50%;
+  background: var(--meet-surface);
+  box-shadow: var(--meet-lift);
+}
+
+.meet-record-face .icon.sm {
+  width: 26px;
+  height: 26px;
+}
+
+.meet-record-action:hover:not(:disabled) .meet-record-face {
+  background: var(--meet-surface-hover);
+}
+
+.meet-record-action[data-recording="true"] .meet-record-face::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 1px solid var(--text-3);
+  border-radius: inherit;
+  opacity: 0.38;
+  pointer-events: none;
+  animation: meet-record-ring 1.8s var(--ease-out) infinite;
+}
+
+@keyframes meet-record-ring {
+  from {
+    opacity: 0;
+  }
+
+  28% {
+    opacity: 0.38;
+  }
+
+  to {
+    transform: scale(1.12);
+    opacity: 0;
+  }
 }
 
 .meet-sources {
@@ -5476,14 +5524,10 @@ html[data-theme="light"] .grain-root {
   line-height: 1.55;
 }
 
-.meet-record-action.button,
-.meet-empty-action.button {
-  padding-inline: 16px;
-  border-radius: 999px;
-}
-
 .meet-empty-action.button {
   margin-top: 6px;
+  padding-inline: 16px;
+  border-radius: 999px;
 }
 
 .grain-root .meet-record-action:disabled,
@@ -6152,11 +6196,11 @@ html[data-theme="light"] .grain-root {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .meet-record-action[data-recording="true"] .meet-record-face::after,
   .meet-spinner {
     animation: none;
   }
 
-  .meet-record-action.button,
   .meet-progress i,
   .meet-row-go,
   .meet-underline {

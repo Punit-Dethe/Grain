@@ -24,8 +24,6 @@ import type {
   TranscriptRevision,
 } from "@/bindings";
 import { hashForRoute } from "../navigation";
-import recallBubbleVideo from "../meet/recall-bubble.mp4";
-import recallBubblePoster from "../meet/recall-bubble.webp";
 import {
   buildTurns,
   filterTurns,
@@ -273,40 +271,6 @@ function SourceSetup({ meet }: { meet: MeetController }) {
   );
 }
 
-const StudioBubble = memo(function StudioBubble({
-  recording,
-}: {
-  recording: boolean;
-}) {
-  const [canAnimate, setCanAnimate] = useState(false);
-  useEffect(() => {
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () =>
-      setCanAnimate(!reducedMotion.matches && !document.hidden);
-    update();
-    reducedMotion.addEventListener("change", update);
-    document.addEventListener("visibilitychange", update);
-    return () => {
-      reducedMotion.removeEventListener("change", update);
-      document.removeEventListener("visibilitychange", update);
-    };
-  }, []);
-
-  return recording && canAnimate ? (
-    <video
-      className="meet-studio-bubble"
-      src={recallBubbleVideo}
-      poster={recallBubblePoster}
-      autoPlay
-      loop
-      muted
-      playsInline
-      aria-hidden="true"
-    />
-  ) : (
-    <img className="meet-studio-bubble" src={recallBubblePoster} alt="" />
-  );
-});
 type RecordingAction = "start" | "stop";
 
 function Studio({
@@ -332,22 +296,24 @@ function Studio({
         recording ? "ui2.meet.live.label" : "ui2.meet.studio.label",
       )}
     >
-      <div className="meet-studio-stage">
-        <StudioBubble recording={Boolean(recording)} />
-        <button
-          className="button primary meet-record-action"
-          type="button"
-          disabled={busy || (!recording && !canStart)}
-          onClick={() => onAction(recording ? "stop" : "start")}
-        >
+      <button
+        className="meet-record-action"
+        type="button"
+        data-recording={Boolean(recording)}
+        disabled={busy || (!recording && !canStart)}
+        onClick={() => onAction(recording ? "stop" : "start")}
+      >
+        <span className="meet-record-face">
           <Glyph name={recording ? "stop" : "mic"} />
+        </span>
+        <span>
           {recording
             ? t("ui2.meet.studio.stop")
             : busy
               ? t("ui2.meet.studio.starting")
               : t("ui2.meet.studio.start")}
-        </button>
-      </div>
+        </span>
+      </button>
       {!recording && <SourceSetup meet={meet} />}
       {recording?.error && (
         <p className="meet-inline-error" role="alert">
