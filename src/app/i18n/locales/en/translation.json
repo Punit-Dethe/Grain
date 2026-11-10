@@ -1115,8 +1115,7 @@
         "state": {
           "recording": "Recording now…",
           "processing": "Transcribing…",
-          "transcribed": "Transcribed",
-          "new": "Not transcribed yet. Open it to transcribe."
+          "transcribed": "Transcribed"
         }
       },
       "player": {
@@ -1146,7 +1145,7 @@
         "noSpeech": "No speech was found in this recording.",
         "loading": "Loading transcript…",
         "noTranscriptTitle": "Not transcribed yet",
-        "noTranscript": "Transcribe it to see who said what. It runs on this device and you can keep using Grain meanwhile.",
+        "noTranscript": "Turn this recording into a searchable transcript on this device.",
         "recordingTitle": "Still recording",
         "recordingBody": "The transcript appears here after you stop and transcribe.",
         "unknownSpeaker": "Unknown speaker",

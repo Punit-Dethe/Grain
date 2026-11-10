@@ -5989,6 +5989,58 @@ html[data-theme="light"] .grain-root {
   line-height: 1.55;
 }
 
+.meet-view:has(.meet-transcribe-empty) {
+  display: flex;
+  flex-direction: column;
+  padding-block-end: 0;
+}
+
+.meet-view-body:has(> .meet-transcribe-empty) {
+  display: grid;
+  flex: 1 0 auto;
+  place-items: center;
+}
+
+.meet-transcribe-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-width: min(100%, 36ch);
+  padding-block: 24px;
+  text-align: center;
+}
+
+.meet-transcribe-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  margin-block-end: 6px;
+  place-items: center;
+  border-radius: 16px;
+  color: var(--text-2);
+  background: var(--meet-surface);
+  box-shadow: inset 0 0 0 1px var(--meet-line);
+}
+
+.meet-transcribe-empty h2 {
+  font-size: 20px;
+}
+
+.meet-transcribe-empty p {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.meet-transcribe-empty .button {
+  margin-block-start: 8px;
+}
+
+.meet-transcribe-empty .button:disabled {
+  opacity: 0.55;
+}
+
 .meet-empty-line {
   margin: 0;
   padding: 22px 0;

@@ -13,7 +13,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { MicOff, VolumeOff } from "lucide-react";
+import { FileText, MicOff, VolumeOff } from "lucide-react";
 import { toast } from "sonner";
 import type {
   MeetingSummary,
@@ -523,11 +523,13 @@ function Recordings({
                         {t("ui2.meet.list.state.recording")}
                       </span>
                     ) : (
-                      <span className="meet-row-preview">
-                        {state === "transcribed" && meeting.preview
-                          ? meeting.preview
-                          : t(`ui2.meet.list.state.${state}`)}
-                      </span>
+                      state !== "new" && (
+                        <span className="meet-row-preview">
+                          {state === "transcribed" && meeting.preview
+                            ? meeting.preview
+                            : t(`ui2.meet.list.state.${state}`)}
+                        </span>
+                      )
                     )}
                   </span>
                   <span className="meet-row-go" aria-hidden="true">
@@ -1310,8 +1312,16 @@ function MeetingView({
     body = <p className="meet-empty-line">{t("ui2.meet.detail.loading")}</p>;
   } else if (!isProcessing) {
     body = (
-      <div className="meet-empty">
-        <strong>{t("ui2.meet.detail.noTranscriptTitle")}</strong>
+      <section
+        className="meet-transcribe-empty"
+        aria-labelledby="meet-transcribe-title"
+      >
+        <span className="meet-transcribe-icon" aria-hidden="true">
+          <FileText size={26} strokeWidth={1.6} />
+        </span>
+        <h2 id="meet-transcribe-title">
+          {t("ui2.meet.detail.noTranscriptTitle")}
+        </h2>
         <p>{t("ui2.meet.detail.noTranscript")}</p>
         <button
           className="button primary"
@@ -1321,7 +1331,7 @@ function MeetingView({
         >
           {t("ui2.meet.detail.process")}
         </button>
-      </div>
+      </section>
     );
   }
 
