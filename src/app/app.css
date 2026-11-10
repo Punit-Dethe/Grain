@@ -5077,7 +5077,6 @@ html[data-theme="light"] .grain-root {
 
 .meet-toolbar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
@@ -5090,6 +5089,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-source-controls {
+  flex: 0 0 auto;
   gap: 6px;
 }
 
@@ -5171,7 +5171,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .grain-root .meet-record-action {
-  min-width: min(142px, 100%);
+  min-width: 0;
   max-width: 100%;
   padding-block: 6px;
   font-size: 13px;
