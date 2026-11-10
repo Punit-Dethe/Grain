@@ -26,6 +26,7 @@ import type {
 } from "@/bindings";
 import { Dropdown } from "../components/ui/Dropdown";
 import { hashForRoute } from "../navigation";
+import studioFeatureContextBg from "../overview/studio-feature-context.webp";
 import {
   buildTurns,
   filterTurns,
@@ -431,11 +432,9 @@ function useSecondTick(active: boolean): number {
 function Recordings({
   meet,
   filters,
-  onFiltersChange,
 }: {
   meet: MeetController;
   filters: RecordingFilters;
-  onFiltersChange: (filters: RecordingFilters) => void;
 }) {
   const { t, i18n } = useTranslation();
   const recordingId = meet.status.recording?.session_id;
@@ -553,34 +552,6 @@ function Recordings({
       className="meet-recordings"
       aria-label={t("ui2.meet.list.heading")}
     >
-      <div className="meet-recordings-controls">
-        <select
-          className="select meet-recordings-sort"
-          value={filters.oldestFirst ? "oldest" : "newest"}
-          onChange={(event) =>
-            onFiltersChange({
-              ...filters,
-              oldestFirst: event.target.value === "oldest",
-            })
-          }
-          aria-label={t("ui2.meet.list.sortByDate")}
-        >
-          <option value="newest">{t("ui2.meet.list.newestFirst")}</option>
-          <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
-        </select>
-        <label className="search-field">
-          <Glyph name="search" />
-          <input
-            type="search"
-            value={filters.query}
-            onChange={(event) =>
-              onFiltersChange({ ...filters, query: event.target.value })
-            }
-            placeholder={t("ui2.meet.list.search")}
-            aria-label={t("ui2.meet.list.search")}
-          />
-        </label>
-      </div>
       <SpeakerModelNotice meet={meet} />
       {meet.status.last_error && (
         <div className="meet-callout is-error" role="alert">
@@ -1578,21 +1549,54 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
     content = (
       <>
         <div className="page-wrap meet-wrap">
-          <header className="page-header meet-head">
-            <div>
+          <header className="studio-feature-hero meet-hero">
+            <img
+              className="studio-feature-image"
+              src={studioFeatureContextBg}
+              alt=""
+            />
+            <div className="studio-feature-copy">
               <h1>{t("ui2.meet.name")}</h1>
               <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
             </div>
-            <button className="button" type="button" disabled>
+            <button
+              className="button meet-hero-settings"
+              type="button"
+              disabled
+            >
               <Glyph name="sliders" />
               {t("ui2.nav.settings")}
             </button>
+            <div className="meet-recordings-controls">
+              <select
+                className="select meet-recordings-sort"
+                value={filters.oldestFirst ? "oldest" : "newest"}
+                onChange={(event) =>
+                  setFilters({
+                    ...filters,
+                    oldestFirst: event.target.value === "oldest",
+                  })
+                }
+                aria-label={t("ui2.meet.list.sortByDate")}
+              >
+                <option value="newest">{t("ui2.meet.list.newestFirst")}</option>
+                <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
+              </select>
+              <label className="search-field">
+                <Glyph name="search" />
+                <input
+                  type="search"
+                  value={filters.query}
+                  onChange={(event) =>
+                    setFilters({ ...filters, query: event.target.value })
+                  }
+                  placeholder={t("ui2.meet.list.search")}
+                  aria-label={t("ui2.meet.list.search")}
+                />
+              </label>
+            </div>
           </header>
-          <Recordings
-            meet={meet}
-            filters={filters}
-            onFiltersChange={setFilters}
-          />
+          <Recordings meet={meet} filters={filters} />
         </div>
         <CaptureDock meet={meet} />
       </>

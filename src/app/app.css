@@ -5059,9 +5059,32 @@ html[data-theme="light"] .grain-root {
   padding-bottom: 56px;
 }
 
-.meet-head {
-  align-items: center;
+.studio-feature-hero.meet-hero {
+  --accent-focus: rgba(252, 252, 251, 0.65);
+  --accent-glow: transparent;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
   margin-block-end: 0;
+  padding: 24px clamp(16px, 3vw, 28px) 16px;
+  color-scheme: dark;
+  background-color: #151515;
+}
+
+.meet-hero::before {
+  background:
+    linear-gradient(to top, #000, rgba(0, 0, 0, 0.84) 30px, transparent 88px),
+    linear-gradient(90deg, rgba(10, 11, 12, 0.82), rgba(10, 11, 12, 0.28));
+}
+
+.grain-root .meet-hero-settings {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  min-height: 32px;
+  gap: 9px;
+  padding-inline: 11px;
+  border-radius: 9px;
+  font-size: 12px;
 }
 
 .meet-capture-dock {
@@ -5338,11 +5361,26 @@ html[data-theme="light"] .meet-toolbar {
 
 .meet-recordings-controls {
   display: flex;
+  grid-column: 1 / -1;
+  grid-row: 3;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  padding-block-end: 20px;
-  border-block-end: 1px solid var(--hairline);
+}
+
+.grain-root .meet-hero .meet-hero-settings,
+.grain-root .meet-hero .meet-recordings-controls :is(.search-field, .select) {
+  color: #fcfcfb;
+  background-color: rgba(38, 38, 38, 0.65);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.grain-root .meet-hero .search-field input {
+  color: #fcfcfb;
+}
+
+.grain-root .meet-hero .search-field input::placeholder {
+  color: rgba(252, 252, 251, 0.78);
 }
 
 .grain-root .meet-recordings-controls .search-field {
@@ -5360,8 +5398,8 @@ html[data-theme="light"] .meet-toolbar {
 }
 
 .meet-recordings-sort option {
-  color: var(--text-1);
-  background: var(--bg-3);
+  color: #fcfcfb;
+  background: #222;
 }
 
 .meet-day h2 {

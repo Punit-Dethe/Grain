@@ -1066,7 +1066,7 @@
     },
     "meet": {
       "name": "Recall",
-      "subtitle": "Record meetings and revisit their transcripts.",
+      "subtitle": "Capture meetings with your microphone or system audio. Replay recordings and turn them into searchable transcripts whenever you’re ready.",
       "processFailed": "Transcription failed.",
       "studio": {
         "label": "Recording controls",
