@@ -4100,7 +4100,11 @@ html[data-theme="light"] .context-profile-mode {
   gap: 8px;
   margin-inline-start: auto;
   min-height: 40px;
+  padding-inline: 12px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 999px;
   color: var(--text-1);
+  background: var(--bg-2);
   font-size: 13px;
 }
 
