@@ -5112,7 +5112,7 @@ html[data-theme="light"] .grain-root {
   --orb-shade: var(--bg-0);
   position: relative;
   isolation: isolate;
-  width: clamp(146px, min(55cqi, 32vh), 300px);
+  width: clamp(134px, min(50cqi, 29vh), 272px);
   max-width: 100%;
   aspect-ratio: 1;
   display: flex;
@@ -5190,8 +5190,8 @@ html[data-theme="light"] .meet-orb {
 }
 
 .meet-orb .icon.sm {
-  width: clamp(30px, 6.5vh, 56px);
-  height: clamp(30px, 6.5vh, 56px);
+  width: clamp(28px, 5.8vh, 50px);
+  height: clamp(28px, 5.8vh, 50px);
 }
 
 .meet-orb strong {
