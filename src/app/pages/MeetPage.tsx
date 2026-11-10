@@ -508,11 +508,13 @@ function RecallSearch({
   value,
   onChange,
   inputRef,
+  disabled,
 }: {
   label: string;
   value: string;
   onChange: (query: string) => void;
   inputRef?: RefObject<HTMLInputElement>;
+  disabled?: boolean;
 }) {
   return (
     <label className="meet-search">
@@ -521,6 +523,7 @@ function RecallSearch({
         ref={inputRef}
         type="search"
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         placeholder={label}
         aria-label={label}
@@ -542,16 +545,23 @@ function Recordings({
 }) {
   const { t, i18n } = useTranslation();
   const recordingId = meet.status.recording?.session_id;
+  const processingId = meet.status.processing?.session_id;
+  const [selection, setSelection] = useState<Set<string> | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [startingTranscript, setStartingTranscript] = useState(false);
   const now = useSecondTick(Boolean(recordingId));
-  const groups = useMemo(() => {
+  const visibleMeetings = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase(i18n.language);
-    const meetings = needle
+    return needle
       ? meet.meetings.filter((meeting) =>
           meeting.title.toLocaleLowerCase(i18n.language).includes(needle),
         )
       : meet.meetings;
-    return groupByDay(meetings, new Date());
   }, [meet.meetings, query, i18n.language]);
+  const groups = useMemo(
+    () => groupByDay(visibleMeetings, new Date()),
+    [visibleMeetings],
+  );
   const dayFormat = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.language, {
@@ -568,6 +578,65 @@ function Recordings({
       }),
     [i18n.language],
   );
+
+  const canManage = (meeting: MeetingSummary) =>
+    meeting.state === "Recorded" &&
+    meeting.id !== recordingId &&
+    meeting.id !== processingId;
+  const selectedMeetings = selection
+    ? visibleMeetings.filter(
+        (meeting) => selection.has(meeting.id) && canManage(meeting),
+      )
+    : [];
+
+  const toggleSelection = (id: string) => {
+    setSelection((current) => {
+      if (!current) return current;
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  };
+
+  const transcribe = async (id: string) => {
+    setStartingTranscript(true);
+    try {
+      await meet.process(id);
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setStartingTranscript(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (!selectedMeetings.length || deleting) return;
+    setDeleting(true);
+    try {
+      const confirmed = await ask(
+        t("ui2.meet.list.deleteConfirm", { count: selectedMeetings.length }),
+        { kind: "warning" },
+      );
+      if (!confirmed) return;
+
+      const failed = new Set<string>();
+      let firstError: string | undefined;
+      for (const meeting of selectedMeetings) {
+        try {
+          await meet.deleteMeeting(meeting.id);
+        } catch (error) {
+          failed.add(meeting.id);
+          firstError ??= errorText(error);
+        }
+      }
+      setSelection(failed.size ? failed : null);
+      if (firstError) toast.error(firstError);
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   let body: ReactNode;
   if (meet.loading) {
@@ -599,7 +668,6 @@ function Recordings({
       </p>
     );
   } else {
-    const processingId = meet.status.processing?.session_id;
     body = (
       <ul className="meet-recording-list">
         {groups.flatMap((group) => {
@@ -618,40 +686,81 @@ function Recordings({
                   : meeting.transcript_revision != null
                     ? "transcribed"
                     : "new";
-            return (
-              <li key={meeting.id}>
-                <button
-                  type="button"
-                  className="meet-row"
-                  data-state={state}
-                  onClick={() => openMeeting(meeting.id)}
-                >
-                  <RecordingLead meeting={meeting} state={state} />
-                  <span className="meet-row-main">
-                    <span className="meet-row-title">{meeting.title}</span>
-                    <time
-                      className="meet-row-meta"
-                      dateTime={new Date(meeting.created_unix_ms).toISOString()}
-                    >
-                      {day}, {timeFormat.format(meeting.created_unix_ms)}
-                    </time>
-                    {state !== "transcribed" && (
-                      <span className="meet-row-state">
-                        {t(`ui2.meet.list.state.${state}`)}
-                      </span>
-                    )}
+            const titleId = `meet-row-title-${meeting.id}`;
+            const rowBody = (
+              <>
+                <RecordingLead meeting={meeting} state={state} />
+                <span className="meet-row-main">
+                  <span id={titleId} className="meet-row-title">
+                    {meeting.title}
                   </span>
-                  <span className="meet-row-duration">
-                    {formatClock(
-                      state === "recording"
-                        ? now - meeting.created_unix_ms
-                        : meeting.duration_ms,
-                    )}
-                  </span>
+                  <time
+                    className="meet-row-meta"
+                    dateTime={new Date(meeting.created_unix_ms).toISOString()}
+                  >
+                    {day}, {timeFormat.format(meeting.created_unix_ms)}
+                  </time>
+                  {state !== "transcribed" && (
+                    <span className="meet-row-state">
+                      {t(`ui2.meet.list.state.${state}`)}
+                    </span>
+                  )}
+                </span>
+                <span className="meet-row-duration">
+                  {formatClock(
+                    state === "recording"
+                      ? now - meeting.created_unix_ms
+                      : meeting.duration_ms,
+                  )}
+                </span>
+                {!selection && (
                   <span className="meet-row-go" aria-hidden="true">
                     <Glyph name="chev-right" />
                   </span>
-                </button>
+                )}
+              </>
+            );
+            return (
+              <li key={meeting.id}>
+                {selection ? (
+                  <label className="meet-recording-item is-selecting">
+                    <input
+                      type="checkbox"
+                      checked={selection.has(meeting.id) && canManage(meeting)}
+                      disabled={deleting || !canManage(meeting)}
+                      onChange={() => toggleSelection(meeting.id)}
+                    />
+                    <span className="meet-row">{rowBody}</span>
+                  </label>
+                ) : (
+                  <div className="meet-recording-item">
+                    <button
+                      type="button"
+                      className="meet-row"
+                      data-state={state}
+                      onClick={() => openMeeting(meeting.id)}
+                    >
+                      {rowBody}
+                    </button>
+                    <button
+                      className="button meet-recording-transcribe"
+                      type="button"
+                      aria-describedby={titleId}
+                      disabled={
+                        !canManage(meeting) ||
+                        processingId !== undefined ||
+                        startingTranscript
+                      }
+                      onClick={() => void transcribe(meeting.id)}
+                    >
+                      {t(
+                        meeting.transcript_revision == null
+                          ? "ui2.meet.detail.process"
+                          : "ui2.meet.detail.reprocess",
+                      )}
+                    </button>
+                  </div>
+                )}
               </li>
             );
           });
@@ -665,11 +774,42 @@ function Recordings({
       <div className="meet-recordings-head">
         <h2 id="meet-recordings">{t("ui2.meet.list.heading")}</h2>
         {!meet.loading && !meet.loadError && meet.meetings.length > 0 && (
-          <RecallSearch
-            label={t("ui2.meet.list.search")}
-            value={query}
-            onChange={onQueryChange}
-          />
+          <div className="meet-recordings-tools">
+            <RecallSearch
+              label={t("ui2.meet.list.search")}
+              value={query}
+              disabled={deleting}
+              onChange={(value) => {
+                if (selection) setSelection(new Set());
+                onQueryChange(value);
+              }}
+            />
+            <button
+              className="button"
+              type="button"
+              disabled={
+                deleting ||
+                (!selection &&
+                  (startingTranscript || !visibleMeetings.some(canManage)))
+              }
+              onClick={() => setSelection(selection ? null : new Set())}
+            >
+              {t(selection ? "common.cancel" : "ui2.meet.list.select")}
+            </button>
+            {selection && (
+              <button
+                className="button meet-delete"
+                type="button"
+                disabled={!selectedMeetings.length || deleting}
+                onClick={() => void deleteSelected()}
+              >
+                <Glyph name="trash" />
+                {t("ui2.meet.list.deleteSelected", {
+                  count: selectedMeetings.length,
+                })}
+              </button>
+            )}
+          </div>
         )}
       </div>
       {body}

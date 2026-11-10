@@ -1106,6 +1106,10 @@
         "heading": "Recordings",
         "search": "Search meeting names",
         "noMatches": "No recordings match that name.",
+        "select": "Select",
+        "deleteSelected": "Delete selected ({{count}})",
+        "deleteConfirm_one": "Delete the selected recording? Its audio and transcripts will be removed permanently.",
+        "deleteConfirm_other": "Delete {{count}} selected recordings? Their audio and transcripts will be removed permanently.",
         "loading": "Loading recordings…",
         "loadError": "Recordings could not be loaded.",
         "retry": "Try again",
@@ -1119,7 +1123,7 @@
           "recording": "Recording now…",
           "processing": "Transcribing…",
           "transcribed": "Transcribed",
-          "new": "Not transcribed yet. Open it to transcribe."
+          "new": "Pending transcription"
         }
       },
       "player": {

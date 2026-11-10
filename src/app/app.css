@@ -5508,6 +5508,18 @@ html[data-theme="light"] .meet-orb {
   font-size: 22px;
 }
 
+.meet-recordings-tools {
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.meet-recordings-tools .meet-search {
+  width: min(240px, 100%);
+}
+
 .meet-recording-list,
 .meet-list-state,
 .meet-list-empty {
@@ -5528,6 +5540,48 @@ html[data-theme="light"] .meet-orb {
   box-shadow: inset 0 1px var(--meet-line);
 }
 
+.meet-recording-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.meet-recording-item.is-selecting {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding-inline-start: 12px;
+}
+
+.meet-recording-item.is-selecting:has(input:not(:disabled)) {
+  cursor: pointer;
+}
+
+.meet-recording-item.is-selecting:has(input:checked),
+.meet-recording-item.is-selecting:has(input:not(:disabled)):hover {
+  background: var(--accent-soft);
+}
+
+.meet-recording-item.is-selecting input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: inherit;
+}
+
+.meet-recording-item .meet-recording-transcribe {
+  min-height: 30px;
+  max-width: 15ch;
+  margin-inline-end: 8px;
+  padding: 4px 8px;
+  white-space: normal;
+}
+
+.grain-root :is(.meet-recordings-tools, .meet-recording-item) .button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .meet-row {
   width: 100%;
   display: grid;
@@ -5544,6 +5598,12 @@ html[data-theme="light"] .meet-orb {
 
 .meet-row:hover {
   background: var(--meet-surface-hover);
+}
+
+.meet-recording-item.is-selecting .meet-row {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  background: transparent;
+  cursor: inherit;
 }
 
 .grain-root .meet-row:focus-visible {
