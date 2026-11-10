@@ -16,6 +16,42 @@ function localDay(ms: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
+const ACTIVITY_WEEKS = 35;
+const DAYS_PER_WEEK = 7;
+
+/** The current local calendar week and the 34 weeks before it, oldest first. */
+export function recordingActivity(meetings: MeetingSummary[], now: Date) {
+  const today = localDay(now.getTime());
+  const firstDay = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate() - today.getDay() - (ACTIVITY_WEEKS - 1) * DAYS_PER_WEEK,
+  );
+  const start = firstDay.getTime();
+  const end = today.getTime();
+  const counts = new Map<number, number>();
+  for (const meeting of meetings) {
+    if (meeting.state !== "Recorded") continue;
+    const day = localDay(meeting.created_unix_ms).getTime();
+    if (day >= start && day <= end) {
+      counts.set(day, (counts.get(day) ?? 0) + 1);
+    }
+  }
+
+  const weeks = Array.from({ length: ACTIVITY_WEEKS }, (_, week) =>
+    Array.from({ length: DAYS_PER_WEEK }, (_, weekday) => {
+      const date = new Date(
+        firstDay.getFullYear(),
+        firstDay.getMonth(),
+        firstDay.getDate() + week * DAYS_PER_WEEK + weekday,
+      );
+      const day = date.getTime();
+      return day <= end ? { date, count: counts.get(day) ?? 0 } : null;
+    }),
+  );
+  return { weeks, firstDay, today, activeDays: counts.size };
+}
+
 export interface RecordingFilters {
   query: string;
   oldestFirst: boolean;

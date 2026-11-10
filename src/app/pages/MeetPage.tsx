@@ -38,6 +38,7 @@ import {
 import {
   groupByDay,
   highlightParts,
+  recordingActivity,
   turnAt,
   wordAt,
   type RecordingFilters,
@@ -427,6 +428,87 @@ function useSecondTick(active: boolean): number {
   }, [active]);
   return now;
 }
+
+const RecordingActivity = memo(function RecordingActivity({
+  meetings,
+}: {
+  meetings: MeetingSummary[];
+}) {
+  const { t, i18n } = useTranslation();
+  const { weeks, firstDay, today, activeDays } = recordingActivity(
+    meetings,
+    new Date(),
+  );
+  const monthFormat = new Intl.DateTimeFormat(i18n.language, {
+    month: "short",
+  });
+  const dateFormat = new Intl.DateTimeFormat(i18n.language, {
+    dateStyle: "medium",
+  });
+
+  return (
+    <figure className="meet-activity">
+      <figcaption className="meet-activity-caption">
+        <strong>{t("ui2.meet.activity.label")}</strong>
+        <span>{t("ui2.meet.activity.activeDays", { count: activeDays })}</span>
+      </figcaption>
+      <div
+        className="meet-activity-grid"
+        role="img"
+        aria-label={t("ui2.meet.activity.range", {
+          start: dateFormat.format(firstDay),
+          end: dateFormat.format(today),
+        })}
+        style={{
+          gridTemplateColumns: `repeat(${weeks.length}, minmax(0, 1fr))`,
+        }}
+      >
+        {weeks.map((week, index) => {
+          const monthStart = week.find((day) => day?.date.getDate() === 1);
+          return (
+            monthStart && (
+              <span
+                key={index}
+                className="meet-activity-month"
+                style={{
+                  gridColumn: `${Math.min(index + 1, weeks.length - 2)} / span 3`,
+                }}
+              >
+                {monthFormat.format(monthStart.date)}
+              </span>
+            )
+          );
+        })}
+        {weeks.map((week, index) => (
+          <div className="meet-activity-week" key={index}>
+            {week.map((day, weekday) => (
+              <span
+                key={weekday}
+                className="meet-activity-cell"
+                data-level={day ? Math.min(day.count, 4) : undefined}
+                title={
+                  day
+                    ? t("ui2.meet.activity.day", {
+                        date: dateFormat.format(day.date),
+                        count: day.count,
+                      })
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="meet-activity-legend" aria-hidden="true">
+        <span>{t("ui2.meet.activity.less")}</span>
+        {[0, 1, 2, 3, 4].map((level) => (
+          <span key={level} className="meet-activity-cell" data-level={level} />
+        ))}
+        <span>{t("ui2.meet.activity.more")}</span>
+      </div>
+    </figure>
+  );
+});
 
 function Recordings({
   meet,
@@ -1588,6 +1670,9 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
               {t("ui2.nav.settings")}
             </button>
           </header>
+          {!meet.loading && !meet.loadError && (
+            <RecordingActivity meetings={meet.meetings} />
+          )}
           <Recordings
             meet={meet}
             filters={filters}
