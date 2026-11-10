@@ -172,6 +172,8 @@ impl Drop for McpService {
     }
 }
 
+#[path = "grain_mcp_google.rs"]
+mod google;
 #[path = "grain_mcp_local.rs"]
 mod local;
 
@@ -186,7 +188,32 @@ const LOCAL_CATALOG: &[CatalogProvider] = &[CatalogProvider {
     registration: Registration::Anonymous,
     setup_url: "https://pypi.org/project/mcp-server-time/",
     ownership: None,
+},
+CatalogProvider {
+    id: google::PROVIDER_ID,
+    bundled_preset: true,
+    name: "Google Workspace",
+    description: "Gmail, Calendar, Drive, Docs and Sheets, signed in with your own Google Cloud OAuth client.",
+    endpoint: "local:google-workspace",
+    // The user brings their own Desktop OAuth client; Grain runs the sign-in.
+    registration: Registration::PreRegistered,
+    setup_url: "https://console.cloud.google.com/auth/clients",
+    ownership: None,
 }];
+
+/// A local server that signs in with Grain's Google flow.
+fn google_local(item: &Provider<'_>) -> bool {
+    local_spec(item).is_some_and(|spec| spec.google_account)
+}
+
+/// Whether the provider's account is signed in, wherever its grant lives.
+async fn account_connected(item: &Provider<'_>) -> Result<bool, String> {
+    if google_local(item) {
+        google::connected().await
+    } else {
+        stored_connected(item.id).await
+    }
+}
 
 fn all_providers() -> impl Iterator<Item = &'static CatalogProvider> {
     CATALOG.iter().chain(LOCAL_CATALOG)
@@ -1222,16 +1249,20 @@ pub async fn mcp_provider_status(
         if require_provider_access(&app, item).is_err() || provider(item.id).is_err() {
             continue;
         }
-        let client_id_configured = provider_client_id(&app, item).is_some();
+        let client_id_configured = if google_local(item) {
+            google::client_configured().await
+        } else {
+            provider_client_id(&app, item).is_some()
+        };
         let account_required = requires_account(item);
         let stored = if account_required {
-            stored_connected(item.id).await
+            account_connected(item).await
         } else {
             Ok(false)
         };
         let connected = stored.as_ref().is_ok_and(|value| *value);
         let observation = provider_control(item.id).ticket().recovery();
-        let state = if local_spec(item).is_some() {
+        let state = if local_spec(item).is_some() && !account_required {
             "local"
         } else if !account_required {
             "fixture_no_auth"
@@ -1272,8 +1303,11 @@ pub async fn mcp_set_client_credentials(
     client_secret: String,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    require_developer_mode(&app)?;
     let item = provider(&id)?;
+    if google_local(item) {
+        return google_set_client(&app, item, &client_id, &client_secret).await;
+    }
+    require_developer_mode(&app)?;
     if item.registration != Registration::PreRegistered {
         return Err("this provider does not require developer OAuth credentials".into());
     }
@@ -1407,6 +1441,87 @@ async fn set_client_credentials_flow(
     result.map_err(|_| "MCP credential update timed out")??
 }
 
+/// Save the user's Google OAuth client. A new client signs the account out.
+async fn google_set_client(
+    app: &AppHandle,
+    item: &'static CatalogProvider,
+    client_id: &str,
+    client_secret: &str,
+) -> Result<(), String> {
+    require_provider_access(app, item)?;
+    let ticket = provider_control(item.id).invalidate();
+    let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
+        .await
+        .map_err(|_| "Saving the Google client timed out")??;
+    google::save_client(client_id, client_secret).await?;
+    google_signed_out(app, item, &ticket).await
+}
+
+/// Shared tail of every Google sign-out: off, stopped, session file and
+/// cached tools gone.
+async fn google_signed_out(
+    app: &AppHandle,
+    item: &'static CatalogProvider,
+    ticket: &session::Ticket,
+) -> Result<(), String> {
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("application context unavailable")?;
+    ticket
+        .commit(|| {
+            ctx.update_settings(|settings| {
+                settings
+                    .mcp_enabled_providers
+                    .retain(|current| current != item.id);
+            })
+        })?
+        .map_err(|error| error.to_string())?;
+    if let Some(spec) = local_spec(item) {
+        local::stop(spec.id).await;
+        local::clear_session(app, spec).await;
+    }
+    forget_tool_cache(app, item).await;
+    Ok(())
+}
+
+/// Google sign-in for the local Workspace server, then the same "connected
+/// means on" behaviour as a remote sign-in.
+async fn google_connect(
+    app: &AppHandle,
+    item: &Provider<'_>,
+    ticket: &session::Ticket,
+) -> Result<(), String> {
+    let spec = local_spec(item).ok_or("unknown local MCP server")?;
+    // A running server still holds the previous account's session.
+    local::stop(spec.id).await;
+    local::clear_session(app, spec).await;
+    google::connect(app, ticket).await?;
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("application context unavailable")?;
+    let id = item.id.to_string();
+    ticket
+        .commit(|| {
+            ctx.update_settings(|settings| {
+                settings
+                    .mcp_enabled_providers
+                    .retain(|current| current != &id);
+                settings.mcp_enabled_providers.push(id.clone());
+                settings.mcp_enabled_providers.sort();
+            })
+        })?
+        .map_err(|error| error.to_string())?;
+    // Install now, never during an Agent call, then save the tool list.
+    local::ensure_installed(app, spec).await?;
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = list_tools(&app, &id).await {
+            log::warn!("[GRAIN] mcp-host {id} first discovery failed: {error}");
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn mcp_set_provider_enabled(
@@ -1422,7 +1537,7 @@ pub async fn mcp_set_provider_enabled(
     let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
         .await
         .map_err(|_| "MCP enable/disable timed out")??;
-    if enabled && requires_account(item) && !stored_connected(&id).await? {
+    if enabled && requires_account(item) && !account_connected(item).await? {
         return Err("connect this MCP provider before enabling it".into());
     }
     let local = local_spec(item);
@@ -1744,7 +1859,13 @@ async fn connect_flow(
         _ = cancelled => Err(SIGN_IN_CANCELLED.into()),
         result = tokio::time::timeout(
             CONNECT_TIMEOUT,
-            ticket.run(connect_oauth(app, item, &ticket)),
+            ticket.run(async {
+                if google_local(item) {
+                    google_connect(app, item, &ticket).await
+                } else {
+                    connect_oauth(app, item, &ticket).await
+                }
+            }),
         ) => result.map_err(|_| "authentication timed out after 5 minutes".to_string())
             .and_then(|result| result).and_then(|result| result),
         _ = window_closed => Err("authentication was cancelled because the app window closed".into()),
@@ -1930,6 +2051,10 @@ pub async fn mcp_disconnect_provider(
     let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
         .await
         .map_err(|_| "MCP disconnect timed out")??;
+    if google_local(item) {
+        google::disconnect().await?;
+        return google_signed_out(&app, item, &ticket).await;
+    }
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("application context unavailable")?;

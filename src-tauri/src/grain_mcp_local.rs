@@ -45,18 +45,60 @@ pub(super) struct Spec {
     pub package: Package,
     /// Fixed by Grain. Never taken from the model, the web or a page.
     pub args: &'static [&'static str],
+    /// Signs in with Grain's Google flow; gets a session file while running.
+    pub google_account: bool,
+    /// Python run before the package's entry point (`python -I -c`), for
+    /// switching off behaviour Grain must own. `None` runs the console script.
+    pub python_prelude: Option<&'static str>,
 }
 
-pub(super) const SPECS: &[Spec] = &[Spec {
-    id: "dev-local-time",
-    package: Package::Pypi {
-        name: "mcp-server-time",
-        version: "2026.10.19",
-        python: "3.12",
-        command: "mcp-server-time",
+/// workspace-mcp opens a browser for its own sign-in when a grant fails.
+/// Grain owns sign-in, so the server may never open one; it reports the
+/// failure instead and the user reconnects in Grain.
+const NO_BROWSER_WORKSPACE_MCP: &str = "import sys, webbrowser
+webbrowser.open = webbrowser.open_new = webbrowser.open_new_tab = lambda *a, **k: False
+from main import main
+sys.exit(main())";
+
+pub(super) const SPECS: &[Spec] = &[
+    Spec {
+        id: "dev-local-time",
+        package: Package::Pypi {
+            name: "mcp-server-time",
+            version: "2026.10.19",
+            python: "3.12",
+            command: "mcp-server-time",
+        },
+        args: &[],
+        google_account: false,
+        python_prelude: None,
     },
-    args: &[],
-}];
+    Spec {
+        id: super::google::PROVIDER_ID,
+        package: Package::Pypi {
+            name: "workspace-mcp",
+            version: "2.2.1",
+            python: "3.12",
+            command: "workspace-mcp",
+        },
+        // The services here must match the scopes in grain_mcp_google.rs.
+        args: &[
+            "--transport",
+            "stdio",
+            "--single-user",
+            "--tool-tier",
+            "core",
+            "--tools",
+            "gmail",
+            "calendar",
+            "drive",
+            "docs",
+            "sheets",
+        ],
+        google_account: true,
+        python_prelude: Some(NO_BROWSER_WORKSPACE_MCP),
+    },
+];
 
 pub(super) fn spec(id: &str) -> Option<&'static Spec> {
     SPECS.iter().find(|spec| spec.id == id)
@@ -77,6 +119,18 @@ fn runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn server_root(app: &AppHandle, spec: &Spec) -> Result<PathBuf, String> {
     Ok(data_dir(app)?.join("mcp-servers").join(spec.id))
+}
+
+/// Per-run files (the Google credential file). Removed when the server stops.
+fn session_dir(app: &AppHandle, spec: &Spec) -> Result<PathBuf, String> {
+    Ok(server_root(app, spec)?.join("session"))
+}
+
+/// Delete a server's per-run files (sign-out, removal).
+pub(super) async fn clear_session(app: &AppHandle, spec: &Spec) {
+    if let Ok(dir) = session_dir(app, spec) {
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
 }
 
 fn version(spec: &Spec) -> &'static str {
@@ -288,7 +342,7 @@ async fn remove_other_versions(root: &Path, keep: &str) {
         return;
     };
     while let Ok(Some(entry)) = entries.next_entry().await {
-        if entry.file_name() != keep {
+        if entry.file_name() != keep && entry.file_name() != "session" {
             let _ = tokio::fs::remove_dir_all(entry.path()).await;
         }
     }
@@ -302,6 +356,7 @@ struct Running {
     child: tokio::process::Child,
     last_used: Instant,
     in_use: usize,
+    session: Option<PathBuf>,
 }
 
 struct Host {
@@ -344,9 +399,25 @@ pub(super) async fn acquire(
         })?
         .map_err(|message| before_dispatch(FailureClass::Internal, message))?;
     make_room().await;
+    let (session, env) = if spec.google_account {
+        let dir = session_dir(app, spec)
+            .map_err(|message| before_dispatch(FailureClass::Internal, message))?;
+        let env = super::google::write_session(&dir)
+            .await
+            .map_err(|message| before_dispatch(FailureClass::Auth, message))?;
+        (Some(dir), env)
+    } else {
+        (None, Vec::new())
+    };
     let started = Instant::now();
-    let mut child = spawn(spec, &installed)
-        .map_err(|message| before_dispatch(FailureClass::Internal, message))?;
+    let spawned = spawn(spec, &installed, &env);
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(message) => {
+            remove_session(session.as_deref()).await;
+            return Err(before_dispatch(FailureClass::Internal, message));
+        }
+    };
     let spawn_ms = started.elapsed().as_millis();
     let (Some(stdout), Some(stdin)) = (child.stdout.take(), child.stdin.take()) else {
         let _ = child.kill().await;
@@ -369,6 +440,7 @@ pub(super) async fn acquire(
         Ok(Ok(service)) => Arc::new(service),
         _ => {
             let _ = child.kill().await;
+            remove_session(session.as_deref()).await;
             log::warn!("[GRAIN] mcp-host {} failed to start", spec.id);
             return Err(before_dispatch(
                 FailureClass::Network,
@@ -389,6 +461,7 @@ pub(super) async fn acquire(
             child,
             last_used: Instant::now(),
             in_use: 1,
+            session,
         },
     );
     if !host.reaper {
@@ -504,13 +577,34 @@ async fn shutdown(id: &str, mut running: Running, reason: &str) {
     {
         let _ = running.child.kill().await;
     }
+    remove_session(running.session.as_deref()).await;
     log::info!("[GRAIN] mcp-host {id} stop reason={reason} idle_s={uptime}");
 }
 
-fn spawn(spec: &Spec, program: &Path) -> Result<tokio::process::Child, String> {
-    let mut command = command(program);
+async fn remove_session(dir: Option<&Path>) {
+    if let Some(dir) = dir {
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+}
+
+fn spawn(
+    spec: &Spec,
+    program: &Path,
+    env: &[(&'static str, String)],
+) -> Result<tokio::process::Child, String> {
+    let mut command = match spec.python_prelude {
+        Some(prelude) => {
+            // The console script and the venv's python share a folder.
+            let python = program.with_file_name(exe_name("python"));
+            let mut command = command(&python);
+            command.args(["-I", "-c", prelude]);
+            command
+        }
+        None => command(program),
+    };
     command
         .args(spec.args)
+        .envs(env.iter().map(|(name, value)| (*name, value)))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());

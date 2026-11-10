@@ -43,6 +43,16 @@
   min-width: 0;
 }
 
+/* The OAuth client form takes its own line under the row. */
+.mcp-preset-available {
+  flex-wrap: wrap;
+}
+
+.mcp-preset-client {
+  flex-basis: 100%;
+  padding-left: 35px;
+}
+
 .mcp-preset-identity h3,
 .mcp-custom-heading h3 {
   margin: 0;

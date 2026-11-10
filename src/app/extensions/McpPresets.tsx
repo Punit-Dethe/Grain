@@ -4,9 +4,11 @@ import {
   useEffect,
   useRef,
   useState,
+  type FormEvent,
   type ReactNode,
 } from "react";
 import { Box } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
 import {
@@ -18,6 +20,7 @@ import githubIcon from "./icons/github.svg";
 import linearIcon from "./icons/linear.svg";
 import linearDarkIcon from "./icons/linear-light.svg";
 import notionIcon from "./icons/notion.png";
+import "./mcp-connections.css";
 import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
@@ -128,6 +131,78 @@ export function McpPresets({
       unwrapResult(await commands.mcpSetProviderEnabled(row.id, enabled));
       if (mounted.current) setMessage(null);
     });
+
+  const saveClient = (
+    event: FormEvent<HTMLFormElement>,
+    row: McpProviderStatus,
+  ) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const clientId = String(data.get("clientId") ?? "");
+    const clientSecret = String(data.get("clientSecret") ?? "");
+    event.currentTarget.reset();
+    void run(row.id, async () => {
+      unwrapResult(
+        await commands.mcpSetClientCredentials(row.id, clientId, clientSecret),
+      );
+      if (mounted.current)
+        setMessage("OAuth client saved. Connect to sign in.");
+    });
+  };
+
+  // Providers that sign in with the user's own OAuth client (Google
+  // Workspace) take its ID and secret here. Secrets go to the OS vault.
+  const clientSettings = (row: McpProviderStatus) =>
+    row.requires_client_credentials && (
+      <details
+        className="mcp-client-settings mcp-preset-client"
+        open={!row.client_id_configured}
+      >
+        <summary>
+          OAuth client {row.client_id_configured ? "(saved)" : "(required)"}
+        </summary>
+        <p className="mcp-integration-feedback">
+          Create a Desktop app OAuth client for your own account, then paste its
+          ID and secret.{" "}
+          <button
+            className="button ghost"
+            type="button"
+            onClick={() => void openUrl(row.setup_url)}
+          >
+            Open setup page
+          </button>
+        </p>
+        <form
+          className="mcp-connection-form"
+          onSubmit={(event) => saveClient(event, row)}
+        >
+          <label>
+            Client ID
+            <input
+              name="clientId"
+              required
+              autoComplete="off"
+              disabled={busy !== null}
+            />
+          </label>
+          <label>
+            Client secret
+            <input
+              name="clientSecret"
+              type="password"
+              required
+              autoComplete="new-password"
+              disabled={busy !== null}
+            />
+          </label>
+          <div className="mcp-connection-actions">
+            <button className="button" type="submit" disabled={busy !== null}>
+              Save OAuth client
+            </button>
+          </div>
+        </form>
+      </details>
+    );
 
   const signInButton = (row: McpProviderStatus) =>
     signingIn === row.id ? (
@@ -283,9 +358,12 @@ export function McpPresets({
                         onChange={(enabled) => void setEnabled(row, enabled)}
                       />
                     ) : (
+                      (!row.requires_client_credentials ||
+                        row.client_id_configured) &&
                       signInButton(row)
                     )}
                   </div>
+                  {clientSettings(row)}
                 </article>
               ))}
             </div>
