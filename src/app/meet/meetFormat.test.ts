@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingSummary } from "@/bindings";
-import {
-  groupByDay,
-  highlightParts,
-  levelFraction,
-  turnAt,
-  wordAt,
-} from "./meetFormat";
+import { groupByDay, highlightParts, turnAt, wordAt } from "./meetFormat";
 import type { Turn } from "./transcriptTurns";
 
 function meeting(id: string, created: Date): MeetingSummary {
@@ -35,17 +29,6 @@ function turn(key: string, startMs: number, endMs: number): Turn {
   };
 }
 
-describe("levelFraction", () => {
-  it("maps peaks onto a 60 dB scale", () => {
-    expect(levelFraction(0)).toBe(0);
-    expect(levelFraction(Number.NaN)).toBe(0);
-    expect(levelFraction(1)).toBe(1);
-    expect(levelFraction(0.001)).toBeCloseTo(0, 5);
-    expect(levelFraction(0.1)).toBeCloseTo(2 / 3, 5);
-    expect(levelFraction(4)).toBe(1);
-  });
-});
-
 describe("groupByDay", () => {
   it("groups consecutive meetings by local day", () => {
     const now = new Date(2026, 10, 2, 15, 0);
@@ -63,6 +46,35 @@ describe("groupByDay", () => {
       ["yesterday", ["c"]],
       ["date", ["d"]],
     ]);
+  });
+
+  it("filters titles and previews, then reverses days and rows for oldest first", () => {
+    const now = new Date(2026, 10, 2, 15, 0);
+    const meetings = [
+      meeting("Plan review", new Date(2026, 10, 2, 14, 0)),
+      meeting("Planning call", new Date(2026, 10, 2, 9, 0)),
+      {
+        ...meeting("Weekly sync", new Date(2026, 10, 1, 16, 0)),
+        preview: "Agreed on a plan.",
+      },
+      meeting("Lunch", new Date(2026, 10, 1, 12, 0)),
+    ];
+
+    const groups = groupByDay(meetings, now, {
+      query: " PLAN ",
+      oldestFirst: true,
+    });
+
+    expect(
+      groups.map((group) => [group.kind, group.meetings.map((m) => m.id)]),
+    ).toEqual([
+      ["yesterday", ["Weekly sync"]],
+      ["today", ["Planning call", "Plan review"]],
+    ]);
+    expect(meetings[0].id).toBe("Plan review");
+    expect(
+      groupByDay(meetings, now, { query: "missing", oldestFirst: false }),
+    ).toEqual([]);
   });
 });
 

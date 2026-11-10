@@ -1066,7 +1066,6 @@
     },
     "meet": {
       "name": "Recall",
-      "subtitle": "Record and transcribe on this device.",
       "processFailed": "Transcription failed.",
       "studio": {
         "start": "Start recording",
@@ -1085,15 +1084,11 @@
         "turnOn": "Turn on {{source}}",
         "turnOff": "Turn off {{source}}",
         "systemUnavailable": "System audio is unavailable on this platform",
-        "keepOne": "Keep at least one source on",
-        "headphones": "Use headphones to avoid capturing audio twice."
+        "keepOne": "Keep at least one source on"
       },
       "live": {
         "label": "Recording in progress",
-        "recording": "Recording · transcribed on this device after you stop",
-        "level": "{{source}} level",
-        "micSilent": "No audio from the microphone. Reconnecting…",
-        "systemWaiting": "Waiting for sound"
+        "recording": "Recording · transcribed on this device after you stop"
       },
       "speakerModel": {
         "body": "Labelling who spoke needs a one-time 106 MB download. Recording works without it.",
@@ -1103,6 +1098,11 @@
       },
       "list": {
         "heading": "Recordings",
+        "search": "Search recordings",
+        "sortByDate": "Sort recordings by date",
+        "newestFirst": "Newest first",
+        "oldestFirst": "Oldest first",
+        "noMatches": "No recordings match your search.",
         "loading": "Loading recordings…",
         "loadError": "Recordings could not be loaded.",
         "retry": "Try again",

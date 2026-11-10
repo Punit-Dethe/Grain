@@ -19,8 +19,8 @@ const IDLE: MeetStatus = {
   last_error: null,
 };
 
-/** How often the live recording panel refreshes its clock and meters. */
-const LIVE_POLL_MS = 100;
+/** The recording clock shows whole seconds. */
+const LIVE_POLL_MS = 1_000;
 
 function unwrap<T>(
   result: { status: "ok"; data: T } | { status: "error"; error: string },
@@ -230,9 +230,8 @@ export function useMeetController(): MeetController {
 }
 
 /**
- * The live recording status (clock, per-source levels), polled only while a
- * recording runs and only by the component that shows it, so the rest of the
- * page does not re-render ten times a second.
+ * Refresh the recording clock and capture error only while recording and only
+ * in the component that displays them.
  */
 export function useLiveRecording(
   initial: RecordingStatus | null,

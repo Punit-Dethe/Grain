@@ -5057,22 +5057,8 @@ html[data-theme="light"] .grain-root {
   align-items: center;
   justify-content: space-between;
   gap: 16px 24px;
-  padding-block-end: 20px;
+  padding-block-end: 14px;
   border-block-end: 1px solid var(--hairline);
-}
-
-.meet-head .page-subtitle {
-  margin-block-start: 4px;
-  font-size: 13px;
-}
-
-.meet-header-actions {
-  display: grid;
-  justify-items: end;
-  gap: 6px;
-  min-width: 0;
-  max-width: 100%;
-  margin-inline-start: auto;
 }
 
 .meet-toolbar {
@@ -5080,7 +5066,9 @@ html[data-theme="light"] .grain-root {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  min-width: 0;
   max-width: 100%;
+  margin-inline-start: auto;
 }
 
 .meet-source-controls,
@@ -5162,14 +5150,6 @@ html[data-theme="light"] .grain-root {
   outline-offset: -2px;
 }
 
-.meet-source-tip {
-  margin: 0;
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.45;
-  text-align: end;
-}
-
 .grain-root .meet-record-action {
   min-width: 0;
   max-width: 100%;
@@ -5219,35 +5199,6 @@ html[data-theme="light"] .grain-root {
   }
 }
 
-.meet-live-strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
-  gap: 10px 24px;
-  margin-block-start: 14px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--meet-surface);
-}
-
-.meet-live-strip .meet-inline-error {
-  grid-column: 1 / -1;
-  margin: 0;
-}
-
-.meet-source {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.meet-source-body {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
 .meet-source-icon {
   display: grid;
   width: 30px;
@@ -5256,44 +5207,6 @@ html[data-theme="light"] .grain-root {
   border-radius: 8px;
   color: var(--text-2);
   background: var(--accent-soft);
-}
-
-.meet-source-name {
-  color: var(--text-1);
-  font-size: 13px;
-  font-weight: 590;
-}
-
-.meet-source-note {
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Live input meter: a row of ticks. */
-.meet-ticks {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 16px;
-}
-
-.meet-ticks i {
-  width: 3px;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent-soft-hover);
-  transition: background 0.08s linear;
-}
-
-.meet-ticks i.on {
-  background: color-mix(in srgb, var(--sage) 85%, var(--text-1));
-}
-
-.meet-ticks i.is-hot {
-  background: var(--peach);
 }
 
 /* --- Callouts and errors --------------------------------------------- */
@@ -5378,14 +5291,38 @@ html[data-theme="light"] .grain-root {
 /* --- Recordings list: one rounded group per day, rows divided by a hairline */
 
 .meet-recordings {
-  margin-block-start: 24px;
+  margin-block-start: 16px;
 }
 
-.meet-recordings > h2 {
-  margin-bottom: 4px;
+.meet-recordings-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
 }
 
-.meet-day h3 {
+.meet-recordings-controls .meet-search {
+  flex: 0 1 320px;
+  min-width: min(180px, 100%);
+}
+
+.grain-root .meet-recordings-sort {
+  min-width: 0;
+  max-width: 100%;
+  height: 36px;
+  margin-inline-start: auto;
+  border-radius: 8px;
+  background-color: var(--accent-soft);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.meet-recordings-sort option {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.meet-day h2 {
   margin: 20px 4px 8px;
   color: var(--text-3);
   font-size: 12px;
@@ -5441,15 +5378,6 @@ html[data-theme="light"] .grain-root {
   border-radius: 13px;
   color: var(--text-3);
   background: var(--accent-soft);
-}
-
-.meet-lead.is-live {
-  background: color-mix(in srgb, var(--meet-live) 14%, transparent);
-}
-
-.meet-lead .meet-live-dot {
-  width: 10px;
-  height: 10px;
 }
 
 .meet-lead-stack {
@@ -5521,10 +5449,6 @@ html[data-theme="light"] .grain-root {
 
 .meet-row:not([data-state="transcribed"]) .meet-row-preview {
   color: var(--text-3);
-}
-
-.meet-row[data-state="recording"] .meet-row-preview {
-  color: var(--meet-error-ink);
 }
 
 .meet-row-meta {
@@ -5981,20 +5905,6 @@ html[data-theme="light"] .grain-root {
   transition: opacity 0.2s ease;
 }
 
-/* Live recording row: a soft red wash and moving level bars. */
-.meet-row[data-state="recording"] {
-  background: color-mix(in srgb, var(--meet-live) 6%, transparent);
-}
-
-.meet-row[data-state="recording"]:hover {
-  background: color-mix(in srgb, var(--meet-live) 10%, transparent);
-}
-
-.meet-row[data-state="recording"] .meet-row-duration {
-  color: var(--meet-error-ink);
-  font-weight: 600;
-}
-
 .meet-bars {
   height: 16px;
   display: flex;
@@ -6315,7 +6225,6 @@ html[data-theme="light"] .grain-root {
     animation: none;
   }
 
-  .meet-ticks i,
   .meet-progress i,
   .meet-row-go,
   .meet-underline {

@@ -20,7 +20,6 @@ import type {
   SourceDevice,
   SourceKind,
   SourceSettings,
-  SourceStatus,
   Stage,
   TrackStatus,
   TranscriptRevision,
@@ -39,9 +38,9 @@ import {
 import {
   groupByDay,
   highlightParts,
-  levelFraction,
   turnAt,
   wordAt,
+  type RecordingFilters,
 } from "../meet/meetFormat";
 import {
   useLiveRecording,
@@ -61,7 +60,6 @@ const STAGES: Stage[] = [
 ];
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
 const SKIP_MS = 10_000;
-const METER_TICKS = 18;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -200,60 +198,6 @@ function SourceControl({
   );
 }
 
-function Meter({ fraction, label }: { fraction: number; label: string }) {
-  const lit = Math.round(fraction * METER_TICKS);
-  return (
-    <div
-      className="meet-ticks"
-      role="meter"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(fraction * 100)}
-    >
-      {Array.from({ length: METER_TICKS }, (_, index) => (
-        <i
-          key={index}
-          className={
-            index < lit
-              ? index >= METER_TICKS - 3
-                ? "on is-hot"
-                : "on"
-              : undefined
-          }
-        />
-      ))}
-    </div>
-  );
-}
-
-function LiveSource({ source }: { source: SourceStatus }) {
-  const { t } = useTranslation();
-  const name = sourceName(source.kind, t);
-  const note = source.active
-    ? source.name
-    : source.kind === "Microphone"
-      ? t("ui2.meet.live.micSilent")
-      : t("ui2.meet.live.systemWaiting");
-  return (
-    <div className="meet-source">
-      <span className="meet-source-icon">
-        <Glyph name={SOURCE_ICON[source.kind]} />
-      </span>
-      <div className="meet-source-body">
-        <span className="meet-source-name">{name}</span>
-        <span className="meet-source-note" title={source.name}>
-          {note}
-        </span>
-      </div>
-      <Meter
-        fraction={levelFraction(source.level)}
-        label={t("ui2.meet.live.level", { source: name })}
-      />
-    </div>
-  );
-}
-
 type CaptureCommand = "sources" | "start" | "stop";
 
 function RecordingHeader({ meet }: { meet: MeetController }) {
@@ -293,105 +237,85 @@ function RecordingHeader({ meet }: { meet: MeetController }) {
   return (
     <>
       <header className="meet-head">
-        <div>
-          <h1>{t("ui2.meet.name")}</h1>
-          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-        </div>
-        <div className="meet-header-actions">
-          <div className="meet-toolbar">
-            {recording ? (
-              <span
-                className="meet-record-clock"
-                role="timer"
-                aria-label={t("ui2.meet.live.label")}
-              >
-                {formatClock(recording.elapsed_ms)}
-              </span>
-            ) : (
-              <div
-                className="meet-source-controls"
-                role="group"
-                aria-busy={!sources}
-                aria-label={t("ui2.meet.sources.label")}
-              >
-                <SourceControl
-                  kind="Microphone"
-                  choice={settings?.microphone}
-                  devices={sources?.microphones}
-                  pending={pending !== null}
-                  locked={micOn && !systemOn}
-                  onChange={(microphone) => {
-                    if (settings)
-                      void run("sources", () =>
-                        meet.setSources({ ...settings, microphone }),
-                      );
-                  }}
-                />
-                <SourceControl
-                  kind="SystemAudio"
-                  choice={settings?.system_audio}
-                  devices={sources?.outputs}
-                  pending={pending !== null}
-                  locked={systemOn && !micOn}
-                  unsupported={sources?.system_audio_supported === false}
-                  onChange={(system_audio) => {
-                    if (settings)
-                      void run("sources", () =>
-                        meet.setSources({ ...settings, system_audio }),
-                      );
-                  }}
-                />
-              </div>
-            )}
-            <button
-              className="button primary meet-record-action"
-              type="button"
-              aria-disabled={recordDisabled}
-              onClick={() => {
-                if (!recordDisabled) {
-                  void run(
-                    recording ? "stop" : "start",
-                    recording
-                      ? meet.stopRecording
-                      : () => meet.startRecording(null),
-                  );
-                }
-              }}
+        <h1>{t("ui2.meet.name")}</h1>
+        <div className="meet-toolbar">
+          {recording ? (
+            <span
+              className="meet-record-clock"
+              role="timer"
+              aria-label={t("ui2.meet.live.label")}
             >
-              <span
-                className={
-                  recording ? "meet-record-mark is-stop" : "meet-record-mark"
-                }
-                aria-hidden="true"
+              {formatClock(recording.elapsed_ms)}
+            </span>
+          ) : (
+            <div
+              className="meet-source-controls"
+              role="group"
+              aria-busy={!sources}
+              aria-label={t("ui2.meet.sources.label")}
+            >
+              <SourceControl
+                kind="Microphone"
+                choice={settings?.microphone}
+                devices={sources?.microphones}
+                pending={pending !== null}
+                locked={micOn && !systemOn}
+                onChange={(microphone) => {
+                  if (settings)
+                    void run("sources", () =>
+                      meet.setSources({ ...settings, microphone }),
+                    );
+                }}
               />
-              {recording
-                ? t("ui2.meet.studio.stop")
-                : pending === "start"
-                  ? t("ui2.meet.studio.starting")
-                  : t("ui2.meet.studio.start")}
-            </button>
-          </div>
-          {!recording && micOn && systemOn && (
-            <p className="meet-source-tip">
-              {t("ui2.meet.sources.headphones")}
-            </p>
+              <SourceControl
+                kind="SystemAudio"
+                choice={settings?.system_audio}
+                devices={sources?.outputs}
+                pending={pending !== null}
+                locked={systemOn && !micOn}
+                unsupported={sources?.system_audio_supported === false}
+                onChange={(system_audio) => {
+                  if (settings)
+                    void run("sources", () =>
+                      meet.setSources({ ...settings, system_audio }),
+                    );
+                }}
+              />
+            </div>
           )}
+          <button
+            className="button primary meet-record-action"
+            type="button"
+            aria-disabled={recordDisabled}
+            onClick={() => {
+              if (!recordDisabled) {
+                void run(
+                  recording ? "stop" : "start",
+                  recording
+                    ? meet.stopRecording
+                    : () => meet.startRecording(null),
+                );
+              }
+            }}
+          >
+            <span
+              className={
+                recording ? "meet-record-mark is-stop" : "meet-record-mark"
+              }
+              aria-hidden="true"
+            />
+            {recording
+              ? t("ui2.meet.studio.stop")
+              : pending === "start"
+                ? t("ui2.meet.studio.starting")
+                : t("ui2.meet.studio.start")}
+          </button>
         </div>
       </header>
-      {recording && (
-        <section
-          className="meet-live-strip"
-          aria-label={t("ui2.meet.live.label")}
-        >
-          {recording.sources.map((source) => (
-            <LiveSource key={source.kind} source={source} />
-          ))}
-          {recording.error && (
-            <p className="meet-inline-error" role="alert">
-              {recording.error}
-            </p>
-          )}
-        </section>
+      {recording?.error && (
+        <p className="meet-inline-error" role="alert">
+          {recording.error}
+        </p>
       )}
     </>
   );
@@ -446,7 +370,7 @@ function RecordingLead({
 }) {
   if (state === "recording") {
     return (
-      <span className="meet-lead is-live" aria-hidden="true">
+      <span className="meet-lead" aria-hidden="true">
         <span className="meet-bars">
           <i />
           <i />
@@ -500,13 +424,21 @@ function useSecondTick(active: boolean): number {
   return now;
 }
 
-function Recordings({ meet }: { meet: MeetController }) {
+function Recordings({
+  meet,
+  filters,
+  onFiltersChange,
+}: {
+  meet: MeetController;
+  filters: RecordingFilters;
+  onFiltersChange: (filters: RecordingFilters) => void;
+}) {
   const { t, i18n } = useTranslation();
   const recordingId = meet.status.recording?.session_id;
   const now = useSecondTick(Boolean(recordingId));
   const groups = useMemo(
-    () => groupByDay(meet.meetings, new Date()),
-    [meet.meetings],
+    () => groupByDay(meet.meetings, new Date(), filters),
+    [meet.meetings, filters],
   );
   const dayFormat = useMemo(
     () =>
@@ -548,17 +480,23 @@ function Recordings({ meet }: { meet: MeetController }) {
         <p>{t("ui2.meet.list.empty")}</p>
       </div>
     );
+  } else if (groups.length === 0) {
+    body = (
+      <p className="meet-list-state" role="status">
+        {t("ui2.meet.list.noMatches")}
+      </p>
+    );
   } else {
     const processingId = meet.status.processing?.session_id;
     body = groups.map((group) => (
       <section key={group.key} className="meet-day">
-        <h3>
+        <h2>
           {group.kind === "today"
             ? t("ui2.meet.list.today")
             : group.kind === "yesterday"
               ? t("ui2.meet.list.yesterday")
               : dayFormat.format(group.day)}
-        </h3>
+        </h2>
         <ul>
           {group.meetings.map((meeting) => {
             const state =
@@ -622,8 +560,38 @@ function Recordings({ meet }: { meet: MeetController }) {
   }
 
   return (
-    <section className="meet-recordings" aria-labelledby="meet-recordings">
-      <h2 id="meet-recordings">{t("ui2.meet.list.heading")}</h2>
+    <section
+      className="meet-recordings"
+      aria-label={t("ui2.meet.list.heading")}
+    >
+      <div className="meet-recordings-controls">
+        <label className="meet-search">
+          <Glyph name="search" />
+          <input
+            type="search"
+            value={filters.query}
+            onChange={(event) =>
+              onFiltersChange({ ...filters, query: event.target.value })
+            }
+            placeholder={t("ui2.meet.list.search")}
+            aria-label={t("ui2.meet.list.search")}
+          />
+        </label>
+        <select
+          className="select meet-recordings-sort"
+          value={filters.oldestFirst ? "oldest" : "newest"}
+          onChange={(event) =>
+            onFiltersChange({
+              ...filters,
+              oldestFirst: event.target.value === "oldest",
+            })
+          }
+          aria-label={t("ui2.meet.list.sortByDate")}
+        >
+          <option value="newest">{t("ui2.meet.list.newestFirst")}</option>
+          <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
+        </select>
+      </div>
       {body}
     </section>
   );
@@ -1475,6 +1443,10 @@ function MeetingView({
 export function MeetPage({ meetingId }: { meetingId: string | null }) {
   const { t } = useTranslation();
   const meet = useMeetController();
+  const [filters, setFilters] = useState<RecordingFilters>({
+    query: "",
+    oldestFirst: false,
+  });
   const pageRef = useRef<HTMLElement>(null);
   const meeting = meetingId
     ? (meet.meetings.find((m) => m.id === meetingId) ?? null)
@@ -1514,7 +1486,11 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
             </p>
           </div>
         )}
-        <Recordings meet={meet} />
+        <Recordings
+          meet={meet}
+          filters={filters}
+          onFiltersChange={setFilters}
+        />
       </div>
     );
   }
