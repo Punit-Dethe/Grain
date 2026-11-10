@@ -22,12 +22,16 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use super::wav::{self, ChunkFile};
 
 pub const MANIFEST_VERSION: u32 = 1;
 const MANIFEST: &str = "manifest.json";
 const MANIFEST_TMP: &str = "manifest.json.tmp";
+const MAX_TITLE_LENGTH: usize = 120;
+// Recovery and renaming can both replace a manifest through the same temp file.
+static MANIFEST_MAINTENANCE: Mutex<()> = Mutex::new(());
 /// FluidMeet's storage chunk length (`MeetingCaptureConfiguration.defaultChunkDuration`).
 pub const CHUNK_SECONDS: u64 = 60;
 /// FluidMeet rotates a chunk when capture resumes more than 0.5 s after the
@@ -248,6 +252,31 @@ pub fn load_manifest(session: &Path) -> Result<Manifest, String> {
         .map_err(|error| format!("Meeting manifest is corrupt: {error}"))?;
     manifest.validate(session.file_name().and_then(|name| name.to_str()))?;
     Ok(manifest)
+}
+
+/// Rename a sealed session without touching its audio or transcript.
+pub fn rename_session(session: &Path, title: &str) -> Result<(), String> {
+    let title = title.trim();
+    if title.is_empty() || title.chars().any(char::is_control) {
+        return Err("Enter a single-line meeting name".into());
+    }
+    if title.encode_utf16().count() > MAX_TITLE_LENGTH {
+        return Err(format!(
+            "Meeting names are limited to {MAX_TITLE_LENGTH} characters"
+        ));
+    }
+    let _maintenance = MANIFEST_MAINTENANCE
+        .lock()
+        .map_err(|_| "Could not lock the meeting manifest")?;
+    let mut manifest = load_manifest(session)?;
+    if manifest.state != SessionState::Recorded {
+        return Err("Finish the recording before renaming it".into());
+    }
+    if manifest.title == title {
+        return Ok(());
+    }
+    manifest.title = title.to_owned();
+    write_manifest(session, &manifest)
 }
 
 /// Path of a chunk's audio file.
@@ -541,6 +570,9 @@ pub struct RecoveryReport {
 /// only empty or unreadable chunk files are removed, and their intervals are
 /// recorded as `Missing` gaps.
 pub fn recover(session: &Path) -> Result<(Manifest, RecoveryReport), String> {
+    let _maintenance = MANIFEST_MAINTENANCE
+        .lock()
+        .map_err(|_| "Could not lock the meeting manifest")?;
     let mut manifest = load_manifest(session)?;
     let mut report = RecoveryReport::default();
     let _ = fs::remove_file(session.join(MANIFEST_TMP));
@@ -681,6 +713,25 @@ mod tests {
         TrackSource::Microphone {
             device: "Test mic".into(),
         }
+    }
+
+    #[test]
+    fn rename_requires_a_sealed_session_and_persists_only_the_title() {
+        let root = tempfile::tempdir().unwrap();
+        let mut writer = SessionWriter::create(root.path(), "Standup").unwrap();
+        let track = writer.add_track(mic()).unwrap();
+        writer.append(track, block(0, &[0.1, -0.1])).unwrap();
+        let dir = writer.dir().to_path_buf();
+        assert!(rename_session(&dir, "Planning").is_err());
+        let mut expected = writer.finish().unwrap();
+        assert!(rename_session(&dir, "  ").is_err());
+        assert!(rename_session(&dir, "Two\nlines").is_err());
+        assert!(rename_session(&dir, &"a".repeat(MAX_TITLE_LENGTH + 1)).is_err());
+        assert_eq!(load_manifest(&dir).unwrap(), expected);
+
+        rename_session(&dir, "  Planning  ").unwrap();
+        expected.title = "Planning".into();
+        assert_eq!(load_manifest(&dir).unwrap(), expected);
     }
 
     #[test]

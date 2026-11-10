@@ -45,6 +45,7 @@ export interface MeetController {
   stopRecording: () => Promise<MeetingSummary>;
   process: (sessionId: string) => Promise<void>;
   cancelProcessing: () => Promise<void>;
+  renameMeeting: (sessionId: string, title: string) => Promise<void>;
   deleteMeeting: (sessionId: string) => Promise<void>;
   downloadDiarizer: () => Promise<void>;
   loadTranscript: (sessionId: string) => Promise<TranscriptRevision | null>;
@@ -63,28 +64,32 @@ export function useMeetController(): MeetController {
   );
   const [diarizerProgress, setDiarizerProgress] = useState<number | null>(null);
   const mountedRef = useRef(false);
+  const reloadRequest = useRef(0);
   const sourcesRef = useRef<MeetSources | null>(null);
   useEffect(() => {
     sourcesRef.current = sources;
   }, [sources]);
 
   const reload = useCallback(async () => {
+    const request = ++reloadRequest.current;
+    const currentRequest = () =>
+      mountedRef.current && request === reloadRequest.current;
     try {
       const [list, installed, current] = await Promise.all([
         commands.meetList().then(unwrap),
         commands.meetDiarizerInstalled().then(unwrap),
         commands.meetStatus(),
       ]);
-      if (!mountedRef.current) return;
+      if (!currentRequest()) return;
       setMeetings(list);
       setDiarizerInstalled(installed);
       setStatus(current);
       setLoadError(null);
     } catch (error) {
       console.error("Failed to load meetings:", error);
-      if (mountedRef.current) setLoadError(String(error));
+      if (currentRequest()) setLoadError(String(error));
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (currentRequest()) setLoading(false);
     }
   }, []);
 
@@ -161,6 +166,14 @@ export function useMeetController(): MeetController {
     unwrap(await commands.meetCancelProcessing());
   }, []);
 
+  const renameMeeting = useCallback(
+    async (sessionId: string, title: string) => {
+      await commands.meetRename(sessionId, title).then(unwrap);
+      await reload();
+    },
+    [reload],
+  );
+
   const deleteMeeting = useCallback(async (sessionId: string) => {
     unwrap(await commands.meetDelete(sessionId));
     if (mountedRef.current) {
@@ -211,6 +224,7 @@ export function useMeetController(): MeetController {
     stopRecording,
     process,
     cancelProcessing,
+    renameMeeting,
     deleteMeeting,
     downloadDiarizer,
     loadTranscript,

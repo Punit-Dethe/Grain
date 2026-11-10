@@ -59,6 +59,7 @@ const STAGES: Stage[] = [
 ];
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
 const SKIP_MS = 10_000;
+const MAX_MEETING_TITLE_LENGTH = 120;
 const METER_TICKS = 18;
 
 function errorText(error: unknown): string {
@@ -502,20 +503,55 @@ function useSecondTick(active: boolean): number {
   return now;
 }
 
+function RecallSearch({
+  label,
+  value,
+  onChange,
+  inputRef,
+}: {
+  label: string;
+  value: string;
+  onChange: (query: string) => void;
+  inputRef?: RefObject<HTMLInputElement>;
+}) {
+  return (
+    <label className="meet-search">
+      <Glyph name="search" />
+      <input
+        ref={inputRef}
+        type="search"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={label}
+        aria-label={label}
+      />
+    </label>
+  );
+}
+
 function Recordings({
   meet,
   emptyAction,
+  query,
+  onQueryChange,
 }: {
   meet: MeetController;
   emptyAction: ReactNode;
+  query: string;
+  onQueryChange: (query: string) => void;
 }) {
   const { t, i18n } = useTranslation();
   const recordingId = meet.status.recording?.session_id;
   const now = useSecondTick(Boolean(recordingId));
-  const groups = useMemo(
-    () => groupByDay(meet.meetings, new Date()),
-    [meet.meetings],
-  );
+  const groups = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase(i18n.language);
+    const meetings = needle
+      ? meet.meetings.filter((meeting) =>
+          meeting.title.toLocaleLowerCase(i18n.language).includes(needle),
+        )
+      : meet.meetings;
+    return groupByDay(meetings, new Date());
+  }, [meet.meetings, query, i18n.language]);
   const dayFormat = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.language, {
@@ -555,6 +591,12 @@ function Recordings({
         <p>{t("ui2.meet.list.empty")}</p>
         {emptyAction}
       </div>
+    );
+  } else if (groups.length === 0) {
+    body = (
+      <p className="meet-list-state" role="status">
+        {t("ui2.meet.list.noMatches")}
+      </p>
     );
   } else {
     const processingId = meet.status.processing?.session_id;
@@ -620,7 +662,16 @@ function Recordings({
 
   return (
     <section className="meet-recordings" aria-labelledby="meet-recordings">
-      <h2 id="meet-recordings">{t("ui2.meet.list.heading")}</h2>
+      <div className="meet-recordings-head">
+        <h2 id="meet-recordings">{t("ui2.meet.list.heading")}</h2>
+        {!meet.loading && !meet.loadError && meet.meetings.length > 0 && (
+          <RecallSearch
+            label={t("ui2.meet.list.search")}
+            value={query}
+            onChange={onQueryChange}
+          />
+        )}
+      </div>
       {body}
     </section>
   );
@@ -1105,6 +1156,21 @@ function MeetingView({
   const [transcript, setTranscript] = useState<TranscriptRevision | null>(null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [draftTitle, setDraftTitle] = useState<string | null>(null);
+  const [savingTitle, setSavingTitle] = useState(false);
+  const titleInput = useRef<HTMLInputElement>(null);
+  const renameButton = useRef<HTMLButtonElement>(null);
+  const transcriptSearch = useRef<HTMLInputElement>(null);
+  const editingTitle = draftTitle !== null;
+  const nextTitle = draftTitle?.trim() ?? "";
+  const canRename = meeting.state === "Recorded";
+  const canSaveTitle =
+    canRename &&
+    nextTitle.length > 0 &&
+    nextTitle.length <= MAX_MEETING_TITLE_LENGTH &&
+    nextTitle !== meeting.title &&
+    !savingTitle;
+  const { loadTranscript } = meet;
   const processing = meet.status.processing;
   const isProcessing = processing?.session_id === meeting.id;
   const isRecording = meet.status.recording?.session_id === meeting.id;
@@ -1112,18 +1178,23 @@ function MeetingView({
   const playback = usePlayback(meet, meeting.id);
 
   useEffect(() => {
+    if (!editingTitle) return;
+    titleInput.current?.focus();
+    titleInput.current?.select();
+  }, [editingTitle]);
+
+  useEffect(() => {
     let active = true;
     setTranscript(null);
     setTranscriptError(null);
     if (meeting.transcript_revision == null) return;
-    meet
-      .loadTranscript(meeting.id)
+    loadTranscript(meeting.id)
       .then((revision) => active && setTranscript(revision))
       .catch((error) => active && setTranscriptError(errorText(error)));
     return () => {
       active = false;
     };
-  }, [meet, meeting.id, meeting.transcript_revision]);
+  }, [loadTranscript, meeting.id, meeting.transcript_revision]);
 
   // Space plays and pauses, as in every media app.
   const { toggle } = playback;
@@ -1232,6 +1303,24 @@ function MeetingView({
     }
   };
 
+  const closeRename = () => {
+    setDraftTitle(null);
+    renameButton.current?.focus();
+  };
+
+  const saveTitle = async () => {
+    if (!canSaveTitle) return;
+    setSavingTitle(true);
+    try {
+      await meet.renameMeeting(meeting.id, nextTitle);
+      closeRename();
+    } catch (error) {
+      toast.error(errorText(error));
+    } finally {
+      setSavingTitle(false);
+    }
+  };
+
   const remove = async () => {
     const confirmed = await ask(t("ui2.meet.detail.deleteConfirm"), {
       kind: "warning",
@@ -1282,16 +1371,19 @@ function MeetingView({
     body = (
       <>
         <div className="meet-transcript-bar">
-          <label className="meet-search">
-            <Glyph name="search" />
-            <input
-              type="search"
+          <div className="meet-transcript-find">
+            <RecallSearch
+              inputRef={transcriptSearch}
+              label={t("ui2.meet.detail.search")}
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("ui2.meet.detail.search")}
-              aria-label={t("ui2.meet.detail.search")}
+              onChange={setQuery}
             />
-          </label>
+            {query.trim() && visible.length > 0 && (
+              <span className="meet-search-count" role="status">
+                {t("ui2.meet.detail.searchMatches", { count: visible.length })}
+              </span>
+            )}
+          </div>
           {transcript.speakers.length > 0 && (
             <ul
               className="meet-legend"
@@ -1315,7 +1407,7 @@ function MeetingView({
           )}
         </div>
         {visible.length === 0 ? (
-          <p className="meet-empty-line">
+          <p className="meet-empty-line" role="status">
             {turns.length === 0
               ? t("ui2.meet.detail.noSpeech")
               : t("ui2.meet.detail.noMatches")}
@@ -1391,6 +1483,46 @@ function MeetingView({
           <div className="meet-view-title">
             <div>
               <h1 id="meet-view-title">{meeting.title}</h1>
+              {draftTitle !== null && (
+                <form
+                  className="meet-rename"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void saveTitle();
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && !savingTitle) {
+                      event.preventDefault();
+                      closeRename();
+                    }
+                  }}
+                >
+                  <input
+                    ref={titleInput}
+                    type="text"
+                    aria-label={t("ui2.meet.detail.meetingName")}
+                    maxLength={MAX_MEETING_TITLE_LENGTH}
+                    value={draftTitle}
+                    disabled={savingTitle}
+                    onChange={(event) => setDraftTitle(event.target.value)}
+                  />
+                  <button
+                    className="button primary"
+                    type="submit"
+                    disabled={!canSaveTitle}
+                  >
+                    {t("common.save")}
+                  </button>
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={closeRename}
+                    disabled={savingTitle}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </form>
+              )}
               <p className="meet-meta">
                 <span>{when}</span>
                 <span>{formatClock(meeting.duration_ms)}</span>
@@ -1398,6 +1530,29 @@ function MeetingView({
               </p>
             </div>
             <div className="meet-view-actions">
+              <button
+                ref={renameButton}
+                className="button"
+                type="button"
+                disabled={!canRename}
+                onClick={() => {
+                  if (editingTitle) titleInput.current?.focus();
+                  else setDraftTitle(meeting.title);
+                }}
+              >
+                {t("ui2.meet.detail.rename")}
+              </button>
+              {transcript && !isRecording && (
+                <button
+                  className="icon-button"
+                  type="button"
+                  aria-label={t("ui2.meet.detail.search")}
+                  title={t("ui2.meet.detail.search")}
+                  onClick={() => transcriptSearch.current?.focus()}
+                >
+                  <Glyph name="search" />
+                </button>
+              )}
               {isProcessing ? (
                 <button className="button" type="button" onClick={cancel}>
                   {t("ui2.meet.detail.cancel")}
@@ -1468,7 +1623,15 @@ function MeetingView({
   );
 }
 
-function RecallHome({ meet }: { meet: MeetController }) {
+function RecallHome({
+  meet,
+  query,
+  onQueryChange,
+}: {
+  meet: MeetController;
+  query: string;
+  onQueryChange: (query: string) => void;
+}) {
   const { t } = useTranslation();
   const captureRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
@@ -1512,6 +1675,8 @@ function RecallHome({ meet }: { meet: MeetController }) {
       </div>
       <Recordings
         meet={meet}
+        query={query}
+        onQueryChange={onQueryChange}
         emptyAction={
           !meet.status.recording && (
             <button
@@ -1536,6 +1701,7 @@ function RecallHome({ meet }: { meet: MeetController }) {
 export function MeetPage({ meetingId }: { meetingId: string | null }) {
   const { t } = useTranslation();
   const meet = useMeetController();
+  const [libraryQuery, setLibraryQuery] = useState("");
   const pageRef = useRef<HTMLElement>(null);
   const meeting = meetingId
     ? (meet.meetings.find((m) => m.id === meetingId) ?? null)
@@ -1563,7 +1729,13 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
       </div>
     );
   } else {
-    content = <RecallHome meet={meet} />;
+    content = (
+      <RecallHome
+        meet={meet}
+        query={libraryQuery}
+        onQueryChange={setLibraryQuery}
+      />
+    );
   }
 
   return (

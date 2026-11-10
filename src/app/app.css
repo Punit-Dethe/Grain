@@ -5496,7 +5496,15 @@ html[data-theme="light"] .meet-orb {
   min-width: 0;
 }
 
-.meet-recordings > h2 {
+.meet-recordings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.meet-recordings-head h2 {
   font-size: 22px;
 }
 
@@ -5716,6 +5724,29 @@ html[data-theme="light"] .meet-orb {
   text-wrap: balance;
 }
 
+.meet-view-title > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.meet-rename {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.meet-rename input {
+  min-width: 0;
+  min-height: 36px;
+  flex: 1 1 130px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
 .meet-meta {
   display: flex;
   flex-wrap: wrap;
@@ -5735,12 +5766,15 @@ html[data-theme="light"] .meet-orb {
 .meet-view-actions {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  max-width: 100%;
 }
 
 .meet-view-actions .button:disabled,
-.meet-view-actions .icon-button:disabled {
+.meet-view-actions .icon-button:disabled,
+.grain-root .meet-rename .button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
@@ -5829,6 +5863,19 @@ html[data-theme="light"] .meet-orb {
   gap: 12px 20px;
   padding-bottom: 16px;
   box-shadow: inset 0 -1px var(--hairline-soft);
+}
+
+.meet-transcript-find {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.meet-search-count {
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .meet-search {

@@ -1637,6 +1637,17 @@ async meetTranscript(sessionId: string) : Promise<Result<TranscriptRevision | nu
 }
 },
 /**
+ * Change a recorded meeting's display name.
+ */
+async meetRename(sessionId: string, title: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_rename", { sessionId, title }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Delete a meeting's audio and transcripts. Refused while it is in use.
  */
 async meetDelete(sessionId: string) : Promise<Result<null, string>> {
