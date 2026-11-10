@@ -6,6 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { Check } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
@@ -41,7 +42,8 @@ const MIN_MENU_H = 120;
 /** Gap between the trigger and the menu, and the margin kept off each edge. */
 const GAP = 4;
 const EDGE = 8;
-const COMPACT_MENU_W = 264;
+const COMPACT_MENU_W = 300;
+const COMPACT_GAP = 8;
 
 /** Where to hang the portalled menu.
  *
@@ -104,8 +106,9 @@ export const Dropdown: React.FC<DropdownProps> = ({
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const below = window.innerHeight - rect.bottom - GAP - EDGE;
-    const above = rect.top - GAP - EDGE;
+    const gap = compact ? COMPACT_GAP : GAP;
+    const below = window.innerHeight - rect.bottom - gap - EDGE;
+    const above = rect.top - gap - EDGE;
     // Flip up only when down genuinely cannot show a usable list AND up is
     // roomier — otherwise the menu jumps sides on tiny layout shifts.
     const flipUp = below < MIN_MENU_H && above > below;
@@ -117,10 +120,12 @@ export const Dropdown: React.FC<DropdownProps> = ({
     setBox({
       left: Math.max(EDGE, Math.min(left, window.innerWidth - width - EDGE)),
       width,
-      maxHeight: Math.max(MIN_MENU_H, Math.min(MAX_MENU_H, room)),
+      maxHeight: compact
+        ? Math.max(0, room)
+        : Math.max(MIN_MENU_H, Math.min(MAX_MENU_H, room)),
       ...(flipUp
-        ? { bottom: window.innerHeight - rect.top + GAP }
-        : { top: rect.bottom + GAP }),
+        ? { bottom: window.innerHeight - rect.top + gap }
+        : { top: rect.bottom + gap }),
     });
   }, [compact]);
 
@@ -230,19 +235,28 @@ export const Dropdown: React.FC<DropdownProps> = ({
             }
           : undefined
       }
-      className="fixed bg-paper-raised border border-line rounded-lg overflow-y-auto overscroll-contain"
+      className={`fixed overflow-y-auto overscroll-contain ${
+        compact
+          ? "dropdown-compact-menu"
+          : "bg-paper-raised border border-line rounded-lg"
+      }`}
       style={{
         left: box.left,
         width: box.width,
         maxHeight: box.maxHeight,
         top: box.top,
         bottom: box.bottom,
-        boxShadow: "var(--shadow-float)",
+        boxShadow: compact ? undefined : "var(--shadow-float)",
         // Above every in-page surface. Set inline rather than as a utility so a
         // dropdown opened from inside a modal is never behind it.
         zIndex: 1000,
       }}
     >
+      {compact && ariaLabel && (
+        <div className="dropdown-compact-heading" aria-hidden="true">
+          {ariaLabel}
+        </div>
+      )}
       <div id={menuId} role="listbox" aria-label={ariaLabel}>
         {options.length === 0 ? (
           <div className="px-2 py-1 text-sm text-ink-soft">
@@ -263,10 +277,10 @@ export const Dropdown: React.FC<DropdownProps> = ({
                 type="button"
                 role="option"
                 aria-selected={selectedValue === option.value}
-                className={`w-full px-2 py-1 text-sm text-start transition-colors duration-150 ${
+                className={`w-full text-start ${
                   compact
                     ? "dropdown-compact-option"
-                    : `hover:bg-[var(--accent-tint)] ${
+                    : `px-2 py-1 text-sm transition-colors duration-150 hover:bg-[var(--accent-tint)] ${
                         selectedValue === option.value
                           ? "bg-[var(--accent-tint)] text-accent font-semibold"
                           : ""
@@ -278,6 +292,9 @@ export const Dropdown: React.FC<DropdownProps> = ({
                 <span className="whitespace-normal break-words">
                   {option.label}
                 </span>
+                {compact && selectedValue === option.value && (
+                  <Check size={15} aria-hidden="true" />
+                )}
               </button>
             </React.Fragment>
           ))

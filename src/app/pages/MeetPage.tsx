@@ -291,7 +291,7 @@ function CaptureDock({ meet }: { meet: MeetController }) {
           </div>
         )}
         <button
-          className="button primary meet-record-action"
+          className="button meet-record-action"
           type="button"
           aria-disabled={recordDisabled}
           onClick={() => {
