@@ -77,7 +77,8 @@ fn paste_via_clipboard(
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
     paste_delay_after_ms: u64,
-) -> Result<(), String> {
+    watch_input: bool,
+) -> Result<Option<u32>, String> {
     let clipboard = app_handle.clipboard();
     let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
     // Only probe for an image when there is no text to restore. Text is by far the
@@ -120,6 +121,8 @@ fn paste_via_clipboard(
         Ok(())
     })();
 
+    // [GRAIN] Record input before the restore delay so a quick submit cancels verification.
+    let input_tick = watch_input.then(crate::paste_catch::input_tick).flatten();
     finish_clipboard_paste(paste_result, paste_delay_after_ms, || {
         // Restore original clipboard content even when key injection failed.
         // Text takes priority so this path stays identical to the previous behavior;
@@ -134,7 +137,8 @@ fn paste_via_clipboard(
             // Nothing was there to begin with — don't leave the transcription behind.
             let _ = clipboard.clear();
         }
-    })
+    })?;
+    Ok(input_tick)
 }
 
 /// Attempts to send a key combination using Linux-native tools.
@@ -828,9 +832,9 @@ pub fn paste_with_options(
         .paste_catch_enabled
         .then(|| crate::paste_catch::probe_generation(&app_handle))
         .flatten();
-    if !suppress_trailing_space
-        && probe.is_some_and(|id| crate::paste_catch::intercept(&app_handle, id, &text))
-    {
+    if probe.is_some_and(|id| {
+        crate::paste_catch::intercept(&app_handle, id, &text, !suppress_trailing_space)
+    }) {
         return Ok(());
     }
 
@@ -851,6 +855,7 @@ pub fn paste_with_options(
     );
 
     // Perform the paste operation
+    let mut input_tick = None; // [GRAIN] Input baseline for missed-insertion verification.
     match paste_method {
         PasteMethod::None => {
             info!("PasteMethod::None selected - skipping paste action");
@@ -862,6 +867,7 @@ pub fn paste_with_options(
                 #[cfg(target_os = "linux")]
                 settings.typing_tool,
             )?;
+            input_tick = probe.and_then(|_| crate::paste_catch::input_tick());
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
             // Debug-gated receipt-sequenced paste (#502): restore the clipboard
@@ -896,13 +902,14 @@ pub fn paste_with_options(
                     }
                 }
             }
-            paste_via_clipboard(
+            input_tick = paste_via_clipboard(
                 &text,
                 &app_handle,
                 &paste_method,
                 paste_delay_ms,
                 paste_delay_after_ms,
-            )?
+                probe.is_some(),
+            )?;
         }
         PasteMethod::ExternalScript => {
             let script_path = settings
@@ -926,8 +933,8 @@ pub fn paste_with_options(
 
     // [GRAIN] Let a confirmed miss offer a copy before modifying the clipboard.
     let copy = settings.clipboard_handling == ClipboardHandling::CopyToClipboard;
-    let verifying =
-        probe.is_some_and(|id| crate::paste_catch::verify(&app_handle, id, &text, copy));
+    let verifying = probe
+        .is_some_and(|id| crate::paste_catch::verify(&app_handle, id, &text, copy, input_tick));
     // After pasting, optionally copy to clipboard based on settings
     if copy && !verifying {
         write_text_to_clipboard(&app_handle, &text)?;
