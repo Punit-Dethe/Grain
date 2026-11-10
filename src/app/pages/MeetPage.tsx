@@ -25,6 +25,7 @@ import type {
   TranscriptRevision,
 } from "@/bindings";
 import { hashForRoute } from "../navigation";
+import { CrystalParticles } from "../meet/CrystalParticles";
 import {
   buildTurns,
   filterTurns,
@@ -60,6 +61,7 @@ const STAGES: Stage[] = [
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
 const SKIP_MS = 10_000;
 const METER_TICKS = 18;
+const ORB_NOISE_FLOOR = 0.25; // -45 dBFS on the live meter scale.
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -359,9 +361,14 @@ function Studio({
   const live = useLiveRecording(initial);
   const recording = live?.session_id === initial?.session_id ? live : initial;
 
-  const level = recording?.sources.reduce(
-    (peak, source) => Math.max(peak, levelFraction(source.level)),
+  const level =
+    recording?.sources.reduce(
+      (peak, source) => Math.max(peak, levelFraction(source.level)),
+      0,
+    ) ?? 0;
+  const motionLevel = Math.max(
     0,
+    (level - ORB_NOISE_FLOOR) / (1 - ORB_NOISE_FLOOR),
   );
   return (
     <section
@@ -377,10 +384,13 @@ function Studio({
           type="button"
           disabled={busy || (!recording && !canStart)}
           style={
-            recording ? ({ "--level": level } as CSSProperties) : undefined
+            recording
+              ? ({ "--level": motionLevel } as CSSProperties)
+              : undefined
           }
           onClick={() => onAction(recording ? "stop" : "start")}
         >
+          {recording && <CrystalParticles moving={motionLevel > 0} />}
           <Glyph name={recording ? "stop" : "mic"} />
           <strong>
             {recording
