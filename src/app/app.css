@@ -5152,7 +5152,7 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
   --meet-dock-button-active: #252525;
   --meet-dock-button-text: #fcfcfb;
   --meet-dock-button-height: 48px;
-  --meet-dock-button-radius: 9px;
+  --meet-dock-button-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
