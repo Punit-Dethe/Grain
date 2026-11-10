@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingSummary } from "@/bindings";
-import { groupByDay, highlightParts, turnAt, wordAt } from "./meetFormat";
+import {
+  groupByDay,
+  highlightParts,
+  levelFraction,
+  turnAt,
+  wordAt,
+} from "./meetFormat";
 import type { Turn } from "./transcriptTurns";
 
 function meeting(id: string, created: Date): MeetingSummary {
@@ -28,6 +34,17 @@ function turn(key: string, startMs: number, endMs: number): Turn {
     words: [],
   };
 }
+
+describe("levelFraction", () => {
+  it("maps peaks onto a 60 dB scale", () => {
+    expect(levelFraction(0)).toBe(0);
+    expect(levelFraction(Number.NaN)).toBe(0);
+    expect(levelFraction(1)).toBe(1);
+    expect(levelFraction(0.001)).toBeCloseTo(0, 5);
+    expect(levelFraction(0.1)).toBeCloseTo(2 / 3, 5);
+    expect(levelFraction(4)).toBe(1);
+  });
+});
 
 describe("groupByDay", () => {
   it("groups consecutive meetings by local day", () => {

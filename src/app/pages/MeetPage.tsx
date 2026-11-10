@@ -19,13 +19,12 @@ import type {
   SourceDevice,
   SourceKind,
   SourceSettings,
+  SourceStatus,
   Stage,
   TrackStatus,
   TranscriptRevision,
 } from "@/bindings";
 import { hashForRoute } from "../navigation";
-import recallBubbleVideo from "../meet/recall-bubble.mp4";
-import recallBubblePoster from "../meet/recall-bubble.webp";
 import {
   buildTurns,
   filterTurns,
@@ -35,7 +34,13 @@ import {
   type Turn,
   type TurnWord,
 } from "../meet/transcriptTurns";
-import { groupByDay, highlightParts, turnAt, wordAt } from "../meet/meetFormat";
+import {
+  groupByDay,
+  highlightParts,
+  levelFraction,
+  turnAt,
+  wordAt,
+} from "../meet/meetFormat";
 import {
   useLiveRecording,
   useMeetController,
@@ -54,6 +59,7 @@ const STAGES: Stage[] = [
 ];
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
 const SKIP_MS = 10_000;
+const METER_TICKS = 18;
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -273,40 +279,68 @@ function SourceSetup({ meet }: { meet: MeetController }) {
   );
 }
 
-const StudioBubble = memo(function StudioBubble({
-  recording,
-}: {
-  recording: boolean;
-}) {
-  const [canAnimate, setCanAnimate] = useState(false);
-  useEffect(() => {
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () =>
-      setCanAnimate(!reducedMotion.matches && !document.hidden);
-    update();
-    reducedMotion.addEventListener("change", update);
-    document.addEventListener("visibilitychange", update);
-    return () => {
-      reducedMotion.removeEventListener("change", update);
-      document.removeEventListener("visibilitychange", update);
-    };
-  }, []);
-
-  return recording && canAnimate ? (
-    <video
-      className="meet-studio-bubble"
-      src={recallBubbleVideo}
-      poster={recallBubblePoster}
-      autoPlay
-      loop
-      muted
-      playsInline
-      aria-hidden="true"
-    />
-  ) : (
-    <img className="meet-studio-bubble" src={recallBubblePoster} alt="" />
+function Meter({ fraction, label }: { fraction: number; label: string }) {
+  const lit = Math.round(fraction * METER_TICKS);
+  return (
+    <div
+      className="meet-ticks"
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(fraction * 100)}
+    >
+      {Array.from({ length: METER_TICKS }, (_, index) => (
+        <i
+          key={index}
+          className={
+            index < lit
+              ? index >= METER_TICKS - 3
+                ? "on is-hot"
+                : "on"
+              : undefined
+          }
+        />
+      ))}
+    </div>
   );
-});
+}
+
+function LiveSource({ source }: { source: SourceStatus }) {
+  const { t } = useTranslation();
+  const name = sourceName(source.kind, t);
+  const note = source.active
+    ? source.name
+    : source.kind === "Microphone"
+      ? t("ui2.meet.live.micSilent")
+      : t("ui2.meet.live.systemWaiting");
+  return (
+    <div className="meet-source is-on is-live">
+      <span className="meet-source-icon">
+        <Glyph name={SOURCE_ICON[source.kind]} />
+      </span>
+      <div className="meet-source-body">
+        <span className="meet-source-name">{name}</span>
+        <span className="meet-source-note" title={source.name}>
+          {note}
+        </span>
+      </div>
+      <Meter
+        fraction={levelFraction(source.level)}
+        label={t("ui2.meet.live.level", { source: name })}
+      />
+    </div>
+  );
+}
+
+function StudioWave() {
+  return (
+    <svg className="meet-studio-wave" viewBox="0 0 80 48" aria-hidden="true">
+      <path d="M3 22v4m10-8v12m10-14v16m10-20v24m11-29v34m11-39v44m11-35v26m11-17v8" />
+    </svg>
+  );
+}
+
 type RecordingAction = "start" | "stop";
 
 function Studio({
@@ -325,34 +359,61 @@ function Studio({
   const live = useLiveRecording(initial);
   const recording = live?.session_id === initial?.session_id ? live : initial;
 
+  const level = recording?.sources.reduce(
+    (peak, source) => Math.max(peak, levelFraction(source.level)),
+    0,
+  );
   return (
     <section
-      className="meet-studio"
+      className={`meet-studio${recording ? " is-recording" : ""}`}
       aria-label={t(
         recording ? "ui2.meet.live.label" : "ui2.meet.studio.label",
       )}
     >
       <div className="meet-studio-stage">
-        <StudioBubble recording={Boolean(recording)} />
+        <StudioWave />
         <button
-          className="button primary meet-record-action"
+          className="meet-orb"
           type="button"
           disabled={busy || (!recording && !canStart)}
+          style={
+            recording ? ({ "--level": level } as CSSProperties) : undefined
+          }
           onClick={() => onAction(recording ? "stop" : "start")}
         >
           <Glyph name={recording ? "stop" : "mic"} />
-          {recording
-            ? t("ui2.meet.studio.stop")
-            : busy
-              ? t("ui2.meet.studio.starting")
-              : t("ui2.meet.studio.start")}
+          <strong>
+            {recording
+              ? t("ui2.meet.studio.stop")
+              : busy
+                ? t("ui2.meet.studio.starting")
+                : t("ui2.meet.studio.start")}
+          </strong>
         </button>
+        <StudioWave />
       </div>
-      {!recording && <SourceSetup meet={meet} />}
-      {recording?.error && (
-        <p className="meet-inline-error" role="alert">
-          {recording.error}
-        </p>
+      {recording ? (
+        <>
+          <div className="meet-studio-status">
+            <span className="meet-live-dot" aria-hidden="true" />
+            <span>{t("ui2.meet.live.recording")}</span>
+            <strong className="meet-clock" role="timer">
+              {formatClock(recording.elapsed_ms)}
+            </strong>
+          </div>
+          <div className="meet-sources">
+            {recording.sources.map((source) => (
+              <LiveSource key={source.kind} source={source} />
+            ))}
+          </div>
+          {recording.error && (
+            <p className="meet-inline-error" role="alert">
+              {recording.error}
+            </p>
+          )}
+        </>
+      ) : (
+        <SourceSetup meet={meet} />
       )}
     </section>
   );
@@ -405,6 +466,18 @@ function RecordingLead({
   meeting: MeetingSummary;
   state: string;
 }) {
+  if (state === "recording") {
+    return (
+      <span className="meet-lead is-live" aria-hidden="true">
+        <span className="meet-bars">
+          <i />
+          <i />
+          <i />
+          <i />
+        </span>
+      </span>
+    );
+  }
   if (state === "processing") {
     return (
       <span className="meet-lead" aria-hidden="true">
@@ -509,6 +582,7 @@ function Recordings({
                 <button
                   type="button"
                   className="meet-row"
+                  data-state={state}
                   onClick={() => openMeeting(meeting.id)}
                 >
                   <RecordingLead meeting={meeting} state={state} />
@@ -1311,6 +1385,7 @@ function MeetingView({
                 type="button"
                 onClick={() => openMeeting(null)}
               >
+                <span className="meet-live-dot" aria-hidden="true" />
                 {t("ui2.meet.live.recording")}
               </button>
             )}
@@ -1427,7 +1502,7 @@ function RecallHome({ meet }: { meet: MeetController }) {
           <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
         </header>
         <Studio meet={meet} busy={busy} canStart={canStart} onAction={run} />
-        {!meet.status.recording && <SpeakerModelNotice meet={meet} />}
+        <SpeakerModelNotice meet={meet} />
         {meet.status.last_error && (
           <div className="meet-callout is-error" role="alert">
             <p>

@@ -5016,6 +5016,7 @@ html[data-theme="light"] .qp-overlay {
 
 /* [GRAIN] Meeting workspace (user-facing name from `ui2.meet.name`). */
 .grain-root {
+  --meet-live: #ff5f57;
   --meet-error-ink: color-mix(in srgb, var(--danger) 55%, var(--text-1));
   --meet-page: var(--bg-1);
   --meet-surface: #292929;
@@ -5028,6 +5029,7 @@ html[data-theme="light"] .qp-overlay {
 /* The light page is #fcfcfb, so surfaces sit a step darker instead of white
    on white, with no shadow. */
 html[data-theme="light"] .grain-root {
+  --meet-live: #e5484d;
   --meet-page: #fcfcfb;
   --meet-surface: #f3f1ec;
   --meet-surface-hover: #ebe8e1;
@@ -5056,7 +5058,7 @@ html[data-theme="light"] .grain-root {
 .page-wrap.wide.meet-home {
   width: min(1320px, 100%);
   display: grid;
-  gap: clamp(16px, 2.6vh, 24px);
+  gap: clamp(20px, 3vh, 32px);
   padding-bottom: 24px;
 }
 
@@ -5085,17 +5087,173 @@ html[data-theme="light"] .grain-root {
 
 .meet-studio-stage {
   display: grid;
-  justify-items: center;
-  gap: 6px;
-  padding-bottom: 14px;
+  grid-template-columns: minmax(0, 138px) minmax(0, auto) minmax(0, 138px);
+  align-items: center;
+  justify-content: center;
+  gap: clamp(14px, 3cqi, 28px);
+  margin-bottom: clamp(18px, 3vh, 26px);
 }
 
-.meet-studio-bubble {
-  display: block;
-  width: clamp(84px, 12vh, 112px);
+.meet-studio-wave {
+  width: 100%;
+  max-height: 66px;
+  fill: none;
+  stroke: var(--text-3);
+  stroke-linecap: round;
+  stroke-width: 2.5px;
+  opacity: 0.48;
+}
+
+.meet-studio-wave:last-child {
+  transform: scaleX(-1);
+}
+
+.meet-orb {
+  --orb-tint: var(--peach);
+  --orb-light: var(--accent);
+  --orb-shade: var(--bg-0);
+  position: relative;
+  isolation: isolate;
+  width: clamp(146px, min(55cqi, 32vh), 300px);
+  max-width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--orb-tint) 44%, var(--hairline));
   border-radius: 50%;
+  color: var(--text-1);
+  background:
+    radial-gradient(
+      circle closest-side,
+      transparent 83%,
+      color-mix(in srgb, var(--orb-light) 48%, transparent) 96%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse at 58% 86%,
+      color-mix(in srgb, var(--orb-light) 35%, transparent),
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 46% 37%,
+      var(--meet-surface) 16%,
+      color-mix(in srgb, var(--orb-tint) 24%, var(--meet-surface)) 57%,
+      color-mix(in srgb, var(--orb-shade) 32%, var(--meet-surface)) 87%
+    );
+  box-shadow:
+    0 0 0 7px var(--accent-soft),
+    0 23px 25px -17px color-mix(in srgb, var(--orb-shade) 65%, transparent),
+    inset 0 1px var(--orb-light);
+  cursor: pointer;
+  transition: transform 0.25s var(--ease-out);
+}
+
+html[data-theme="light"] .meet-orb {
+  --orb-light: var(--bg-0);
+  --orb-shade: var(--accent);
+}
+
+/* Two angled reflections give the rim depth without covering the controls. */
+.meet-orb::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 2px;
+  border-radius: inherit;
+  background:
+    radial-gradient(
+      ellipse 22% 7% at 50% 17%,
+      var(--orb-light) 10%,
+      transparent 96%
+    ),
+    radial-gradient(
+      ellipse 25% 9% at 51% 86%,
+      color-mix(in srgb, var(--orb-light) 72%, transparent),
+      transparent 94%
+    );
+  transform: rotate(-42deg);
+}
+
+.meet-orb:hover:not(:disabled) {
+  transform: scale(1.035);
+}
+
+.meet-orb:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.meet-orb:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.meet-orb .icon.sm {
+  width: clamp(30px, 6.5vh, 56px);
+  height: clamp(30px, 6.5vh, 56px);
+}
+
+.meet-orb strong {
+  font-size: clamp(14px, 2.6vh, 21px);
+  font-weight: 630;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.is-recording .meet-orb {
+  --orb-tint: var(--meet-live);
+}
+
+.is-recording .meet-orb::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border: 1px solid var(--meet-live);
+  border-radius: inherit;
+  opacity: calc(0.35 + var(--level) * 0.45);
+  transform: scale(calc(1 + var(--level) * 0.11));
+  transition:
+    transform 0.12s linear,
+    opacity 0.12s linear;
+}
+
+.meet-studio-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--text-3);
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.meet-clock {
+  color: var(--text-1);
+  font-size: 17px;
+  font-weight: 630;
+  font-variant-numeric: tabular-nums;
+}
+
+.meet-live-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--meet-live);
+  animation: meet-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes meet-pulse {
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .meet-sources {
@@ -5145,6 +5303,10 @@ html[data-theme="light"] .grain-root {
     border-block-start: 0;
     border-inline-start: 1px solid var(--hairline);
   }
+}
+
+.meet-source.is-live {
+  grid-template-columns: 34px minmax(0, 1fr);
 }
 
 .meet-source.is-placeholder {
@@ -5242,6 +5404,31 @@ html[data-theme="light"] .grain-root {
   text-align: center;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* Live input meter: a row of ticks. */
+.meet-ticks {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 16px;
+}
+
+.meet-ticks i {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-soft-hover);
+  transition: background 0.08s linear;
+}
+
+.meet-ticks i.on {
+  background: color-mix(in srgb, var(--sage) 85%, var(--text-1));
+}
+
+.meet-ticks i.is-hot {
+  background: var(--peach);
 }
 
 /* --- Callouts and errors --------------------------------------------- */
@@ -5386,6 +5573,10 @@ html[data-theme="light"] .grain-root {
   background: var(--accent-soft);
 }
 
+.meet-lead.is-live {
+  background: color-mix(in srgb, var(--meet-live) 14%, transparent);
+}
+
 .meet-row-main {
   min-width: 0;
   display: grid;
@@ -5412,6 +5603,10 @@ html[data-theme="light"] .grain-root {
 .meet-row-state {
   color: var(--text-3);
   font-size: 12px;
+}
+
+.meet-row[data-state="recording"] .meet-row-state {
+  color: var(--meet-error-ink);
 }
 
 .meet-row-go {
@@ -5476,18 +5671,13 @@ html[data-theme="light"] .grain-root {
   line-height: 1.55;
 }
 
-.meet-record-action.button,
 .meet-empty-action.button {
+  margin-top: 6px;
   padding-inline: 16px;
   border-radius: 999px;
 }
 
-.meet-empty-action.button {
-  margin-top: 6px;
-}
-
-.grain-root .meet-record-action:disabled,
-.grain-root .meet-empty-action:disabled {
+.meet-empty-action:disabled {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -5531,10 +5721,11 @@ html[data-theme="light"] .grain-root {
 .meet-live-pill {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   padding: 6px 12px;
   border-radius: 999px;
   color: var(--text-2);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--meet-live) 12%, transparent);
   font-size: 12.5px;
   cursor: pointer;
 }
@@ -5875,6 +6066,57 @@ html[data-theme="light"] .grain-root {
   transition: opacity 0.2s ease;
 }
 
+/* Live recording row: a soft red wash and moving level bars. */
+.meet-row[data-state="recording"] {
+  background: color-mix(in srgb, var(--meet-live) 6%, transparent);
+}
+
+.meet-row[data-state="recording"]:hover {
+  background: color-mix(in srgb, var(--meet-live) 10%, transparent);
+}
+
+.meet-row[data-state="recording"] .meet-row-duration {
+  color: var(--meet-error-ink);
+  font-weight: 600;
+}
+
+.meet-bars {
+  height: 16px;
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+}
+
+.meet-bars i {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--meet-live);
+  transform-origin: center;
+  animation: meet-bar 0.9s ease-in-out infinite alternate;
+}
+
+.meet-bars i:nth-child(2) {
+  animation-delay: -0.35s;
+}
+
+.meet-bars i:nth-child(3) {
+  animation-delay: -0.6s;
+}
+
+.meet-bars i:nth-child(4) {
+  animation-delay: -0.15s;
+}
+
+@keyframes meet-bar {
+  from {
+    transform: scaleY(0.3);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
 .meet-empty {
   display: grid;
   justify-items: start;
@@ -6152,15 +6394,23 @@ html[data-theme="light"] .grain-root {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .meet-spinner {
+  .meet-live-dot,
+  .meet-spinner,
+  .meet-bars i {
     animation: none;
   }
 
-  .meet-record-action.button,
+  .meet-orb,
+  .meet-orb::before,
+  .meet-ticks i,
   .meet-progress i,
   .meet-row-go,
   .meet-underline {
     transition: none;
+  }
+
+  .is-recording .meet-orb::before {
+    transform: none;
   }
 }
 
