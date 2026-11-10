@@ -335,8 +335,8 @@ function LiveSource({ source }: { source: SourceStatus }) {
 
 function StudioWave() {
   return (
-    <svg className="meet-studio-wave" viewBox="0 0 72 44" aria-hidden="true">
-      <path d="M3 20v4m11-7v10m11-15v20m11-29v38m11-33v28m11-21v14m11-10v6" />
+    <svg className="meet-studio-wave" viewBox="0 0 80 48" aria-hidden="true">
+      <path d="M3 22v4m10-8v12m10-14v16m10-20v24m11-29v34m11-39v44m11-35v26m11-17v8" />
     </svg>
   );
 }
@@ -367,13 +367,6 @@ function Studio({ meet }: { meet: MeetController }) {
     (peak, source) => Math.max(peak, levelFraction(source.level)),
     0,
   );
-  const sourceSummary = micOn
-    ? systemOn
-      ? t("ui2.meet.studio.sourcesBoth")
-      : t("ui2.meet.studio.sourcesMic")
-    : systemOn
-      ? t("ui2.meet.studio.sourcesSystem")
-      : null;
   return (
     <section
       className={`meet-studio${recording ? " is-recording" : ""}`}
@@ -409,21 +402,15 @@ function Studio({ meet }: { meet: MeetController }) {
         </button>
         <StudioWave />
       </div>
-      <div className="meet-studio-status">
-        {recording ? (
-          <>
+      {recording ? (
+        <>
+          <div className="meet-studio-status">
             <span className="meet-live-dot" aria-hidden="true" />
             <span>{t("ui2.meet.live.recording")}</span>
             <strong className="meet-clock" role="timer">
               {formatClock(recording.elapsed_ms)}
             </strong>
-          </>
-        ) : (
-          sourceSummary
-        )}
-      </div>
-      {recording ? (
-        <>
+          </div>
           <div className="meet-sources">
             {recording.sources.map((source) => (
               <LiveSource key={source.kind} source={source} />
@@ -508,25 +495,6 @@ function RecordingLead({
       </span>
     );
   }
-  if (meeting.speaker_count > 0) {
-    const shown = Math.min(meeting.speaker_count, 3);
-    const extra = meeting.speaker_count - shown;
-    return (
-      <span className="meet-lead-stack" aria-hidden="true">
-        {Array.from({ length: shown }, (_, index) => (
-          <span
-            key={index}
-            className={`meet-avatar is-stack tone-${SPEAKER_TONES[index % SPEAKER_TONES.length]}`}
-          >
-            {index + 1}
-          </span>
-        ))}
-        {extra > 0 && (
-          <span className="meet-avatar is-stack is-more">+{extra}</span>
-        )}
-      </span>
-    );
-  }
   return (
     <span className="meet-lead" aria-hidden="true">
       <Glyph name={SOURCE_ICON[meeting.sources[0] ?? "Microphone"]} />
@@ -556,8 +524,7 @@ function Recordings({ meet }: { meet: MeetController }) {
   const dayFormat = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.language, {
-        weekday: "long",
-        month: "long",
+        month: "short",
         day: "numeric",
       }),
     [i18n.language],
@@ -592,17 +559,16 @@ function Recordings({ meet }: { meet: MeetController }) {
     );
   } else {
     const processingId = meet.status.processing?.session_id;
-    body = groups.map((group) => (
-      <section key={group.key} className="meet-day">
-        <h3>
-          {group.kind === "today"
-            ? t("ui2.meet.list.today")
-            : group.kind === "yesterday"
-              ? t("ui2.meet.list.yesterday")
-              : dayFormat.format(group.day)}
-        </h3>
-        <ul>
-          {group.meetings.map((meeting) => {
+    body = (
+      <ul className="meet-recording-list">
+        {groups.flatMap((group) => {
+          const day =
+            group.kind === "today"
+              ? t("ui2.meet.list.today")
+              : group.kind === "yesterday"
+                ? t("ui2.meet.list.yesterday")
+                : dayFormat.format(group.day);
+          return group.meetings.map((meeting) => {
             const state =
               meeting.id === recordingId
                 ? "recording"
@@ -611,9 +577,6 @@ function Recordings({ meet }: { meet: MeetController }) {
                   : meeting.transcript_revision != null
                     ? "transcribed"
                     : "new";
-            const sourcesText = [...new Set(meeting.sources)]
-              .map((kind) => sourceName(kind, t))
-              .join(" + ");
             return (
               <li key={meeting.id}>
                 <button
@@ -624,32 +587,25 @@ function Recordings({ meet }: { meet: MeetController }) {
                 >
                   <RecordingLead meeting={meeting} state={state} />
                   <span className="meet-row-main">
-                    <span className="meet-row-top">
-                      <span className="meet-row-title">{meeting.title}</span>
-                      <span className="meet-row-duration">
-                        {formatClock(
-                          state === "recording"
-                            ? now - meeting.created_unix_ms
-                            : meeting.duration_ms,
-                        )}
+                    <span className="meet-row-title">{meeting.title}</span>
+                    <time
+                      className="meet-row-meta"
+                      dateTime={new Date(meeting.created_unix_ms).toISOString()}
+                    >
+                      {day}, {timeFormat.format(meeting.created_unix_ms)}
+                    </time>
+                    {state !== "transcribed" && (
+                      <span className="meet-row-state">
+                        {t(`ui2.meet.list.state.${state}`)}
                       </span>
-                    </span>
-                    <span className="meet-row-preview">
-                      {state === "transcribed" && meeting.preview
-                        ? meeting.preview
-                        : t(`ui2.meet.list.state.${state}`)}
-                    </span>
-                    <span className="meet-row-meta">
-                      <time>{timeFormat.format(meeting.created_unix_ms)}</time>
-                      {meeting.speaker_count > 0 && (
-                        <span>
-                          {t("ui2.meet.list.speakers", {
-                            count: meeting.speaker_count,
-                          })}
-                        </span>
-                      )}
-                      <span>{sourcesText}</span>
-                    </span>
+                    )}
+                  </span>
+                  <span className="meet-row-duration">
+                    {formatClock(
+                      state === "recording"
+                        ? now - meeting.created_unix_ms
+                        : meeting.duration_ms,
+                    )}
                   </span>
                   <span className="meet-row-go" aria-hidden="true">
                     <Glyph name="chev-right" />
@@ -657,10 +613,10 @@ function Recordings({ meet }: { meet: MeetController }) {
                 </button>
               </li>
             );
-          })}
-        </ul>
-      </section>
-    ));
+          });
+        })}
+      </ul>
+    );
   }
 
   return (

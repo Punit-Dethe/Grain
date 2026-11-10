@@ -5047,6 +5047,7 @@ html[data-theme="light"] .grain-root {
 
 .page[data-page-panel="meet"]:has(> .meet-home) {
   container: recall / inline-size;
+  padding: clamp(16px, 3vh, 28px) clamp(16px, 2.5vw, 36px) 0;
 }
 
 .meet-wrap {
@@ -5055,16 +5056,17 @@ html[data-theme="light"] .grain-root {
   padding-bottom: 56px;
 }
 
-.meet-home {
+.page-wrap.wide.meet-home {
+  width: min(1320px, 100%);
   display: grid;
   align-items: start;
-  gap: clamp(24px, 3cqi, 44px);
-  padding-bottom: 48px;
+  gap: clamp(16px, 2.4cqi, 36px);
+  padding-bottom: 24px;
 }
 
-@container recall (min-width: 820px) {
-  .meet-home {
-    grid-template-columns: minmax(0, 1.55fr) minmax(310px, 1fr);
+@container recall (min-width: 690px) {
+  .page-wrap.wide.meet-home {
+    grid-template-columns: minmax(0, 1.65fr) minmax(250px, 1fr);
   }
 }
 
@@ -5074,16 +5076,16 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-head {
-  margin-bottom: clamp(26px, 5cqi, 52px);
+  margin-bottom: clamp(16px, 3vh, 28px);
   text-align: center;
 }
 
 .meet-head h1 {
-  font-size: clamp(30px, 8cqi, 48px);
+  font-size: clamp(30px, 6.5cqi, 48px);
 }
 
 .meet-head .page-subtitle {
-  margin: 6px auto 0;
+  margin: 4px auto 0;
 }
 
 /* --- Recording control and audio sources ----------------------------- */
@@ -5094,15 +5096,16 @@ html[data-theme="light"] .grain-root {
 
 .meet-studio-stage {
   display: grid;
-  grid-template-columns: minmax(0, 72px) minmax(0, auto) minmax(0, 72px);
+  grid-template-columns: minmax(0, 96px) minmax(0, auto) minmax(0, 96px);
   align-items: center;
   justify-content: center;
-  gap: clamp(10px, 5cqi, 32px);
+  gap: clamp(10px, 3.2cqi, 28px);
+  margin-bottom: 18px;
 }
 
 .meet-studio-wave {
   width: 100%;
-  max-height: 44px;
+  max-height: 56px;
   fill: none;
   stroke: var(--text-3);
   stroke-linecap: round;
@@ -5118,7 +5121,7 @@ html[data-theme="light"] .grain-root {
   --orb-tint: var(--accent);
   position: relative;
   isolation: isolate;
-  width: clamp(146px, 52cqi, 284px);
+  width: clamp(146px, min(48cqi, 36vh), 330px);
   max-width: 100%;
   aspect-ratio: 1;
   display: flex;
@@ -5132,15 +5135,15 @@ html[data-theme="light"] .grain-root {
   color: var(--text-1);
   background:
     radial-gradient(
-      ellipse at 35% 17%,
+      ellipse at 29% 19%,
       var(--glass-highlight),
-      transparent 48%
+      transparent 45%
     ),
     linear-gradient(
       148deg,
-      color-mix(in srgb, var(--orb-tint) 18%, var(--meet-surface)),
+      color-mix(in srgb, var(--orb-tint) 22%, var(--meet-surface)),
       var(--meet-surface) 60%,
-      color-mix(in srgb, var(--orb-tint) 12%, var(--bg-0))
+      color-mix(in srgb, var(--orb-tint) 16%, var(--bg-0))
     );
   box-shadow:
     0 0 0 7px var(--accent-soft),
@@ -5194,13 +5197,12 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-studio-status {
-  min-height: 26px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin: 16px 0 18px;
+  margin: 0 0 10px;
   color: var(--text-3);
   text-align: center;
   font-size: 13px;
@@ -5243,8 +5245,8 @@ html[data-theme="light"] .grain-root {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 4px 10px;
-  padding: 12px;
+  gap: 4px 8px;
+  padding: 10px 12px;
 }
 
 .meet-source-body {
@@ -5258,11 +5260,12 @@ html[data-theme="light"] .grain-root {
   border-block-start: 1px solid var(--hairline);
 }
 
-@container recall-capture (min-width: 440px) {
+@container recall-capture (min-width: 390px) {
   .meet-sources {
     grid-template-columns: none;
     grid-auto-columns: minmax(0, 1fr);
     grid-auto-flow: column;
+    border-radius: 28px;
   }
 
   .meet-source + .meet-source {
@@ -5365,7 +5368,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-sources-hint {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   color: var(--text-3);
   text-align: center;
   font-size: 12px;
@@ -5477,11 +5480,11 @@ html[data-theme="light"] .grain-root {
   animation: history-spin 0.8s linear infinite;
 }
 
-/* --- Recordings list: one rounded group per day, rows divided by a hairline */
+/* --- Recordings list ------------------------------------------------- */
 
 .meet-recordings {
   min-width: 0;
-  padding: clamp(16px, 2cqi, 24px);
+  padding: clamp(12px, 1.65cqi, 22px);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--meet-surface);
@@ -5492,32 +5495,25 @@ html[data-theme="light"] .grain-root {
   font-size: 20px;
 }
 
-.meet-day h3 {
-  margin: 16px 0 6px;
-  color: var(--text-3);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.meet-day ul {
-  margin: 0;
+.meet-recording-list {
+  margin: 8px 0 0;
   padding: 0;
   overflow: hidden;
   border-radius: var(--radius-sm);
   list-style: none;
 }
 
-.meet-day li + li {
+.meet-recording-list li + li {
   box-shadow: inset 0 1px var(--meet-line);
 }
 
 .meet-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 16px;
+  grid-template-columns: 36px minmax(0, 1fr) auto 16px;
   align-items: center;
-  gap: 8px;
-  padding: 10px 6px;
+  gap: 10px;
+  padding: 8px 4px;
   color: var(--text-1);
   background: transparent;
   text-align: start;
@@ -5533,17 +5529,12 @@ html[data-theme="light"] .grain-root {
   outline-offset: -2px;
 }
 
-.meet-lead,
-.meet-lead-stack {
-  width: 58px;
-  height: 44px;
+.meet-lead {
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-}
-
-.meet-lead {
-  width: 44px;
-  border-radius: 13px;
+  border-radius: var(--radius-sm);
   color: var(--text-3);
   background: var(--accent-soft);
 }
@@ -5552,50 +5543,10 @@ html[data-theme="light"] .grain-root {
   background: color-mix(in srgb, var(--meet-live) 14%, transparent);
 }
 
-.meet-lead .meet-live-dot {
-  width: 10px;
-  height: 10px;
-}
-
-.meet-lead-stack {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-}
-
-.meet-avatar.is-stack {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-  font-size: 11.5px;
-  box-shadow: 0 0 0 2px var(--meet-surface);
-  transition: box-shadow 0.15s ease;
-}
-
-.meet-avatar.is-stack + .meet-avatar.is-stack {
-  margin-inline-start: -10px;
-}
-
-.meet-row:hover .meet-avatar.is-stack {
-  box-shadow: 0 0 0 2px var(--meet-surface-hover);
-}
-
-.meet-avatar.is-more {
-  color: var(--text-2);
-  font-size: 10.5px;
-}
-
 .meet-row-main {
   min-width: 0;
   display: grid;
-  gap: 3px;
-}
-
-.meet-row-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 1px;
 }
 
 .meet-row-title {
@@ -5609,41 +5560,19 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-row-duration {
-  flex: 0 0 auto;
   color: var(--text-3);
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
 
-.meet-row-preview {
-  overflow: hidden;
-  color: var(--text-2);
-  font-size: 13px;
-  line-height: 1.5;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.meet-row:not([data-state="transcribed"]) .meet-row-preview {
+.meet-row-meta,
+.meet-row-state {
   color: var(--text-3);
-}
-
-.meet-row[data-state="recording"] .meet-row-preview {
-  color: var(--meet-error-ink);
-}
-
-.meet-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  color: var(--text-4);
   font-size: 12px;
-  font-variant-numeric: tabular-nums;
 }
 
-.meet-row-meta > * + *::before {
-  content: "·";
-  margin-inline: 7px;
+.meet-row[data-state="recording"] .meet-row-state {
+  color: var(--meet-error-ink);
 }
 
 .meet-row-go {
@@ -5664,7 +5593,7 @@ html[data-theme="light"] .grain-root {
   justify-items: start;
   gap: 12px;
   margin: 0;
-  padding: 18px 4px;
+  padding: 12px 0 0;
   color: var(--text-3);
   font-size: 13px;
 }
@@ -5675,9 +5604,9 @@ html[data-theme="light"] .grain-root {
 
 .meet-list-empty {
   display: grid;
-  gap: 6px;
-  margin-top: 14px;
-  padding: 18px 14px;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 12px;
   border-radius: var(--radius-md);
   background: var(--accent-soft);
 }
