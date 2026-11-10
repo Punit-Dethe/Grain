@@ -7,11 +7,9 @@
 //! clipboard afterwards, and clears the clipboard outright when there was
 //! nothing to restore. The words the user just spoke survive only in history.
 //!
-//! This module catches that. On a confirmed miss the transcript is held on the
-//! clipboard behind a visible offer for a grace period; the user moves to a real
-//! field and presses the deliver key (or plain `Ctrl+V` — the transcript really
-//! is on the clipboard). When the grace period ends, the clipboard is handed
-//! back **exactly** as Handy would have left it.
+//! On a confirmed miss the transcript stays in memory while a copy offer is
+//! visible. The offer can copy, discard, or deliver it using the existing
+//! shortcut. The timeout copies only if the user has not copied something else.
 //!
 //! # Detection
 //!
@@ -28,9 +26,8 @@
 //! can describe the read-only output buffer while the terminal accepts paste.
 //!
 //! The governing rule is asymmetric: **act only on positive evidence of a
-//! miss.** A false positive interrupts a user who pasted fine *and* holds their
-//! clipboard for the grace period; a false negative merely reproduces today's
-//! behaviour. So every ambiguous reading is silent, in *both* probes — see
+//! miss.** A false positive interrupts a user who pasted fine. Ambiguous readings
+//! stay silent in both probes. See
 //! [`verdict_after_paste`] for the three ways that rule was learned the hard way.
 //!
 //! # What this cannot prove
@@ -45,18 +42,10 @@
 //! [`should_verify`]). Giving Paste Catch its own receipt would mean taking over
 //! the paste path from `clipboard::paste` rather than bracketing it, which costs
 //! more upstream divergence than the remaining ambiguity is worth today.
-//!
-//! # Why the clipboard rather than a private buffer
-//!
-//! Holding the transcript on the real clipboard means plain `Ctrl+V` works in
-//! every application, including those that reject synthesized input, and it
-//! needs no delivery machinery at all. The cost — occupying the user's clipboard
-//! for the grace period — is bounded by the TTL and abandoned the moment they
-//! copy something else.
 
 use grain_core::DaemonEvent;
 use log::{info, warn};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -68,6 +57,8 @@ use crate::settings::{get_settings, ClipboardHandling, PasteMethod, ShortcutBind
 /// Settings id of the deliver binding. Registered only while a hold is armed —
 /// see `grain_core::capture::is_dynamic_binding`.
 const BINDING_ID: &str = "paste_catch_deliver";
+const COPY_OFFER_DELAY: Duration = Duration::from_millis(400);
+const COPY_COUNTDOWN: Duration = Duration::from_secs(3);
 
 /// How long to wait after the paste before asking the field what it holds.
 /// Applications process a paste asynchronously; this is measured from a point
@@ -101,21 +92,17 @@ enum Snapshot {
     Image(tauri::image::Image<'static>),
 }
 
-/// One armed hold.
-struct Held {
+struct PendingCopy {
+    id: u32,
     text: String,
-    saved: Snapshot,
-    /// Clipboard sequence number right after publishing. If it has moved by the
-    /// time we act, the user copied something else and their copy wins.
-    seq_at_publish: u32,
-    /// Generation, so a superseded hold's timer cannot expire a newer one.
-    gen: u64,
+    clipboard_sequence: u32,
 }
 
 #[derive(Default)]
 pub struct PasteCatchState {
-    held: Mutex<Option<Held>>,
-    gen: AtomicU64,
+    pending: Mutex<Option<PendingCopy>>,
+    gen: AtomicU32,
+    deliver_registration: Mutex<()>,
     /// The focused element as it was **immediately before** the paste, captured
     /// by [`intercept`] at no extra cost (it already reads focus for pre-flight).
     /// Differencing against the post-paste read is far stronger than matching
@@ -319,34 +306,29 @@ fn method_verifiable(method: PasteMethod) -> bool {
 // -- The two hooks -------------------------------------------------------------
 
 /// Decide once for the entire paste, before either accessibility probe.
-pub(crate) fn should_probe_focus(app: &AppHandle) -> bool {
+pub(crate) fn probe_generation(app: &AppHandle) -> Option<u32> {
+    let id = supersede(app);
     if !crate::agent::foreground_is_terminal() {
-        return true;
+        return Some(id);
     }
-    // Retire any earlier hold before the terminal paste owns the clipboard.
-    supersede(app);
     log::debug!("[paste-catch] bypassing accessibility checks for terminal paste");
-    false
+    None
 }
 
 /// Pre-flight. Called at the top of `clipboard::paste`.
 ///
 /// Returns `true` when Grain has taken ownership of the transcript — focus is
 /// provably not editable, so the caller must NOT paste.
-pub fn intercept(app: &AppHandle, text: &str) -> bool {
+pub fn intercept(app: &AppHandle, id: u32, text: &str) -> bool {
     let settings = get_settings(app);
     if !settings.paste_catch_enabled || text.trim().is_empty() {
         return false;
     }
-    // A new transcript supersedes any held one: hand the old clipboard back now,
-    // so a stale hold's restore cannot land on top of what is about to happen.
-    supersede(app);
-
-    // `PasteMethod::None` means the user asked for no paste at all. Catching a
-    // paste that was never going to happen would be a surprise, not a rescue.
-    if settings.paste_method == PasteMethod::None {
+    // Clipboard-only and external-script modes own their own delivery.
+    if !method_verifiable(settings.paste_method) {
         return false;
     }
+    let sequence = clipboard_sequence();
     // ONE focus read serving two purposes: the pre-flight verdict, and the
     // before-image that post-flight differences against. Reading focus twice
     // would cost a second cross-process round trip on the paste path and risk
@@ -366,7 +348,7 @@ pub fn intercept(app: &AppHandle, text: &str) -> bool {
         return false;
     }
     info!("[paste-catch] focus is not editable — holding the transcript instead of pasting");
-    arm(app, text);
+    arm(app, id, text.to_owned(), sequence);
     true
 }
 
@@ -375,18 +357,21 @@ pub fn intercept(app: &AppHandle, text: &str) -> bool {
 ///
 /// Fire-and-forget: the check runs on a short-lived worker so it costs the user
 /// no latency, and every failure path is silent.
-pub fn verify(app: &AppHandle, text: &str) {
+pub fn verify(app: &AppHandle, id: u32, text: &str, copy: bool) -> bool {
     let settings = get_settings(app);
-    if !should_verify(
-        settings.paste_catch_enabled,
-        settings.reliable_paste,
-        settings.auto_submit,
-        method_verifiable(settings.paste_method),
-        text.chars().count(),
-    ) {
-        return;
+    if !cfg!(windows)
+        || !should_verify(
+            settings.paste_catch_enabled,
+            settings.reliable_paste,
+            settings.auto_submit,
+            method_verifiable(settings.paste_method),
+            text.chars().count(),
+        )
+    {
+        return false;
     }
 
+    let sequence = clipboard_sequence();
     let app = app.clone();
     let text = text.to_string();
     std::thread::spawn(move || {
@@ -394,14 +379,23 @@ pub fn verify(app: &AppHandle, text: &str) {
         // The preference can change while this short-lived verifier sleeps.
         // Re-read it before touching accessibility APIs or arming a hold so OFF
         // has no delayed work and cannot surface a stale clipboard notice.
-        if !get_settings(&app).paste_catch_enabled {
+        let state = app.state::<PasteCatchState>();
+        if state.gen.load(Ordering::Acquire) != id {
             return;
         }
-        if confirmed_miss(&app, &text) {
+        if get_settings(&app).paste_catch_enabled && confirmed_miss(&app, &text) {
             info!("[paste-catch] the paste missed — holding the transcript");
-            arm(&app, &text);
+            arm(&app, id, text, sequence);
+        } else if copy {
+            let _pending = state.pending.lock().unwrap();
+            if state.gen.load(Ordering::Acquire) == id && clipboard_sequence() == sequence {
+                if let Err(error) = app.clipboard().write_text(text) {
+                    warn!("[paste-catch] could not copy the transcript: {error}");
+                }
+            }
         }
     });
+    true
 }
 
 /// A miss, read twice.
@@ -496,130 +490,160 @@ fn snapshot(app: &AppHandle) -> Snapshot {
     }
 }
 
-/// Arm a fresh hold, snapshotting the user's current clipboard first.
-fn arm(app: &AppHandle, text: &str) {
-    // Hand any older hold back before snapshotting, or the snapshot would
-    // capture the PREVIOUS transcript instead of the user's own clipboard.
-    supersede(app);
-    let saved = snapshot(app);
-    arm_with(app, text.to_string(), saved);
-}
-
-/// Arm a hold over an already-captured snapshot. Split out for re-arming after a
-/// delivery that missed again: at that moment the clipboard holds the
-/// transcript, so re-snapshotting would lose the user's content.
-fn arm_with(app: &AppHandle, text: String, saved: Snapshot) {
-    let Some(state) = app.try_state::<PasteCatchState>() else {
-        return;
-    };
-    if let Err(e) = app.clipboard().write_text(text.clone()) {
-        warn!("[paste-catch] could not publish the held transcript: {e}");
+fn arm(app: &AppHandle, id: u32, text: String, sequence: u32) {
+    let state = app.state::<PasteCatchState>();
+    let mut pending = state.pending.lock().unwrap();
+    let settings = get_settings(app);
+    if state.gen.load(Ordering::Acquire) != id || !settings.paste_catch_enabled {
         return;
     }
-
-    let gen = state.gen.fetch_add(1, Ordering::SeqCst) + 1;
+    if settings.overlay_style == crate::settings::OverlayStyle::None {
+        if settings.clipboard_handling == ClipboardHandling::CopyToClipboard
+            && clipboard_sequence() == sequence
+        {
+            if let Err(error) = app.clipboard().write_text(text) {
+                warn!("[paste-catch] could not copy the transcript: {error}");
+            }
+        }
+        return;
+    }
+    let ttl = COPY_OFFER_DELAY + COPY_COUNTDOWN;
+    let deadline = tokio::time::Instant::now() + ttl;
+    let expires_at_ms = (std::time::SystemTime::now() + ttl)
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
     let chars = text.chars().count() as u32;
-    let held = Held {
+    *pending = Some(PendingCopy {
+        id,
         text,
-        saved,
-        seq_at_publish: clipboard_sequence(),
-        gen,
-    };
-    match state.held.lock() {
-        Ok(mut slot) => *slot = Some(held),
-        Err(_) => return,
-    }
+        clipboard_sequence: sequence,
+    });
+    drop(pending);
+    reconcile_deliver_deferred(app);
 
-    let shortcut = deliver_binding(app).current_binding;
-    register_deliver_deferred(app);
-    crate::bridge::emit(app, DaemonEvent::PasteMissed { shortcut, chars });
-
-    let ttl = Duration::from_millis(get_settings(app).paste_catch_hold_ms);
     let app = app.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(ttl);
-        expire(&app, gen);
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep_until(deadline - COPY_COUNTDOWN).await;
+        {
+            let state = app.state::<PasteCatchState>();
+            let pending = state.pending.lock().unwrap();
+            if pending.as_ref().is_none_or(|offer| offer.id != id) {
+                return;
+            }
+            crate::bridge::emit(
+                &app,
+                DaemonEvent::PasteMissed {
+                    id,
+                    expires_at_ms,
+                    shortcut: deliver_binding(&app).current_binding,
+                    chars,
+                },
+            );
+        }
+        tokio::time::sleep_until(deadline).await;
+        if let Err(error) = resolve(&app, id, CopyDecision::Timeout) {
+            warn!("[paste-catch] could not copy the transcript: {error}");
+            crate::bridge::emit(&app, DaemonEvent::PasteError { error });
+        }
     });
 }
 
-/// The TTL elapsed. Only the hold that armed this timer may be expired by it.
-fn expire(app: &AppHandle, gen: u64) {
-    let Some(state) = app.try_state::<PasteCatchState>() else {
-        return;
-    };
-    let held = {
-        let Ok(mut slot) = state.held.lock() else {
-            return;
-        };
-        match slot.as_ref() {
-            Some(held) if held.gen == gen => slot.take(),
-            _ => None,
-        }
-    };
-    if let Some(held) = held {
-        hand_off(app, held, "hold expired");
+#[derive(Clone, Copy)]
+enum CopyDecision {
+    Copy,
+    Discard,
+    Timeout,
+}
+
+fn should_copy(decision: CopyDecision, original_sequence: u32, current_sequence: u32) -> bool {
+    match decision {
+        CopyDecision::Copy => true,
+        CopyDecision::Discard => false,
+        CopyDecision::Timeout => original_sequence == current_sequence,
     }
 }
 
-/// Drop any armed hold and hand the clipboard back. Called when a new
-/// transcript arrives, so a stale restore cannot clobber it.
-pub fn supersede(app: &AppHandle) {
-    let Some(state) = app.try_state::<PasteCatchState>() else {
-        return;
-    };
-    let held = state.held.lock().ok().and_then(|mut slot| slot.take());
-    if let Some(held) = held {
-        hand_off(app, held, "superseded");
-    }
-}
-
-/// Hand the clipboard back **exactly** the way Handy would have left it, then
-/// withdraw the offer.
-fn hand_off(app: &AppHandle, held: Held, reason: &str) {
-    let clipboard = app.clipboard();
-    if !still_ours(app, &held) {
-        // The user copied something else while we were holding. Their action
-        // wins — the same rule `paste_tx` applies via the sequence number.
-        info!("[paste-catch] clipboard changed externally; leaving it untouched ({reason})");
-    } else if get_settings(app).clipboard_handling == ClipboardHandling::CopyToClipboard {
-        // Upstream's contract under this setting is "the transcript stays".
-        info!("[paste-catch] leaving the transcript on the clipboard ({reason})");
+fn take_offer(slot: &mut Option<PendingCopy>, id: u32) -> Option<PendingCopy> {
+    if slot.as_ref().is_some_and(|offer| offer.id == id) {
+        slot.take()
     } else {
-        match held.saved {
-            Snapshot::Text(text) => {
-                let _ = clipboard.write_text(text);
-            }
-            Snapshot::Image(image) => {
-                let _ = clipboard.write_image(&image);
-            }
-            // Nothing was there to begin with — upstream clears rather than
-            // leaving the transcript behind, so this does too.
-            Snapshot::Empty => {
-                let _ = clipboard.clear();
-            }
-        }
-        info!("[paste-catch] clipboard handed back ({reason})");
+        None
     }
-
-    crate::bridge::emit(app, DaemonEvent::PasteMissedClear);
-    unregister_deliver_deferred(app);
 }
 
-/// Whether the transcript we published is still the clipboard's content.
-fn still_ours(app: &AppHandle, held: &Held) -> bool {
-    #[cfg(windows)]
-    {
-        let _ = app;
-        clipboard_sequence() == held.seq_at_publish
-    }
-    // No sequence number elsewhere: compare the content instead. Cheaper than
-    // it looks — the alternative is restoring over a copy the user just made.
-    #[cfg(not(windows))]
-    {
+fn resolve(app: &AppHandle, id: u32, decision: CopyDecision) -> Result<(), String> {
+    let state = app.state::<PasteCatchState>();
+    let mut pending = state.pending.lock().unwrap();
+    let Some(offer) = take_offer(&mut pending, id) else {
+        return Ok(());
+    };
+    let result = if should_copy(decision, offer.clipboard_sequence, clipboard_sequence()) {
         app.clipboard()
-            .read_text()
-            .map(|current| current == held.text)
-            .unwrap_or(false)
+            .write_text(&offer.text)
+            .map_err(|error| error.to_string())
+    } else {
+        Ok(())
+    };
+    if result.is_err() && matches!(decision, CopyDecision::Copy) {
+        *pending = Some(offer);
+        return result;
+    }
+    crate::bridge::emit(app, DaemonEvent::PasteMissedClear { id });
+    drop(pending);
+    reconcile_deliver_deferred(app);
+    result
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn resolve_clipboard_offer(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: u32,
+    copy: bool,
+) -> Result<(), String> {
+    if window.label() != "recording_overlay" {
+        return Err("The copy offer belongs to the recording overlay.".into());
+    }
+    resolve(
+        &app,
+        id,
+        if copy {
+            CopyDecision::Copy
+        } else {
+            CopyDecision::Discard
+        },
+    )
+}
+
+/// Cancel an older verifier and discard its pending copy before a new dictation.
+pub fn supersede(app: &AppHandle) -> u32 {
+    let Some(state) = app.try_state::<PasteCatchState>() else {
+        return 0;
+    };
+    let mut pending = state.pending.lock().unwrap();
+    let id = state.gen.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+    if let Some(offer) = pending.take() {
+        crate::bridge::emit(app, DaemonEvent::PasteMissedClear { id: offer.id });
+        drop(pending);
+        reconcile_deliver_deferred(app);
+    }
+    id
+}
+
+fn restore(app: &AppHandle, saved: Snapshot) {
+    let clipboard = app.clipboard();
+    match saved {
+        Snapshot::Text(text) => {
+            let _ = clipboard.write_text(text);
+        }
+        Snapshot::Image(image) => {
+            let _ = clipboard.write_image(&image);
+        }
+        Snapshot::Empty => {
+            let _ = clipboard.clear();
+        }
     }
 }
 
@@ -638,64 +662,56 @@ fn clipboard_sequence() -> u32 {
 
 // -- Delivery ------------------------------------------------------------------
 
-/// The deliver shortcut fired. Puts the held transcript where the caret is now.
-///
-/// Everything runs off the input thread: this is reached from a `ShortcutAction`
-/// and it unregisters a shortcut, which must never happen synchronously there —
-/// doing so hangs every global shortcut.
+/// Deliver a pending transcript through the existing shortcut.
 pub fn deliver(app: &AppHandle) {
     let app = app.clone();
-    std::thread::spawn(move || {
-        let Some(state) = app.try_state::<PasteCatchState>() else {
-            return;
-        };
-        let held = state.held.lock().ok().and_then(|mut slot| slot.take());
-        let Some(held) = held else {
-            return;
-        };
-        // Invalidate the armed timer: this hold is ours now.
-        state.gen.fetch_add(1, Ordering::SeqCst);
-
-        // If the user copied over the transcript, put it back before pasting.
-        if !still_ours(&app, &held) {
-            if let Err(e) = app.clipboard().write_text(held.text.clone()) {
-                warn!("[paste-catch] could not re-publish the transcript: {e}");
-                crate::bridge::emit(&app, DaemonEvent::PasteMissedClear);
-                unregister_deliver_deferred(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<PasteCatchState>();
+        let (offer, saved, sequence, id) = {
+            let mut pending = state.pending.lock().unwrap();
+            let Some(offer) = pending.take() else {
+                return;
+            };
+            let id = state.gen.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+            crate::bridge::emit(&app, DaemonEvent::PasteMissedClear { id: offer.id });
+            let saved = snapshot(&app);
+            let written = app.clipboard().write_text(&offer.text);
+            let sequence = clipboard_sequence();
+            drop(pending);
+            reconcile_deliver_deferred(&app);
+            if let Err(error) = written {
+                warn!("[paste-catch] could not deliver the transcript: {error}");
+                arm(&app, id, offer.text, sequence);
                 return;
             }
-        }
+            (offer, saved, sequence, id)
+        };
 
-        // Refresh the before-image so the delivery is verified against the
-        // element it is actually going to, not the one the original paste
-        // missed — otherwise the identity check disables differencing here.
         let probe_focus = !crate::agent::foreground_is_terminal();
         if probe_focus {
             if let Ok(mut slot) = state.before.lock() {
                 *slot = crate::context_detect::read_focus_probe();
             }
         }
-
-        let chord_sent = send_paste_chord(&app)
-            .inspect_err(|e| warn!("[paste-catch] delivery chord failed: {e}"))
-            .is_ok();
-
-        // Let the destination read the clipboard before handing it back. A
-        // failed chord or confirmed miss reuses the original clipboard snapshot.
+        let chord_sent = state.gen.load(Ordering::Acquire) == id
+            && send_paste_chord(&app)
+                .inspect_err(|e| warn!("[paste-catch] delivery chord failed: {e}"))
+                .is_ok();
         std::thread::sleep(Duration::from_millis(VERIFY_SETTLE_MS));
-        let delivered = chord_sent && (!probe_focus || !confirmed_miss(&app, &held.text));
-
-        if delivered {
-            info!("[paste-catch] delivered");
-            hand_off(&app, held, "delivered");
-        } else if get_settings(&app).paste_catch_enabled {
-            info!("[paste-catch] delivery missed as well — re-arming the hold");
-            let Held { text, saved, .. } = held;
-            arm_with(&app, text, saved);
-        } else {
-            // The setting changed while delivery was being verified. Restore
-            // the clipboard instead of resurrecting the disabled feature.
-            hand_off(&app, held, "disabled");
+        let delivered = chord_sent && (!probe_focus || !confirmed_miss(&app, &offer.text));
+        let mut rearm_sequence = sequence;
+        {
+            let _pending = state.pending.lock().unwrap();
+            if clipboard_sequence() == sequence
+                && (!delivered
+                    || get_settings(&app).clipboard_handling != ClipboardHandling::CopyToClipboard)
+            {
+                restore(&app, saved);
+                rearm_sequence = clipboard_sequence();
+            }
+        }
+        if !delivered {
+            arm(&app, id, offer.text, rearm_sequence);
         }
     });
 }
@@ -741,40 +757,50 @@ fn deliver_binding(app: &AppHandle) -> ShortcutBinding {
         })
 }
 
-/// Hold the deliver key for the offer's lifetime.
-///
-/// A conflict with an existing global binding is logged and otherwise ignored:
-/// the offer still works via plain `Ctrl+V`, so a busy accelerator degrades the
-/// feature rather than breaking it.
-fn register_deliver_deferred(app: &AppHandle) {
+/// Reconcile the shortcut off the input thread. Always consult the latest offer
+/// so a queued registration cannot outlive a newer discard or replacement.
+fn reconcile_deliver_deferred(app: &AppHandle) {
     let app = app.clone();
-    std::thread::spawn(move || {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<PasteCatchState>();
+        let _registration = state.deliver_registration.lock().unwrap();
+        let active = state.pending.lock().unwrap().is_some();
         let binding = deliver_binding(&app);
         if binding.current_binding.trim().is_empty() {
             return;
         }
         let _ = crate::shortcut::unregister_shortcut(&app, binding.clone());
-        if let Err(e) = crate::shortcut::register_shortcut(&app, binding.clone()) {
-            warn!(
-                "[paste-catch] could not register '{}': {e} — Ctrl+V still delivers",
-                binding.current_binding
-            );
+        if active {
+            if let Err(error) = crate::shortcut::register_shortcut(&app, binding) {
+                warn!("[paste-catch] could not register the delivery shortcut: {error}");
+            }
         }
-    });
-}
-
-/// Release the deliver key. "Destroy if not in use": outside an armed hold the
-/// accelerator belongs to whatever else the user has bound it to.
-fn unregister_deliver_deferred(app: &AppHandle) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let _ = crate::shortcut::unregister_shortcut(&app, deliver_binding(&app));
     });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_explicit_copy_can_replace_newer_clipboard_contents() {
+        assert!(should_copy(CopyDecision::Timeout, 10, 10));
+        assert!(!should_copy(CopyDecision::Timeout, 10, 11));
+        assert!(should_copy(CopyDecision::Copy, 10, 11));
+        assert!(!should_copy(CopyDecision::Discard, 10, 10));
+    }
+
+    #[test]
+    fn a_stale_or_duplicate_resolution_cannot_consume_an_offer() {
+        let mut pending = Some(PendingCopy {
+            id: 2,
+            text: "Transcript".into(),
+            clipboard_sequence: 10,
+        });
+        assert!(take_offer(&mut pending, 1).is_none());
+        assert!(take_offer(&mut pending, 2).is_some());
+        assert!(take_offer(&mut pending, 2).is_none());
+    }
 
     #[test]
     fn normalize_collapses_whitespace() {

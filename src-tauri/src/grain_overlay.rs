@@ -12,8 +12,6 @@ use tauri::{AppHandle, Emitter, Manager};
 /// Grain's visual clearance above Handy's platform-specific bottom placement.
 pub const BOTTOM_RAISE: f64 = 16.0;
 
-// Leave a short gap after Handy's 300 ms recording-window hide delay.
-const CLIPBOARD_NOTICE_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
 #[cfg(windows)]
 const DICTIONARY_NOTICE_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -24,6 +22,12 @@ pub struct DictionarySuggestion {
     pub corrected: String,
     /// Wall-clock deadline for the renderer's countdown. Cleared on save failure.
     pub expires_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Type)]
+pub struct ClipboardOffer {
+    pub id: u32,
+    pub expires_at_ms: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,6 +48,7 @@ pub struct OverlayPresentation {
     pub icon: Option<String>,
     pub notice: Option<String>,
     pub dictionary: Option<DictionarySuggestion>,
+    pub clipboard_offer: Option<ClipboardOffer>,
     pub committed: String,
     pub tentative: String,
     pub working: bool,
@@ -95,7 +100,7 @@ impl OverlayPresentation {
             return false;
         }
         self.clear_capture();
-        if self.dictionary.is_some() {
+        if self.dictionary.is_some() || self.clipboard_offer.is_some() {
             return false;
         }
         if self.notice.is_some() {
@@ -293,8 +298,7 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::ProcessingComplete { .. }
             | DaemonEvent::SessionCancelled { .. }
             | DaemonEvent::PasteMissed { .. }
-            | DaemonEvent::PasteMissedClear
-            | DaemonEvent::PasteCatchDisabled
+            | DaemonEvent::PasteMissedClear { .. }
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
@@ -304,31 +308,7 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
     }
     let handle = app.clone();
     let event = event.clone();
-    let _ = app.run_on_main_thread(move || {
-        if matches!(event, DaemonEvent::PasteMissed { .. }) {
-            let Some(ctx) = handle.try_state::<OverlayContext>() else {
-                return;
-            };
-            let generation = ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1;
-            // Delay presentation only: clipboard contents and the deliver
-            // shortcut are already available. Reuse the async runtime timer.
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(CLIPBOARD_NOTICE_DELAY).await;
-                let app = handle.clone();
-                let _ = handle.run_on_main_thread(move || {
-                    let Some(ctx) = app.try_state::<OverlayContext>() else {
-                        return;
-                    };
-                    // A new capture, replacement offer or clear owns the UI now.
-                    if ctx.notice_generation.load(Ordering::Acquire) == generation {
-                        on_event_main(&app, &event);
-                    }
-                });
-            });
-        } else {
-            on_event_main(&handle, &event);
-        }
-    });
+    let _ = app.run_on_main_thread(move || on_event_main(&handle, &event));
 }
 
 fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
@@ -346,8 +326,7 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::ProcessingComplete { .. }
             | DaemonEvent::SessionCancelled { .. }
             | DaemonEvent::PasteMissed { .. }
-            | DaemonEvent::PasteMissedClear
-            | DaemonEvent::PasteCatchDisabled
+            | DaemonEvent::PasteMissedClear { .. }
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
@@ -390,15 +369,32 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                 // A clipboard notice is independent of capture completion.
                 hide = value.complete(*session_id);
             }
-            DaemonEvent::PasteMissed { .. } | DaemonEvent::PasteError { .. } => {
-                value.notice = Some(
-                    if matches!(event, DaemonEvent::PasteMissed { .. }) {
-                        "Copied to clipboard"
-                    } else {
-                        "Could not paste"
-                    }
-                    .into(),
-                );
+            DaemonEvent::PasteMissed {
+                id, expires_at_ms, ..
+            } => {
+                value.clipboard_offer = Some(ClipboardOffer {
+                    id: *id,
+                    expires_at_ms: *expires_at_ms,
+                });
+                value.state = "copy".into();
+                value.visible = crate::settings::get_settings(app).overlay_style
+                    != crate::settings::OverlayStyle::None;
+                show = Some("copy");
+            }
+            DaemonEvent::PasteMissedClear { id }
+                if value
+                    .clipboard_offer
+                    .as_ref()
+                    .is_some_and(|offer| offer.id == *id) =>
+            {
+                value.clipboard_offer = None;
+                if value.state == "copy" {
+                    value.visible = false;
+                    hide = true;
+                }
+            }
+            DaemonEvent::PasteError { .. } => {
+                value.notice = Some("Could not paste".into());
                 if !value.visible {
                     value.clear_capture();
                     value.state = "notice".into();
@@ -407,14 +403,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                     show = Some("notice");
                 }
                 expiry = Some(ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1);
-            }
-            DaemonEvent::PasteCatchDisabled | DaemonEvent::PasteMissedClear => {
-                ctx.notice_generation.fetch_add(1, Ordering::AcqRel);
-                value.notice = None;
-                if value.state == "notice" {
-                    value.visible = false;
-                    hide = true;
-                }
             }
             DaemonEvent::PillIcon { rgba } => {
                 value.icon = rgba
@@ -654,10 +642,12 @@ pub fn change_overlay_style_setting(
     crate::overlay::update_overlay_enabled_cache(style != crate::settings::OverlayStyle::None);
     if style == crate::settings::OverlayStyle::None {
         crate::grain_dictionary::cancel_watch();
+        crate::paste_catch::supersede(&app);
         let ctx = app.state::<OverlayContext>();
         let mut value = ctx.presentation.lock().unwrap();
         value.visible = false;
         value.dictionary = None;
+        value.clipboard_offer = None;
         drop(value);
         crate::overlay::hide_recording_overlay(&app);
     }

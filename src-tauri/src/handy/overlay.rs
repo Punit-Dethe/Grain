@@ -58,7 +58,7 @@ const OVERLAY_STREAM_HEIGHT: f64 = 120.0;
 pub(crate) fn overlay_dimensions(state: &str) -> (f64, f64) {
     match state {
         "streaming" => (OVERLAY_STREAM_WIDTH, OVERLAY_STREAM_HEIGHT),
-        "dictionary" => (400.0, 176.0), // [GRAIN] Dictionary confirmation.
+        "dictionary" | "copy" => (400.0, 176.0), // [GRAIN] Confirmation cards.
         _ => (OVERLAY_WIDTH, OVERLAY_HEIGHT),
     }
 }

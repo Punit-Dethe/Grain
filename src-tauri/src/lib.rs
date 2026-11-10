@@ -1385,6 +1385,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_paste_catch_enabled_setting,
             grain_dictionary::set_learn_from_edits,
             grain_overlay::resolve_dictionary_suggestion,
+            paste_catch::resolve_clipboard_offer,
             grain_commands::detect_active_app,
             shortcut::suspend_binding,
             shortcut::resume_binding,

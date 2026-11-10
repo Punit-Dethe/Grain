@@ -822,11 +822,14 @@ pub fn paste_with_options(
     // ownership of the transcript: focus is provably not editable, so the OS
     // paste below would be a no-op that destroys the transcript on restore —
     // and the chord could fire a real command in the target app. The transcript
-    // is held on the clipboard behind a visible offer instead. Every
+    // is held privately behind a visible offer instead. Every
     // inconclusive reading returns false and leaves this path untouched.
-    let probe_focus =
-        settings.paste_catch_enabled && crate::paste_catch::should_probe_focus(&app_handle);
-    if probe_focus && !suppress_trailing_space && crate::paste_catch::intercept(&app_handle, &text)
+    let probe = settings
+        .paste_catch_enabled
+        .then(|| crate::paste_catch::probe_generation(&app_handle))
+        .flatten();
+    if !suppress_trailing_space
+        && probe.is_some_and(|id| crate::paste_catch::intercept(&app_handle, id, &text))
     {
         return Ok(());
     }
@@ -921,19 +924,13 @@ pub fn paste_with_options(
         }
     }
 
+    // [GRAIN] Let a confirmed miss offer a copy before modifying the clipboard.
+    let copy = settings.clipboard_handling == ClipboardHandling::CopyToClipboard;
+    let verifying =
+        probe.is_some_and(|id| crate::paste_catch::verify(&app_handle, id, &text, copy));
     // After pasting, optionally copy to clipboard based on settings
-    if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+    if copy && !verifying {
         write_text_to_clipboard(&app_handle, &text)?;
-    }
-
-    // [GRAIN] Paste Catch (post-flight). Sequenced here rather than timed from
-    // the top of this function, so it stays correct if the body above is
-    // re-ordered or re-timed upstream, and so the clipboard snapshot it may need
-    // is taken lazily — a paste that lands costs it no clipboard work at all.
-    // Fire-and-forget: the check runs on a worker and is silent unless it finds
-    // positive evidence that the transcript never arrived.
-    if probe_focus {
-        crate::paste_catch::verify(&app_handle, &text);
     }
 
     Ok(())

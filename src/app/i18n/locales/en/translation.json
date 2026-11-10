@@ -1038,7 +1038,7 @@
       },
       "pasteCatch": {
         "title": "Recover missed text insertion",
-        "description": "If Grain cannot insert a transcript into the text field, keep it on the clipboard and briefly confirm the copy in the pill. Turn this off to disable both recovery and the confirmation."
+        "description": "If Grain can’t insert a transcript, it offers to copy it. The transcript is copied after a short countdown unless you decline."
       }
     },
     "appearance": {
@@ -1173,6 +1173,12 @@
         "failed": "A track could not be transcribed: {{reason}}"
       }
     }
+  },
+  "clipboardOffer": {
+    "title": "Copy to clipboard?",
+    "accept": "Copy to clipboard",
+    "decline": "Don’t copy",
+    "error": "Couldn’t copy the transcript"
   },
   "dictionarySuggestion": {
     "learn": "Learn from edits",

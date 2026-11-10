@@ -1,6 +1,12 @@
 import { type UnlistenFn } from "@tauri-apps/api/event";
 import { ArrowRight, Clipboard } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   commands,
   events,
@@ -23,6 +29,7 @@ const empty: OverlayPresentation = {
   icon: null,
   notice: null,
   dictionary: null,
+  clipboard_offer: null,
   committed: "",
   tentative: "",
   working: false,
@@ -35,19 +42,57 @@ const NOTICE_EXIT_TIMEOUT_MS = 220;
 
 function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
   const { t } = useTranslation();
+  return (
+    <ConfirmationOffer
+      expiresAt={suggestion.expires_at_ms}
+      title={t("dictionarySuggestion.title")}
+      accept={t("dictionarySuggestion.accept")}
+      decline={t("dictionarySuggestion.dismiss")}
+      error={t("dictionarySuggestion.error")}
+      resolve={(save) =>
+        commands.resolveDictionarySuggestion(suggestion.id, save)
+      }
+    >
+      <div className="grain-dictionary-change" dir="ltr">
+        <del dir="auto" title={suggestion.original}>
+          {suggestion.original}
+        </del>
+        <ArrowRight size={14} aria-hidden="true" />
+        <strong dir="auto" title={suggestion.corrected}>
+          {suggestion.corrected}
+        </strong>
+      </div>
+    </ConfirmationOffer>
+  );
+}
+
+function ConfirmationOffer({
+  expiresAt,
+  title,
+  accept,
+  decline,
+  error,
+  resolve,
+  children,
+}: {
+  expiresAt: number | null;
+  title: string;
+  accept: string;
+  decline: string;
+  error: string;
+  resolve: (accept: boolean) => Promise<{ status: "ok" | "error" }>;
+  children?: ReactNode;
+}) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [countdownMs] = useState(() =>
-    Math.max(0, (suggestion.expires_at_ms ?? 0) - Date.now()),
+    Math.max(0, (expiresAt ?? 0) - Date.now()),
   );
 
-  const resolve = async (save: boolean) => {
+  const decide = async (accept: boolean) => {
     setBusy(true);
     try {
-      const result = await commands.resolveDictionarySuggestion(
-        suggestion.id,
-        save,
-      );
+      const result = await resolve(accept);
       if (result.status === "ok") return;
     } catch {
       // Keep the offer available for a retry if the command could not finish.
@@ -58,44 +103,28 @@ function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
 
   return (
     <section
-      className="grain-dictionary-offer"
-      aria-labelledby="dictionary-offer-title"
+      className="grain-confirmation-offer"
+      aria-labelledby="confirmation-offer-title"
     >
-      <h2 id="dictionary-offer-title" role="status">
-        {t(
-          failed || suggestion.expires_at_ms === null
-            ? "dictionarySuggestion.error"
-            : "dictionarySuggestion.title",
-        )}
+      <h2 id="confirmation-offer-title" role="status">
+        {failed || expiresAt === null ? error : title}
       </h2>
-      <div className="grain-dictionary-change" dir="ltr">
-        <del dir="auto" title={suggestion.original}>
-          {suggestion.original}
-        </del>
-        <ArrowRight size={14} aria-hidden="true" />
-        <strong dir="auto" title={suggestion.corrected}>
-          {suggestion.corrected}
-        </strong>
-      </div>
-      <div className="grain-dictionary-actions">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void resolve(true)}
-        >
-          {t("dictionarySuggestion.accept")}
+      {children}
+      <div className="grain-confirmation-actions">
+        <button type="button" disabled={busy} onClick={() => void decide(true)}>
+          {accept}
         </button>
         <button
           type="button"
           disabled={busy}
-          onClick={() => void resolve(false)}
+          onClick={() => void decide(false)}
         >
-          {t("dictionarySuggestion.dismiss")}
+          {decline}
         </button>
       </div>
-      {suggestion.expires_at_ms !== null && (
+      {expiresAt !== null && (
         <div
-          className="grain-dictionary-countdown"
+          className="grain-confirmation-countdown"
           style={{ animationDuration: `${countdownMs}ms` }}
           aria-hidden="true"
         />
@@ -466,6 +495,25 @@ export function RecordingOverlay() {
       {showClose && <div className="sbase-r">{cancelBtn}</div>}
     </div>
   );
+
+  const clipboardOffer = presentation.clipboard_offer;
+  if (presentation.visible && clipboardOffer) {
+    return (
+      <div dir={direction} className={`ov-stage ${position}`}>
+        <ConfirmationOffer
+          key={clipboardOffer.id}
+          expiresAt={clipboardOffer.expires_at_ms}
+          title={t("clipboardOffer.title")}
+          accept={t("clipboardOffer.accept")}
+          decline={t("clipboardOffer.decline")}
+          error={t("clipboardOffer.error")}
+          resolve={(copy) =>
+            commands.resolveClipboardOffer(clipboardOffer.id, copy)
+          }
+        />
+      </div>
+    );
+  }
 
   if (presentation.visible && presentation.dictionary) {
     return (

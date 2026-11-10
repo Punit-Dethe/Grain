@@ -547,7 +547,7 @@ body,
   }
 }
 
-.grain-dictionary-offer {
+.grain-confirmation-offer {
   position: relative;
   box-sizing: border-box;
   display: grid;
@@ -563,7 +563,7 @@ body,
   font: 17px/24px var(--s-font);
 }
 
-.grain-dictionary-offer h2 {
+.grain-confirmation-offer h2 {
   margin: 0;
   color: #c6c6c3;
   font: 500 13px/18px var(--s-font);
@@ -592,7 +592,7 @@ body,
   color: #a3a09a;
 }
 
-.grain-dictionary-actions {
+.grain-confirmation-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -600,7 +600,7 @@ body,
   margin-block-start: 10px;
 }
 
-.grain-dictionary-actions button {
+.grain-confirmation-actions button {
   min-height: 36px;
   padding: 6px 14px;
   border: 1px solid #424242;
@@ -611,27 +611,27 @@ body,
   cursor: pointer;
 }
 
-.grain-dictionary-actions button:first-child {
+.grain-confirmation-actions button:first-child {
   border-color: #f4f4f2;
   background: #f4f4f2;
   color: #0b0b0b;
 }
 
-.grain-dictionary-actions button:hover:enabled {
+.grain-confirmation-actions button:hover:enabled {
   filter: brightness(0.85);
 }
 
-.grain-dictionary-actions button:focus-visible {
+.grain-confirmation-actions button:focus-visible {
   outline: 2px solid #f4f4f2;
   outline-offset: 2px;
 }
 
-.grain-dictionary-actions button:disabled {
+.grain-confirmation-actions button:disabled {
   opacity: 0.55;
   cursor: default;
 }
 
-.grain-dictionary-countdown {
+.grain-confirmation-countdown {
   position: absolute;
   inset-inline: 16px;
   inset-block-end: 0;
@@ -639,21 +639,21 @@ body,
   background: #fff;
   pointer-events: none;
   transform-origin: left center;
-  animation: dictionary-countdown linear forwards;
+  animation: confirmation-countdown linear forwards;
 }
 
-.grain-dictionary-countdown:dir(rtl) {
+.grain-confirmation-countdown:dir(rtl) {
   transform-origin: right center;
 }
 
-@keyframes dictionary-countdown {
+@keyframes confirmation-countdown {
   to {
     transform: scaleX(0);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .grain-dictionary-countdown {
+  .grain-confirmation-countdown {
     animation-timing-function: steps(10, end);
   }
 }

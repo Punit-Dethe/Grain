@@ -53,6 +53,7 @@ pub(crate) fn next_session_id() -> u64 {
 /// start never shows a pill that must be torn down.
 pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: SessionMode) {
     crate::grain_dictionary::cancel_watch();
+    crate::paste_catch::supersede(app);
     crate::bridge::emit(
         app,
         DaemonEvent::OverlayConfig {

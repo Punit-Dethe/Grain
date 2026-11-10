@@ -121,23 +121,17 @@ pub enum DaemonEvent {
         error: String,
     },
 
-    /// [GRAIN] Paste Catch: a transcript's paste provably missed the text field,
-    /// so Grain is holding it on the clipboard instead of letting the restore
-    /// destroy it. The pill shows an offer for the hold's lifetime; pressing
-    /// `shortcut` (or plain Ctrl+V — the transcript really is on the clipboard)
-    /// delivers it. `chars` is the transcript length, for a "42 words held"
-    /// style hint without shipping the text itself to the surface.
+    /// [GRAIN] A missed paste is held privately until the clipboard offer resolves.
     PasteMissed {
+        id: u32,
+        expires_at_ms: u64,
         shortcut: String,
         chars: u32,
     },
-    /// [GRAIN] Withdraw the Paste Catch offer: delivered, superseded by a new
-    /// dictation, or the hold expired and the clipboard was handed back.
-    PasteMissedClear,
-    /// [GRAIN] Paste Catch was turned off in settings. Unlike the ordinary hold
-    /// clear above, this also withdraws the pill's independent three-second
-    /// clipboard confirmation immediately.
-    PasteCatchDisabled,
+    /// [GRAIN] Withdraw only the offer that resolved.
+    PasteMissedClear {
+        id: u32,
+    },
 
     /// Where the single pill should anchor — and whether to show at all
     /// (`OverlayPosition::None` = never show). Emitted on session start and when

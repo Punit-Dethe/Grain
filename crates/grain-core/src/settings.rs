@@ -761,18 +761,12 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub agent_enabled: bool,
     /// [GRAIN] Paste Catch: when a dictation paste provably misses the text
-    /// field, hold the transcript on the clipboard behind a visible offer
+    /// field, keep it privately until the copy offer resolves
     /// instead of letting the restore destroy it. ON by default — a missed
     /// paste currently loses the transcript outright, and the detection only
     /// fires on positive evidence, so the failure mode is "no offer shown".
     #[serde(default = "default_paste_catch_enabled")]
     pub paste_catch_enabled: bool,
-    /// [GRAIN] How long the caught transcript stays on the clipboard before the
-    /// clipboard is handed back exactly as Handy would have. Long enough to
-    /// notice the offer and reach a field; short enough that holding someone
-    /// else's clipboard stays defensible.
-    #[serde(default = "default_paste_catch_hold_ms")]
-    pub paste_catch_hold_ms: u64,
     /// [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
     /// separate from diagnostic `debug_mode`: only this switch allows native
     /// folder selection and load-unpacked projects. OFF by default.
@@ -819,11 +813,6 @@ fn default_always_on_microphone() -> bool {
 /// the transcript, and the detection only ever acts on positive evidence.
 fn default_paste_catch_enabled() -> bool {
     true
-}
-/// 20s. Below ~15s a user who has to find a window and click into a field runs
-/// out of time; much above 20s and Grain is squatting on someone's clipboard.
-fn default_paste_catch_hold_ms() -> u64 {
-    20_000
 }
 fn default_translate_to_english() -> bool {
     false
@@ -1587,7 +1576,6 @@ pub fn get_default_settings() -> AppSettings {
         snippets_enabled: false,
         agent_enabled: true,
         paste_catch_enabled: default_paste_catch_enabled(),
-        paste_catch_hold_ms: default_paste_catch_hold_ms(),
         extension_developer_mode: false,
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),
