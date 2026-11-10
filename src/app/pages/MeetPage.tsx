@@ -304,7 +304,9 @@ function Studio({
       (level, source) => Math.max(level, source.level),
       0,
     ) ?? 0;
-  const waveLevel = 0.12 + 0.88 * Math.sqrt(Math.min(1, peak));
+  const waveLevel = recording
+    ? 0.12 + 0.88 * Math.sqrt(Math.min(1, peak))
+    : 0.65;
 
   return (
     <section
@@ -314,32 +316,31 @@ function Studio({
       )}
     >
       <header className="meet-head">
-        <div>
-          <h1>{t("ui2.meet.name")}</h1>
-          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-        </div>
-        <div
-          className="meet-record-controls"
-          style={{ "--meet-wave-level": waveLevel } as CSSProperties}
-        >
-          {recording && <StudioWave />}
-          <button
-            className="button primary meet-record-action"
-            type="button"
-            disabled={busy || (!recording && !canStart)}
-            onClick={() => onAction(recording ? "stop" : "start")}
-          >
-            <Glyph name={recording ? "stop" : "mic"} />
-            <span>
-              {recording
-                ? t("ui2.meet.studio.stop")
-                : busy
-                  ? t("ui2.meet.studio.starting")
-                  : t("ui2.meet.studio.start")}
-            </span>
-          </button>
-        </div>
+        <h1>{t("ui2.meet.name")}</h1>
+        <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
       </header>
+      <div
+        className="meet-record-controls"
+        style={{ "--meet-wave-level": waveLevel } as CSSProperties}
+      >
+        <StudioWave />
+        <button
+          className="meet-record-action"
+          type="button"
+          disabled={busy || (!recording && !canStart)}
+          onClick={() => onAction(recording ? "stop" : "start")}
+        >
+          <Glyph name={recording ? "stop" : "mic"} />
+          <span>
+            {recording
+              ? t("ui2.meet.studio.stop")
+              : busy
+                ? t("ui2.meet.studio.starting")
+                : t("ui2.meet.studio.start")}
+          </span>
+        </button>
+        <StudioWave />
+      </div>
       {!recording && (
         <div
           className="meet-studio-sources"

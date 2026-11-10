@@ -5062,16 +5062,8 @@ html[data-theme="light"] .grain-root {
   padding-bottom: 14px;
 }
 
-.meet-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-}
-
 .meet-head h1 {
-  font-size: 26px;
+  font-size: clamp(26px, 3cqi, 32px);
 }
 
 .meet-head .page-subtitle {
@@ -5081,24 +5073,57 @@ html[data-theme="light"] .grain-root {
 /* --- Recording controls and audio sources ---------------------------- */
 
 .meet-record-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 72px) auto minmax(0, 72px);
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: clamp(9px, 2cqi, 18px);
+  padding: 14px 0;
 }
 
-.meet-record-action.button {
-  min-height: 38px;
-  white-space: normal;
+.meet-record-action {
+  width: clamp(92px, 15vh, 112px);
+  aspect-ratio: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  place-content: center;
+  justify-items: center;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  color: var(--text-1);
+  background: linear-gradient(145deg, var(--bg-0), var(--meet-surface));
+  box-shadow: 0 0 0 5px var(--accent-soft);
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.meet-record-action:hover:not(:disabled) {
+  box-shadow: 0 0 0 5px var(--accent-soft-hover);
+}
+
+.meet-record-action .icon.sm {
+  width: 24px;
+  height: 24px;
 }
 
 .meet-studio-wave {
-  width: 48px;
-  height: 24px;
-  flex: 0 0 auto;
+  width: 100%;
+  height: 34px;
   fill: none;
   stroke: var(--text-3);
   stroke-width: 2px;
   stroke-linecap: round;
+  opacity: 0.58;
+}
+
+.meet-studio-wave:last-child {
+  transform: scaleX(-1);
 }
 
 .meet-studio-wave path {
@@ -5109,7 +5134,8 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-studio-sources {
-  margin-top: 10px;
+  width: min(680px, 100%);
+  margin-inline: auto;
 }
 
 .meet-sources {
@@ -5142,6 +5168,7 @@ html[data-theme="light"] .grain-root {
 @container recall (min-width: 420px) {
   .meet-sources {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-radius: 999px;
   }
 
   .meet-source + .meet-source {
@@ -5242,6 +5269,7 @@ html[data-theme="light"] .grain-root {
 .meet-sources-hint {
   margin: 6px 0 0;
   color: var(--text-3);
+  text-align: center;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -5464,6 +5492,7 @@ html[data-theme="light"] .grain-root {
   gap: 12px;
   margin: 10px 0 0;
   padding: 14px;
+  background: var(--meet-surface);
   color: var(--text-3);
   font-size: 13px;
 }
@@ -6182,7 +6211,7 @@ html[data-theme="light"] .grain-root {
 
 @media (prefers-reduced-motion: reduce) {
   .meet-studio-wave path {
-    transform: scaleY(0.78);
+    transform: scaleY(0.65);
     transition: none;
   }
 
