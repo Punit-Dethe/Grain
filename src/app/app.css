@@ -5581,6 +5581,7 @@ html[data-theme="light"] .meet-orb {
 }
 
 .meet-recording-item {
+  height: 62px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -5589,7 +5590,7 @@ html[data-theme="light"] .meet-orb {
 
 .meet-recording-item.is-selecting {
   grid-template-columns: auto minmax(0, 1fr);
-  min-height: 56px;
+  min-height: 62px;
   padding-inline-start: 12px;
   border-radius: inherit;
 }
@@ -5621,13 +5622,13 @@ html[data-theme="light"] .meet-orb {
 }
 
 .meet-recording-actions .icon-button {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-sm);
 }
 
 .meet-recording-actions .meet-recording-transcribe {
-  min-height: 30px;
+  min-height: 32px;
   padding: 5px 10px;
   white-space: nowrap;
 }
@@ -5636,7 +5637,7 @@ html[data-theme="light"] .meet-orb {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 26px;
+  min-height: 28px;
   padding: 0 8px;
   border-radius: 999px;
   color: var(--text-3);
@@ -5661,12 +5662,13 @@ html[data-theme="light"] .meet-orb {
 .meet-row {
   width: 100%;
   min-width: 0;
-  min-height: 54px;
+  height: 62px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto 16px;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
+  padding: 8px 14px;
   border-radius: var(--radius-md);
   color: var(--text-1);
   background: transparent;
@@ -5701,8 +5703,8 @@ html[data-theme="light"] .meet-orb {
 }
 
 .meet-lead {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   border-radius: 10px;
@@ -5717,10 +5719,14 @@ html[data-theme="light"] .meet-orb {
 .meet-row-main {
   min-width: 0;
   display: grid;
-  gap: 1px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
+  grid-template-rows: min-content min-content;
+  column-gap: 8px;
+  row-gap: 1px;
 }
 
 .meet-row-title {
+  grid-column: 1 / -1;
   min-width: 0;
   overflow: hidden;
   font-size: 14.5px;
@@ -5738,8 +5744,28 @@ html[data-theme="light"] .meet-orb {
 
 .meet-row-meta,
 .meet-row-state {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-3);
   font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meet-row-meta {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.meet-row-state {
+  grid-column: 2;
+  grid-row: 2;
+  text-align: end;
+}
+
+.meet-row-main .meet-rename {
+  grid-column: 1 / -1;
+  grid-row: 1;
 }
 
 .meet-row-go {
