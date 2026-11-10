@@ -616,28 +616,18 @@ pub struct FocusFacts {
     pub is_shell_desktop: bool,
 }
 
-/// A cheap composite identity for the focused element.
-///
-/// Not a true `RuntimeId` — that is a SAFEARRAY needing manual COM lifetime
-/// handling for no benefit here. All this has to answer is "is the thing I am
-/// looking at now the same thing the paste went to?", and a changed process,
-/// control type or owning window answers that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Identify the exact focused control and its foreground window for a short paste check.
+#[derive(Debug, PartialEq, Eq)]
 pub struct FocusIdentity {
-    pub process_id: i32,
-    pub control_type: i32,
-    pub native_window: isize,
+    pub foreground_window: isize,
+    pub runtime_id: Vec<i32>,
 }
 
-/// Everything Paste Catch needs about the focused element, from one read.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct FocusProbe {
     pub facts: FocusFacts,
-    pub identity: FocusIdentity,
-    /// The caret neighbourhood, when there is a caret to anchor on.
-    pub caret: Option<CaretContext>,
-    /// The element's value — read only when there is no caret, since
-    /// single-line inputs expose `ValuePattern` but often no usable selection.
+    pub identity: Option<FocusIdentity>,
+    /// Bounded full field contents. Empty and unavailable are distinct.
     pub value: Option<String>,
 }
 
@@ -653,6 +643,9 @@ pub fn read_focus_probe() -> Option<FocusProbe> {
         None
     }
 }
+
+#[cfg(windows)]
+pub(crate) use uia::dictionary_field;
 
 /// The decision table. Pure, so the whole matrix is unit-testable without COM.
 ///
@@ -710,17 +703,6 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
     }
 }
 
-/// A bounded caret neighbourhood used by explicit focus probes such as Paste Catch.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct CaretContext {
-    /// Relevant text immediately before the caret (at most
-    /// [`MAX_CARET_LEFT_CHARS`]).
-    pub before: String,
-    /// Relevant text immediately after the caret (at most
-    /// [`MAX_CARET_RIGHT_CHARS`]).
-    pub after: String,
-}
-
 /// Immutable, bounded evidence captured at the accepted Stop action. A known
 /// empty caret is different from an inaccessible field.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -763,93 +745,9 @@ pub struct StopContext {
     pub caret: Option<StopCaret>,
 }
 
-impl CaretContext {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.before.trim().is_empty() && self.after.trim().is_empty()
-    }
-
-    /// Reduce a raw UIA neighbourhood to the nearest sentence fragments.
-    fn from_surrounding(before: &str, after: &str) -> Option<Self> {
-        let mut context = Self {
-            before: relevant_left_fragment(before),
-            after: relevant_right_fragment(after),
-        };
-        if context.before.trim().is_empty() {
-            context.before.clear();
-        }
-        if context.after.trim().is_empty() {
-            context.after.clear();
-        }
-        (!context.is_empty()).then_some(context)
-    }
-}
-
-/// Bounds for focus probes; the left side helps verify that text landed.
+// Bounds for the stop-time caret probe.
 const MAX_CARET_LEFT_CHARS: usize = 200;
 const MAX_CARET_RIGHT_CHARS: usize = 80;
-
-fn relevant_left_fragment(text: &str) -> String {
-    let capped = cap_tail_chars(text, MAX_CARET_LEFT_CHARS);
-    let mut start = 0;
-
-    for (index, ch) in capped.char_indices() {
-        let next = index + ch.len_utf8();
-        if matches!(ch, '\r' | '\n')
-            || (is_sentence_terminal(ch)
-                && (is_cjk_sentence_terminal(ch)
-                    || capped[next..]
-                        .chars()
-                        .next()
-                        .is_none_or(char::is_whitespace)))
-        {
-            start = next;
-        }
-    }
-
-    capped[start..]
-        .trim_start_matches(char::is_whitespace)
-        .to_string()
-}
-
-fn relevant_right_fragment(text: &str) -> String {
-    let capped = cap_head_chars(text, MAX_CARET_RIGHT_CHARS);
-
-    for (index, ch) in capped.char_indices() {
-        if matches!(ch, '\r' | '\n') {
-            return capped[..index].to_string();
-        }
-        if is_sentence_terminal(ch) {
-            let end = index + ch.len_utf8();
-            if is_cjk_sentence_terminal(ch)
-                || capped[end..].chars().next().is_none_or(char::is_whitespace)
-            {
-                return capped[..end].to_string();
-            }
-        }
-    }
-
-    capped
-}
-
-fn cap_tail_chars(text: &str, max_chars: usize) -> String {
-    let count = text.chars().count();
-    if count <= max_chars {
-        return text.to_string();
-    }
-    text.chars().skip(count - max_chars).collect()
-}
-
-fn cap_head_chars(text: &str, max_chars: usize) -> String {
-    text.chars().take(max_chars).collect()
-}
-
-fn is_sentence_terminal(ch: char) -> bool {
-    matches!(ch, '.' | '?' | '!' | '。' | '？' | '！' | '؟')
-}
-
-fn is_cjk_sentence_terminal(ch: char) -> bool {
-    matches!(ch, '。' | '？' | '！')
-}
 
 /// How much we trust the resolved surface.
 ///
@@ -1544,8 +1442,8 @@ mod windows_impl {
 #[cfg(windows)]
 mod uia {
     use super::{
-        host_from_url, CaretContext, Confidence, ControlClass, FieldKind, FocusFacts,
-        FocusIdentity, FocusProbe, StopCaret, MAX_CARET_LEFT_CHARS, MAX_CARET_RIGHT_CHARS,
+        host_from_url, Confidence, ControlClass, FieldKind, FocusFacts, FocusIdentity, FocusProbe,
+        StopCaret, MAX_CARET_LEFT_CHARS, MAX_CARET_RIGHT_CHARS,
     };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
@@ -2023,11 +1921,6 @@ mod uia {
         ))
     }
 
-    unsafe fn read_caret(element: &IUIAutomationElement) -> Option<CaretContext> {
-        let (before, after, _) = read_caret_ranges(element, false)?;
-        CaretContext::from_surrounding(&before, &after)
-    }
-
     unsafe fn read_stop_caret(element: &IUIAutomationElement) -> Option<StopCaret> {
         // TextPattern also exists on read-only pages; require editable evidence.
         let value = element
@@ -2128,6 +2021,98 @@ mod uia {
         el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false)
     }
 
+    /// Call from a COM-initialized thread. The legacy CUIAutomation class
+    /// cannot supply IUIAutomation2, which provides the timeouts.
+    unsafe fn bounded_automation(
+    ) -> windows::core::Result<windows::Win32::UI::Accessibility::IUIAutomation2> {
+        use windows::Win32::UI::Accessibility::{CUIAutomation8, IUIAutomation2};
+        let automation: IUIAutomation2 =
+            CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
+        automation.SetConnectionTimeout(200)?;
+        automation.SetTransactionTimeout(200)?;
+        Ok(automation)
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn dictionary_automation_can_set_timeouts() {
+        unsafe {
+            let _com = ComGuard::init();
+            let automation = bounded_automation().expect("create the dictionary UIA client");
+            assert_eq!(automation.ConnectionTimeout().unwrap(), 200);
+            assert_eq!(automation.TransactionTimeout().unwrap(), 200);
+        }
+    }
+
+    /// Read only a bounded, editable, non-password field. Runtime IDs distinguish
+    /// controls that share a process, HWND and control type (e.g. web inputs).
+    pub(crate) fn dictionary_field() -> Option<(Vec<i32>, String)> {
+        const LIMIT: usize = 4096;
+        unsafe {
+            let _com = ComGuard::init();
+            let automation = bounded_automation().ok()?;
+            let element = automation.GetFocusedElement().ok()?;
+            if element.CurrentIsPassword().ok()?.as_bool()
+                || element.CurrentProcessId().ok()? as u32 == std::process::id()
+            {
+                return None;
+            }
+            let value = if let Ok(pattern) =
+                element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            {
+                if pattern.CurrentIsReadOnly().ok()?.as_bool() {
+                    return None;
+                }
+                pattern.CurrentValue().ok()?
+            } else {
+                if element.CurrentControlType().ok() != Some(UIA_EditControlTypeId)
+                    && element
+                        .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
+                        .is_err()
+                {
+                    return None;
+                }
+                element
+                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                    .ok()?
+                    .DocumentRange()
+                    .ok()?
+                    .GetText((LIMIT + 1) as i32)
+                    .ok()?
+            };
+            if value.len() > LIMIT {
+                return None;
+            }
+            Some((
+                runtime_id(&element)?,
+                value.to_string().replace("\r\n", "\n"),
+            ))
+        }
+    }
+
+    unsafe fn runtime_id(element: &IUIAutomationElement) -> Option<Vec<i32>> {
+        use windows::Win32::System::Ole::{
+            SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound,
+        };
+        let array = element.GetRuntimeId().ok()?;
+        let id = (|| {
+            let lower = SafeArrayGetLBound(array, 1).ok()?;
+            let upper = SafeArrayGetUBound(array, 1).ok()?;
+            if !(0..32).contains(&upper.checked_sub(lower)?) {
+                return None;
+            }
+            (lower..=upper)
+                .map(|index| {
+                    let mut part = 0i32;
+                    SafeArrayGetElement(array, &index, (&mut part as *mut i32).cast()).ok()?;
+                    Some(part)
+                })
+                .collect::<Option<Vec<_>>>()
+        })();
+        let _ = SafeArrayDestroy(array);
+        id
+    }
+
     /// Control types that unambiguously accept no typed text.
     ///
     /// Deliberately excludes the CONTAINER types — `Pane`, `Window`, `Group`,
@@ -2165,45 +2150,43 @@ mod uia {
         .any(|id| id.0 == control_type)
     }
 
-    /// Facts + caret (+ value only when there is no caret) in ONE pass.
-    ///
-    /// One `GetFocusedElement` for everything: Paste Catch needs all three to
-    /// reach a verdict, and asking twice would both cost a second cross-process
-    /// round trip and risk the two reads seeing different focus.
+    /// Capture an exact target and its bounded full text in one focus read.
     pub(in crate::context_detect) fn read_focus_probe() -> Option<FocusProbe> {
         unsafe {
+            let foreground = super::windows_impl::foreground_window()?;
             let _com = ComGuard::init();
-            let automation: IUIAutomation =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let automation = bounded_automation().ok()?;
             let el = automation.GetFocusedElement().ok()?;
-
             let mut facts = FocusFacts {
-                is_password: is_password(&el),
+                is_password: el.CurrentIsPassword().ok()?.as_bool(),
+                is_own_process: el.CurrentProcessId().ok()? as u32 == std::process::id(),
                 ..FocusFacts::default()
             };
-            let mut identity = FocusIdentity::default();
-            if facts.is_password {
+            if facts.is_password || facts.is_own_process {
                 return Some(FocusProbe {
                     facts,
-                    identity,
-                    caret: None,
-                    value: None,
+                    ..Default::default()
                 });
             }
-            fill_patterns(&el, &mut facts, &mut identity);
-
-            let caret = read_caret(&el).filter(|c| !c.is_empty());
-            // Only when there is no caret to anchor on: single-line inputs
-            // expose ValuePattern but often no usable selection range.
-            let value = if caret.is_none() {
-                read_value(&el)
-            } else {
-                None
-            };
+            let value = fill_patterns(&el, &mut facts);
+            let identity = value.as_ref().and_then(|_| {
+                Some(FocusIdentity {
+                    foreground_window: foreground.0 as isize,
+                    runtime_id: runtime_id(&el)?,
+                })
+            });
+            // Treat a focus transition during an accessibility read as inconclusive.
+            if super::windows_impl::foreground_window()? != foreground
+                || !automation
+                    .CompareElements(&el, &automation.GetFocusedElement().ok()?)
+                    .ok()?
+                    .as_bool()
+            {
+                return None;
+            }
             Some(FocusProbe {
                 facts,
                 identity,
-                caret,
                 value,
             })
         }
@@ -2253,37 +2236,31 @@ mod uia {
         matches!(class.as_str(), "Progman" | "WorkerW")
     }
 
-    /// Pattern availability, control class and identity — one pass over the
-    /// focused element.
-    unsafe fn fill_patterns(
-        el: &IUIAutomationElement,
-        facts: &mut FocusFacts,
-        identity: &mut FocusIdentity,
-    ) {
-        identity.process_id = el.CurrentProcessId().unwrap_or(0);
-        identity.native_window = el
-            .CurrentNativeWindowHandle()
-            .map(|hwnd| hwnd.0 as isize)
-            .unwrap_or(0);
-        facts.is_own_process = identity.process_id as u32 == std::process::id();
+    /// Keep missing or oversized values inconclusive, including a truncated
+    /// TextPattern range. Prefer a nonempty range over an empty ValuePattern
+    /// when the provider exposes both, as some rich editors populate only one.
+    unsafe fn fill_patterns(el: &IUIAutomationElement, facts: &mut FocusFacts) -> Option<String> {
+        use windows::Win32::System::Variant::VT_BOOL;
+        use windows::Win32::UI::Accessibility::UIA_IsReadOnlyAttributeId;
+
+        const LIMIT: usize = 4096;
         facts.has_native_caret = foreground_has_caret();
         facts.is_shell_desktop = foreground_is_shell_desktop();
         facts.has_text_edit_pattern = el
             .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
             .is_ok();
-        facts.value_read_only = el
+        let value_pattern = el
             .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-            .ok()
+            .ok();
+        facts.value_read_only = value_pattern
+            .as_ref()
             .and_then(|vp| vp.CurrentIsReadOnly().ok())
             .map(|b| b.as_bool());
-
         let text_pattern = el
             .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
             .ok();
         facts.has_text_pattern = text_pattern.is_some();
-
         if let Ok(control_type) = el.CurrentControlType() {
-            identity.control_type = control_type.0;
             facts.control = if control_type == UIA_EditControlTypeId {
                 ControlClass::Edit
             } else if control_type == UIA_DocumentControlTypeId {
@@ -2294,11 +2271,40 @@ mod uia {
                 ControlClass::Other
             };
         }
-
         facts.has_caret = text_pattern
+            .as_ref()
             .and_then(|tp| tp.GetSelection().ok())
             .and_then(|sel| sel.GetElement(0).ok())
             .is_some();
+
+        if facts.control == ControlClass::NonText || facts.value_read_only == Some(true) {
+            return None;
+        }
+        let value = value_pattern.and_then(|vp| vp.CurrentValue().ok());
+        let value = if facts.value_read_only == Some(false)
+            && value.as_ref().is_some_and(|value| !value.is_empty())
+        {
+            value
+        } else {
+            let range = text_pattern.and_then(|tp| tp.DocumentRange().ok());
+            if facts.value_read_only != Some(false) {
+                let read_only = range
+                    .as_ref()
+                    .and_then(|range| range.GetAttributeValue(UIA_IsReadOnlyAttributeId).ok())
+                    .filter(|attribute| attribute.vt() == VT_BOOL)
+                    .and_then(|attribute| bool::try_from(&attribute).ok());
+                if read_only == Some(true)
+                    || (facts.control != ControlClass::Edit
+                        && !(facts.has_caret && read_only == Some(false)))
+                {
+                    return None;
+                }
+            }
+            range
+                .and_then(|range| range.GetText((LIMIT + 1) as i32).ok())
+                .or(value)
+        }?;
+        (value.len() <= LIMIT).then(|| value.to_string().replace("\r\n", "\n"))
     }
 }
 
@@ -2802,27 +2808,6 @@ mod tests {
             category_for_site("gemini.google.com"),
             Some(AppCategory::AiChat)
         );
-    }
-
-    #[test]
-    fn caret_capture_keeps_only_the_nearest_sentence_fragments() {
-        let caret = CaretContext::from_surrounding(
-            "An unrelated sentence. I think we should ",
-            " before releasing this. Another sentence.",
-        )
-        .unwrap();
-        assert_eq!(caret.before, "I think we should ");
-        assert_eq!(caret.after, " before releasing this.");
-
-        // A completed left sentence at end-of-field needs no caret capture.
-        assert_eq!(CaretContext::from_surrounding("Hello there.", ""), None);
-    }
-
-    #[test]
-    fn caret_capture_enforces_asymmetric_character_budgets() {
-        let caret = CaretContext::from_surrounding(&"界".repeat(250), &"界".repeat(120)).unwrap();
-        assert_eq!(caret.before.chars().count(), MAX_CARET_LEFT_CHARS);
-        assert_eq!(caret.after.chars().count(), MAX_CARET_RIGHT_CHARS);
     }
 
     /// Any applied context layer must be followed by the terminal output

@@ -85,16 +85,18 @@ impl AppContext {
         Ok(ret)
     }
 
-    /// Commit setup only after its public settings have been durably saved.
-    pub fn complete_onboarding(&self) -> Result<()> {
+    /// Commit public settings after the atomic save, without rewriting credentials.
+    pub fn update_public_settings(&self, update: impl FnOnce(&mut AppSettings)) -> Result<()> {
         let _persistence = self.persistence.lock().expect("persistence lock poisoned");
         let mut next = self.settings();
-        next.onboarding_completed = true;
-        // Only this public setting changes. Credentials are neither rewritten nor
-        // published to the public JSON, and memory commits after the atomic save.
+        update(&mut next);
         save_public_settings(&self.data_dir, &next)?;
         *self.settings.write().expect("settings lock poisoned") = next;
         Ok(())
+    }
+
+    pub fn complete_onboarding(&self) -> Result<()> {
+        self.update_public_settings(|settings| settings.onboarding_completed = true)
     }
 
     /// Replace settings wholesale and persist (the headless `write_settings`).

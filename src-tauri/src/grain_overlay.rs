@@ -12,8 +12,41 @@ use tauri::{AppHandle, Emitter, Manager};
 /// Grain's visual clearance above Handy's platform-specific bottom placement.
 pub const BOTTOM_RAISE: f64 = 16.0;
 
-// Leave a short gap after Handy's 300 ms recording-window hide delay.
-const CLIPBOARD_NOTICE_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
+pub(crate) fn confirmation_dimensions(state: &str) -> Option<(f64, f64)> {
+    matches!(state, "dictionary" | "copy").then_some((400.0, 176.0))
+}
+
+#[cfg(windows)]
+pub(crate) fn active_confirmation_dimensions(app: &AppHandle) -> Option<(f64, f64)> {
+    let ctx = app.try_state::<OverlayContext>()?;
+    let value = ctx.presentation.lock().unwrap();
+    confirmation_dimensions(&value.state)
+}
+
+#[cfg(windows)]
+const DICTIONARY_NOTICE_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[derive(Clone, Serialize, Deserialize, Type)]
+pub struct DictionarySuggestion {
+    pub id: u32,
+    pub original: String,
+    pub corrected: String,
+    /// Wall-clock deadline for the renderer's countdown. Cleared on save failure.
+    pub expires_at_ms: Option<u64>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Type)]
+pub struct ClipboardOffer {
+    pub id: u32,
+    pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DictionaryResolution {
+    Save,
+    Decline,
+    Timeout,
+}
 
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
 pub struct OverlayPresentation {
@@ -25,6 +58,8 @@ pub struct OverlayPresentation {
     pub app_icon_enabled: bool,
     pub icon: Option<String>,
     pub notice: Option<String>,
+    pub dictionary: Option<DictionarySuggestion>,
+    pub clipboard_offer: Option<ClipboardOffer>,
     pub committed: String,
     pub tentative: String,
     pub working: bool,
@@ -76,6 +111,9 @@ impl OverlayPresentation {
             return false;
         }
         self.clear_capture();
+        if self.dictionary.is_some() || self.clipboard_offer.is_some() {
+            return false;
+        }
         if self.notice.is_some() {
             self.state = "notice".into();
             return false;
@@ -101,6 +139,40 @@ impl OverlayPresentation {
             self.visible = false;
         }
         Some(hide)
+    }
+
+    fn show_clipboard_offer(&mut self, offer: ClipboardOffer, visible: bool) {
+        self.dictionary = None;
+        self.clipboard_offer = Some(offer);
+        self.state = "copy".into();
+        self.visible = visible;
+    }
+
+    /// A click and its timeout share the same pending offer. Only the first
+    /// successful resolution consumes it. A failed save permits a manual retry.
+    fn resolve_dictionary(
+        &mut self,
+        id: u32,
+        resolution: DictionaryResolution,
+        save: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let Some(suggestion) = self.dictionary.as_mut().filter(|suggestion| {
+            self.visible
+                && suggestion.id == id
+                && (resolution != DictionaryResolution::Timeout
+                    || suggestion.expires_at_ms.is_some())
+        }) else {
+            return Ok(false);
+        };
+        if resolution != DictionaryResolution::Decline {
+            if let Err(error) = save(&suggestion.corrected) {
+                suggestion.expires_at_ms = None;
+                return Err(error);
+            }
+        }
+        self.dictionary = None;
+        self.visible = false;
+        Ok(true)
     }
 }
 
@@ -244,8 +316,7 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::ProcessingComplete { .. }
             | DaemonEvent::SessionCancelled { .. }
             | DaemonEvent::PasteMissed { .. }
-            | DaemonEvent::PasteMissedClear
-            | DaemonEvent::PasteCatchDisabled
+            | DaemonEvent::PasteMissedClear { .. }
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
@@ -255,31 +326,7 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
     }
     let handle = app.clone();
     let event = event.clone();
-    let _ = app.run_on_main_thread(move || {
-        if matches!(event, DaemonEvent::PasteMissed { .. }) {
-            let Some(ctx) = handle.try_state::<OverlayContext>() else {
-                return;
-            };
-            let generation = ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1;
-            // Delay presentation only: clipboard contents and the deliver
-            // shortcut are already available. Reuse the async runtime timer.
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(CLIPBOARD_NOTICE_DELAY).await;
-                let app = handle.clone();
-                let _ = handle.run_on_main_thread(move || {
-                    let Some(ctx) = app.try_state::<OverlayContext>() else {
-                        return;
-                    };
-                    // A new capture, replacement offer or clear owns the UI now.
-                    if ctx.notice_generation.load(Ordering::Acquire) == generation {
-                        on_event_main(&app, &event);
-                    }
-                });
-            });
-        } else {
-            on_event_main(&handle, &event);
-        }
-    });
+    let _ = app.run_on_main_thread(move || on_event_main(&handle, &event));
 }
 
 fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
@@ -297,8 +344,7 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::ProcessingComplete { .. }
             | DaemonEvent::SessionCancelled { .. }
             | DaemonEvent::PasteMissed { .. }
-            | DaemonEvent::PasteMissedClear
-            | DaemonEvent::PasteCatchDisabled
+            | DaemonEvent::PasteMissedClear { .. }
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
@@ -317,6 +363,10 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
         let mut value = ctx.presentation.lock().unwrap();
         match event {
             DaemonEvent::RecordingStarted { session_id, .. } => {
+                if value.dictionary.take().is_some() {
+                    value.visible = false;
+                    hide = true;
+                }
                 value.session_id = *session_id;
             }
             DaemonEvent::RecordingStopped { session_id } if *session_id == value.session_id => {
@@ -337,15 +387,34 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                 // A clipboard notice is independent of capture completion.
                 hide = value.complete(*session_id);
             }
-            DaemonEvent::PasteMissed { .. } | DaemonEvent::PasteError { .. } => {
-                value.notice = Some(
-                    if matches!(event, DaemonEvent::PasteMissed { .. }) {
-                        "Copied to clipboard"
-                    } else {
-                        "Could not paste"
-                    }
-                    .into(),
+            DaemonEvent::PasteMissed {
+                id, expires_at_ms, ..
+            } => {
+                let visible = crate::settings::get_settings(app).overlay_style
+                    != crate::settings::OverlayStyle::None;
+                value.show_clipboard_offer(
+                    ClipboardOffer {
+                        id: *id,
+                        expires_at_ms: *expires_at_ms,
+                    },
+                    visible,
                 );
+                show = Some("copy");
+            }
+            DaemonEvent::PasteMissedClear { id }
+                if value
+                    .clipboard_offer
+                    .as_ref()
+                    .is_some_and(|offer| offer.id == *id) =>
+            {
+                value.clipboard_offer = None;
+                if value.state == "copy" {
+                    value.visible = false;
+                    hide = true;
+                }
+            }
+            DaemonEvent::PasteError { .. } => {
+                value.notice = Some("Could not paste".into());
                 if !value.visible {
                     value.clear_capture();
                     value.state = "notice".into();
@@ -354,14 +423,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                     show = Some("notice");
                 }
                 expiry = Some(ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1);
-            }
-            DaemonEvent::PasteCatchDisabled | DaemonEvent::PasteMissedClear => {
-                ctx.notice_generation.fetch_add(1, Ordering::AcqRel);
-                value.notice = None;
-                if value.state == "notice" {
-                    value.visible = false;
-                    hide = true;
-                }
             }
             DaemonEvent::PillIcon { rgba } => {
                 value.icon = rgba
@@ -392,8 +453,8 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
     }
     if let Some(generation) = expiry {
         let app = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs(3));
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
                 let Some(ctx) = handle.try_state::<OverlayContext>() else {
@@ -413,6 +474,135 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             });
         });
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn show_dictionary_suggestion(
+    app: &AppHandle,
+    id: u32,
+    original: String,
+    corrected: String,
+) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let settings = crate::settings::get_settings(&handle);
+        let ctx = handle.state::<OverlayContext>();
+        let mut value = ctx.presentation.lock().unwrap();
+        if value.visible
+            || !settings.learn_from_edits
+            || settings.overlay_style == crate::settings::OverlayStyle::None
+            || !crate::grain_dictionary::is_current(id)
+            || dictionary_contains(&settings.custom_words, &corrected)
+        {
+            return;
+        }
+        let deadline = tokio::time::Instant::now() + DICTIONARY_NOTICE_DURATION;
+        let expires_at_ms = (std::time::SystemTime::now() + DICTIONARY_NOTICE_DURATION)
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        value.state = "dictionary".into();
+        value.visible = true;
+        value.dictionary = Some(DictionarySuggestion {
+            id,
+            original,
+            corrected,
+            expires_at_ms: Some(expires_at_ms),
+        });
+        publish(&handle, &value);
+        drop(value);
+        crate::overlay::show_overlay_state(&handle, "dictionary");
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep_until(deadline).await;
+            let app = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                if let Err(error) =
+                    finish_dictionary_suggestion(&app, id, DictionaryResolution::Timeout)
+                {
+                    log::warn!("Could not save dictionary suggestion: {error}");
+                }
+            });
+        });
+    });
+}
+
+fn dictionary_contains(words: &[String], candidate: &str) -> bool {
+    let candidate = candidate.to_lowercase();
+    words
+        .iter()
+        .any(|word| word.trim().to_lowercase() == candidate)
+}
+
+pub(crate) fn dismiss_dictionary_suggestion(app: &AppHandle) {
+    let ctx = app.state::<OverlayContext>();
+    let id = ctx
+        .presentation
+        .lock()
+        .unwrap()
+        .dictionary
+        .as_ref()
+        .map(|suggestion| suggestion.id);
+    if let Some(id) = id {
+        let _ = finish_dictionary_suggestion(app, id, DictionaryResolution::Decline);
+    }
+}
+
+fn finish_dictionary_suggestion(
+    app: &AppHandle,
+    id: u32,
+    resolution: DictionaryResolution,
+) -> Result<(), String> {
+    let ctx = app.state::<OverlayContext>();
+    let mut value = ctx.presentation.lock().unwrap();
+    let mut saved = false;
+    let resolved = value.resolve_dictionary(id, resolution, |corrected| {
+        if !crate::grain_dictionary::is_current(id) {
+            return Ok(());
+        }
+        app.state::<std::sync::Arc<grain_core::AppContext>>()
+            .update_public_settings(|settings| {
+                if settings.learn_from_edits
+                    && !dictionary_contains(&settings.custom_words, corrected)
+                {
+                    settings.custom_words.push(corrected.to_owned());
+                    saved = true;
+                }
+            })
+            .map_err(|error| error.to_string())
+    });
+    if matches!(resolved, Ok(false)) {
+        return Ok(());
+    }
+    publish(app, &value);
+    drop(value);
+    resolved?;
+    crate::overlay::hide_recording_overlay(app);
+    if saved {
+        let _ = app.emit(
+            "settings-changed",
+            serde_json::json!({ "setting": "custom_words" }),
+        );
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn resolve_dictionary_suggestion(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: u32,
+    save: bool,
+) -> Result<(), String> {
+    if window.label() != "recording_overlay" {
+        return Err("The suggestion belongs to the recording overlay.".into());
+    }
+    let resolution = if save {
+        DictionaryResolution::Save
+    } else {
+        DictionaryResolution::Decline
+    };
+    finish_dictionary_suggestion(&app, id, resolution)
 }
 
 #[derive(Serialize, Deserialize, Type)]
@@ -471,11 +661,14 @@ pub fn change_overlay_style_setting(
         .map_err(|error| error.to_string())?;
     crate::overlay::update_overlay_enabled_cache(style != crate::settings::OverlayStyle::None);
     if style == crate::settings::OverlayStyle::None {
-        app.state::<OverlayContext>()
-            .presentation
-            .lock()
-            .unwrap()
-            .visible = false;
+        crate::grain_dictionary::cancel_watch();
+        crate::paste_catch::supersede(&app);
+        let ctx = app.state::<OverlayContext>();
+        let mut value = ctx.presentation.lock().unwrap();
+        value.visible = false;
+        value.dictionary = None;
+        value.clipboard_offer = None;
+        drop(value);
         crate::overlay::hide_recording_overlay(&app);
     }
     Ok(())
@@ -512,7 +705,7 @@ pub fn emit_public_levels(app: &AppHandle, levels: &[f32]) {
 
 #[cfg(test)]
 mod tests {
-    use super::OverlayPresentation;
+    use super::{ClipboardOffer, DictionaryResolution, DictionarySuggestion, OverlayPresentation};
     use crate::settings::OverlayStyle;
 
     #[test]
@@ -628,6 +821,93 @@ mod tests {
         value.state = "recording".into();
         assert_eq!(value.expire_notice(2, 2), None);
         assert!(value.visible);
+    }
+
+    fn dictionary_offer() -> OverlayPresentation {
+        OverlayPresentation {
+            visible: true,
+            dictionary: Some(DictionarySuggestion {
+                id: 7,
+                original: "Puneet".into(),
+                corrected: "Punit".into(),
+                expires_at_ms: Some(10_000),
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn copy_offer_replaces_dictionary_and_cancels_its_timeout() {
+        let mut value = dictionary_offer();
+        value.show_clipboard_offer(
+            ClipboardOffer {
+                id: 8,
+                expires_at_ms: 20_000,
+            },
+            true,
+        );
+
+        assert!(!value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| panic!("replaced"))
+            .unwrap());
+        assert!(value.visible && value.dictionary.is_none());
+        assert_eq!(value.clipboard_offer.unwrap().id, 8);
+    }
+
+    #[test]
+    fn declining_a_dictionary_offer_cancels_its_timeout() {
+        let mut value = dictionary_offer();
+        assert!(!value
+            .resolve_dictionary(6, DictionaryResolution::Timeout, |_| panic!(
+                "stale timeout"
+            ))
+            .unwrap());
+        assert!(value
+            .resolve_dictionary(7, DictionaryResolution::Decline, |_| panic!("declined"))
+            .unwrap());
+        assert!(!value.visible);
+        assert!(!value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| panic!(
+                "dismissed offer"
+            ))
+            .unwrap());
+    }
+
+    #[test]
+    fn a_dictionary_timeout_and_an_explicit_save_each_save_once() {
+        for resolution in [DictionaryResolution::Timeout, DictionaryResolution::Save] {
+            let mut value = dictionary_offer();
+            assert!(value
+                .resolve_dictionary(7, resolution, |word| {
+                    assert_eq!(word, "Punit");
+                    Ok(())
+                })
+                .unwrap());
+            assert!(!value.visible && value.dictionary.is_none());
+            assert!(!value
+                .resolve_dictionary(7, resolution, |_| panic!("already saved"))
+                .unwrap());
+        }
+    }
+
+    #[test]
+    fn a_failed_dictionary_save_stops_the_countdown_and_allows_retry() {
+        let mut value = dictionary_offer();
+        assert!(value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| Err(
+                "disk error".into()
+            ))
+            .is_err());
+        assert!(value.visible);
+        assert!(value.dictionary.as_ref().unwrap().expires_at_ms.is_none());
+        assert!(!value
+            .resolve_dictionary(7, DictionaryResolution::Timeout, |_| panic!(
+                "countdown stopped"
+            ))
+            .unwrap());
+        assert!(value
+            .resolve_dictionary(7, DictionaryResolution::Save, |_| Ok(()))
+            .unwrap());
     }
 
     #[test]

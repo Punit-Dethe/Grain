@@ -9,7 +9,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::{mpsc, Mutex, PoisonError};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "linux")]
@@ -77,7 +77,8 @@ fn paste_via_clipboard(
     paste_method: &PasteMethod,
     paste_delay_ms: u64,
     paste_delay_after_ms: u64,
-) -> Result<(), String> {
+    watch_input: bool,
+) -> Result<Option<u32>, String> {
     let clipboard = app_handle.clipboard();
     let saved_text = clipboard.read_text().ok().filter(|t| !t.is_empty());
     // Only probe for an image when there is no text to restore. Text is by far the
@@ -120,6 +121,8 @@ fn paste_via_clipboard(
         Ok(())
     })();
 
+    // [GRAIN] Record input before the restore delay so a quick submit cancels verification.
+    let input_tick = watch_input.then(crate::paste_catch::input_tick).flatten();
     finish_clipboard_paste(paste_result, paste_delay_after_ms, || {
         // Restore original clipboard content even when key injection failed.
         // Text takes priority so this path stays identical to the previous behavior;
@@ -134,7 +137,8 @@ fn paste_via_clipboard(
             // Nothing was there to begin with — don't leave the transcription behind.
             let _ = clipboard.clear();
         }
-    })
+    })?;
+    Ok(input_tick)
 }
 
 /// Attempts to send a key combination using Linux-native tools.
@@ -450,8 +454,16 @@ fn type_text_via_xdotool(text: &str) -> Result<(), String> {
     // restore can leave the modifier latched on the XTEST keyboard (#1817).
     // Release both sides of Handy's supported push-style modifiers to clear any
     // stale restore. Lock keys are intentionally excluded because key events
-    // toggle them. Cleanup precedes the status check because xdotool may have
-    // changed modifier state before returning an error.
+    // toggle them.
+    //
+    // The release is unconditional, so it can make a modifier that is still
+    // physically held appear released until the next physical event. This is
+    // preferable to leaving a synthetic modifier latched system-wide.
+    //
+    // Clean up before checking the typing status because xdotool may have
+    // changed modifier state before returning an error. Cleanup remains
+    // best-effort because the text may already have been partially or fully
+    // typed, but failures are logged so they can be diagnosed.
     match Command::new("xdotool")
         .arg("keyup")
         .args([
@@ -802,31 +814,25 @@ pub fn paste_with_options(
     // [GRAIN] The options entry point owns the whole clipboard transaction too.
     let _paste = PASTE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
 
-    // [GRAIN] Dictation INTO the Agent conversation window: if that panel is the
-    // focused window, the user is dictating into its follow-up box — hand the
-    // transcript to it as an event instead of an OS paste. An OS paste there
-    // would emit Ctrl+V and paste the CLIPBOARD (e.g. an auto-copied AI reply),
-    // not the transcript. Scoped strictly to that one window; every other paste
-    // path keeps the upstream (Handy) behavior untouched.
-    if crate::agent::panel_dictation_target(&app_handle) {
-        if let Some(panel) = app_handle.get_webview_window(crate::agent::PANEL_LABEL) {
-            info!("[GRAIN] agent panel focused — routing dictation into it (no OS paste)");
-            let _ = panel.emit("agent-panel-dictation", text);
-            return Ok(());
-        }
-    }
-
-    // [GRAIN] Paste Catch (pre-flight). Returns true when Grain has taken
-    // ownership of the transcript: focus is provably not editable, so the OS
-    // paste below would be a no-op that destroys the transcript on restore —
-    // and the chord could fire a real command in the target app. The transcript
-    // is held on the clipboard behind a visible offer instead. Every
-    // inconclusive reading returns false and leaves this path untouched.
-    if !suppress_trailing_space && crate::paste_catch::intercept(&app_handle, &text) {
+    // [GRAIN] Route focused Agent dictation before attempting an OS paste.
+    if crate::agent::route_panel_dictation(&app_handle, &text) {
         return Ok(());
     }
 
     let settings = get_settings(&app_handle);
+
+    // [GRAIN] Hold confirmed misses or capture a baseline for verification.
+    let probe = match crate::paste_catch::prepare(
+        &app_handle,
+        &settings,
+        &text,
+        !suppress_trailing_space,
+    ) {
+        crate::paste_catch::Preparation::Passthrough => None,
+        crate::paste_catch::Preparation::Held => return Ok(()),
+        crate::paste_catch::Preparation::Verify(probe) => Some(probe),
+    };
+
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
     let paste_delay_after_ms = settings.paste_delay_after_ms;
@@ -844,6 +850,7 @@ pub fn paste_with_options(
     );
 
     // Perform the paste operation
+    let mut input_tick = None; // [GRAIN] Input baseline for missed-insertion verification.
     match paste_method {
         PasteMethod::None => {
             info!("PasteMethod::None selected - skipping paste action");
@@ -855,6 +862,9 @@ pub fn paste_with_options(
                 #[cfg(target_os = "linux")]
                 settings.typing_tool,
             )?;
+            input_tick = probe
+                .as_ref()
+                .and_then(|_| crate::paste_catch::input_tick());
         }
         PasteMethod::CtrlV | PasteMethod::CtrlShiftV | PasteMethod::ShiftInsert => {
             // Debug-gated receipt-sequenced paste (#502): restore the clipboard
@@ -889,13 +899,14 @@ pub fn paste_with_options(
                     }
                 }
             }
-            paste_via_clipboard(
+            input_tick = paste_via_clipboard(
                 &text,
                 &app_handle,
                 &paste_method,
                 paste_delay_ms,
                 paste_delay_after_ms,
-            )?
+                probe.is_some(),
+            )?;
         }
         PasteMethod::ExternalScript => {
             let script_path = settings
@@ -917,18 +928,15 @@ pub fn paste_with_options(
         }
     }
 
+    // [GRAIN] Let a confirmed miss offer a copy before modifying the clipboard.
+    let copy = settings.clipboard_handling == ClipboardHandling::CopyToClipboard;
+    let verifying = probe.is_some_and(|probe| {
+        crate::paste_catch::verify(&app_handle, probe, &text, copy, input_tick)
+    });
     // After pasting, optionally copy to clipboard based on settings
-    if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
+    if copy && !verifying {
         write_text_to_clipboard(&app_handle, &text)?;
     }
-
-    // [GRAIN] Paste Catch (post-flight). Sequenced here rather than timed from
-    // the top of this function, so it stays correct if the body above is
-    // re-ordered or re-timed upstream, and so the clipboard snapshot it may need
-    // is taken lazily — a paste that lands costs it no clipboard work at all.
-    // Fire-and-forget: the check runs on a worker and is silent unless it finds
-    // positive evidence that the transcript never arrived.
-    crate::paste_catch::verify(&app_handle, &text);
 
     Ok(())
 }

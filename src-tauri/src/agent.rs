@@ -485,17 +485,23 @@ fn summon_inner(app: &AppHandle) {
 
 /// Route dictation into the follow-up field when the expanded Agent panel
 /// is focused.
-pub fn panel_dictation_target(app: &AppHandle) -> bool {
+pub(crate) fn route_panel_dictation(app: &AppHandle, text: &str) -> bool {
     let expanded = app
         .try_state::<AgentState>()
-        .map(|s| s.reply_visible.load(Ordering::SeqCst))
-        .unwrap_or(false);
+        .is_some_and(|state| state.reply_visible.load(Ordering::SeqCst));
     if !expanded {
         return false;
     }
-    app.get_webview_window(PANEL_LABEL)
-        .and_then(|w| w.is_focused().ok())
-        .unwrap_or(false)
+    let Some(panel) = app.get_webview_window(PANEL_LABEL) else {
+        return false;
+    };
+    if !panel.is_focused().unwrap_or(false) {
+        return false;
+    }
+    // Route directly to the follow-up box so an OS paste cannot insert the current clipboard.
+    log::info!("[GRAIN] agent panel focused — routing dictation into it (no OS paste)");
+    let _ = panel.emit("agent-panel-dictation", text);
+    true
 }
 
 fn input_is_current(state: &AgentState, generation: u64) -> bool {
@@ -831,7 +837,7 @@ fn is_terminal_surface(class: &str, exe: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn foreground_is_terminal() -> bool {
+pub(crate) fn foreground_is_terminal() -> bool {
     use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -884,7 +890,7 @@ fn foreground_is_terminal() -> bool {
 }
 
 #[cfg(not(windows))]
-fn foreground_is_terminal() -> bool {
+pub(crate) fn foreground_is_terminal() -> bool {
     false
 }
 

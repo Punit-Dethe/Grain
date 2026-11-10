@@ -6,6 +6,7 @@ interface SwitchProps {
   disabled?: boolean;
   isUpdating?: boolean;
   ariaLabel?: string;
+  ariaDescribedBy?: string;
 }
 
 // [GRAIN] Bare toggle (no label/row) — the same switch as ToggleSwitch, for
@@ -17,6 +18,7 @@ export const Switch: React.FC<SwitchProps> = ({
   disabled = false,
   isUpdating = false,
   ariaLabel,
+  ariaDescribedBy,
 }) => {
   const locked = disabled || isUpdating;
   return (
@@ -31,6 +33,7 @@ export const Switch: React.FC<SwitchProps> = ({
         checked={checked}
         disabled={locked}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         onChange={(e) => onChange(e.target.checked)}
       />
       <div className="relative w-9 h-5 rounded-full bg-[var(--toggle-off)] transition-colors duration-200 peer-checked:bg-[var(--toggle-on)] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent-focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-4 after:w-4 after:rounded-full after:bg-[var(--toggle-thumb-off)] peer-checked:after:bg-[var(--toggle-thumb-on)] after:shadow-[0_1px_2px_rgba(0,0,0,0.28)] after:transition-transform after:duration-200 peer-checked:after:translate-x-4 rtl:peer-checked:after:-translate-x-4" />

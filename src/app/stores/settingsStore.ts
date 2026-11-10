@@ -218,6 +218,7 @@ const settingUpdaters: {
   },
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
+  learn_from_edits: (value) => commands.setLearnFromEdits(value as boolean),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),
   // Core feature toggles must not use the retired built-in extension route.
   // Bindings return structured errors; throw them so the optimistic UI rolls back.

@@ -2051,24 +2051,33 @@ html[data-theme="light"] .overview-shortcut-keys .overview-shortcut-key {
   color: var(--text-4);
 }
 
-.filter-pill {
-  height: 29px;
-  padding: 0 10px;
-  border-radius: 6px;
-  color: var(--text-3);
-  background: transparent;
-  font-size: 10px;
-  cursor: pointer;
+.grain-root .history-search input:focus {
+  outline: none;
+  box-shadow: none !important;
 }
 
-.filter-pill:hover {
+.history-search:focus-within {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.04);
 }
 
-.filter-pill.active {
+.grain-root .history-date-filter > button {
+  height: 32px;
+  min-width: 0;
+  width: 132px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.075);
+  background: var(--bg-2);
+  font-size: 11px;
+}
+
+.grain-root .history-date-filter > button:hover {
+  background: var(--bg-3);
+}
+
+.grain-root .history-date-filter > button:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
 }
 
 .toolbar-spacer {
@@ -2622,8 +2631,7 @@ html[data-theme="light"] .history-search {
   box-shadow: none;
 }
 
-html[data-theme="light"] .view-switch button.active,
-html[data-theme="light"] .filter-pill.active {
+html[data-theme="light"] .view-switch button.active {
   background: #eeebe3;
   box-shadow: none;
 }
@@ -4074,6 +4082,50 @@ html[data-theme="light"] .context-profile-mode {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.dictionary-term-toolbar {
+  flex-wrap: wrap;
+}
+
+.dictionary-term-toolbar .dictionary-search {
+  flex: 1 0 min(100%, 180px);
+  max-width: 320px;
+}
+
+.dictionary-learn-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+  min-height: 40px;
+  padding-inline: 12px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 999px;
+  color: var(--text-1);
+  background: var(--bg-2);
+  font-size: 13px;
+}
+
+.dictionary-learn-control [role="tooltip"] {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 100%;
+  inset-inline-end: 0;
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 12px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 8px;
+  background: var(--bg-2);
+  box-shadow: var(--shadow-float);
+  visibility: hidden;
+}
+
+.dictionary-learn-control:hover [role="tooltip"],
+.dictionary-learn-control:focus-within [role="tooltip"] {
+  visibility: visible;
 }
 
 .dictionary-search {

@@ -513,7 +513,9 @@ pub(crate) fn show_overlay_state(app_handle: &AppHandle, state: &str) {
 
 fn show_overlay_state_on_main(app_handle: &AppHandle, state: &str) {
     // Size the overlay for this state (compact vs. streaming), then position it.
-    let (width, height) = overlay_dimensions(state);
+    // [GRAIN] Grain-owned presentations supply their own bounds.
+    let (width, height) = crate::grain_overlay::confirmation_dimensions(state)
+        .unwrap_or_else(|| overlay_dimensions(state));
     if let Some(overlay_window) = app_handle.get_webview_window("recording_overlay") {
         // Invalidate any delayed hide still in flight from a previous session
         // (see `hide_recording_overlay`).
@@ -662,7 +664,9 @@ fn update_overlay_position_on_main(app_handle: &AppHandle) {
             } else {
                 "recording"
             };
-            let (width, height) = overlay_dimensions(state);
+            // [GRAIN] Keep confirmation bounds when the overlay position changes.
+            let (width, height) = crate::grain_overlay::active_confirmation_dimensions(app_handle)
+                .unwrap_or_else(|| overlay_dimensions(state));
             if let Err(error) = place_windows_overlay(app_handle, &overlay_window, width, height) {
                 log::error!("Failed to update recording overlay position: {error}");
             }

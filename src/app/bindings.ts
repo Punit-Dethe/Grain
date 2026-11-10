@@ -616,12 +616,35 @@ async changeScrapThatEnabledSetting(enabled: boolean) : Promise<Result<null, str
 },
 /**
  * [GRAIN] Toggle Paste Catch, the missed-text-field clipboard safety net.
- * Turning it off also releases any active hold so the clipboard, temporary
- * delivery shortcut, and native pill notice do not outlive the preference.
+ * Turning it off discards any pending copy and releases its delivery shortcut.
  */
 async changePasteCatchEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_paste_catch_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setLearnFromEdits(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_learn_from_edits", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resolveDictionarySuggestion(id: number, save: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resolve_dictionary_suggestion", { id, save }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resolveClipboardOffer(id: number, copy: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resolve_clipboard_offer", { id, copy }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1819,6 +1842,10 @@ pill_show_app_icon?: boolean;
  */
 pill_hide_close_button?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
 /**
+ * Offer to save a spelling after a local edit to a recent dictation.
+ */
+learn_from_edits?: boolean;
+/**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
 snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap;
@@ -1871,19 +1898,12 @@ snippets_enabled?: boolean;
 agent_enabled?: boolean;
 /**
  * [GRAIN] Paste Catch: when a dictation paste provably misses the text
- * field, hold the transcript on the clipboard behind a visible offer
+ * field, keep it privately until the copy offer resolves
  * instead of letting the restore destroy it. ON by default — a missed
  * paste currently loses the transcript outright, and the detection only
  * fires on positive evidence, so the failure mode is "no offer shown".
  */
 paste_catch_enabled?: boolean;
-/**
- * [GRAIN] How long the caught transcript stays on the clipboard before the
- * clipboard is handed back exactly as Handy would have. Long enough to
- * notice the offer and reach a field; short enough that holding someone
- * else's clipboard stays defensible.
- */
-paste_catch_hold_ms?: number;
 /**
  * [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
  * separate from diagnostic `debug_mode`: only this switch allows native
@@ -1934,6 +1954,7 @@ export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDevi
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ChineseScript = "as_transcribed" | "simplified" | "traditional_tw" | "traditional_hk"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+export type ClipboardOffer = { id: number; expires_at_ms: number }
 /**
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
  * revisions (JavaScript numbers cannot represent all supported revisions).
@@ -2038,6 +2059,11 @@ name: string;
  * URL reader resolved it. `None` otherwise.
  */
 url_host: string | null }
+export type DictionarySuggestion = { id: number; original: string; corrected: string;
+/**
+ * Wall-clock deadline for the renderer's countdown. Cleared on save failure.
+ */
+expires_at_ms: number | null }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
@@ -2240,7 +2266,7 @@ export type OnboardingStep =
  * also the persisted `overlay_position` setting (grain-core re-exports it).
  */
 export type OverlayPosition = "top" | "bottom"
-export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; committed: string; tentative: string; working: boolean; work_kind: string }
+export type OverlayPresentation = { visible: boolean; state: string; ready: boolean; session_id: number; prompt_recording: boolean; app_icon_enabled: boolean; icon: string | null; notice: string | null; dictionary: DictionarySuggestion | null; clipboard_offer: ClipboardOffer | null; committed: string; tentative: string; working: boolean; work_kind: string }
 export type OverlaySnapshot = { presentation: OverlayPresentation; position: OverlayPosition; pill_hide_close_button: boolean; theme: ThemeState; streaming_width: number; streaming_height: number }
 /**
  * Handy's presentation contract. Position only selects an edge.
