@@ -5021,8 +5021,8 @@ html[data-theme="light"] .qp-overlay {
   --meet-page: var(--bg-1);
   --meet-surface: #292929;
   --meet-surface-hover: #313131;
-  --meet-row-bg: var(--bg-3);
-  --meet-row-hover: var(--bg-4);
+  --meet-row-bg: #282828;
+  --meet-row-hover: var(--bg-3);
   --meet-dock: #262626;
   --meet-line: rgba(255, 255, 255, 0.07);
   --meet-lift: inset 0 1px rgba(255, 255, 255, 0.035);
@@ -5335,24 +5335,18 @@ html[data-theme="light"] .meet-toolbar {
 .meet-activity {
   --activity-gap: clamp(2px, 0.35vw, 4px);
   width: min(100%, 780px);
-  margin: 20px 0 0;
+  margin: 20px auto 0;
 }
 
 .meet-activity-caption {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 4px 12px;
-  margin-block-end: 10px;
+  margin-block-start: 8px;
   color: var(--text-3);
   font-size: 12px;
-}
-
-.meet-activity-caption strong {
-  color: var(--text-1);
-  font-size: 13px;
-  font-weight: 600;
 }
 
 .meet-activity-grid {
@@ -5406,10 +5400,8 @@ html[data-theme="light"] .meet-toolbar {
 .meet-activity-legend {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 4px;
-  margin-block-start: 8px;
-  color: var(--text-3);
+  margin-inline-start: auto;
   font-size: 11px;
 }
 

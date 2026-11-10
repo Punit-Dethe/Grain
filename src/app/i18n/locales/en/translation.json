@@ -1099,7 +1099,6 @@
         "ready": "Speaker model installed"
       },
       "activity": {
-        "label": "Recording activity",
         "activeDays_one": "{{count}} day with recordings",
         "activeDays_other": "{{count}} days with recordings",
         "range": "Daily recording counts from {{start}} to {{end}}",

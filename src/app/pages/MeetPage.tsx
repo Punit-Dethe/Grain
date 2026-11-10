@@ -448,10 +448,6 @@ const RecordingActivity = memo(function RecordingActivity({
 
   return (
     <figure className="meet-activity">
-      <figcaption className="meet-activity-caption">
-        <strong>{t("ui2.meet.activity.label")}</strong>
-        <span>{t("ui2.meet.activity.activeDays", { count: activeDays })}</span>
-      </figcaption>
       <div
         className="meet-activity-grid"
         role="img"
@@ -499,13 +495,20 @@ const RecordingActivity = memo(function RecordingActivity({
           </div>
         ))}
       </div>
-      <div className="meet-activity-legend" aria-hidden="true">
-        <span>{t("ui2.meet.activity.less")}</span>
-        {[0, 1, 2, 3, 4].map((level) => (
-          <span key={level} className="meet-activity-cell" data-level={level} />
-        ))}
-        <span>{t("ui2.meet.activity.more")}</span>
-      </div>
+      <figcaption className="meet-activity-caption">
+        <span>{t("ui2.meet.activity.activeDays", { count: activeDays })}</span>
+        <span className="meet-activity-legend" aria-hidden="true">
+          <span>{t("ui2.meet.activity.less")}</span>
+          {[0, 1, 2, 3, 4].map((level) => (
+            <span
+              key={level}
+              className="meet-activity-cell"
+              data-level={level}
+            />
+          ))}
+          <span>{t("ui2.meet.activity.more")}</span>
+        </span>
+      </figcaption>
     </figure>
   );
 });
