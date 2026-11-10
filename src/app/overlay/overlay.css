@@ -482,6 +482,7 @@ body,
   font-display: swap;
 }
 .grain-notice {
+  --notice-resting-offset: -4px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -491,7 +492,7 @@ body,
   min-height: 46px;
   padding: 4px 12px;
   border: 1px solid #353535;
-  border-radius: 12px;
+  border-radius: 16px;
   background: #0b0b0b;
   color: #f4f4f2;
   font:
@@ -499,6 +500,34 @@ body,
     "Segoe UI",
     sans-serif;
   overflow-wrap: anywhere;
+  transition-property: opacity, transform;
+  transition-duration: 240ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ov-stage.top .grain-notice {
+  --notice-resting-offset: 4px;
+}
+
+.grain-notice.leaving {
+  opacity: 0;
+  transform: translateY(var(--notice-resting-offset)) scale(0.92);
+  transition-duration: 165ms;
+  transition-timing-function: ease-in;
+}
+
+@starting-style {
+  .grain-notice {
+    opacity: 0;
+    transform: translateY(var(--notice-resting-offset)) scale(0.92);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grain-notice,
+  .grain-notice.leaving {
+    transition: none;
+  }
 }
 
 .grain-notice-icon {

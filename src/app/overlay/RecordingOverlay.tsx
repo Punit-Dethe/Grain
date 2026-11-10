@@ -27,9 +27,17 @@ const empty: OverlayPresentation = {
   work_kind: "transcribing",
 };
 
+// Fallback when the webview skips transitionend. Handy hides the native window
+// 300 ms after hide-overlay, leaving room for the 165 ms CSS exit.
+const NOTICE_EXIT_TIMEOUT_MS = 220;
+
 export function RecordingOverlay() {
   const { t } = useTranslation();
   const [presentation, setPresentation] = useState(empty);
+  const [notice, setNotice] = useState<{
+    label: string;
+    leaving: boolean;
+  } | null>(null);
   const [position, setPosition] = useState("bottom");
   const [hideCompactClose, setHideCompactClose] = useState(false);
   const [text, setText] = useState<StreamTextEvent>({
@@ -61,6 +69,11 @@ export function RecordingOverlay() {
       close: false,
     };
     const releases: UnlistenFn[] = [];
+    const dismissNotice = () => {
+      setNotice((current) =>
+        current && !current.leaving ? { ...current, leaving: true } : current,
+      );
+    };
     const register = async (promise: Promise<UnlistenFn>) => {
       const fn = await promise;
       if (disposed) fn();
@@ -79,6 +92,11 @@ export function RecordingOverlay() {
       const apply = (value: OverlayPresentation) => {
         acceptsLiveText = value.visible && value.state === "streaming";
         setPresentation(value);
+        if (value.visible && value.notice) {
+          setNotice({ label: value.notice, leaving: false });
+        } else {
+          dismissNotice();
+        }
         setText({ committed: value.committed, tentative: value.tentative });
         setWorking(value.working);
         setKind(value.work_kind || "transcribing");
@@ -96,7 +114,10 @@ export function RecordingOverlay() {
             if (disposed) return;
             acceptsLiveText = payload === "streaming";
             revision++;
-            if (payload === "recording" || payload === "streaming") reset();
+            if (payload === "recording" || payload === "streaming") {
+              setNotice(null);
+              reset();
+            }
             setPresentation((value) => ({
               ...value,
               visible: true,
@@ -117,6 +138,7 @@ export function RecordingOverlay() {
             if (disposed) return;
             acceptsLiveText = false;
             revision++;
+            dismissNotice();
             setPresentation((value) => ({
               ...value,
               visible: false,
@@ -220,6 +242,18 @@ export function RecordingOverlay() {
     };
   }, []);
 
+  const leavingNotice = notice?.leaving ? notice : null;
+  const noticeVisible = notice !== null;
+  useEffect(() => {
+    if (!leavingNotice) return;
+    const timer = setTimeout(
+      () =>
+        setNotice((current) => (current === leavingNotice ? null : current)),
+      NOTICE_EXIT_TIMEOUT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [leavingNotice]);
+
   useEffect(() => {
     setSlowModelLoad(false);
     if (
@@ -257,7 +291,7 @@ export function RecordingOverlay() {
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [text, presentation.visible, presentation.notice, session]);
+  }, [text, presentation.visible, noticeVisible, session]);
 
   useLayoutEffect(() => {
     const row = workRow.current;
@@ -285,7 +319,7 @@ export function RecordingOverlay() {
   }, [
     presentation.visible,
     presentation.state,
-    presentation.notice,
+    noticeVisible,
     working,
     kind,
     hasText,
@@ -294,7 +328,7 @@ export function RecordingOverlay() {
     t,
   ]);
 
-  if (!presentation.visible) return null;
+  if (!presentation.visible && !notice) return null;
   const showClose =
     !hideCompactClose || (presentation.state === "streaming" && hasText);
   const closeClass = showClose ? "" : "no-close";
@@ -360,14 +394,27 @@ export function RecordingOverlay() {
     </div>
   );
 
-  if (presentation.notice) {
+  if (notice) {
     return (
       <div dir={direction} className={`ov-stage ${position}`}>
-        <div className="grain-notice" role="status">
+        <div
+          className={`grain-notice${notice.leaving ? " leaving" : ""}`}
+          role="status"
+          aria-hidden={notice.leaving || undefined}
+          onTransitionEnd={(event) => {
+            if (
+              notice.leaving &&
+              event.target === event.currentTarget &&
+              event.propertyName === "opacity"
+            ) {
+              setNotice((current) => (current === notice ? null : current));
+            }
+          }}
+        >
           <span className="grain-notice-icon" aria-hidden="true">
             <Clipboard size={16} strokeWidth={1.6} />
           </span>
-          <span dir="auto">{presentation.notice}</span>
+          <span dir="auto">{notice.label}</span>
         </div>
       </div>
     );
