@@ -29,6 +29,8 @@ interface DropdownProps {
   disabled?: boolean;
   onRefresh?: () => void;
   ariaLabel?: string;
+  /** Arrow-only trigger for a split control with a full-width options menu. */
+  compact?: boolean;
   pagination?: { label: string; loading: boolean; onLoadMore: () => void };
 }
 
@@ -39,6 +41,7 @@ const MIN_MENU_H = 120;
 /** Gap between the trigger and the menu, and the margin kept off each edge. */
 const GAP = 4;
 const EDGE = 8;
+const COMPACT_MENU_W = 264;
 
 /** Where to hang the portalled menu.
  *
@@ -73,6 +76,7 @@ export const Dropdown: React.FC<DropdownProps> = ({
   disabled = false,
   onRefresh,
   ariaLabel,
+  compact = false,
   pagination,
 }) => {
   const { t } = useTranslation();
@@ -106,18 +110,19 @@ export const Dropdown: React.FC<DropdownProps> = ({
     // roomier — otherwise the menu jumps sides on tiny layout shifts.
     const flipUp = below < MIN_MENU_H && above > below;
     const room = flipUp ? above : below;
+    const width = compact
+      ? Math.min(COMPACT_MENU_W, window.innerWidth - 2 * EDGE)
+      : rect.width;
+    const left = compact ? rect.right - width : rect.left;
     setBox({
-      left: Math.max(
-        EDGE,
-        Math.min(rect.left, window.innerWidth - rect.width - EDGE),
-      ),
-      width: rect.width,
+      left: Math.max(EDGE, Math.min(left, window.innerWidth - width - EDGE)),
+      width,
       maxHeight: Math.max(MIN_MENU_H, Math.min(MAX_MENU_H, room)),
       ...(flipUp
         ? { bottom: window.innerHeight - rect.top + GAP }
         : { top: rect.bottom + GAP }),
     });
-  }, []);
+  }, [compact]);
 
   // Measure before paint so the menu never appears at a stale position.
   useLayoutEffect(() => {
@@ -184,13 +189,13 @@ export const Dropdown: React.FC<DropdownProps> = ({
 
   const handleSelect = (value: string, event: React.MouseEvent) => {
     onSelect(value);
-    if (event.detail === 0) triggerRef.current?.focus();
+    if (compact || event.detail === 0) triggerRef.current?.focus();
     setIsOpen(false);
   };
 
   const toggle = (fromKeyboard: boolean) => {
     if (disabled) return;
-    focusOnOpen.current = !isOpen && fromKeyboard;
+    focusOnOpen.current = !isOpen && (compact || fromKeyboard);
     if (!isOpen && onRefresh) onRefresh();
     setIsOpen(!isOpen);
   };
@@ -258,10 +263,14 @@ export const Dropdown: React.FC<DropdownProps> = ({
                 type="button"
                 role="option"
                 aria-selected={selectedValue === option.value}
-                className={`w-full px-2 py-1 text-sm text-start hover:bg-[var(--accent-tint)] transition-colors duration-150 ${
-                  selectedValue === option.value
-                    ? "bg-[var(--accent-tint)] text-accent font-semibold"
-                    : ""
+                className={`w-full px-2 py-1 text-sm text-start transition-colors duration-150 ${
+                  compact
+                    ? "dropdown-compact-option"
+                    : `hover:bg-[var(--accent-tint)] ${
+                        selectedValue === option.value
+                          ? "bg-[var(--accent-tint)] text-accent font-semibold"
+                          : ""
+                      }`
                 } ${option.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
                 onClick={(event) => handleSelect(option.value, event)}
                 disabled={option.disabled}
@@ -296,11 +305,15 @@ export const Dropdown: React.FC<DropdownProps> = ({
       <button
         ref={triggerRef}
         type="button"
-        className={`px-2 py-[5px] text-sm font-medium bg-paper-sunken border border-line rounded-lg min-w-[200px] w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-all duration-150 ${
-          disabled
-            ? "opacity-50 cursor-not-allowed"
-            : "hover:bg-[var(--accent-tint)] hover:border-accent cursor-pointer"
-        }`}
+        className={
+          compact
+            ? "grid h-full w-7 place-items-center"
+            : `px-2 py-[5px] text-sm font-medium bg-paper-sunken border border-line rounded-lg min-w-[200px] w-full text-start grid grid-cols-[1fr_auto] gap-2 items-center transition-all duration-150 ${
+                disabled
+                  ? "opacity-50 cursor-not-allowed"
+                  : "hover:bg-[var(--accent-tint)] hover:border-accent cursor-pointer"
+              }`
+        }
         onClick={(event) => toggle(event.detail === 0)}
         onKeyDown={(event) => {
           if (
@@ -312,14 +325,21 @@ export const Dropdown: React.FC<DropdownProps> = ({
           event.preventDefault();
           toggle(true);
         }}
-        disabled={disabled}
+        disabled={disabled && !compact}
+        aria-disabled={compact ? disabled : undefined}
         aria-label={ariaLabel}
+        title={compact && !disabled ? selectedOption?.label : undefined}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={isOpen ? menuId : undefined}
       >
-        <span className="truncate">{selectedOption?.label || placeholder}</span>
+        {!compact && (
+          <span className="truncate">
+            {selectedOption?.label || placeholder}
+          </span>
+        )}
         <svg
+          aria-hidden="true"
           className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "transform rotate-180" : ""}`}
           fill="none"
           stroke="currentColor"

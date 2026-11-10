@@ -13,6 +13,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
+import { MicOff, VolumeOff } from "lucide-react";
 import { toast } from "sonner";
 import type {
   MeetingSummary,
@@ -24,6 +25,7 @@ import type {
   TrackStatus,
   TranscriptRevision,
 } from "@/bindings";
+import { Dropdown } from "../components/ui/Dropdown";
 import { hashForRoute } from "../navigation";
 import {
   buildTurns,
@@ -106,170 +108,94 @@ function trackStatusNote(status: TrackStatus, t: T): string | null {
 }
 
 /* ------------------------------------------------------------------------ */
-/* Recording studio                                                          */
+/* Recording controls                                                        */
 /* ------------------------------------------------------------------------ */
 
-function DevicePicker({
-  label,
-  devices,
-  selected,
-  disabled,
+function SourceControl({
+  kind,
+  choice,
+  devices = [],
+  pending,
+  locked,
+  unsupported = false,
   onChange,
 }: {
-  label: string;
-  devices: SourceDevice[];
-  selected: string | null;
-  disabled: boolean;
-  onChange: (id: string | null) => void;
-}) {
-  const { t } = useTranslation();
-  const fallback = devices.find((device) => device.is_default);
-  const missing =
-    selected !== null && !devices.some((device) => device.id === selected);
-  return (
-    <select
-      className="meet-device"
-      value={selected ?? ""}
-      disabled={disabled}
-      aria-label={label}
-      onChange={(event) => onChange(event.target.value || null)}
-    >
-      <option value="">
-        {fallback
-          ? t("ui2.meet.sources.followDefaultNamed", { name: fallback.name })
-          : t("ui2.meet.sources.followDefault")}
-      </option>
-      {missing && (
-        <option value={selected}>{t("ui2.meet.sources.disconnected")}</option>
-      )}
-      {devices.map((device) => (
-        <option key={device.id} value={device.id}>
-          {device.name}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-function SourceRow({
-  kind,
-  enabled,
-  locked,
-  unavailable,
-  children,
-  onToggle,
-}: {
   kind: SourceKind;
-  enabled: boolean;
+  choice: SourceSettings["microphone"] | undefined;
+  devices?: SourceDevice[];
+  pending: boolean;
   locked: boolean;
-  unavailable: boolean;
-  children: ReactNode;
-  onToggle: (enabled: boolean) => void;
+  unsupported?: boolean;
+  onChange: (choice: SourceSettings["microphone"]) => void;
 }) {
   const { t } = useTranslation();
   const name = sourceName(kind, t);
-  const on = enabled && !unavailable;
-  return (
-    <div className={`meet-source${on ? " is-on" : ""}`}>
-      <span className="meet-source-icon">
-        <Glyph name={SOURCE_ICON[kind]} />
-      </span>
-      <div className="meet-source-body">
-        <span className="meet-source-name">{name}</span>
-        {unavailable ? (
-          <span className="meet-source-note">
-            {t("ui2.meet.sources.unsupported")}
-          </span>
-        ) : (
-          children
-        )}
-      </div>
-      <button
-        className={`toggle${on ? " on" : ""}`}
-        type="button"
-        role="switch"
-        aria-checked={on}
-        aria-label={name}
-        title={locked ? t("ui2.meet.sources.keepOne") : undefined}
-        disabled={locked || unavailable}
-        onClick={() => onToggle(!enabled)}
-      >
-        <span />
-      </button>
-    </div>
-  );
-}
-
-function SourceSetup({ meet }: { meet: MeetController }) {
-  const { t } = useTranslation();
-  const sources = meet.sources;
-  if (!sources) {
-    return (
-      <div className="meet-sources" aria-busy="true">
-        <div className="meet-source is-placeholder" />
-        <div className="meet-source is-placeholder" />
-      </div>
-    );
+  const MutedIcon = kind === "Microphone" ? MicOff : VolumeOff;
+  const enabled = Boolean(choice?.enabled && !unsupported);
+  const pickerDisabled = !choice || pending || unsupported;
+  const toggleDisabled = pickerDisabled || locked;
+  const selected = choice?.device_id ?? "";
+  const fallback = devices.find((device) => device.is_default);
+  const options = [
+    {
+      value: "",
+      label: fallback
+        ? t("ui2.meet.sources.followDefaultNamed", { name: fallback.name })
+        : t("ui2.meet.sources.followDefault"),
+    },
+    ...devices.map((device) => ({ value: device.id, label: device.name })),
+  ];
+  if (selected && !devices.some((device) => device.id === selected)) {
+    options.push({
+      value: selected,
+      label: t("ui2.meet.sources.disconnected"),
+    });
   }
-  const { settings } = sources;
-  const micOn = settings.microphone.enabled;
-  const systemOn =
-    settings.system_audio.enabled && sources.system_audio_supported;
-  const save = (next: SourceSettings) => {
-    meet.setSources(next).catch((error) => toast.error(errorText(error)));
-  };
+
+  let toggleTitle = enabled
+    ? t("ui2.meet.sources.turnOff", { source: name })
+    : t("ui2.meet.sources.turnOn", { source: name });
+  if (unsupported) {
+    toggleTitle = t("ui2.meet.sources.systemUnavailable");
+  } else if (locked) {
+    toggleTitle = t("ui2.meet.sources.keepOne");
+  }
+
   return (
-    <div className="meet-sources">
-      <SourceRow
-        kind="Microphone"
-        enabled={micOn}
-        locked={micOn && !systemOn}
-        unavailable={false}
-        onToggle={(enabled) =>
-          save({ ...settings, microphone: { ...settings.microphone, enabled } })
-        }
+    <div className="meet-source-control">
+      <button
+        className="meet-source-toggle"
+        type="button"
+        aria-pressed={enabled}
+        aria-disabled={toggleDisabled}
+        aria-label={name}
+        title={toggleTitle}
+        onClick={() => {
+          if (choice && !toggleDisabled)
+            onChange({ ...choice, enabled: !enabled });
+        }}
       >
-        <DevicePicker
-          label={t("ui2.meet.sources.microphoneDevice")}
-          devices={sources.microphones}
-          selected={settings.microphone.device_id}
-          disabled={!micOn}
-          onChange={(device_id) =>
-            save({
-              ...settings,
-              microphone: { ...settings.microphone, device_id },
-            })
-          }
-        />
-      </SourceRow>
-      <SourceRow
-        kind="SystemAudio"
-        enabled={systemOn}
-        locked={systemOn && !micOn}
-        unavailable={!sources.system_audio_supported}
-        onToggle={(enabled) =>
-          save({
-            ...settings,
-            system_audio: { ...settings.system_audio, enabled },
-          })
+        {enabled ? (
+          <Glyph name={SOURCE_ICON[kind]} />
+        ) : (
+          <MutedIcon className="icon sm" aria-hidden="true" />
+        )}
+      </button>
+      <Dropdown
+        compact
+        options={options}
+        selectedValue={selected}
+        disabled={pickerDisabled}
+        ariaLabel={
+          kind === "Microphone"
+            ? t("ui2.meet.sources.microphoneDevice")
+            : t("ui2.meet.sources.systemAudioDevice")
         }
-      >
-        <DevicePicker
-          label={t("ui2.meet.sources.systemAudioDevice")}
-          devices={sources.outputs}
-          selected={settings.system_audio.device_id}
-          disabled={!systemOn}
-          onChange={(device_id) =>
-            save({
-              ...settings,
-              system_audio: { ...settings.system_audio, device_id },
-            })
-          }
-        />
-      </SourceRow>
-      {micOn && systemOn && (
-        <p className="meet-sources-hint">{t("ui2.meet.sources.headphones")}</p>
-      )}
+        onSelect={(value) => {
+          if (choice && value !== selected)
+            onChange({ ...choice, device_id: value || null });
+        }}
+      />
     </div>
   );
 }
@@ -310,7 +236,7 @@ function LiveSource({ source }: { source: SourceStatus }) {
       ? t("ui2.meet.live.micSilent")
       : t("ui2.meet.live.systemWaiting");
   return (
-    <div className="meet-source is-on">
+    <div className="meet-source">
       <span className="meet-source-icon">
         <Glyph name={SOURCE_ICON[source.kind]} />
       </span>
@@ -328,61 +254,135 @@ function LiveSource({ source }: { source: SourceStatus }) {
   );
 }
 
-function Studio({ meet }: { meet: MeetController }) {
+type CaptureCommand = "sources" | "start" | "stop";
+
+function RecordingHeader({ meet }: { meet: MeetController }) {
   const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
-  const live = useLiveRecording(meet.status.recording);
-  const recording = live ?? meet.status.recording;
-  const settings = meet.sources?.settings;
+  const [pending, setPending] = useState<CaptureCommand | null>(null);
+  const commandInFlight = useRef(false);
+  const currentRecording = meet.status.recording;
+  const live = useLiveRecording(currentRecording);
+  const recording =
+    live?.session_id === currentRecording?.session_id ? live : currentRecording;
+  const sources = meet.sources;
+  const settings = sources?.settings;
   const micOn = Boolean(settings?.microphone.enabled);
   const systemOn = Boolean(
-    settings?.system_audio.enabled && meet.sources?.system_audio_supported,
+    settings?.system_audio.enabled && sources?.system_audio_supported,
   );
 
-  const run = async (action: () => Promise<unknown>) => {
-    setBusy(true);
+  const run = async (
+    command: CaptureCommand,
+    action: () => Promise<unknown>,
+  ) => {
+    if (commandInFlight.current) return;
+    commandInFlight.current = true;
+    setPending(command);
     try {
       await action();
     } catch (error) {
       toast.error(errorText(error));
     } finally {
-      setBusy(false);
+      commandInFlight.current = false;
+      setPending(null);
     }
   };
 
-  if (recording) {
-    const level = Math.max(
-      0,
-      ...recording.sources.map((source) => levelFraction(source.level)),
-    );
-    return (
-      <section
-        className="meet-studio is-recording"
-        aria-label={t("ui2.meet.live.label")}
-      >
-        <div className="meet-studio-main">
-          <button
-            className="meet-orb is-live"
-            type="button"
-            disabled={busy}
-            aria-label={t("ui2.meet.studio.stop")}
-            title={t("ui2.meet.studio.stop")}
-            style={{ "--level": level } as CSSProperties}
-            onClick={() => void run(meet.stopRecording)}
-          >
-            <span className="meet-orb-core" aria-hidden="true" />
-          </button>
-          <div className="meet-studio-copy">
-            <strong className="meet-clock" role="timer">
-              {formatClock(recording.elapsed_ms)}
-            </strong>
-            <span className="meet-studio-hint">
-              <span className="meet-live-dot" aria-hidden="true" />
-              {t("ui2.meet.live.recording")}
-            </span>
-          </div>
+  const recordDisabled =
+    pending !== null || (!recording && (!settings || (!micOn && !systemOn)));
+  return (
+    <>
+      <header className="meet-head">
+        <div>
+          <h1>{t("ui2.meet.name")}</h1>
+          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
         </div>
-        <div className="meet-sources">
+        <div className="meet-header-actions">
+          <div className="meet-toolbar">
+            {recording ? (
+              <span
+                className="meet-record-clock"
+                role="timer"
+                aria-label={t("ui2.meet.live.label")}
+              >
+                {formatClock(recording.elapsed_ms)}
+              </span>
+            ) : (
+              <div
+                className="meet-source-controls"
+                role="group"
+                aria-busy={!sources}
+                aria-label={t("ui2.meet.sources.label")}
+              >
+                <SourceControl
+                  kind="Microphone"
+                  choice={settings?.microphone}
+                  devices={sources?.microphones}
+                  pending={pending !== null}
+                  locked={micOn && !systemOn}
+                  onChange={(microphone) => {
+                    if (settings)
+                      void run("sources", () =>
+                        meet.setSources({ ...settings, microphone }),
+                      );
+                  }}
+                />
+                <SourceControl
+                  kind="SystemAudio"
+                  choice={settings?.system_audio}
+                  devices={sources?.outputs}
+                  pending={pending !== null}
+                  locked={systemOn && !micOn}
+                  unsupported={sources?.system_audio_supported === false}
+                  onChange={(system_audio) => {
+                    if (settings)
+                      void run("sources", () =>
+                        meet.setSources({ ...settings, system_audio }),
+                      );
+                  }}
+                />
+              </div>
+            )}
+            <button
+              className="button primary meet-record-action"
+              type="button"
+              aria-disabled={recordDisabled}
+              onClick={() => {
+                if (!recordDisabled) {
+                  void run(
+                    recording ? "stop" : "start",
+                    recording
+                      ? meet.stopRecording
+                      : () => meet.startRecording(null),
+                  );
+                }
+              }}
+            >
+              <span
+                className={
+                  recording ? "meet-record-mark is-stop" : "meet-record-mark"
+                }
+                aria-hidden="true"
+              />
+              {recording
+                ? t("ui2.meet.studio.stop")
+                : pending === "start"
+                  ? t("ui2.meet.studio.starting")
+                  : t("ui2.meet.studio.start")}
+            </button>
+          </div>
+          {!recording && micOn && systemOn && (
+            <p className="meet-source-tip">
+              {t("ui2.meet.sources.headphones")}
+            </p>
+          )}
+        </div>
+      </header>
+      {recording && (
+        <section
+          className="meet-live-strip"
+          aria-label={t("ui2.meet.live.label")}
+        >
           {recording.sources.map((source) => (
             <LiveSource key={source.kind} source={source} />
           ))}
@@ -391,41 +391,9 @@ function Studio({ meet }: { meet: MeetController }) {
               {recording.error}
             </p>
           )}
-        </div>
-      </section>
-    );
-  }
-
-  const summary =
-    micOn && systemOn
-      ? t("ui2.meet.studio.sourcesBoth")
-      : micOn
-        ? t("ui2.meet.studio.sourcesMic")
-        : t("ui2.meet.studio.sourcesSystem");
-  return (
-    <section className="meet-studio" aria-label={t("ui2.meet.studio.label")}>
-      <div className="meet-studio-main">
-        <button
-          className="meet-start"
-          type="button"
-          disabled={busy || !meet.sources || (!micOn && !systemOn)}
-          onClick={() => void run(() => meet.startRecording(null))}
-        >
-          <span className="meet-orb" aria-hidden="true">
-            <span className="meet-orb-core" />
-          </span>
-          <span className="meet-studio-copy">
-            <strong>
-              {busy
-                ? t("ui2.meet.studio.starting")
-                : t("ui2.meet.studio.start")}
-            </strong>
-            <span className="meet-studio-hint">{summary}</span>
-          </span>
-        </button>
-      </div>
-      <SourceSetup meet={meet} />
-    </section>
+        </section>
+      )}
+    </>
   );
 }
 
@@ -573,6 +541,9 @@ function Recordings({ meet }: { meet: MeetController }) {
   } else if (meet.meetings.length === 0) {
     body = (
       <div className="meet-list-empty">
+        <span className="meet-source-icon">
+          <Glyph name="mic" />
+        </span>
         <strong>{t("ui2.meet.list.emptyTitle")}</strong>
         <p>{t("ui2.meet.list.empty")}</p>
       </div>
@@ -1533,11 +1504,7 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
   } else {
     content = (
       <div className="page-wrap meet-wrap">
-        <header className="meet-head">
-          <h1>{t("ui2.meet.name")}</h1>
-          <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-        </header>
-        <Studio meet={meet} />
+        <RecordingHeader meet={meet} />
         <SpeakerModelNotice meet={meet} />
         {meet.status.last_error && (
           <div className="meet-callout is-error" role="alert">

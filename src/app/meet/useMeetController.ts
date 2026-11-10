@@ -64,6 +64,8 @@ export function useMeetController(): MeetController {
   const [diarizerProgress, setDiarizerProgress] = useState<number | null>(null);
   const mountedRef = useRef(false);
   const sourcesRef = useRef<MeetSources | null>(null);
+  const sourceRefreshId = useRef(0);
+  const savingSources = useRef(false);
   useEffect(() => {
     sourcesRef.current = sources;
   }, [sources]);
@@ -89,9 +91,13 @@ export function useMeetController(): MeetController {
   }, []);
 
   const refreshSources = useCallback(async () => {
+    if (savingSources.current) return;
+    const refreshId = ++sourceRefreshId.current;
     try {
       const next = unwrap(await commands.meetSources());
-      if (mountedRef.current) setSourcesState(next);
+      if (mountedRef.current && refreshId === sourceRefreshId.current) {
+        setSourcesState(next);
+      }
     } catch (error) {
       console.error("Failed to load meeting audio sources:", error);
     }
@@ -128,6 +134,9 @@ export function useMeetController(): MeetController {
   }, [reload, refreshSources]);
 
   const setSources = useCallback(async (settings: SourceSettings) => {
+    // A device refresh started before this write may have read the old settings.
+    savingSources.current = true;
+    sourceRefreshId.current += 1;
     const previous = sourcesRef.current;
     if (previous) setSourcesState({ ...previous, settings });
     try {
@@ -135,6 +144,8 @@ export function useMeetController(): MeetController {
     } catch (error) {
       if (mountedRef.current) setSourcesState(previous);
       throw error;
+    } finally {
+      savingSources.current = false;
     }
   }, []);
 

@@ -5052,185 +5052,156 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-head {
-  margin-bottom: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  padding-block-end: 20px;
+  border-block-end: 1px solid var(--hairline);
 }
 
 .meet-head .page-subtitle {
-  margin-top: 4px;
-  color: var(--text-3);
+  margin-block-start: 4px;
   font-size: 13px;
 }
 
-/* --- Studio: one surface, the record control and the sources --------- */
-
-.meet-studio {
+.meet-header-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
+  justify-items: end;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+
+.meet-toolbar {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 32px;
-  padding: 22px 22px 22px 26px;
-  border-radius: 22px;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 100%;
+}
+
+.meet-source-controls,
+.meet-source-control {
+  display: flex;
+}
+
+.meet-source-controls {
+  gap: 6px;
+}
+
+.meet-source-control {
+  border-radius: 8px;
   background: var(--meet-surface);
-  box-shadow: var(--meet-lift);
-  transition: box-shadow 0.4s var(--ease-out);
+  box-shadow: inset 0 0 0 1px var(--meet-line);
 }
 
-.meet-studio.is-recording {
-  box-shadow:
-    var(--meet-lift),
-    0 0 0 1px color-mix(in srgb, var(--meet-live) 30%, transparent),
-    0 14px 40px color-mix(in srgb, var(--meet-live) 10%, transparent);
-}
-
-@media (max-width: 760px) {
-  .meet-studio {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 20px;
-  }
-}
-
-.meet-studio-main {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-
-.meet-start {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  margin: -8px;
-  padding: 8px 18px 8px 8px;
-  border-radius: 999px;
-  color: inherit;
-  background: transparent;
-  text-align: start;
+.meet-source-control button {
+  min-height: 36px;
+  color: var(--text-3);
   cursor: pointer;
-  transition: background 0.2s ease;
 }
 
-.meet-start:hover:not(:disabled) {
+.meet-source-control button:hover:not([aria-disabled="true"]),
+.meet-source-control button[aria-expanded="true"] {
+  color: var(--text-1);
+  background: var(--meet-surface-hover);
+}
+
+.meet-source-control button:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+.meet-source-toggle {
+  display: grid;
+  width: 36px;
+  place-items: center;
+  border-start-start-radius: 8px;
+  border-end-start-radius: 8px;
+}
+
+.meet-source-control .meet-source-toggle[aria-pressed="true"] {
+  color: var(--text-1);
+}
+
+.meet-source-control button[aria-haspopup="listbox"] {
+  border-inline-start: 1px solid var(--meet-line);
+  border-start-end-radius: 8px;
+  border-end-end-radius: 8px;
+}
+
+.meet-source-control button[aria-haspopup="listbox"] svg {
+  width: 12px;
+  height: 12px;
+}
+
+.meet-source-control button[aria-disabled="true"] {
+  cursor: default;
+}
+
+.meet-source-control button[aria-disabled="true"]:not([aria-pressed="true"]) {
+  color: var(--text-4);
+}
+
+.dropdown-compact-option:hover:not(:disabled, [aria-selected="true"]) {
   background: var(--accent-soft);
 }
 
-.meet-start:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-/* The record orb: a red dot that becomes a stop square while recording,
-   with a halo that follows the live input level. */
-.meet-orb {
-  --level: 0;
-  position: relative;
-  width: 64px;
-  height: 64px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--meet-live) 14%, transparent);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--meet-live) 34%, transparent);
-  cursor: pointer;
-  transition:
-    background 0.25s ease,
-    transform 0.3s var(--ease-out);
-}
-
-.meet-orb::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--meet-live);
-  opacity: 0;
-  transform: scale(1);
-  transition:
-    transform 0.12s linear,
-    opacity 0.12s linear;
-}
-
-.meet-orb-core {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--meet-live);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--meet-live) 40%, transparent);
-  transition:
-    width 0.35s var(--ease-out),
-    height 0.35s var(--ease-out),
-    border-radius 0.35s var(--ease-out),
-    background 0.25s ease,
-    transform 0.25s var(--ease-out);
-}
-
-.meet-start:hover:not(:disabled) .meet-orb-core {
-  transform: scale(1.1);
-}
-
-.meet-start:active:not(:disabled) .meet-orb {
-  transform: scale(0.95);
-}
-
-.meet-orb.is-live {
-  background: var(--meet-live);
-  box-shadow: 0 6px 22px color-mix(in srgb, var(--meet-live) 35%, transparent);
-}
-
-.meet-orb.is-live::before {
-  opacity: calc(0.12 + var(--level) * 0.28);
-  transform: scale(calc(1 + var(--level) * 0.42));
-}
-
-.meet-orb.is-live .meet-orb-core {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: #fff;
-  box-shadow: none;
-}
-
-.meet-orb.is-live:hover .meet-orb-core {
-  transform: scale(1.08);
-}
-
-.meet-orb.is-live:active {
-  transform: scale(0.95);
-}
-
-.meet-studio-copy {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-
-.meet-studio-copy strong {
+.dropdown-compact-option[aria-selected="true"] {
   color: var(--text-1);
-  font-size: 19px;
-  font-weight: 630;
-  letter-spacing: -0.02em;
+  background: var(--accent-soft-hover);
+  font-weight: 600;
 }
 
-.meet-studio-copy .meet-clock {
-  font-size: 34px;
-  font-weight: 560;
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.035em;
+.grain-root .dropdown-compact-option:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: -2px;
 }
 
-.meet-studio-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.meet-source-tip {
+  margin: 0;
   color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: end;
+}
+
+.grain-root .meet-record-action {
+  min-width: min(142px, 100%);
+  max-width: 100%;
+  padding-block: 6px;
   font-size: 13px;
-  line-height: 1.4;
+  font-weight: 610;
+}
+
+.button.meet-record-action[aria-disabled="true"] {
+  opacity: 0.58;
+  cursor: default;
+  filter: none;
+  transform: none;
+}
+
+.meet-record-mark {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--meet-live);
+}
+
+.meet-record-mark.is-stop {
+  border-radius: 2px;
+}
+
+.meet-record-clock {
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .meet-live-dot {
@@ -5248,137 +5219,57 @@ html[data-theme="light"] .grain-root {
   }
 }
 
-/* Sources: rows on the studio surface, separated by a hairline. */
-.meet-sources {
-  min-width: 0;
+.meet-live-strip {
   display: grid;
-  padding-inline-start: 26px;
-  box-shadow: inset 1px 0 var(--hairline);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+  gap: 10px 24px;
+  margin-block-start: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--meet-surface);
 }
 
-@media (max-width: 760px) {
-  .meet-sources {
-    margin-top: 14px;
-    padding: 6px 0 0;
-    box-shadow: inset 0 1px var(--hairline);
-  }
+.meet-live-strip .meet-inline-error {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .meet-source {
-  min-width: 0;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  column-gap: 14px;
-  padding: 11px 0;
+  gap: 10px;
+  min-width: 0;
 }
 
 .meet-source-body {
-  min-width: 0;
   display: grid;
-  justify-items: start;
   gap: 1px;
-  padding-inline-end: 12px;
-}
-
-.meet-source + .meet-source {
-  box-shadow: inset 0 1px var(--hairline-soft);
-}
-
-.meet-source.is-placeholder {
-  min-height: 58px;
+  min-width: 0;
 }
 
 .meet-source-icon {
-  width: 34px;
-  height: 34px;
   display: grid;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 10px;
-  color: var(--text-4);
+  border-radius: 8px;
+  color: var(--text-2);
   background: var(--accent-soft);
-  transition:
-    color 0.2s ease,
-    background 0.2s ease;
-}
-
-.meet-source.is-on .meet-source-icon {
-  color: var(--text-1);
-  background: var(--accent-soft-hover);
 }
 
 .meet-source-name {
   color: var(--text-1);
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 590;
-  transition: color 0.2s ease;
-}
-
-.meet-source:not(.is-on) .meet-source-name {
-  color: var(--text-3);
 }
 
 .meet-source-note {
   overflow: hidden;
   color: var(--text-3);
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Device picker: reads as text with a chevron, not as a box. */
-.meet-device {
-  width: auto;
-  max-width: min(100%, 230px);
-  margin-inline-start: -6px;
-  padding: 2px 22px 2px 6px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 6px;
-  outline: 0;
-  appearance: none;
-  color: var(--text-3);
-  background-color: transparent;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238d9295' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-  font: inherit;
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease;
-}
-
-.meet-device:hover:not(:disabled),
-.meet-device:focus-visible {
-  color: var(--text-1);
-  background-color: var(--accent-soft);
-}
-
-.meet-device:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-
-.meet-device option {
-  color: var(--text-1);
-  background: var(--bg-3);
-}
-
-.grain-root .meet-source .toggle:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.meet-sources-hint {
-  margin: 4px 0 0;
-  color: var(--text-3);
   font-size: 12px;
-  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Live input meter: a row of ticks. */
@@ -5487,7 +5378,7 @@ html[data-theme="light"] .grain-root {
 /* --- Recordings list: one rounded group per day, rows divided by a hairline */
 
 .meet-recordings {
-  margin-top: 44px;
+  margin-block-start: 24px;
 }
 
 .meet-recordings > h2 {
@@ -5679,11 +5570,17 @@ html[data-theme="light"] .grain-root {
 
 .meet-list-empty {
   display: grid;
-  gap: 6px;
-  margin-top: 14px;
-  padding: 28px 24px;
-  border-radius: 18px;
-  background: var(--meet-surface);
+  justify-items: center;
+  gap: 5px;
+  margin-block-start: 12px;
+  padding: 28px 20px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.meet-list-empty .meet-source-icon {
+  margin-block-end: 4px;
 }
 
 .meet-list-empty strong {
@@ -6418,17 +6315,11 @@ html[data-theme="light"] .grain-root {
     animation: none;
   }
 
-  .meet-orb::before,
-  .meet-orb-core,
   .meet-ticks i,
   .meet-progress i,
   .meet-row-go,
   .meet-underline {
     transition: none;
-  }
-
-  .meet-orb.is-live::before {
-    transform: none;
   }
 }
 

@@ -1066,28 +1066,27 @@
     },
     "meet": {
       "name": "Recall",
-      "subtitle": "Record calls and meetings. Transcribed privately on this device.",
+      "subtitle": "Record and transcribe on this device.",
       "processFailed": "Transcription failed.",
       "studio": {
-        "label": "New recording",
         "start": "Start recording",
         "starting": "Starting…",
-        "stop": "Stop recording",
-        "sourcesBoth": "Microphone and system audio",
-        "sourcesMic": "Microphone only",
-        "sourcesSystem": "System audio only"
+        "stop": "Stop recording"
       },
       "sources": {
+        "label": "Recording sources",
         "microphone": "Microphone",
-        "microphoneDevice": "Microphone for recordings",
+        "microphoneDevice": "Choose microphone",
         "systemAudio": "System audio",
-        "systemAudioDevice": "Output to record",
+        "systemAudioDevice": "Choose system audio device",
         "followDefault": "System default",
-        "followDefaultNamed": "{{name}}",
+        "followDefaultNamed": "System default ({{name}})",
         "disconnected": "Disconnected device",
-        "unsupported": "Not available on this system yet",
-        "keepOne": "Recordings need at least one source",
-        "headphones": "With both on, wear headphones so the microphone doesn't pick up the call twice."
+        "turnOn": "Turn on {{source}}",
+        "turnOff": "Turn off {{source}}",
+        "systemUnavailable": "System audio is unavailable on this platform",
+        "keepOne": "Keep at least one source on",
+        "headphones": "Use headphones to avoid capturing audio twice."
       },
       "live": {
         "label": "Recording in progress",
@@ -1108,7 +1107,7 @@
         "loadError": "Recordings could not be loaded.",
         "retry": "Try again",
         "emptyTitle": "No recordings yet",
-        "empty": "Choose your sources above and start recording. Your recordings appear here.",
+        "empty": "Start a recording to see it here.",
         "speakers_one": "{{count}} speaker",
         "speakers_other": "{{count}} speakers",
         "today": "Today",
