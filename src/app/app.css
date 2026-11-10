@@ -5624,34 +5624,15 @@ html[data-theme="light"] .meet-toolbar {
   min-width: 0;
 }
 
+.meet-title-edit [contenteditable] {
+  min-width: 1ch;
+  outline: none;
+}
+
 .meet-title-edit svg {
   flex: 0 0 auto;
   align-self: center;
   color: var(--text-3);
-}
-
-.meet-title-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.grain-root .meet-title-input {
-  min-width: 0;
-  min-height: 36px;
-  flex: 1 1 180px;
-  padding-inline: 10px;
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  color: var(--text-1);
-  background: var(--meet-surface);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.meet-title-form .button:disabled {
-  opacity: 0.55;
 }
 
 .meet-meta {

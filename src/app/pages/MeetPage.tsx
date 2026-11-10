@@ -1071,110 +1071,83 @@ function EditableMeetingTitle({
   onRename: (title: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const [draft, setDraft] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const [pendingTitle, setPendingTitle] = useState<string | null>(null);
+  const editorRef = useRef<HTMLSpanElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
-  const editing = draft !== null;
+  const cancelled = useRef(false);
+  const editing = editingTitle !== null;
 
   useLayoutEffect(() => {
-    if (editing) {
-      inputRef.current?.focus();
-      inputRef.current?.select();
+    const editor = editorRef.current;
+    if (editing && editor) {
+      editor.focus();
+      window.getSelection()?.collapse(editor, editor.childNodes.length);
     } else if (restoreFocus.current) {
       restoreFocus.current = false;
       buttonRef.current?.focus();
     }
   }, [editing]);
 
-  const close = () => {
-    restoreFocus.current = true;
-    setDraft(null);
+  const finish = (text: string) => {
+    setEditingTitle(null);
+    if (cancelled.current) {
+      cancelled.current = false;
+      return;
+    }
+
+    const nextTitle = text.replace(/[\r\n]+/g, " ").trim();
+    if (!nextTitle || nextTitle === title) return;
+    setPendingTitle(nextTitle);
+    void onRename(nextTitle)
+      .catch((error) => toast.error(errorText(error)))
+      .finally(() => setPendingTitle(null));
   };
 
-  if (draft === null) {
-    return (
-      <h1 id="meet-view-title">
+  const pencil = <Pencil size={15} aria-hidden="true" />;
+  return (
+    <h1 id="meet-view-title">
+      {editing ? (
+        <span className="meet-title-edit">
+          <span
+            ref={editorRef}
+            contentEditable="plaintext-only"
+            suppressContentEditableWarning
+            spellCheck={false}
+            role="textbox"
+            aria-label={t("ui2.meet.detail.meetingTitle")}
+            onBlur={(event) => finish(event.currentTarget.innerText)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter" || event.key === "Escape") {
+                event.preventDefault();
+                restoreFocus.current = true;
+                cancelled.current = event.key === "Escape";
+                event.currentTarget.blur();
+              }
+            }}
+          >
+            {editingTitle}
+          </span>
+          {pencil}
+        </span>
+      ) : (
         <button
           ref={buttonRef}
           className="meet-title-edit"
           type="button"
           title={t("ui2.meet.detail.editTitle")}
-          onClick={() => setDraft(title)}
+          aria-disabled={pendingTitle !== null}
+          onClick={() => {
+            if (pendingTitle === null) setEditingTitle(title);
+          }}
         >
-          <span>{title}</span>
-          <Pencil size={15} aria-hidden="true" />
+          <span>{pendingTitle ?? title}</span>
+          {pencil}
         </button>
-      </h1>
-    );
-  }
-
-  const nextTitle = draft.trim();
-  const save = async () => {
-    if (saving || !nextTitle) return;
-    if (nextTitle === title) {
-      close();
-      return;
-    }
-    setSaving(true);
-    try {
-      await onRename(nextTitle);
-      close();
-    } catch (error) {
-      toast.error(errorText(error));
-      inputRef.current?.focus();
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <form
-      className="meet-title-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-      onKeyDown={(event) => {
-        if (
-          event.key === "Escape" &&
-          !event.nativeEvent.isComposing &&
-          !saving
-        ) {
-          event.preventDefault();
-          close();
-        }
-      }}
-    >
-      <h1 id="meet-view-title" className="sr-only">
-        {title}
-      </h1>
-      <input
-        ref={inputRef}
-        className="meet-title-input"
-        type="text"
-        aria-label={t("ui2.meet.detail.meetingTitle")}
-        value={draft}
-        readOnly={saving}
-        onChange={(event) => setDraft(event.target.value)}
-      />
-      <button
-        className="button primary"
-        type="submit"
-        disabled={saving || !nextTitle}
-      >
-        {t("common.save")}
-      </button>
-      <button
-        className="button"
-        type="button"
-        disabled={saving}
-        onClick={close}
-      >
-        {t("common.cancel")}
-      </button>
-    </form>
+      )}
+    </h1>
   );
 }
 
