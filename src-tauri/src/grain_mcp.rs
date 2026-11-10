@@ -196,13 +196,14 @@ struct Provider<'a> {
     endpoint: &'a str,
     registration: Registration,
     setup_url: &'a str,
+    bundled_preset: bool,
     ownership: Option<&'a connections::RuntimeOwner>,
 }
 
 type CatalogProvider = Provider<'static>;
 
 fn is_preset(item: &Provider<'_>) -> bool {
-    item.ownership.is_none() && matches!(item.id, "github" | "notion")
+    item.ownership.is_none() && item.bundled_preset
 }
 
 enum RuntimeProvider {
@@ -360,6 +361,7 @@ const CATALOG: &[CatalogProvider] = &[
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-linear",
+        bundled_preset: false,
         name: "Harness Linear Read-only",
         description: "Isolated live SDK consent preflight; no tool execution.",
         endpoint: "https://mcp.linear.app/mcp/readonly",
@@ -370,6 +372,7 @@ const CATALOG: &[CatalogProvider] = &[
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-auth-peer",
+        bundled_preset: false,
         name: "Harness MCP Peer Account",
         description: "Second isolated SDK OAuth origin for provider independence.",
         endpoint: "https://grain-mcp-peer-harness.invalid/mcp",
@@ -380,6 +383,7 @@ const CATALOG: &[CatalogProvider] = &[
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-auth-peer-client",
+        bundled_preset: false,
         name: "Harness MCP Peer Client",
         description: "Second isolated preregistered origin for fixed-port conflict.",
         endpoint: "https://grain-mcp-peer-harness.invalid/mcp",
@@ -390,6 +394,7 @@ const CATALOG: &[CatalogProvider] = &[
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-auth-client",
+        bundled_preset: false,
         name: "Harness MCP Client",
         description: "Isolated public/confidential client registration acceptance fixture.",
         endpoint: "https://grain-mcp-account-harness.invalid/mcp",
@@ -400,6 +405,7 @@ const CATALOG: &[CatalogProvider] = &[
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness-auth",
+        bundled_preset: false,
         name: "Harness MCP Account",
         description: "Isolated SDK OAuth account acceptance fixture.",
         endpoint: "https://grain-mcp-account-harness.invalid/mcp",
@@ -410,6 +416,7 @@ const CATALOG: &[CatalogProvider] = &[
     #[cfg(feature = "agent-harness")]
     CatalogProvider {
         id: "grain-harness",
+        bundled_preset: false,
         name: "Harness MCP",
         description: "Disposable, unauthenticated MCP tools for real Agent acceptance tests.",
         endpoint: "https://grain-agent-harness.invalid/mcp",
@@ -419,6 +426,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "linear",
+        bundled_preset: false,
         name: "Linear",
         description: "Issues, projects, cycles, and team workflows.",
         endpoint: "https://mcp.linear.app/mcp",
@@ -428,6 +436,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "notion",
+        bundled_preset: true,
         name: "Notion",
         description: "Pages, databases, search, and workspace content.",
         endpoint: "https://mcp.notion.com/mcp",
@@ -437,6 +446,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "atlassian",
+        bundled_preset: false,
         name: "Atlassian",
         description: "Jira and Confluence work across one Atlassian account.",
         endpoint: "https://mcp.atlassian.com/v1/mcp/authv2",
@@ -446,6 +456,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "github",
+        bundled_preset: true,
         name: "GitHub",
         description: "Repositories, issues, pull requests, and code workflows.",
         endpoint: "https://api.githubcopilot.com/mcp/",
@@ -459,6 +470,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "slack",
+        bundled_preset: false,
         name: "Slack",
         description: "Channels, messages, search, and collaboration workflows.",
         endpoint: "https://mcp.slack.com/mcp",
@@ -468,6 +480,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "google-calendar",
+        bundled_preset: false,
         name: "Google Calendar",
         description: "Calendars, events, availability, and invitations.",
         endpoint: "https://calendarmcp.googleapis.com/mcp/v1",
@@ -1094,8 +1107,10 @@ async fn stored_connected(provider_id: &str) -> Result<bool, String> {
 pub async fn mcp_provider_status(
     app: AppHandle,
     window: WebviewWindow,
+    presets_only: Option<bool>,
 ) -> Result<Vec<McpProviderStatus>, String> {
     crate::grain_commands::require_main_window(&window)?;
+    let presets_only = presets_only.unwrap_or(false);
     let settings = crate::settings::get_settings(&app);
     let enabled: HashSet<&str> = settings
         .mcp_enabled_providers
@@ -1103,7 +1118,10 @@ pub async fn mcp_provider_status(
         .map(String::as_str)
         .collect();
     let mut statuses = Vec::with_capacity(CATALOG.len());
-    for item in CATALOG {
+    for item in CATALOG
+        .iter()
+        .filter(|item| !presets_only || is_preset(item))
+    {
         if require_provider_access(&app, item).is_err() || provider(item.id).is_err() {
             continue;
         }
@@ -2914,13 +2932,15 @@ mod tests {
 
     #[test]
     fn bundled_presets_keep_the_expected_oauth_and_github_toolsets() {
-        let mut presets = CATALOG.iter().filter(|item| is_preset(item));
-        let notion = presets.next().unwrap();
-        let github = presets.next().unwrap();
-        assert!(presets.next().is_none());
-        assert_eq!(notion.id, "notion");
+        let notion = provider("notion").unwrap();
+        let github = provider("github").unwrap();
+        assert!(is_preset(notion));
+        assert!(is_preset(github));
+        assert!(CATALOG
+            .iter()
+            .filter(|item| item.id.starts_with("grain-harness"))
+            .all(|item| !is_preset(item)));
         assert!(notion.registration == Registration::Dynamic);
-        assert_eq!(github.id, "github");
         assert!(github.registration == Registration::PreRegistered);
         assert_eq!(github.headers()["x-mcp-toolsets"], "all");
     }

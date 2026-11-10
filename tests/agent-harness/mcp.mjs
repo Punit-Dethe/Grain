@@ -9,6 +9,12 @@ export function mcpHandlers(ctx) {
   async function enabled() {
     await control("enable");
     const status = await ctx.invoke("mcp_provider_status");
+    const presets = await ctx.invoke("mcp_provider_status", {
+      presetsOnly: true,
+    });
+    assert.ok(presets.some((item) => item.id === "github"));
+    assert.ok(presets.some((item) => item.id === "notion"));
+    assert.ok(presets.every((item) => !item.id.startsWith("grain-harness")));
     const fixture = status.find((item) => item.id === "grain-harness");
     assert.equal(fixture.state, "fixture_no_auth");
     assert.equal(

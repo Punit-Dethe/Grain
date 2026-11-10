@@ -696,9 +696,9 @@ async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
-async mcpProviderStatus() : Promise<Result<McpProviderStatus[], string>> {
+async mcpProviderStatus(presetsOnly: boolean | null) : Promise<Result<McpProviderStatus[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("mcp_provider_status") };
+    return { status: "ok", data: await TAURI_INVOKE("mcp_provider_status", { presetsOnly }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

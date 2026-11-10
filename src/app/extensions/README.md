@@ -8,7 +8,9 @@ its next model round. Disconnect removes the saved account.
 
 Keep the first 30–40 presets in the Grain repository and ship them with the
 desktop app. The Rust catalog owns the provider name, description, endpoint,
-authentication mode and release eligibility. The UI uses small provider marks.
+authentication mode and release eligibility. Set `bundled_preset` on a reviewed
+catalog entry to include it in Extensions. The UI uses small provider marks
+where bundled and a generic icon otherwise.
 The catalog renders without fetching catalog data from the network.
 
 Publishing another preset requires a Grain release. The review for a new

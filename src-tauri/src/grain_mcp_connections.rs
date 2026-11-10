@@ -49,6 +49,7 @@ impl RuntimeOwner {
                 McpAuthentication::OAuth {} => super::Registration::Dynamic,
             },
             setup_url: &definition.url,
+            bundled_preset: false,
             ownership: Some(self),
         }
     }

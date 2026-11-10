@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { Box } from "lucide-react";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
 import {
@@ -39,9 +40,8 @@ export function McpPresets({
   const pending = useRef<string | null>(null);
   const mounted = useRef(false);
   const refresh = useCallback(async () => {
-    const status = unwrapResult(await commands.mcpProviderStatus());
-    if (mounted.current)
-      setRows(status.filter((row) => presetIcons.has(row.id)));
+    const status = unwrapResult(await commands.mcpProviderStatus(true));
+    if (mounted.current) setRows(status);
   }, []);
 
   useEffect(() => {
@@ -131,22 +131,31 @@ export function McpPresets({
       </button>
     );
 
-  const identity = (row: McpProviderStatus) => (
-    <div className="mcp-preset-identity">
-      <img
-        className="mcp-brand-icon"
-        data-provider={row.id}
-        src={presetIcons.get(row.id)}
-        alt=""
-        width={24}
-        height={24}
-      />
-      <div>
-        <h3>{row.name}</h3>
-        <p>{row.description}</p>
+  const identity = (row: McpProviderStatus) => {
+    const icon = presetIcons.get(row.id);
+    return (
+      <div className="mcp-preset-identity">
+        {icon ? (
+          <img
+            className="mcp-brand-icon"
+            data-provider={row.id}
+            src={icon}
+            alt=""
+            width={24}
+            height={24}
+          />
+        ) : (
+          <span className="mcp-preset-icon" aria-hidden="true">
+            <Box size={17} />
+          </span>
+        )}
+        <div>
+          <h3>{row.name}</h3>
+          <p>{row.description}</p>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <>
