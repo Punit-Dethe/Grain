@@ -5021,7 +5021,10 @@ html[data-theme="light"] .qp-overlay {
   --meet-page: var(--bg-1);
   --meet-surface: #292929;
   --meet-surface-hover: #313131;
+  --meet-row-bg: var(--bg-3);
+  --meet-row-hover: var(--bg-4);
   --meet-dock: #262626;
+  --meet-capture-fill: #1b1b1b;
   --meet-line: rgba(255, 255, 255, 0.07);
   --meet-lift: inset 0 1px rgba(255, 255, 255, 0.035);
 }
@@ -5033,7 +5036,10 @@ html[data-theme="light"] .grain-root {
   --meet-page: #fcfcfb;
   --meet-surface: #f3f1ec;
   --meet-surface-hover: #ebe8e1;
+  --meet-row-bg: #f8f7f4;
+  --meet-row-hover: var(--meet-surface);
   --meet-dock: #efece6;
+  --meet-capture-fill: #e9e4d9;
   --meet-line: rgba(26, 26, 26, 0.08);
   --meet-lift: none;
 }
@@ -5056,6 +5062,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-head {
+  align-items: center;
   margin-block-end: 0;
 }
 
@@ -5088,8 +5095,9 @@ html[data-theme="light"] .grain-root {
   gap: 10px;
   max-width: 100%;
   padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--text-1) 16%, transparent);
   border-radius: 999px;
-  background: var(--meet-dock);
+  background: var(--meet-capture-fill);
   box-shadow: var(--shadow-float);
   pointer-events: auto;
 }
@@ -5331,7 +5339,7 @@ html[data-theme="light"] .grain-root {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  padding-block-start: 14px;
+  padding-block-start: 20px;
   border-block-start: 1px solid var(--hairline);
 }
 
@@ -5367,7 +5375,7 @@ html[data-theme="light"] .grain-root {
   padding: 0;
   overflow: hidden;
   border-radius: 18px;
-  background: var(--meet-surface);
+  background: var(--meet-row-bg);
   box-shadow: var(--meet-lift);
   list-style: none;
 }
@@ -5391,7 +5399,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-row:hover {
-  background: var(--meet-surface-hover);
+  background: var(--meet-row-hover);
 }
 
 .grain-root .meet-row:focus-visible {
@@ -5424,7 +5432,7 @@ html[data-theme="light"] .grain-root {
   height: 28px;
   flex: 0 0 auto;
   font-size: 11.5px;
-  box-shadow: 0 0 0 2px var(--meet-surface);
+  box-shadow: 0 0 0 2px var(--meet-row-bg);
   transition: box-shadow 0.15s ease;
 }
 
@@ -5433,7 +5441,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-row:hover .meet-avatar.is-stack {
-  box-shadow: 0 0 0 2px var(--meet-surface-hover);
+  box-shadow: 0 0 0 2px var(--meet-row-hover);
 }
 
 .meet-avatar.is-more {

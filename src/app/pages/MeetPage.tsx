@@ -1475,6 +1475,7 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
               <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
             </div>
             <button className="button" type="button" disabled>
+              <Glyph name="sliders" />
               {t("ui2.nav.settings")}
             </button>
           </header>
