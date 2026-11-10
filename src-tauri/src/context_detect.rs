@@ -2131,22 +2131,39 @@ mod uia {
         el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false)
     }
 
+    /// Call from a COM-initialized thread. The legacy CUIAutomation class
+    /// cannot supply IUIAutomation2, which provides the timeouts.
+    unsafe fn dictionary_automation(
+    ) -> windows::core::Result<windows::Win32::UI::Accessibility::IUIAutomation2> {
+        use windows::Win32::UI::Accessibility::{CUIAutomation8, IUIAutomation2};
+        let automation: IUIAutomation2 =
+            CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
+        automation.SetConnectionTimeout(200)?;
+        automation.SetTransactionTimeout(200)?;
+        Ok(automation)
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn dictionary_automation_can_set_timeouts() {
+        unsafe {
+            let _com = ComGuard::init();
+            let automation = dictionary_automation().expect("create the dictionary UIA client");
+            assert_eq!(automation.ConnectionTimeout().unwrap(), 200);
+            assert_eq!(automation.TransactionTimeout().unwrap(), 200);
+        }
+    }
+
     /// Read only a bounded, editable, non-password field. Runtime IDs distinguish
     /// controls that share a process, HWND and control type (e.g. web inputs).
     pub(crate) fn dictionary_field() -> Option<(Vec<i32>, String)> {
-        use windows::core::Interface;
         use windows::Win32::System::Ole::{
             SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound,
         };
-        use windows::Win32::UI::Accessibility::IUIAutomation2;
         const LIMIT: usize = 4096;
         unsafe {
             let _com = ComGuard::init();
-            let automation: IUIAutomation =
-                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
-            let limits = automation.cast::<IUIAutomation2>().ok()?;
-            limits.SetConnectionTimeout(200).ok()?;
-            limits.SetTransactionTimeout(200).ok()?;
+            let automation = dictionary_automation().ok()?;
             let element = automation.GetFocusedElement().ok()?;
             if element.CurrentIsPassword().ok()?.as_bool()
                 || element.CurrentProcessId().ok()? as u32 == std::process::id()
