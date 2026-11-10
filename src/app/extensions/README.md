@@ -21,15 +21,42 @@ Gmail, Drive, Docs and Sheets remain separate follow-ups.
 ### Rollout checkpoint
 
 - **Slack is next.** Start with browser sign-in and read-only tool discovery in
-  an internal Slack workspace. Slack requires a registered app for its MCP
-  server. Distribution beyond the internal pilot requires a Marketplace listing.
-  [Slack MCP app requirements](https://docs.slack.dev/ai/slack-mcp-server/#app-identity)
+  an internal Slack workspace. See [Slack pilot setup](#slack-pilot-setup).
 - **Google Workspace is deferred.** Keep the Calendar preview in place. Resume
   once a managed Google Workspace account can enroll the Grain Cloud project.
   Then configure the desktop OAuth client and verify sign-in, refresh and an
   Agent read with an eligible tester account.
   [Google preview enrollment](https://developers.google.com/workspace/preview#how_to_join_the_program)
 - **Microsoft 365 is deferred** until its tenant and app setup are ready.
+
+### Slack pilot setup
+
+1. Create a dedicated **Grain Slack Pilot** app in a workspace you administer.
+   A Slack developer sandbox also works for internal testing.
+   [Slack app settings](https://api.slack.com/apps) ·
+   [Developer sandboxes](https://docs.slack.dev/tools/developer-sandboxes/)
+2. In the app's **Agents** settings, enable **Slack Model Context Protocol
+   (MCP) Server**. In **OAuth & Permissions**, enable PKCE, add
+   `http://localhost:31938/mcp/oauth/callback` under **Redirect URLs**, and add
+   `search:read.public` under **User Token Scopes** for the first public-channel
+   search test. Install the app in the pilot workspace.
+   [Slack MCP app setup](https://docs.slack.dev/ai/slack-mcp-server/developing/) ·
+   [Desktop PKCE](https://docs.slack.dev/authentication/using-pkce/) ·
+   [Public search scope](https://docs.slack.dev/changelog/2026/02/17/slack-mcp/)
+3. Copy the **Client ID** from **Basic Information → App Credentials**. The
+   pilot is intended to use this public ID and PKCE. Keep the client secret
+   out of Grain builds.
+
+Before bundling Slack, verify that the user-token endpoint accepts the desktop
+PKCE flow with the registered app and that token refresh and MCP discovery work.
+Slack's live authorization metadata currently lists only `client_secret_post`,
+while its desktop guidance describes a public client. The first live check
+should search for a known message in a pilot workspace's public channel.
+Distribution beyond the internal pilot requires a Slack Marketplace listing.
+[Slack authorization metadata](https://mcp.slack.com/.well-known/oauth-authorization-server) ·
+[Slack MCP app requirements](https://docs.slack.dev/ai/slack-mcp-server/#app-identity)
+
+### Catalog maintenance
 
 Publishing another preset requires a Grain release. The review for a new
 preset includes sign-in on a release build and tool discovery.
