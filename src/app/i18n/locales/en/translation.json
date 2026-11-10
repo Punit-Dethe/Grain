@@ -1110,8 +1110,6 @@
         "retry": "Try again",
         "emptyTitle": "No recordings yet",
         "empty": "Start a recording to see it here.",
-        "speakers_one": "{{count}} speaker",
-        "speakers_other": "{{count}} speakers",
         "today": "Today",
         "yesterday": "Yesterday",
         "state": {

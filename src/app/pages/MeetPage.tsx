@@ -449,15 +449,6 @@ function Recordings({
       }),
     [i18n.language],
   );
-  const timeFormat = useMemo(
-    () =>
-      new Intl.DateTimeFormat(i18n.language, {
-        hour: "numeric",
-        minute: "2-digit",
-      }),
-    [i18n.language],
-  );
-
   let body: ReactNode;
   if (meet.loading) {
     body = <p className="meet-list-state">{t("ui2.meet.list.loading")}</p>;
@@ -507,9 +498,6 @@ function Recordings({
                   : meeting.transcript_revision != null
                     ? "transcribed"
                     : "new";
-            const sourcesText = [...new Set(meeting.sources)]
-              .map((kind) => sourceName(kind, t))
-              .join(" + ");
             return (
               <li key={meeting.id}>
                 <button
@@ -541,17 +529,6 @@ function Recordings({
                           : t(`ui2.meet.list.state.${state}`)}
                       </span>
                     )}
-                    <span className="meet-row-meta">
-                      <time>{timeFormat.format(meeting.created_unix_ms)}</time>
-                      {meeting.speaker_count > 0 && (
-                        <span>
-                          {t("ui2.meet.list.speakers", {
-                            count: meeting.speaker_count,
-                          })}
-                        </span>
-                      )}
-                      <span>{sourcesText}</span>
-                    </span>
                   </span>
                   <span className="meet-row-go" aria-hidden="true">
                     <Glyph name="chev-right" />
@@ -1492,9 +1469,14 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
     content = (
       <>
         <div className="page-wrap meet-wrap">
-          <header>
-            <h1>{t("ui2.meet.name")}</h1>
-            <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
+          <header className="page-header meet-head">
+            <div>
+              <h1>{t("ui2.meet.name")}</h1>
+              <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
+            </div>
+            <button className="button" type="button" disabled>
+              {t("ui2.nav.settings")}
+            </button>
           </header>
           <Recordings
             meet={meet}

@@ -5055,6 +5055,10 @@ html[data-theme="light"] .grain-root {
   padding-bottom: 56px;
 }
 
+.meet-head {
+  margin-block-end: 0;
+}
+
 .meet-capture-dock {
   position: sticky;
   z-index: 5;
@@ -5327,8 +5331,8 @@ html[data-theme="light"] .grain-root {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  padding-block-end: 14px;
-  border-block-end: 1px solid var(--hairline);
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--hairline);
 }
 
 .grain-root .meet-recordings-controls .search-field {
@@ -5478,20 +5482,6 @@ html[data-theme="light"] .grain-root {
 
 .meet-row:not([data-state="transcribed"]) .meet-row-preview {
   color: var(--text-3);
-}
-
-.meet-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  color: var(--text-4);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.meet-row-meta > * + *::before {
-  content: "·";
-  margin-inline: 7px;
 }
 
 .meet-row-go {
