@@ -5154,7 +5154,6 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
 
 .meet-toolbar {
   --meet-glass-opacity: 0.8;
-  --meet-glass-button-bg: rgb(var(--meet-glass-tint) / 0.2);
   --meet-glass-button-edge: inset 0 0 0 1px rgb(var(--meet-glass-tint) / 0.24);
   display: flex;
   align-items: center;
@@ -5171,11 +5170,6 @@ html[data-theme="light"] :is(.meet-toolbar, .dropdown-compact-menu) {
   display: flex;
 }
 
-html[data-theme="light"] .meet-source-control {
-  background-color: var(--meet-glass-button-bg);
-  box-shadow: var(--meet-glass-button-edge);
-}
-
 .meet-source-controls {
   flex: 0 0 auto;
   gap: 8px;
@@ -5185,6 +5179,11 @@ html[data-theme="light"] .meet-source-control {
   border-radius: 999px;
   background: rgb(var(--meet-glass-tint) / 0.09);
   box-shadow: inset 0 0 0 1px rgb(var(--meet-glass-tint) / 0.12);
+}
+
+html[data-theme="light"] .meet-source-control {
+  background-color: #a7a096;
+  box-shadow: var(--meet-glass-button-edge);
 }
 
 .meet-source-control button {
@@ -5258,6 +5257,12 @@ html[data-theme="light"] .meet-source-control {
   scrollbar-width: none;
 }
 
+html[data-theme="light"] .dropdown-compact-menu {
+  background-color: var(--meet-glass-fallback);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 .dropdown-compact-menu::-webkit-scrollbar {
   display: none;
 }
@@ -5323,7 +5328,7 @@ html[data-theme="light"] .meet-source-control {
   padding-inline: 16px;
   border-radius: 999px;
   color: var(--meet-glass-text);
-  background-color: var(--meet-glass-button-bg);
+  background-color: rgb(var(--meet-glass-tint) / 0.2);
   box-shadow: var(--meet-glass-button-edge);
   font-size: 14px;
   font-weight: 610;
