@@ -831,7 +831,7 @@ fn is_terminal_surface(class: &str, exe: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn foreground_is_terminal() -> bool {
+pub(crate) fn foreground_is_terminal() -> bool {
     use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -884,7 +884,7 @@ fn foreground_is_terminal() -> bool {
 }
 
 #[cfg(not(windows))]
-fn foreground_is_terminal() -> bool {
+pub(crate) fn foreground_is_terminal() -> bool {
     false
 }
 

@@ -24,6 +24,9 @@
 //! - **Post-flight** ([`verify`], bottom of `clipboard::paste`): re-read the
 //!   same element and compare. Did anything actually change?
 //!
+//! Recognized terminal windows bypass both probes. Their accessibility tree
+//! can describe the read-only output buffer while the terminal accepts paste.
+//!
 //! The governing rule is asymmetric: **act only on positive evidence of a
 //! miss.** A false positive interrupts a user who pasted fine *and* holds their
 //! clipboard for the grace period; a false negative merely reproduces today's
@@ -314,6 +317,17 @@ fn method_verifiable(method: PasteMethod) -> bool {
 }
 
 // -- The two hooks -------------------------------------------------------------
+
+/// Decide once for the entire paste, before either accessibility probe.
+pub(crate) fn should_probe_focus(app: &AppHandle) -> bool {
+    if !crate::agent::foreground_is_terminal() {
+        return true;
+    }
+    // Retire any earlier hold before the terminal paste owns the clipboard.
+    supersede(app);
+    log::debug!("[paste-catch] bypassing accessibility checks for terminal paste");
+    false
+}
 
 /// Pre-flight. Called at the top of `clipboard::paste`.
 ///
@@ -655,21 +669,21 @@ pub fn deliver(app: &AppHandle) {
         // Refresh the before-image so the delivery is verified against the
         // element it is actually going to, not the one the original paste
         // missed — otherwise the identity check disables differencing here.
-        if let Ok(mut slot) = state.before.lock() {
-            *slot = crate::context_detect::read_focus_probe();
+        let probe_focus = !crate::agent::foreground_is_terminal();
+        if probe_focus {
+            if let Ok(mut slot) = state.before.lock() {
+                *slot = crate::context_detect::read_focus_probe();
+            }
         }
 
-        if let Err(e) = send_paste_chord(&app) {
-            warn!("[paste-catch] delivery chord failed: {e}");
-        }
+        let chord_sent = send_paste_chord(&app)
+            .inspect_err(|e| warn!("[paste-catch] delivery chord failed: {e}"))
+            .is_ok();
 
-        // Verify the delivery the same way the original paste was verified. If
-        // it missed again the hold simply comes back — reusing the ORIGINAL
-        // snapshot, because the clipboard currently holds the transcript.
+        // Let the destination read the clipboard before handing it back. A
+        // failed chord or confirmed miss reuses the original clipboard snapshot.
         std::thread::sleep(Duration::from_millis(VERIFY_SETTLE_MS));
-        // Only a CONFIRMED miss re-arms. `Unknown` counts as delivered, so an
-        // unreadable target cannot trap the user in a loop of re-offers.
-        let delivered = !confirmed_miss(&app, &held.text);
+        let delivered = chord_sent && (!probe_focus || !confirmed_miss(&app, &held.text));
 
         if delivered {
             info!("[paste-catch] delivered");
