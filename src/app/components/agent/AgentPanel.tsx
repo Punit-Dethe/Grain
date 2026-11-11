@@ -518,8 +518,11 @@ export function AgentPanel() {
           </button>
         </header>
 
-        {revealed && (
-          <div className="agent-notch-reply">
+        {/* Mounted (hidden, clipped by the compact shell) as soon as the first
+            reply is known, so reveal is only a class change: mounting the
+            reply in the reveal frame stalled the start of the growth. */}
+        {(revealed || (!busy && (!!firstReply || !!error))) && (
+          <div className="agent-notch-reply" aria-hidden={!revealed}>
             <div className="agc-c-scroll">
               {quoteText && !hasFollowups && (
                 <button

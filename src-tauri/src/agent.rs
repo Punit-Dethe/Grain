@@ -43,7 +43,7 @@ const AGENT_BINDING: &str = "agent";
 const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-const NOTCH_REPLY: (f64, f64) = (680.0, 384.0);
+const NOTCH_REPLY: (f64, f64) = (600.0, 340.0);
 /// The compact shell, in CSS px (`.agent-notch` in agent.css).
 const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
 /// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.

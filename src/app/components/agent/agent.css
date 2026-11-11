@@ -22,15 +22,12 @@ html[data-window="agent-panel"] body {
   --agc-ink: #f4f3f8;
   --agc-muted: #a4a3b4;
   --agc-faint: #6f6e80;
-  --agc-blue: #7c9bff;
-  --agc-violet: #a77bff;
-  --agc-orange: #ff9f6b;
-  --agc-spectrum: linear-gradient(
-    120deg,
-    var(--agc-blue),
-    var(--agc-violet) 55%,
-    var(--agc-orange)
-  );
+  /* Monochrome: one light gray, in three strengths. */
+  --agc-light: #e6e6ec;
+  --agc-mid: #9d9da8;
+  --agc-dim: #5d5d68;
+  --agc-fill: linear-gradient(to bottom, #f4f4f7, #cfcfd6);
+  --agc-fade: #ffffff1f;
   --notch-line: #ffffff1c;
   --notch-ease: cubic-bezier(0.16, 1, 0.3, 1);
   /* NOTCH_GROW in agent.rs and the grown timer in AgentPanel wait for this. */
@@ -57,41 +54,27 @@ html[data-window="agent-panel"] body {
     border-radius var(--notch-grow) var(--notch-ease);
 }
 
-/* Grain's light: the capture glow sits on the shell's bottom edge and rides it
-   down as the notch grows, ending as a low glow under the composer. */
+/* A single light-gray fade rising from the shell's bottom edge. It is sized
+   by the shell, so it rides the edge down as the notch grows and settles as a
+   low light under the composer. Static: no layer of its own to re-raster. */
 .agent-notch::before {
   content: "";
   position: absolute;
   z-index: -1;
   inset: 0;
   pointer-events: none;
-  background:
-    radial-gradient(ellipse at 22% 120%, #295dc37d, transparent 60%),
-    radial-gradient(ellipse at 82% 140%, #c363367d, transparent 57%),
-    radial-gradient(ellipse at 53% 130%, #6946a271, transparent 64%);
-  animation: agent-notch-color 9s ease-in-out infinite alternate;
+  background: linear-gradient(to top, var(--agc-fade), transparent 75%);
   transition: opacity var(--notch-grow) ease;
 }
 
 .agent-notch.is-reply {
   width: 100vw;
   height: 100vh;
-  border-radius: 0 0 24px 24px;
+  border-radius: 0 0 22px 22px;
 }
 
 .agent-notch.is-reply::before {
-  opacity: 0.38;
-  /* Freeze in place; `animation: none` snapped the glow mid-fade. */
-  animation-play-state: paused;
-}
-
-@keyframes agent-notch-color {
-  from {
-    transform: scaleX(1.12) translateX(-4%);
-  }
-  to {
-    transform: scaleX(1.22) translateX(5%);
-  }
+  opacity: 0.75;
 }
 
 .agent-notch-header {
@@ -112,8 +95,8 @@ html[data-window="agent-panel"] body {
   padding-inline: 18px 10px;
 }
 
-/* The one element that never changes identity: a dot that listens (blue,
-   breathing), thinks (spectrum, turning) and then signs the reply. */
+/* The one element that never changes identity: a dot that listens (light,
+   breathing), thinks (a turning gray sweep) and then signs the reply. */
 .agent-notch-indicator {
   position: relative;
   flex: none;
@@ -128,18 +111,18 @@ html[data-window="agent-panel"] body {
 }
 
 [data-phase="listening"] .agent-notch-indicator {
-  background: var(--agc-blue);
-  box-shadow: 0 0 0 0 #7c9bff66;
+  background: var(--agc-light);
+  box-shadow: 0 0 0 0 #ffffff4d;
   animation: agent-notch-breathe 1.6s ease-out infinite;
 }
 
 [data-phase="working"] .agent-notch-indicator,
 .is-reply .agent-notch-indicator {
   background: conic-gradient(
-    var(--agc-blue),
-    var(--agc-violet),
-    var(--agc-orange),
-    var(--agc-blue)
+    var(--agc-light),
+    var(--agc-mid),
+    var(--agc-dim),
+    var(--agc-light)
   );
 }
 
@@ -154,7 +137,7 @@ html[data-window="agent-panel"] body {
 
 @keyframes agent-notch-breathe {
   to {
-    box-shadow: 0 0 0 5px #7c9bff00;
+    box-shadow: 0 0 0 5px #ffffff00;
   }
 }
 
@@ -182,6 +165,9 @@ html[data-window="agent-panel"] body {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Own layers from the start: promoting them at reveal blanked the text
+     for two frames while they rastered. */
+  will-change: opacity, transform;
   transition:
     opacity 220ms ease,
     transform var(--notch-grow) var(--notch-ease);
@@ -208,7 +194,7 @@ html[data-window="agent-panel"] body {
   display: flex;
   flex: none;
   align-items: center;
-  color: #c4d2ff;
+  color: #dcdce2;
 }
 
 .agent-notch-wave .swave {
@@ -253,7 +239,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agent-notch button:focus-visible {
-  outline: 2px solid var(--agc-blue);
+  outline: 2px solid var(--agc-light);
   outline-offset: -2px;
 }
 
@@ -298,7 +284,21 @@ html[data-window="agent-panel"] body {
   min-height: 0;
   flex-direction: column;
   isolation: isolate;
-  animation: agent-notch-reply 260ms ease 80ms both;
+  /* Pre-mounted while compact: already laid out and rastered at reveal. */
+  visibility: hidden;
+  opacity: 0;
+  will-change: opacity;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s linear 340ms;
+}
+
+.is-reply .agent-notch-reply {
+  visibility: visible;
+  opacity: 1;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s;
 }
 
 /* Fine dot grain behind the conversation, fading out at both ends. */
@@ -318,15 +318,6 @@ html[data-window="agent-panel"] body {
     #000 62%,
     transparent 88%
   );
-}
-
-@keyframes agent-notch-reply {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 .agc-c-scroll {
@@ -356,7 +347,7 @@ html[data-window="agent-panel"] body {
   flex-shrink: 0;
 }
 
-/* The selection the request acted on: a quiet chip with a spectrum edge. */
+/* The selection the request acted on: a quiet chip with a light edge. */
 .agc-c-prompt {
   align-self: flex-start;
   max-width: 100%;
@@ -366,7 +357,7 @@ html[data-window="agent-panel"] body {
   padding: 6px 11px 6px 13px;
   background:
     linear-gradient(var(--agc-raise), var(--agc-raise)) padding-box,
-    var(--agc-spectrum) left / 2px 100% no-repeat border-box;
+    var(--agc-fill) left / 2px 100% no-repeat border-box;
   color: var(--agc-muted);
   font: inherit;
   font-size: 12.5px;
@@ -397,9 +388,9 @@ html[data-window="agent-panel"] body {
   max-width: 80%;
   box-sizing: border-box;
   padding: 7px 12px;
-  border: 1px solid #a9b8ff2e;
+  border: 1px solid #ffffff1f;
   border-radius: 16px 16px 5px 16px;
-  background: linear-gradient(135deg, #5872e63d, #8f5ef036);
+  background: #ffffff14;
   color: var(--agc-ink);
   white-space: pre-wrap;
 }
@@ -456,7 +447,7 @@ html[data-window="agent-panel"] body {
   padding: 2px 12px 12px;
 }
 
-/* Pill composer; the glow under the shell shows through its edge. */
+/* Pill composer; the fade under the shell shows around it. */
 .agc-c-field {
   display: flex;
   align-items: flex-end;
@@ -470,7 +461,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agc-c-field:focus-within {
-  border-color: #a9b8ff40;
+  border-color: #ffffff33;
 }
 
 .agc-c-send {
@@ -491,7 +482,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agc-c-send:not(:disabled) {
-  background: var(--agc-spectrum);
+  background: var(--agc-fill);
   color: #0c0c14;
 }
 
@@ -524,7 +515,7 @@ html[data-window="agent-panel"] body {
 
 .agc-action-btn {
   border-color: transparent;
-  background: var(--agc-spectrum);
+  background: var(--agc-fill);
   color: #0c0c14;
 }
 
@@ -548,7 +539,7 @@ html[data-window="agent-panel"] body {
   outline: none;
   background: transparent;
   color: var(--agc-ink);
-  caret-color: var(--agc-blue);
+  caret-color: var(--agc-light);
   font: inherit;
   font-size: 13.5px;
   line-height: 1.45;
@@ -575,7 +566,7 @@ html[data-window="agent-panel"] body {
   color: #ffb4a4;
 }
 
-/* Typing: a small assistant bubble with the spectrum's three dots. */
+/* Typing: a small assistant bubble with three dots in fading grays. */
 .agent-typing {
   align-self: flex-start;
   display: flex;
@@ -591,16 +582,16 @@ html[data-window="agent-panel"] body {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--agc-blue);
+  background: var(--agc-light);
   animation: agent-notch-thinking 1s ease-in-out infinite alternate;
 }
 
 .agent-typing > span:nth-child(2) {
-  background: var(--agc-violet);
+  background: var(--agc-mid);
   animation-delay: 160ms;
 }
 .agent-typing > span:nth-child(3) {
-  background: var(--agc-orange);
+  background: var(--agc-dim);
   animation-delay: 320ms;
 }
 
