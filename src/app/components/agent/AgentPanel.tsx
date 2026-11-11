@@ -51,6 +51,8 @@ export function AgentPanel() {
   // phrase timer) stays mounted until then so it can fade out with the growth.
   const [grown, setGrown] = useState(false);
   const [hasDraft, setHasDraft] = useState(false);
+  // Retracting into the screen edge; the window closes when that ends.
+  const [closing, setClosing] = useState(false);
   const revealedRef = useRef(false);
   const [capture, setCapture] = useState<AgentNotchStatus | null>(null);
   const generationRef = useRef<number | null>(null);
@@ -221,6 +223,8 @@ export function AgentPanel() {
       win
         .listen("agent-instruction", () => void startFirstIfQueued())
         .then(track),
+      // The host times the close itself (NOTCH_CLOSE); this only animates it.
+      win.listen("agent-dismiss", () => setClosing(true)).then(track),
       win
         .listen("agent-reveal", () => {
           // Give the WebView a compact paint after the native bounds change.
@@ -272,6 +276,13 @@ export function AgentPanel() {
       void commands.agentPresentReply(generation).catch(console.error);
     }
   }, [busy, error, revealed, firstReply]);
+
+  /** Close the reply the same way the host closes it: retract, then close. */
+  const dismiss = useCallback(() => {
+    setClosing(true);
+    // Matches --notch-close in agent.css (and NOTCH_CLOSE in agent.rs).
+    window.setTimeout(() => void win.close(), 320);
+  }, [win]);
 
   useEffect(() => {
     if (!revealed) return;
@@ -459,7 +470,7 @@ export function AgentPanel() {
   return (
     <div className="agent-panel-root">
       <section
-        className={revealed ? "agent-notch is-reply" : "agent-notch"}
+        className={`agent-notch${revealed ? " is-reply" : ""}${closing ? " is-closing" : ""}`}
         data-phase={
           revealed
             ? "reply"
@@ -509,7 +520,8 @@ export function AgentPanel() {
             }
             disabled={!revealed && !capture}
             onClick={() => {
-              if (revealed) void win.close();
+              if (closing) return;
+              if (revealed) dismiss();
               else if (capture)
                 void commands.agentCancelNotch(capture.generation);
             }}

@@ -43,12 +43,14 @@ const AGENT_BINDING: &str = "agent";
 const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-const NOTCH_REPLY: (f64, f64) = (600.0, 340.0);
+const NOTCH_REPLY: (f64, f64) = (600.0, 360.0);
 /// The compact shell, in CSS px (`.agent-notch` in agent.css).
 const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
 /// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.
 /// Native window work waits for it: any restyle mid-growth re-presents WebView2.
 const NOTCH_GROW: Duration = Duration::from_millis(460);
+/// The shell's retract-on-close (`--notch-close` in agent.css) plus a frame.
+const NOTCH_CLOSE: Duration = Duration::from_millis(320);
 
 /// The Agent's system instruction. The user's dictated/typed instruction is the
 /// task; the selected text (if any) is supplied as context separately.
@@ -1448,15 +1450,7 @@ fn input_cancel_cleanup(app: &AppHandle) {
     clear_screen_image(app);
     clear_pending_action(app);
     crate::capability::prefetch::clear();
-    let app2 = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if app2.state::<AgentState>().summon_gen.load(Ordering::SeqCst) != generation {
-            return;
-        }
-        if let Some(panel) = app2.get_webview_window(PANEL_LABEL) {
-            let _ = panel.close();
-        }
-    });
+    close_panel_animated(app, generation);
     // A failed pre-create has no Destroyed event to release the shortcuts.
     unregister_transient_shortcuts_deferred(app);
 }
@@ -1695,28 +1689,42 @@ pub fn global_close(app: &AppHandle) {
         EscapeTarget::AgentPanel => {}
     }
 
-    // Cancel immediately; closing the window on the main thread may be delayed.
-    let closing_session = app
+    // Cancel immediately; the window closes once its shell has retracted.
+    let Some(closing_session) = app
         .try_state::<AgentState>()
-        .map(|state| state.summon_gen.load(Ordering::SeqCst));
+        .map(|state| state.summon_gen.load(Ordering::SeqCst))
+    else {
+        return;
+    };
     clear_pending_action(app);
-    let app_for_main = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        if app_for_main
-            .try_state::<AgentState>()
-            .map(|state| state.summon_gen.load(Ordering::SeqCst))
-            != closing_session
-        {
-            return;
-        }
-        if let Some(panel) = app_for_main.get_webview_window(PANEL_LABEL) {
-            let _ = panel.close();
-        }
+    close_panel_animated(app, closing_session);
+}
 
-        if app_for_main.get_webview_window(PANEL_LABEL).is_none() {
-            unregister_transient_shortcuts_deferred(&app_for_main);
-            clear_pending_action(&app_for_main);
-        }
+/// Retract the notch into the screen edge, then close it. The close is timed
+/// here, not by the webview, so a wedged webview still goes away. A newer
+/// summon owns the panel by then and is left alone.
+fn close_panel_animated(app: &AppHandle, generation: u64) {
+    let _ = app.emit_to(PANEL_LABEL, "agent-dismiss", ());
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(NOTCH_CLOSE).await;
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if handle
+                .try_state::<AgentState>()
+                .map(|state| state.summon_gen.load(Ordering::SeqCst))
+                != Some(generation)
+            {
+                return;
+            }
+            if let Some(panel) = handle.get_webview_window(PANEL_LABEL) {
+                let _ = panel.close();
+            } else {
+                // No Destroyed event will release them.
+                unregister_transient_shortcuts_deferred(&handle);
+                clear_pending_action(&handle);
+            }
+        });
     });
 }
 

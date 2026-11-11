@@ -32,6 +32,8 @@ html[data-window="agent-panel"] body {
   --notch-ease: cubic-bezier(0.16, 1, 0.3, 1);
   /* NOTCH_GROW in agent.rs and the grown timer in AgentPanel wait for this. */
   --notch-grow: 420ms;
+  /* NOTCH_CLOSE in agent.rs and `dismiss` in AgentPanel wait for this. */
+  --notch-close: 300ms;
   --notch-reply-header: 34px;
   box-sizing: border-box;
   position: relative;
@@ -75,6 +77,27 @@ html[data-window="agent-panel"] body {
 
 .agent-notch.is-reply::before {
   opacity: 0.75;
+}
+
+/* Closing is the growth in reverse: the content fades, then the same shell
+   retracts into the top edge and is gone. Covers the compact and reply notch. */
+.agent-notch.is-closing {
+  width: min(200px, 100vw);
+  height: 0;
+  opacity: 0;
+  border-radius: 0 0 10px 10px;
+  pointer-events: none;
+  transition:
+    width var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
+    height var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
+    border-radius var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 90ms ease calc(var(--notch-close) - 90ms);
+}
+
+.agent-notch.is-closing .agent-notch-header > *,
+.agent-notch.is-closing .agent-notch-reply {
+  opacity: 0;
+  transition: opacity 110ms ease;
 }
 
 .agent-notch-header {
@@ -616,7 +639,10 @@ html[data-window="agent-panel"] body {
   .agent-notch-reply,
   .agent-working-phrases > span,
   .agent-typing > span,
-  .agc-c-send {
+  .agc-c-send,
+  .agent-notch.is-closing,
+  .agent-notch.is-closing .agent-notch-header > *,
+  .agent-notch.is-closing .agent-notch-reply {
     animation: none;
     transition: none;
   }
