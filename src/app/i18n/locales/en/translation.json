@@ -1199,6 +1199,7 @@
         "speakers": "Speakers",
         "details": "Recording details",
         "duration": "Duration",
+        "recordedAt": "Recorded",
         "recordedWith": "Recorded with",
         "noMatches": "Nothing in this transcript matches.",
         "noSpeech": "No speech was found in this recording.",

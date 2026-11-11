@@ -5781,6 +5781,12 @@ html[data-theme="light"] .dropdown-compact-menu {
 
 /* --- Recording view ------------------------------------------------------ */
 
+/* A narrow, centred reading column: the side margins carry the calm. */
+.meet-view {
+  width: min(740px, 100%);
+  margin-inline: auto;
+}
+
 .meet-view-head {
   margin-bottom: 24px;
 }
@@ -5815,6 +5821,27 @@ html[data-theme="light"] .dropdown-compact-menu {
   background: var(--accent-soft);
 }
 
+.meet-back.is-icon {
+  width: 32px;
+  height: 32px;
+  justify-content: center;
+  margin-inline-start: 0;
+  padding: 0;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--accent-soft);
+}
+
+.meet-back.is-icon:hover {
+  background: var(--accent-soft-hover);
+}
+
+.meet-view-nav-start {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .meet-live-pill {
   display: inline-flex;
   align-items: center;
@@ -5837,6 +5864,9 @@ html[data-theme="light"] .dropdown-compact-menu {
 .meet-view-title h1 {
   overflow-wrap: anywhere;
   text-wrap: balance;
+  font-size: 24px;
+  font-weight: 520;
+  letter-spacing: -0.03em;
 }
 
 .meet-view-heading {
@@ -5874,7 +5904,7 @@ html[data-theme="light"] .dropdown-compact-menu {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 20px;
+  gap: 6px 8px;
   margin: 12px 0 0;
   color: var(--text-3);
   font-size: 13px;
@@ -5891,12 +5921,22 @@ html[data-theme="light"] .dropdown-compact-menu {
   position: relative;
 }
 
+.meet-chip {
+  height: 26px;
+  padding-inline: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
 .meet-info-button {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   place-items: center;
-  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
   color: var(--text-4);
   background: transparent;
   cursor: help;
@@ -6150,7 +6190,7 @@ html[data-theme="light"] .meet-info-card {
 
 .meet-turn {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   margin-inline: -14px;
   padding: 12px 14px;
@@ -6210,9 +6250,25 @@ html[data-theme="light"] .meet-info-card {
 }
 
 .meet-turn-head strong {
-  color: var(--text-1);
+  color: var(--text-2);
   font-size: 13px;
   font-weight: 620;
+}
+
+.meet-turn-head strong.tone-peach {
+  color: color-mix(in srgb, var(--peach) 80%, var(--text-1));
+}
+
+.meet-turn-head strong.tone-sage {
+  color: color-mix(in srgb, var(--sage) 80%, var(--text-1));
+}
+
+.meet-turn-head strong.tone-lilac {
+  color: color-mix(in srgb, var(--lilac) 80%, var(--text-1));
+}
+
+.meet-turn-head strong.tone-sky {
+  color: color-mix(in srgb, var(--sky) 80%, var(--text-1));
 }
 
 .meet-turn-source {
@@ -6774,7 +6830,7 @@ html[data-theme="light"] .meet-info-card {
     0 10px 28px rgba(0, 0, 0, 0.22),
     0 2px 6px rgba(0, 0, 0, 0.14);
   pointer-events: auto;
-  width: min(960px, 100%);
+  width: min(800px, 100%);
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 2fr) minmax(0, 1fr);
   align-items: center;

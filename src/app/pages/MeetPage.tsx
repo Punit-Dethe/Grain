@@ -13,15 +13,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import {
-  CalendarDays,
-  Info,
-  FileText,
-  Users,
-  MicOff,
-  Pencil,
-  VolumeOff,
-} from "lucide-react";
+import { Info, FileText, Users, MicOff, Pencil, VolumeOff } from "lucide-react";
 import { toast } from "sonner";
 import type {
   MeetingSummary,
@@ -1043,15 +1035,11 @@ const TurnRow = memo(function TurnRow({
       className={`meet-turn${heard ? " is-current" : ""}`}
       data-turn={turn.key}
     >
-      <span
-        className={`meet-avatar${look.tone ? ` tone-${look.tone}` : ""}`}
-        aria-hidden="true"
-      >
-        {look.mark}
-      </span>
       <div className="meet-turn-body">
         <div className="meet-turn-head">
-          <strong>{look.label}</strong>
+          <strong className={look.tone ? `tone-${look.tone}` : undefined}>
+            {look.label}
+          </strong>
           {source && (
             <span
               className="meet-turn-source"
@@ -1403,6 +1391,21 @@ function MeetingView({
     hour: "numeric",
     minute: "2-digit",
   }).format(meeting.created_unix_ms);
+  const dayLabel = (() => {
+    const created = new Date(meeting.created_unix_ms);
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (created.toDateString() === now.toDateString())
+      return t("ui2.meet.list.today");
+    if (created.toDateString() === yesterday.toDateString())
+      return t("ui2.meet.list.yesterday");
+    return new Intl.DateTimeFormat(i18n.language, {
+      month: "short",
+      day: "numeric",
+      year: created.getFullYear() === now.getFullYear() ? undefined : "numeric",
+    }).format(created);
+  })();
   const sourcesText = [...new Set(meeting.sources)]
     .map((kind) => sourceName(kind, t))
     .join(" + ");
@@ -1515,34 +1518,25 @@ function MeetingView({
       >
         <header className="meet-view-head">
           <div className="meet-view-nav">
-            <button
-              className="meet-back"
-              type="button"
-              onClick={() => openMeeting(null)}
-            >
-              <Glyph name="chev-left" />
-              {t("ui2.meet.detail.back")}
-            </button>
-            {otherRecording && (
+            <div className="meet-view-nav-start">
               <button
-                className="meet-live-pill"
+                className="meet-back is-icon"
                 type="button"
+                aria-label={t("ui2.meet.detail.back")}
+                title={t("ui2.meet.detail.back")}
                 onClick={() => openMeeting(null)}
               >
-                <span className="meet-live-dot" aria-hidden="true" />
-                {t("ui2.meet.live.recording")}
+                <Glyph name="chev-left" />
               </button>
-            )}
-          </div>
-          <div className="meet-view-title">
-            <div className="meet-view-heading">
-              {isRecording ? (
-                <h1 id="meet-view-title">{meeting.title}</h1>
-              ) : (
-                <EditableMeetingTitle
-                  title={meeting.title}
-                  onRename={(title) => meet.renameMeeting(meeting.id, title)}
-                />
+              {otherRecording && (
+                <button
+                  className="meet-live-pill"
+                  type="button"
+                  onClick={() => openMeeting(null)}
+                >
+                  <span className="meet-live-dot" aria-hidden="true" />
+                  {t("ui2.meet.live.recording")}
+                </button>
               )}
             </div>
             <div className="meet-view-actions">
@@ -1553,13 +1547,14 @@ function MeetingView({
               ) : (
                 meeting.transcript_revision != null && (
                   <button
-                    className="button"
+                    className="icon-button"
                     type="button"
                     disabled={isRecording || processing != null}
+                    aria-label={t("ui2.meet.detail.reprocess")}
+                    title={t("ui2.meet.detail.reprocess")}
                     onClick={runProcess}
                   >
                     <Glyph name="refresh" />
-                    {t("ui2.meet.detail.reprocess")}
                   </button>
                 )
               )}
@@ -1585,10 +1580,21 @@ function MeetingView({
               </button>
             </div>
           </div>
+          <div className="meet-view-title">
+            <div className="meet-view-heading">
+              {isRecording ? (
+                <h1 id="meet-view-title">{meeting.title}</h1>
+              ) : (
+                <EditableMeetingTitle
+                  title={meeting.title}
+                  onRename={(title) => meet.renameMeeting(meeting.id, title)}
+                />
+              )}
+            </div>
+          </div>
           <p className="meet-meta">
-            <span>
-              <CalendarDays className="icon sm" aria-hidden="true" />
-              {when}
+            <span className="meet-chip" title={when}>
+              {dayLabel}
             </span>
             <span className="meet-info">
               <button
@@ -1599,6 +1605,10 @@ function MeetingView({
                 <Info className="icon sm" aria-hidden="true" />
               </button>
               <span className="meet-info-card" role="tooltip">
+                <span>
+                  <small>{t("ui2.meet.detail.recordedAt")}</small>
+                  {when}
+                </span>
                 <span>
                   <small>{t("ui2.meet.detail.recordedWith")}</small>
                   {sourcesText}
