@@ -206,6 +206,20 @@ function SourceControl({
   );
 }
 
+/** Every source can be switched on or off during a recording. */
+const LIVE_KINDS: SourceKind[] = ["Microphone", "SystemAudio"];
+
+function switchedOff(kind: SourceKind): SourceStatus {
+  return {
+    kind,
+    name: "",
+    recorded_ms: 0,
+    level: 0,
+    active: false,
+    muted: true,
+  };
+}
+
 const METER_SEGMENTS = 8;
 /** Peak amplitude to a 0..1 meter fill: -50 dB is empty, -6 dB is full. */
 function meterFill(peak: number): number {
@@ -330,13 +344,22 @@ function CaptureDock({ meet }: { meet: MeetController }) {
               role="group"
               aria-label={t("ui2.meet.sources.label")}
             >
-              {recording.sources.map((source) => (
+              {LIVE_KINDS.filter(
+                (kind) =>
+                  kind === "Microphone" ||
+                  sources?.system_audio_supported !== false,
+              ).map((kind) => (
                 <LiveSource
-                  key={source.kind}
-                  source={source}
+                  key={kind}
+                  // A source that began switched off shows as muted; turning
+                  // it on starts it.
+                  source={
+                    recording.sources.find((s) => s.kind === kind) ??
+                    switchedOff(kind)
+                  }
                   onToggle={(muted) =>
                     void meet
-                      .setSourceMuted(source.kind, muted)
+                      .setSourceMuted(kind, muted)
                       .catch((error) => toast.error(errorText(error)))
                   }
                 />
@@ -1403,6 +1426,16 @@ function MeetingView({
       <div className="meet-reader">
         <div className="meet-reader-main">
           <div className="meet-info-bar">
+            <label className="meet-search">
+              <Glyph name="search" />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("ui2.meet.detail.search")}
+                aria-label={t("ui2.meet.detail.search")}
+              />
+            </label>
             <span className="meet-info-stats">
               <Users className="icon sm" aria-hidden="true" />
               {transcript.speakers.length > 0 && (
@@ -1415,16 +1448,6 @@ function MeetingView({
               )}
               {formatClock(meeting.duration_ms)}
             </span>
-            <label className="meet-search">
-              <Glyph name="search" />
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t("ui2.meet.detail.search")}
-                aria-label={t("ui2.meet.detail.search")}
-              />
-            </label>
           </div>
           {visible.length === 0 ? (
             <p className="meet-empty-line">

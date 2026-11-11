@@ -159,6 +159,8 @@ fn snapshot(state: &State) -> MeetStatus {
             sources: recording
                 .progress
                 .sources
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
                 .iter()
                 .map(|source| SourceStatus {
                     kind: source.kind,
@@ -355,22 +357,41 @@ pub async fn meet_stop_recording(app: AppHandle) -> Result<MeetingSummary, Strin
     summary(&dir, &manifest)
 }
 
-/// [GRAIN] Mute or unmute one source of the recording in progress. A muted
-/// source keeps running and is written as silence.
+/// [GRAIN] Mute or unmute one source of the recording in progress. Muting
+/// closes its device; unmuting reopens it. A source that was off when the
+/// recording began is opened the first time it is turned on.
 #[tauri::command]
 #[specta::specta]
-pub fn meet_set_source_muted(app: AppHandle, kind: SourceKind, muted: bool) -> Result<(), String> {
-    {
+pub async fn meet_set_source_muted(
+    app: AppHandle,
+    kind: SourceKind,
+    muted: bool,
+) -> Result<(), String> {
+    let (existing, adder) = {
         let guard = state();
         let recording = guard.active.as_ref().ok_or("No meeting is recording")?;
-        let source = recording
-            .progress
-            .sources
-            .iter()
-            .find(|source| source.kind == kind)
-            .ok_or("That source is not being recorded")?;
+        (recording.source(kind), recording.adder())
+    };
+    if let Some(source) = existing {
         source.muted.store(muted, Ordering::Release);
+        emit_status(&app);
+        return Ok(());
     }
+    if muted {
+        return Ok(()); // never started: already silent
+    }
+    if kind == SourceKind::SystemAudio && !sources::system_audio_supported() {
+        return Err("System audio is not available on this device".into());
+    }
+    let settings = sources::load_settings(&meetings_root(&app)?);
+    let name = match kind {
+        SourceKind::Microphone => sources::microphone_name(&settings.microphone),
+        SourceKind::SystemAudio => sources::output_name(settings.system_audio.device_id.as_deref()),
+    };
+    // Opening a device can block for seconds (Bluetooth); not on the runtime.
+    tauri::async_runtime::spawn_blocking(move || adder.add(kind, name))
+        .await
+        .map_err(|e| e.to_string())??;
     emit_status(&app);
     Ok(())
 }

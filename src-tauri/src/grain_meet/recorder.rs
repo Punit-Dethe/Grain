@@ -14,7 +14,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -52,15 +52,16 @@ pub(crate) struct SourceProgress {
     /// f32 bits order like the values, so etch_max keeps the peak).
     pub level: AtomicU32,
     pub active: AtomicBool,
-    /// [GRAIN] Muted mid-recording: the source keeps running but its audio is
-    /// written as silence, so the meeting clock stays whole and unmuting is
-    /// instant.
+    /// [GRAIN] Muted mid-recording: the writer closes the device (no audio is
+    /// captured, the OS shows the microphone as free) and reopens it on unmute.
+    /// The time in between is a known-silent gap.
     pub muted: AtomicBool,
 }
 
 #[derive(Default)]
 pub(crate) struct Progress {
-    pub sources: Vec<Arc<SourceProgress>>,
+    /// Grows when a source that began switched off is turned on mid-recording.
+    pub sources: Mutex<Vec<Arc<SourceProgress>>>,
     pub error: Mutex<Option<String>>,
 }
 
@@ -105,7 +106,36 @@ pub(crate) struct Recording {
     pub started: Instant,
     pub progress: Arc<Progress>,
     stop: Arc<AtomicBool>,
+    control: Sender<Control>,
     writer: Option<std::thread::JoinHandle<Result<Manifest, String>>>,
+}
+
+/// Asks the writer thread to change the set of sources while it records.
+enum Control {
+    Add {
+        kind: SourceKind,
+        name: String,
+        reply: SyncSender<Result<(), String>>,
+    },
+}
+
+/// A cloneable way to turn a source on mid-recording without holding the
+/// recording (opening a device can take seconds).
+#[derive(Clone)]
+pub(crate) struct SourceAdder(Sender<Control>);
+
+impl SourceAdder {
+    /// Open `kind` and record it from now on. If it is already being recorded
+    /// it is simply unmuted.
+    pub(crate) fn add(&self, kind: SourceKind, name: String) -> Result<(), String> {
+        let (reply, answer) = mpsc::sync_channel(1);
+        self.0
+            .send(Control::Add { kind, name, reply })
+            .map_err(|_| "The recording has ended".to_string())?;
+        answer
+            .recv_timeout(Duration::from_secs(20))
+            .map_err(|_| "The source did not start in time".to_string())?
+    }
 }
 
 struct Source {
@@ -118,6 +148,10 @@ struct Source {
     last_arrival: Instant,
     last_restart: Option<Instant>,
     lost: bool,
+    /// Closed because it is muted (not because it failed).
+    closed_by_mute: bool,
+    /// The next block follows an unmute: record the muted time as a silent gap.
+    resume_gap: bool,
 }
 
 fn deliver_to(sender: SyncSender<Frame>, source: usize, dropped: Arc<AtomicU64>) -> Deliver {
@@ -209,12 +243,15 @@ impl Recording {
                 last_arrival: Instant::now(),
                 last_restart: None,
                 lost: false,
+                closed_by_mute: false,
+                resume_gap: false,
             });
         }
         let progress = Arc::new(Progress {
-            sources: list.iter().map(|s| Arc::clone(&s.progress)).collect(),
+            sources: Mutex::new(list.iter().map(|s| Arc::clone(&s.progress)).collect()),
             error: Mutex::new(None),
         });
+        let (control, commands) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let started = Instant::now();
         let thread_progress = Arc::clone(&progress);
@@ -230,6 +267,7 @@ impl Recording {
                     started,
                     thread_progress,
                     thread_stop,
+                    commands,
                     opener,
                 )
             })
@@ -239,8 +277,24 @@ impl Recording {
             started,
             progress,
             stop,
+            control,
             writer: Some(writer),
         })
+    }
+
+    /// The live progress of one source, if it is being recorded.
+    pub(crate) fn source(&self, kind: SourceKind) -> Option<Arc<SourceProgress>> {
+        self.progress
+            .sources
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|source| source.kind == kind)
+            .cloned()
+    }
+
+    pub(crate) fn adder(&self) -> SourceAdder {
+        SourceAdder(self.control.clone())
     }
 
     /// Close every source, write what they delivered, and seal the session.
@@ -270,6 +324,65 @@ fn frames_ns(frames: u64, rate: u32) -> u64 {
     frames * 1_000_000_000 / u64::from(rate.max(1))
 }
 
+/// Start recording a source that was off when the recording began. A source
+/// that is already recorded is just unmuted.
+fn add_source(
+    writer: &mut SessionWriter,
+    sources: &mut Vec<Source>,
+    sender: &SyncSender<Frame>,
+    progress: &Progress,
+    opener: &impl Opener,
+    kind: SourceKind,
+    name: String,
+) -> Result<(), String> {
+    if let Some(existing) = sources.iter().find(|source| source.kind == kind) {
+        existing.progress.muted.store(false, Ordering::Release);
+        return Ok(());
+    }
+    let index = sources.len();
+    let dropped = Arc::new(AtomicU64::new(0));
+    let failed = Arc::new(AtomicBool::new(false));
+    // Open the device first: a source that cannot start leaves no empty track.
+    let capture = opener.open(
+        kind,
+        deliver_to(sender.clone(), index, Arc::clone(&dropped)),
+        Arc::clone(&failed),
+    )?;
+    let track = writer.add_track(match kind {
+        SourceKind::Microphone => TrackSource::Microphone {
+            device: name.clone(),
+        },
+        SourceKind::SystemAudio => TrackSource::Application { name: name.clone() },
+    })?;
+    let source = Source {
+        kind,
+        track,
+        progress: Arc::new(SourceProgress {
+            kind,
+            name,
+            frames_ns: AtomicU64::new(0),
+            level: AtomicU32::new(0),
+            active: AtomicBool::new(false),
+            muted: AtomicBool::new(false),
+        }),
+        dropped,
+        failed,
+        capture: Some(capture),
+        last_arrival: Instant::now(),
+        last_restart: None,
+        lost: false,
+        closed_by_mute: false,
+        resume_gap: false,
+    };
+    progress
+        .sources
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(Arc::clone(&source.progress));
+    sources.push(source);
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_loop(
     mut writer: SessionWriter,
@@ -279,6 +392,7 @@ fn write_loop(
     origin: Instant,
     progress: Arc<Progress>,
     stop: Arc<AtomicBool>,
+    commands: Receiver<Control>,
     opener: impl Opener,
 ) -> Result<Manifest, String> {
     let mut failure: Option<String> = None;
@@ -303,8 +417,11 @@ fn write_loop(
         let len = (frame.samples.len() / usize::from(frame.channels)) as u64;
         let arrival_start =
             since_origin(origin, frame.arrived).saturating_sub(frames_ns(len, frame.rate));
+        let resumed = std::mem::take(&mut source.resume_gap);
         let discontinuity = if std::mem::take(&mut source.lost) {
             Some(GapReason::SourceLost)
+        } else if resumed {
+            Some(GapReason::Silent)
         } else if lost > 0 {
             log::warn!("Meeting capture dropped {lost} frames: the writer fell behind");
             Some(GapReason::Overflow)
@@ -339,6 +456,26 @@ fn write_loop(
         if stop.load(Ordering::Acquire) {
             break;
         }
+        while let Ok(command) = commands.try_recv() {
+            match command {
+                Control::Add { kind, name, reply } => {
+                    let result = if failure.is_some() {
+                        Err("The recording has stopped".to_string())
+                    } else {
+                        add_source(
+                            &mut writer,
+                            &mut sources,
+                            &sender,
+                            &progress,
+                            &opener,
+                            kind,
+                            name,
+                        )
+                    };
+                    let _ = reply.send(result);
+                }
+            }
+        }
         match frames.recv_timeout(POLL) {
             Ok(frame) => {
                 if failure.is_some() {
@@ -359,8 +496,36 @@ fn write_loop(
         if failure.is_some() {
             continue;
         }
+        // A muted source is closed; unmuting reopens it.
+        for (index, source) in sources.iter_mut().enumerate() {
+            let muted = source.progress.muted.load(Ordering::Acquire);
+            if muted && !source.closed_by_mute {
+                source.capture = None;
+                source.closed_by_mute = true;
+                source.progress.active.store(false, Ordering::Release);
+            } else if !muted && source.closed_by_mute {
+                source.closed_by_mute = false;
+                source.resume_gap = true;
+                source.last_arrival = Instant::now();
+                source.failed.store(false, Ordering::Release);
+                match opener.open(
+                    source.kind,
+                    deliver_to(sender.clone(), index, Arc::clone(&source.dropped)),
+                    Arc::clone(&source.failed),
+                ) {
+                    Ok(capture) => source.capture = Some(capture),
+                    Err(error) => {
+                        log::warn!("Meeting {:?} could not be unmuted: {error}", source.kind);
+                        source.failed.store(true, Ordering::Release);
+                    }
+                }
+            }
+        }
         // Reopen failed or (for the microphone) silent sources.
         for (index, source) in sources.iter_mut().enumerate() {
+            if source.closed_by_mute {
+                continue;
+            }
             let silent = source.kind == SourceKind::Microphone
                 && source.last_arrival.elapsed() >= SOURCE_LOST_AFTER;
             if !silent && !source.failed.load(Ordering::Acquire) {
@@ -526,12 +691,74 @@ mod tests {
         push(&opener.latest(SourceKind::Microphone).0, 0.3, 48_000, 1);
         std::thread::sleep(SOURCE_LOST_AFTER + Duration::from_millis(500));
         assert_eq!(opener.opens(SourceKind::Microphone), 2, "reopened once");
-        assert!(!recording.progress.sources[0].active.load(Ordering::Acquire));
+        assert!(!recording
+            .source(SourceKind::Microphone)
+            .unwrap()
+            .active
+            .load(Ordering::Acquire));
         push(&opener.latest(SourceKind::Microphone).0, 0.3, 48_000, 1);
         let manifest = recording.finish().unwrap();
         let gaps = &manifest.tracks[0].gaps;
         assert_eq!(gaps.len(), 1);
         assert_eq!(gaps[0].reason, GapReason::SourceLost);
+    }
+
+    #[test]
+    fn a_source_that_began_off_can_be_turned_on_mid_recording() {
+        let root = tempfile::tempdir().unwrap();
+        let opener = FakeOpener::default();
+        let kinds = vec![(SourceKind::SystemAudio, "Speakers".into())];
+        let recording = Recording::begin(root.path(), "Late", &kinds, opener.clone()).unwrap();
+        push(&opener.latest(SourceKind::SystemAudio).0, 0.5, 48_000, 2);
+        assert!(recording.source(SourceKind::Microphone).is_none());
+        recording
+            .adder()
+            .add(SourceKind::Microphone, "Mic".into())
+            .unwrap();
+        push(&opener.latest(SourceKind::Microphone).0, 0.5, 48_000, 1);
+        // Asking again only unmutes; it never opens a second device.
+        recording
+            .adder()
+            .add(SourceKind::Microphone, "Mic".into())
+            .unwrap();
+        assert_eq!(opener.opens(SourceKind::Microphone), 1);
+        let manifest = recording.finish().unwrap();
+        assert_eq!(manifest.tracks.len(), 2);
+        assert!(matches!(
+            manifest.tracks[1].source,
+            TrackSource::Microphone { .. }
+        ));
+        assert_eq!(
+            manifest.tracks[1]
+                .chunks
+                .iter()
+                .map(|c| c.frames)
+                .sum::<u64>(),
+            24_000
+        );
+    }
+
+    #[test]
+    fn muting_closes_the_device_and_unmuting_leaves_a_silent_gap() {
+        let root = tempfile::tempdir().unwrap();
+        let opener = FakeOpener::default();
+        let kinds = vec![(SourceKind::Microphone, "Mic".into())];
+        let recording = Recording::begin(root.path(), "Mute", &kinds, opener.clone()).unwrap();
+        push(&opener.latest(SourceKind::Microphone).0, 0.3, 48_000, 1);
+        let mic = recording.source(SourceKind::Microphone).unwrap();
+        mic.muted.store(true, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(400));
+        // Muted for longer than the lost-microphone timeout: never "reopened".
+        std::thread::sleep(SOURCE_LOST_AFTER);
+        assert_eq!(opener.opens(SourceKind::Microphone), 1);
+        mic.muted.store(false, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(opener.opens(SourceKind::Microphone), 2);
+        push(&opener.latest(SourceKind::Microphone).0, 0.3, 48_000, 1);
+        let manifest = recording.finish().unwrap();
+        let gaps = &manifest.tracks[0].gaps;
+        assert_eq!(gaps.len(), 1);
+        assert_eq!(gaps[0].reason, GapReason::Silent);
     }
 
     #[test]
