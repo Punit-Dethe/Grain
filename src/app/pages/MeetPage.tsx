@@ -15,7 +15,7 @@ import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   CalendarDays,
-  Clock3,
+  Info,
   FileText,
   MicOff,
   Pencil,
@@ -1334,9 +1334,7 @@ function MeetingView({
     );
   } else if (transcript) {
     body = (
-      <div
-        className={`meet-reader${transcript.speakers.length > 0 ? " has-aside" : ""}`}
-      >
+      <div className="meet-reader">
         <div className="meet-reader-main">
           <div className="meet-transcript-bar">
             <label className="meet-search">
@@ -1349,6 +1347,28 @@ function MeetingView({
                 aria-label={t("ui2.meet.detail.search")}
               />
             </label>
+            {transcript.speakers.length > 0 && (
+              <ul
+                className="meet-speakers"
+                aria-label={t("ui2.meet.detail.speakers")}
+              >
+                {transcript.speakers.map((speaker) => {
+                  const look = looks.get(speaker.id) ?? unknown;
+                  return (
+                    <li key={speaker.id}>
+                      <span
+                        className={`meet-dot${look.tone ? ` tone-${look.tone}` : ""}`}
+                        aria-hidden="true"
+                      />
+                      {look.label}
+                      <span className="meet-speaker-share">
+                        {percent.format(shares.get(speaker.id) ?? 0)}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
           {visible.length === 0 ? (
             <p className="meet-empty-line">
@@ -1378,40 +1398,6 @@ function MeetingView({
             </ol>
           )}
         </div>
-        {transcript.speakers.length > 0 && (
-          <aside
-            className="meet-aside"
-            aria-label={t("ui2.meet.detail.speakers")}
-          >
-            <h2>{t("ui2.meet.detail.speakers")}</h2>
-            <ul>
-              {transcript.speakers.map((speaker) => {
-                const look = looks.get(speaker.id) ?? unknown;
-                const share = shares.get(speaker.id) ?? 0;
-                return (
-                  <li key={speaker.id}>
-                    <span
-                      className={`meet-avatar is-small${look.tone ? ` tone-${look.tone}` : ""}`}
-                      aria-hidden="true"
-                    >
-                      {look.mark}
-                    </span>
-                    <span className="meet-aside-name">{look.label}</span>
-                    <span className="meet-aside-share">
-                      {percent.format(share)}
-                    </span>
-                    <span
-                      className={`meet-aside-bar${look.tone ? ` tone-${look.tone}` : ""}`}
-                      aria-hidden="true"
-                    >
-                      <i style={{ width: `${Math.round(share * 100)}%` }} />
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </aside>
-        )}
       </div>
     );
   } else if (meeting.transcript_revision != null && !transcriptError) {
@@ -1524,15 +1510,24 @@ function MeetingView({
               <CalendarDays className="icon sm" aria-hidden="true" />
               {when}
             </span>
-            <span>
-              <Clock3 className="icon sm" aria-hidden="true" />
-              {formatClock(meeting.duration_ms)}
-            </span>
-            <span>
-              {[...new Set(meeting.sources)].map((kind) => (
-                <Glyph key={kind} name={SOURCE_ICON[kind]} />
-              ))}
-              {sourcesText}
+            <span className="meet-info">
+              <button
+                className="meet-info-button"
+                type="button"
+                aria-label={t("ui2.meet.detail.details")}
+              >
+                <Info className="icon sm" aria-hidden="true" />
+              </button>
+              <span className="meet-info-card" role="tooltip">
+                <span>
+                  <small>{t("ui2.meet.detail.duration")}</small>
+                  {formatClock(meeting.duration_ms)}
+                </span>
+                <span>
+                  <small>{t("ui2.meet.detail.recordedWith")}</small>
+                  {sourcesText}
+                </span>
+              </span>
             </span>
           </p>
           {!isRecording && (
