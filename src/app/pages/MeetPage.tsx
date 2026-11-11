@@ -794,17 +794,12 @@ type Playback = ReturnType<typeof usePlayback>;
 function Player({
   playback,
   fallbackDuration,
-  title,
-  now,
   visible,
 }: {
   playback: Playback;
   fallbackDuration: number;
-  title: string;
   /** Hidden on the other tabs; the audio element stays mounted. */
   visible: boolean;
-  /** The speaker at the playback position, if the transcript has one. */
-  now: SpeakerLook | null;
 }) {
   const { t } = useTranslation();
   const duration = playback.duration || fallbackDuration;
@@ -819,24 +814,6 @@ function Player({
     >
       <audio {...playback.audioProps} />
       <div className="meet-dock-inner">
-        <div className="meet-dock-now">
-          {now ? (
-            <span
-              className={`meet-avatar${now.tone ? ` tone-${now.tone}` : ""}`}
-              aria-hidden="true"
-            >
-              {now.mark}
-            </span>
-          ) : (
-            <span className="meet-avatar" aria-hidden="true">
-              <Glyph name="mic" />
-            </span>
-          )}
-          <span className="meet-dock-now-copy">
-            <strong>{now ? now.label : title}</strong>
-            <span>{now ? title : t("ui2.meet.player.label")}</span>
-          </span>
-        </div>
         <div className="meet-dock-center">
           <div className="meet-dock-controls">
             <button
@@ -1295,10 +1272,6 @@ function MeetingView({
   // The turn being heard, once audio is loaded (paused keeps its place).
   const heardKey =
     playback.state === "ready" ? turnAt(turns, playback.position) : null;
-  const heardTurn = turns.find((turn) => turn.key === heardKey);
-  const now = heardTurn?.speakerId
-    ? (looks.get(heardTurn.speakerId) ?? null)
-    : null;
   const heard = useMemo<Heard>(
     () => ({
       audio: playback.audioRef,
@@ -1704,8 +1677,6 @@ function MeetingView({
         <Player
           playback={playback}
           fallbackDuration={meeting.duration_ms}
-          title={meeting.title}
-          now={now}
           visible={activeTab === "transcript"}
         />
       )}
