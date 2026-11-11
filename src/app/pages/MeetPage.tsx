@@ -26,6 +26,7 @@ import type {
 } from "@/bindings";
 import { Dropdown } from "../components/ui/Dropdown";
 import { hashForRoute } from "../navigation";
+import studioFeatureContextBg from "../overview/studio-feature-context.webp";
 import {
   buildTurns,
   filterTurns,
@@ -39,7 +40,6 @@ import {
   groupByDay,
   highlightParts,
   turnAt,
-  waveBars,
   wordAt,
   type RecordingFilters,
 } from "../meet/meetFormat";
@@ -160,10 +160,6 @@ function SourceControl({
     toggleTitle = t("ui2.meet.sources.keepOne");
   }
 
-  const deviceName = selected
-    ? (devices.find((device) => device.id === selected)?.name ?? null)
-    : (fallback?.name ?? null);
-
   return (
     <div className="meet-source-control">
       <button
@@ -182,10 +178,6 @@ function SourceControl({
           <Glyph name={SOURCE_ICON[kind]} />
         ) : (
           <MutedIcon className="icon sm" aria-hidden="true" />
-        )}
-        <span className="meet-source-name">{name}</span>
-        {enabled && deviceName && (
-          <span className="meet-source-device">{deviceName}</span>
         )}
       </button>
       <Dropdown
@@ -245,8 +237,7 @@ function CaptureDock({ meet }: { meet: MeetController }) {
     pending !== null || (!recording && (!settings || (!micOn && !systemOn)));
   return (
     <section
-      className="meet-capture"
-      data-recording={recording ? "true" : undefined}
+      className="meet-capture-dock"
       aria-label={t("ui2.meet.studio.label")}
     >
       {recording?.error && (
@@ -254,19 +245,15 @@ function CaptureDock({ meet }: { meet: MeetController }) {
           {recording.error}
         </p>
       )}
-      <div className="meet-capture-bar">
+      <div className="meet-toolbar">
         {recording ? (
-          <div className="meet-capture-live">
-            <span className="meet-record-dot" aria-hidden="true" />
-            <span>{t("ui2.meet.live.label")}</span>
-            <span
-              className="meet-record-clock"
-              role="timer"
-              aria-label={t("ui2.meet.live.label")}
-            >
-              {formatClock(recording.elapsed_ms)}
-            </span>
-          </div>
+          <span
+            className="meet-record-clock"
+            role="timer"
+            aria-label={t("ui2.meet.live.label")}
+          >
+            {formatClock(recording.elapsed_ms)}
+          </span>
         ) : (
           <div
             className="meet-source-controls"
@@ -304,7 +291,7 @@ function CaptureDock({ meet }: { meet: MeetController }) {
           </div>
         )}
         <button
-          className="button primary meet-record-action"
+          className="button meet-record-action"
           type="button"
           aria-disabled={recordDisabled}
           onClick={() => {
@@ -375,32 +362,58 @@ function SpeakerModelNotice({ meet }: { meet: MeetController }) {
 /* Recordings                                                                */
 /* ------------------------------------------------------------------------ */
 
-/** One fixed-size tile for every row, so the list scans as a single column. */
 function RecordingLead({
   meeting,
   state,
+  t,
 }: {
   meeting: MeetingSummary;
   state: string;
+  t: T;
 }) {
-  return (
-    <span className="meet-lead" data-state={state} aria-hidden="true">
-      {state === "recording" ? (
+  if (state === "recording") {
+    return (
+      <span className="meet-lead" aria-hidden="true">
         <span className="meet-bars">
           <i />
           <i />
           <i />
           <i />
         </span>
-      ) : state === "processing" ? (
+      </span>
+    );
+  }
+  if (state === "processing") {
+    return (
+      <span className="meet-lead" aria-hidden="true">
         <span className="meet-spinner" />
-      ) : (
-        <span className="meet-wave">
-          {waveBars(meeting.id).map((height, index) => (
-            <i key={index} style={{ height: `${height}%` }} />
-          ))}
-        </span>
-      )}
+      </span>
+    );
+  }
+  if (meeting.speaker_count > 0) {
+    const shown = Math.min(meeting.speaker_count, 3);
+    return (
+      <span
+        className="meet-lead-stack"
+        role="img"
+        aria-label={t("ui2.meet.list.speakers", {
+          count: meeting.speaker_count,
+        })}
+      >
+        {Array.from({ length: shown }, (_, index) => (
+          <span
+            key={index}
+            className={`meet-avatar is-stack tone-${SPEAKER_TONES[index]}`}
+          >
+            {index === shown - 1 && meeting.speaker_count}
+          </span>
+        ))}
+      </span>
+    );
+  }
+  return (
+    <span className="meet-lead" aria-hidden="true">
+      <Glyph name={SOURCE_ICON[meeting.sources[0] ?? "Microphone"]} />
     </span>
   );
 }
@@ -436,14 +449,6 @@ function Recordings({
         weekday: "long",
         month: "long",
         day: "numeric",
-      }),
-    [i18n.language],
-  );
-  const timeFormat = useMemo(
-    () =>
-      new Intl.DateTimeFormat(i18n.language, {
-        hour: "numeric",
-        minute: "2-digit",
       }),
     [i18n.language],
   );
@@ -504,80 +509,31 @@ function Recordings({
                   data-state={state}
                   onClick={() => openMeeting(meeting.id)}
                 >
-                  <RecordingLead meeting={meeting} state={state} />
+                  <RecordingLead meeting={meeting} state={state} t={t} />
                   <span className="meet-row-main">
-                    <span className="meet-row-title">{meeting.title}</span>
-                    <span className="meet-row-preview">
-                      {state === "recording"
-                        ? t("ui2.meet.list.state.recording")
-                        : state === "transcribed" && meeting.preview
-                          ? meeting.preview
-                          : state === "processing"
-                            ? t("ui2.meet.list.state.processing")
-                            : state === "transcribed"
-                              ? t("ui2.meet.list.state.transcribed")
-                              : null}
+                    <span className="meet-row-top">
+                      <span className="meet-row-title">{meeting.title}</span>
+                      <span className="meet-row-duration">
+                        {formatClock(
+                          state === "recording"
+                            ? now - meeting.created_unix_ms
+                            : meeting.duration_ms,
+                        )}
+                      </span>
                     </span>
-                  </span>
-                  <span className="meet-row-meta">
-                    <span className="meet-row-duration">
-                      {formatClock(
-                        state === "recording"
-                          ? now - meeting.created_unix_ms
-                          : meeting.duration_ms,
-                      )}
-                    </span>
-                    <span className="meet-row-facts">
-                      {meeting.speaker_count > 0 && (
-                        <span
-                          className="meet-row-fact"
-                          title={t("ui2.meet.list.speakers", {
-                            count: meeting.speaker_count,
-                          })}
-                        >
-                          <span
-                            className="meet-avatar-stack"
-                            aria-hidden="true"
-                          >
-                            {Array.from(
-                              { length: Math.min(meeting.speaker_count, 3) },
-                              (_, index) => (
-                                <span
-                                  key={index}
-                                  className={`meet-avatar is-stack tone-${SPEAKER_TONES[index]}`}
-                                />
-                              ),
-                            )}
-                          </span>
-                          {meeting.speaker_count}
-                          <span className="sr-only">
-                            {t("ui2.meet.list.speakers", {
-                              count: meeting.speaker_count,
-                            })}
-                          </span>
+                    {state === "recording" ? (
+                      <span className="sr-only">
+                        {t("ui2.meet.list.state.recording")}
+                      </span>
+                    ) : (
+                      state !== "new" && (
+                        <span className="meet-row-preview">
+                          {state === "transcribed" && meeting.preview
+                            ? meeting.preview
+                            : t(`ui2.meet.list.state.${state}`)}
                         </span>
-                      )}
-                      {meeting.sources.map((source) => (
-                        <span
-                          key={source}
-                          className="meet-row-fact"
-                          title={sourceName(source, t)}
-                        >
-                          <Glyph name={SOURCE_ICON[source]} />
-                          <span className="sr-only">
-                            {sourceName(source, t)}
-                          </span>
-                        </span>
-                      ))}
-                      <time
-                        className="meet-row-time"
-                        dateTime={new Date(
-                          meeting.created_unix_ms,
-                        ).toISOString()}
-                      >
-                        {timeFormat.format(meeting.created_unix_ms)}
-                      </time>
-                    </span>
+                      )
+                    )}
                   </span>
                   <span className="meet-row-go" aria-hidden="true">
                     <Glyph name="chev-right" />
@@ -1593,43 +1549,56 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
     content = (
       <>
         <div className="page-wrap meet-wrap">
-          <header className="page-header">
-            <div>
+          <header className="studio-feature-hero meet-hero">
+            <img
+              className="studio-feature-image"
+              src={studioFeatureContextBg}
+              alt=""
+            />
+            <div className="studio-feature-copy">
               <h1>{t("ui2.meet.name")}</h1>
               <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
             </div>
-          </header>
-          <CaptureDock meet={meet} />
-          <div className="meet-filters">
-            <label className="search-field">
-              <Glyph name="search" />
-              <input
-                type="search"
-                value={filters.query}
-                onChange={(event) =>
-                  setFilters({ ...filters, query: event.target.value })
-                }
-                placeholder={t("ui2.meet.list.search")}
-                aria-label={t("ui2.meet.list.search")}
-              />
-            </label>
-            <select
-              className="select meet-recordings-sort"
-              value={filters.oldestFirst ? "oldest" : "newest"}
-              onChange={(event) =>
-                setFilters({
-                  ...filters,
-                  oldestFirst: event.target.value === "oldest",
-                })
-              }
-              aria-label={t("ui2.meet.list.sortByDate")}
+            <button
+              className="button meet-hero-settings"
+              type="button"
+              disabled
             >
-              <option value="newest">{t("ui2.meet.list.newestFirst")}</option>
-              <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
-            </select>
-          </div>
+              <Glyph name="sliders" />
+              {t("ui2.nav.settings")}
+            </button>
+            <div className="meet-recordings-controls">
+              <select
+                className="select meet-recordings-sort"
+                value={filters.oldestFirst ? "oldest" : "newest"}
+                onChange={(event) =>
+                  setFilters({
+                    ...filters,
+                    oldestFirst: event.target.value === "oldest",
+                  })
+                }
+                aria-label={t("ui2.meet.list.sortByDate")}
+              >
+                <option value="newest">{t("ui2.meet.list.newestFirst")}</option>
+                <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
+              </select>
+              <label className="search-field">
+                <Glyph name="search" />
+                <input
+                  type="search"
+                  value={filters.query}
+                  onChange={(event) =>
+                    setFilters({ ...filters, query: event.target.value })
+                  }
+                  placeholder={t("ui2.meet.list.search")}
+                  aria-label={t("ui2.meet.list.search")}
+                />
+              </label>
+            </div>
+          </header>
           <Recordings meet={meet} filters={filters} />
         </div>
+        <CaptureDock meet={meet} />
       </>
     );
   }

@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingSummary } from "@/bindings";
-import {
-  groupByDay,
-  highlightParts,
-  turnAt,
-  waveBars,
-  wordAt,
-} from "./meetFormat";
+import { groupByDay, highlightParts, turnAt, wordAt } from "./meetFormat";
 import type { Turn } from "./transcriptTurns";
 
 function meeting(id: string, created: Date): MeetingSummary {
@@ -120,18 +114,5 @@ describe("wordAt", () => {
     expect(wordAt(words, 300)).toBe(1);
     expect(wordAt(words, 5_000)).toBe(2);
     expect(wordAt([], 10)).toBe(-1);
-  });
-});
-
-describe("waveBars", () => {
-  it("is stable per id and stays inside the glyph", () => {
-    const bars = waveBars("session-1");
-    expect(waveBars("session-1")).toEqual(bars);
-    expect(waveBars("session-2")).not.toEqual(bars);
-    expect(bars).toHaveLength(9);
-    for (const height of bars) {
-      expect(height).toBeGreaterThanOrEqual(24);
-      expect(height).toBeLessThanOrEqual(100);
-    }
   });
 });

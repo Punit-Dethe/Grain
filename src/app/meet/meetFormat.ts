@@ -104,25 +104,3 @@ export function turnAt(turns: Turn[], ms: number): string | null {
   }
   return found?.key ?? null;
 }
-
-/**
- * A short, stable bar pattern for a recording's glyph. It is decoration keyed
- * on the id, so each recording keeps its own recognisable shape; it is not
- * derived from the audio.
- */
-export function waveBars(id: string, count = 9): number[] {
-  let state = 2166136261;
-  for (let index = 0; index < id.length; index++) {
-    state = Math.imul(state ^ id.charCodeAt(index), 16777619) >>> 0;
-  }
-  const bars: number[] = [];
-  for (let index = 0; index < count; index++) {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    // Taller toward the middle so the glyph reads as one soft waveform.
-    const envelope = 1 - Math.abs(index - (count - 1) / 2) / count;
-    bars.push(
-      Math.round(24 + ((state % 1000) / 1000) * 50 * envelope + 26 * envelope),
-    );
-  }
-  return bars;
-}
