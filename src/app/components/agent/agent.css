@@ -14,15 +14,28 @@ html[data-window="agent-panel"] body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The notch: one near-black shell fused to the top edge of the screen. It is
+   compact while capturing and grows, as the same element, into the reply. */
 .agent-notch {
-  --agc-bg: #101016;
-  --agc-ink: #f7f6fb;
-  --agc-muted: #b4b3c2;
-  --notch-line: #ffffff21;
+  --agc-bg: #0a0a0e;
+  --agc-raise: #ffffff0b;
+  --agc-ink: #f4f3f8;
+  --agc-muted: #a4a3b4;
+  --agc-faint: #6f6e80;
+  --agc-blue: #7c9bff;
+  --agc-violet: #a77bff;
+  --agc-orange: #ff9f6b;
+  --agc-spectrum: linear-gradient(
+    120deg,
+    var(--agc-blue),
+    var(--agc-violet) 55%,
+    var(--agc-orange)
+  );
+  --notch-line: #ffffff1c;
   --notch-ease: cubic-bezier(0.16, 1, 0.3, 1);
   /* NOTCH_GROW in agent.rs and the grown timer in AgentPanel wait for this. */
   --notch-grow: 420ms;
-  --notch-reply-header: 32px;
+  --notch-reply-header: 34px;
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -44,6 +57,8 @@ html[data-window="agent-panel"] body {
     border-radius var(--notch-grow) var(--notch-ease);
 }
 
+/* Grain's light: the capture glow sits on the shell's bottom edge and rides it
+   down as the notch grows, ending as a low glow under the composer. */
 .agent-notch::before {
   content: "";
   position: absolute;
@@ -61,12 +76,12 @@ html[data-window="agent-panel"] body {
 .agent-notch.is-reply {
   width: 100vw;
   height: 100vh;
-  border-radius: 0 0 26px 26px;
+  border-radius: 0 0 24px 24px;
 }
 
 .agent-notch.is-reply::before {
-  opacity: 0;
-  /* Freeze in place while it fades; `animation: none` snapped the glow. */
+  opacity: 0.38;
+  /* Freeze in place; `animation: none` snapped the glow mid-fade. */
   animation-play-state: paused;
 }
 
@@ -89,33 +104,64 @@ html[data-window="agent-panel"] body {
   padding-inline: 13px;
   transition:
     flex-basis var(--notch-grow) var(--notch-ease),
-    padding var(--notch-grow) var(--notch-ease),
-    gap var(--notch-grow) var(--notch-ease);
+    padding var(--notch-grow) var(--notch-ease);
 }
 
 .is-reply .agent-notch-header {
   flex-basis: min(var(--notch-reply-header), 100vh);
-  padding-inline: 19px;
+  padding-inline: 18px 10px;
 }
 
+/* The one element that never changes identity: a dot that listens (blue,
+   breathing), thinks (spectrum, turning) and then signs the reply. */
 .agent-notch-indicator {
+  position: relative;
   flex: none;
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #a8baff;
+  background: var(--agc-faint);
   transition:
     width var(--notch-grow) var(--notch-ease),
-    opacity 200ms ease;
+    height var(--notch-grow) var(--notch-ease),
+    background-color 200ms ease;
+}
+
+[data-phase="listening"] .agent-notch-indicator {
+  background: var(--agc-blue);
+  box-shadow: 0 0 0 0 #7c9bff66;
+  animation: agent-notch-breathe 1.6s ease-out infinite;
+}
+
+[data-phase="working"] .agent-notch-indicator,
+.is-reply .agent-notch-indicator {
+  background: conic-gradient(
+    var(--agc-blue),
+    var(--agc-violet),
+    var(--agc-orange),
+    var(--agc-blue)
+  );
+}
+
+[data-phase="working"] .agent-notch-indicator {
+  animation: agent-notch-turn 1.2s linear infinite;
 }
 
 .is-reply .agent-notch-indicator {
-  width: 0;
-  opacity: 0;
+  width: 8px;
+  height: 8px;
 }
 
-.is-reply .agent-notch-header {
-  gap: 0;
+@keyframes agent-notch-breathe {
+  to {
+    box-shadow: 0 0 0 5px #7c9bff00;
+  }
+}
+
+@keyframes agent-notch-turn {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 /* Compact status and brand share one cell and crossfade. */
@@ -124,8 +170,9 @@ html[data-window="agent-panel"] body {
   min-width: 0;
   display: grid;
   overflow: hidden;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 550;
+  letter-spacing: 0.005em;
   white-space: nowrap;
 }
 
@@ -141,6 +188,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agent-notch-brand {
+  color: var(--agc-muted);
   opacity: 0;
   transform: translateY(-4px);
 }
@@ -179,21 +227,24 @@ html[data-window="agent-panel"] body {
   width: 30px;
   height: 30px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 999px;
   background: transparent;
   color: var(--agc-muted);
   cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .agent-notch-control:hover:not(:disabled),
 .agc-c-tool:hover:not(:disabled) {
-  background: #ffffff17;
+  background: #ffffff14;
   color: var(--agc-ink);
 }
 
 .agent-notch-close {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
 }
 
 .agent-notch button:disabled {
@@ -202,7 +253,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agent-notch button:focus-visible {
-  outline: 2px solid #a8baff;
+  outline: 2px solid var(--agc-blue);
   outline-offset: -2px;
 }
 
@@ -246,7 +297,27 @@ html[data-window="agent-panel"] body {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  animation: agent-notch-reply 220ms ease 110ms both;
+  isolation: isolate;
+  animation: agent-notch-reply 260ms ease 80ms both;
+}
+
+/* Fine dot grain behind the conversation, fading out at both ends. */
+.agent-notch-reply::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, #ffffff14 0.7px, transparent 1.1px);
+  background-size: 12px 12px;
+  background-position: 6px 2px;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 22%,
+    #000 62%,
+    transparent 88%
+  );
 }
 
 @keyframes agent-notch-reply {
@@ -263,26 +334,42 @@ html[data-window="agent-panel"] body {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  scrollbar-color: #ffffff37 transparent;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff2e transparent;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 19px 12px;
-  font-size: 14px;
+  gap: 10px;
+  padding: 8px 16px 14px;
+  font-size: 13.5px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent
+  );
 }
 
 .agc-c-scroll > * {
   flex-shrink: 0;
 }
 
+/* The selection the request acted on: a quiet chip with a spectrum edge. */
 .agc-c-prompt {
-  border: 1px solid var(--notch-line);
+  align-self: flex-start;
+  max-width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ffffff12;
   border-radius: 10px;
-  padding: 7px 10px;
-  background: #ffffff07;
+  padding: 6px 11px 6px 13px;
+  background:
+    linear-gradient(var(--agc-raise), var(--agc-raise)) padding-box,
+    var(--agc-spectrum) left / 2px 100% no-repeat border-box;
   color: var(--agc-muted);
+  font: inherit;
+  font-size: 12.5px;
   text-align: start;
   overflow: hidden;
   white-space: nowrap;
@@ -293,28 +380,51 @@ html[data-window="agent-panel"] body {
 .agc-c-prompt.is-open {
   white-space: pre-wrap;
 }
-.agc-c-turn.is-user {
+
+.agc-c-turn {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.agc-c-turn.is-user {
+  align-items: flex-end;
 }
 
 .agc-c-user {
-  max-width: 88%;
-  color: var(--agc-muted);
+  max-width: 80%;
+  box-sizing: border-box;
+  padding: 7px 12px;
+  border: 1px solid #a9b8ff2e;
+  border-radius: 16px 16px 5px 16px;
+  background: linear-gradient(135deg, #5872e63d, #8f5ef036);
+  color: var(--agc-ink);
   white-space: pre-wrap;
 }
 
 .agc-c-answer {
+  max-width: 94%;
   min-width: 0;
+  box-sizing: border-box;
+  padding: 9px 13px;
+  border: 1px solid #ffffff10;
+  border-radius: 5px 16px 16px 16px;
+  background: #15151bdd;
+  box-shadow: inset 0 1px 0 #ffffff08;
 }
 
 .agc-c-tools {
   display: flex;
-  gap: 4px;
+  gap: 2px;
+  padding-left: 4px;
+  transition: opacity 140ms ease;
 }
 
 .agc-c-tool {
-  height: 24px;
+  width: 26px;
+  height: 22px;
 }
 
 @media (hover: hover) {
@@ -332,28 +442,65 @@ html[data-window="agent-panel"] body {
 
 .agc-confirm-actions {
   display: flex;
-  gap: 4px;
-  margin-top: 5px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .agc-c-tool.is-flash {
-  color: #acd9bf;
+  color: #9be0b8;
 }
 
 .agc-c-compose {
   position: relative;
   flex: none;
-  padding: 4px 16px 7px 19px;
-  background: var(--agc-bg);
+  padding: 2px 12px 12px;
 }
 
-.agc-c-compose::before {
-  content: "";
-  position: absolute;
-  inset: auto 0 100%;
-  height: 8px;
-  background: linear-gradient(to top, var(--agc-bg), transparent);
-  pointer-events: none;
+/* Pill composer; the glow under the shell shows through its edge. */
+.agc-c-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 4px 4px 4px 14px;
+  border: 1px solid #ffffff17;
+  border-radius: 19px;
+  background: #121217e6;
+  box-shadow: inset 0 1px 0 #ffffff09;
+  transition: border-color 160ms ease;
+}
+
+.agc-c-field:focus-within {
+  border-color: #a9b8ff40;
+}
+
+.agc-c-send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: #ffffff12;
+  color: var(--agc-faint);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms var(--notch-ease);
+}
+
+.agc-c-send:not(:disabled) {
+  background: var(--agc-spectrum);
+  color: #0c0c14;
+}
+
+.agent-notch .agc-c-send:disabled {
+  opacity: 1;
+}
+
+.agc-c-send:not(:disabled):hover {
+  transform: scale(1.06);
 }
 
 .agc-action-btn,
@@ -363,32 +510,36 @@ html[data-window="agent-panel"] body {
   justify-content: center;
   gap: 8px;
   min-width: 0;
-  min-height: 32px;
-  padding-inline: 9px;
+  min-height: 30px;
+  padding-inline: 14px;
   border: 1px solid var(--notch-line);
-  border-radius: 10px;
+  border-radius: 999px;
   background: #ffffff09;
   color: var(--agc-ink);
-  font-size: 13px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
   cursor: pointer;
 }
 
 .agc-action-btn {
-  background: #e7ebff;
-  color: #171933;
+  border-color: transparent;
+  background: var(--agc-spectrum);
+  color: #0c0c14;
 }
 
 .agc-cancel-btn:hover:not(:disabled) {
   background: #ffffff1b;
 }
 .agc-action-btn:hover:not(:disabled) {
-  background: #fff;
+  filter: brightness(1.08);
 }
 
 .agc-c-textarea {
   box-sizing: border-box;
   display: block;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 28px;
   max-height: min(76px, 24vh);
   resize: none;
@@ -397,66 +548,84 @@ html[data-window="agent-panel"] body {
   outline: none;
   background: transparent;
   color: var(--agc-ink);
-  caret-color: #a8baff;
+  caret-color: var(--agc-blue);
   font: inherit;
-  font-size: 13px;
+  font-size: 13.5px;
   line-height: 1.45;
 }
 
 .agc-c-textarea::placeholder {
-  color: var(--agc-muted);
+  color: var(--agc-faint);
 }
 
 .agc-confirm-action,
 .agc-error {
-  margin-top: 5px;
-  padding: 9px 11px;
+  max-width: 94%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  padding: 10px 13px;
   border: 1px solid var(--notch-line);
-  border-radius: 10px;
-  background: #ffffff08;
+  border-radius: 14px;
+  background: var(--agc-raise);
 }
 
 .agc-error {
+  align-self: flex-start;
+  border-color: #ff9f8a33;
   color: #ffb4a4;
 }
 
+/* Typing: a small assistant bubble with the spectrum's three dots. */
 .agent-typing {
+  align-self: flex-start;
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 18px;
+  gap: 5px;
+  padding: 11px 14px;
+  border: 1px solid #ffffff10;
+  border-radius: 5px 16px 16px 16px;
+  background: #15151bdd;
 }
 
 .agent-typing > span {
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: #a8baff;
-  animation: agent-notch-thinking 1.2s ease-in-out infinite alternate;
+  background: var(--agc-blue);
+  animation: agent-notch-thinking 1s ease-in-out infinite alternate;
 }
 
 .agent-typing > span:nth-child(2) {
-  animation-delay: 150ms;
+  background: var(--agc-violet);
+  animation-delay: 160ms;
 }
 .agent-typing > span:nth-child(3) {
-  animation-delay: 300ms;
+  background: var(--agc-orange);
+  animation-delay: 320ms;
 }
 
 @keyframes agent-notch-thinking {
   from {
-    opacity: 0.38;
+    opacity: 0.35;
+    transform: translateY(1.5px);
   }
   to {
     opacity: 1;
+    transform: translateY(-1.5px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .agent-notch,
   .agent-notch::before,
+  .agent-notch-header,
+  .agent-notch-indicator,
+  .agent-notch-status,
+  .agent-notch-brand,
   .agent-notch-reply,
   .agent-working-phrases > span,
-  .agent-typing > span {
+  .agent-typing > span,
+  .agc-c-send {
     animation: none;
     transition: none;
   }

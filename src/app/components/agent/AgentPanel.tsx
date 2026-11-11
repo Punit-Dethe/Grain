@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, RotateCcw, X, Check } from "lucide-react";
+import { ArrowUp, Copy, RotateCcw, X, Check } from "lucide-react";
 import {
   commands,
   type AgentNotchStatus,
@@ -50,6 +50,7 @@ export function AgentPanel() {
   // True once the shell has finished growing; the compact status (and its
   // phrase timer) stays mounted until then so it can fade out with the growth.
   const [grown, setGrown] = useState(false);
+  const [hasDraft, setHasDraft] = useState(false);
   const revealedRef = useRef(false);
   const [capture, setCapture] = useState<AgentNotchStatus | null>(null);
   const generationRef = useRef<number | null>(null);
@@ -239,6 +240,7 @@ export function AgentPanel() {
           const separator = input.value && !/\s$/.test(input.value) ? " " : "";
           input.value += separator + dictated;
           resizeComposer(input);
+          setHasDraft(true);
           input.focus();
         })
         .then(track),
@@ -318,6 +320,17 @@ export function AgentPanel() {
     [runConversation],
   );
 
+  /** Send the composer's draft as a follow-up (Enter or the send button). */
+  const sendDraft = useCallback(() => {
+    const input = composerRef.current;
+    const text = input?.value.trim();
+    if (!input || !text || busyRef.current) return;
+    input.value = "";
+    resizeComposer(input);
+    setHasDraft(false);
+    void runFollowup(text);
+  }, [runFollowup]);
+
   const onComposerKey = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (
@@ -327,14 +340,9 @@ export function AgentPanel() {
       )
         return;
       event.preventDefault();
-      const input = event.currentTarget;
-      const text = input.value.trim();
-      if (!text || busyRef.current) return;
-      input.value = "";
-      resizeComposer(input);
-      void runFollowup(text);
+      sendDraft();
     },
-    [runFollowup],
+    [sendDraft],
   );
 
   /** Copy one specific answer (the per-reply copy affordance). Only the copied
@@ -452,6 +460,15 @@ export function AgentPanel() {
     <div className="agent-panel-root">
       <section
         className={revealed ? "agent-notch is-reply" : "agent-notch"}
+        data-phase={
+          revealed
+            ? "reply"
+            : capture?.working
+              ? "working"
+              : capture?.listening
+                ? "listening"
+                : "starting"
+        }
         aria-label={t("agent.brand")}
       >
         {/* One header for both states: the compact status crossfades into the
@@ -570,15 +587,30 @@ export function AgentPanel() {
             </div>
 
             <div className="agc-c-compose">
-              <textarea
-                ref={composerRef}
-                rows={1}
-                className="agc-c-textarea"
-                aria-label={t("agent.placeholderAsk")}
-                placeholder={t("agent.placeholderAsk")}
-                onInput={(event) => resizeComposer(event.currentTarget)}
-                onKeyDown={onComposerKey}
-              />
+              <div className="agc-c-field">
+                <textarea
+                  ref={composerRef}
+                  rows={1}
+                  className="agc-c-textarea"
+                  aria-label={t("agent.placeholderAsk")}
+                  placeholder={t("agent.placeholderAsk")}
+                  onInput={(event) => {
+                    resizeComposer(event.currentTarget);
+                    setHasDraft(!!event.currentTarget.value.trim());
+                  }}
+                  onKeyDown={onComposerKey}
+                />
+                <button
+                  type="button"
+                  className="agc-c-send"
+                  disabled={!hasDraft || busy}
+                  onClick={sendDraft}
+                  aria-label={t("agent.send")}
+                  title={t("agent.send")}
+                >
+                  <ArrowUp size={15} strokeWidth={2.25} />
+                </button>
+              </div>
             </div>
           </div>
         )}
