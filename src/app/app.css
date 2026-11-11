@@ -5790,7 +5790,7 @@ html[data-theme="light"] .dropdown-compact-menu {
   font-variant-numeric: tabular-nums;
 }
 
-.meet-meta span {
+.meet-meta > span {
   display: inline-flex;
   align-items: center;
   gap: 7px;

@@ -53,6 +53,8 @@ export interface MeetController {
   downloadDiarizer: () => Promise<void>;
   loadTranscript: (sessionId: string) => Promise<TranscriptRevision | null>;
   loadPlayback: (sessionId: string) => Promise<string>;
+  /** Mix a finished meeting's playback audio ahead of the first play. */
+  warmPlayback: (sessionId: string) => Promise<void>;
   loadSummary: (sessionId: string) => Promise<MeetSummaryDoc | null>;
   generateSummary: (sessionId: string) => Promise<MeetSummaryDoc>;
   ask: (
@@ -280,6 +282,10 @@ export function useMeetController(): MeetController {
     [osType],
   );
 
+  const warmPlayback = useCallback(async (sessionId: string) => {
+    unwrap(await commands.meetPlaybackAudio(sessionId));
+  }, []);
+
   return {
     status,
     meetings,
@@ -300,6 +306,7 @@ export function useMeetController(): MeetController {
     downloadDiarizer,
     loadTranscript,
     loadPlayback,
+    warmPlayback,
     loadSummary,
     generateSummary,
     ask,

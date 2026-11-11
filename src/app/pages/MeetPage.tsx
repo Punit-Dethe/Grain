@@ -1156,6 +1156,14 @@ function MeetingView({
   const isRecording = meet.status.recording?.session_id === meeting.id;
   const otherRecording = Boolean(meet.status.recording) && !isRecording;
   const playback = usePlayback(meet, meeting.id);
+  const { warmPlayback } = meet;
+
+  // Mix the audio while the meeting is being read, not at the first play.
+  // Already-built audio makes this a no-op; a failure surfaces on play.
+  useEffect(() => {
+    if (isRecording) return;
+    warmPlayback(meeting.id).catch(() => undefined);
+  }, [warmPlayback, meeting.id, isRecording]);
 
   useEffect(() => {
     let active = true;

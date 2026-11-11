@@ -429,7 +429,16 @@ pub fn meet_process(app: AppHandle, session_id: String) -> Result<(), String> {
             }
             emit_status(&app);
             if let Some(session_id) = published {
-                super::ai::spawn_auto(app.clone(), session_id);
+                super::ai::spawn_auto(app.clone(), session_id.clone());
+                // Mix the playback audio now, while the user is not waiting
+                // on it, so pressing play is instant.
+                if let Ok(root) = meetings_root(&app) {
+                    if let Ok(dir) = storage::session_dir(&root, &session_id) {
+                        if let Err(error) = ensure_playback(&dir) {
+                            log::warn!("Could not prepare meeting playback: {error}");
+                        }
+                    }
+                }
             }
         });
     if let Err(error) = spawned {
@@ -509,28 +518,36 @@ pub fn meet_delete(app: AppHandle, session_id: String) -> Result<(), String> {
     std::fs::remove_dir_all(&dir).map_err(|e| format!("Could not delete the meeting: {e}"))
 }
 
-/// The meeting's playback file (created on first request): every track mixed
-/// on the meeting clock. Only that one file is opened to the webview.
+/// Make sure a finished meeting's mixed playback file exists and return it.
+/// Serialised so the post-transcription build and a play request never write
+/// the same temporary file at once.
+fn ensure_playback(dir: &std::path::Path) -> Result<PathBuf, String> {
+    static BUILDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _building = BUILDING.lock().unwrap_or_else(|e| e.into_inner());
+    let manifest = storage::load_manifest(dir)?;
+    if manifest.state != SessionState::Recorded {
+        return Err("Finish the recording before playing it".into());
+    }
+    let folder = dir.join("playback");
+    std::fs::create_dir_all(&folder)
+        .map_err(|e| format!("Could not prepare playback audio: {e}"))?;
+    let path = folder.join("meeting.wav");
+    if !path.is_file() {
+        analysis::write_meeting_playback(dir, &manifest.tracks, &path)?;
+    }
+    Ok(path)
+}
+
+/// The meeting's playback file (built once, normally right after
+/// transcription): every track mixed on the meeting clock. Only that one file
+/// is opened to the webview.
 #[tauri::command]
 #[specta::specta]
 pub async fn meet_playback_audio(app: AppHandle, session_id: String) -> Result<String, String> {
     let dir = storage::session_dir(&meetings_root(&app)?, &session_id)?;
-    let path = tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, String> {
-        let manifest = storage::load_manifest(&dir)?;
-        if manifest.state != SessionState::Recorded {
-            return Err("Finish the recording before playing it".into());
-        }
-        let folder = dir.join("playback");
-        std::fs::create_dir_all(&folder)
-            .map_err(|e| format!("Could not prepare playback audio: {e}"))?;
-        let path = folder.join("meeting.wav");
-        if !path.is_file() {
-            analysis::write_meeting_playback(&dir, &manifest.tracks, &path)?;
-        }
-        Ok(path)
-    })
-    .await
-    .map_err(|e| e.to_string())??;
+    let path = tauri::async_runtime::spawn_blocking(move || ensure_playback(&dir))
+        .await
+        .map_err(|e| e.to_string())??;
     app.asset_protocol_scope()
         .allow_file(&path)
         .map_err(|e| e.to_string())?;
