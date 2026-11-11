@@ -4,7 +4,9 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import {
   commands,
   events,
+  type AskTurn,
   type MeetSources,
+  type MeetSummaryDoc,
   type MeetStatus,
   type MeetingSummary,
   type RecordingStatus,
@@ -17,6 +19,7 @@ const IDLE: MeetStatus = {
   recording: null,
   processing: null,
   last_error: null,
+  summarizing: null,
 };
 
 /** The recording clock shows whole seconds. */
@@ -50,6 +53,34 @@ export interface MeetController {
   downloadDiarizer: () => Promise<void>;
   loadTranscript: (sessionId: string) => Promise<TranscriptRevision | null>;
   loadPlayback: (sessionId: string) => Promise<string>;
+  loadSummary: (sessionId: string) => Promise<MeetSummaryDoc | null>;
+  generateSummary: (sessionId: string) => Promise<MeetSummaryDoc>;
+  ask: (
+    sessionId: string,
+    question: string,
+    history: AskTurn[],
+  ) => Promise<string>;
+}
+
+/** Whether an AI provider and model are set up for Recall to use. Re-checked
+ * when the window regains focus, since the provider is set elsewhere. */
+export function useMeetAiAvailable(): boolean | null {
+  const [available, setAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    const check = () =>
+      void commands
+        .meetAiAvailable()
+        .then((value) => active && setAvailable(value))
+        .catch(() => active && setAvailable(false));
+    check();
+    window.addEventListener("focus", check);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", check);
+    };
+  }, []);
+  return available;
 }
 
 export function useMeetController(): MeetController {
@@ -119,7 +150,9 @@ export function useMeetController(): MeetController {
       // A recording or an attempt just ended: its meeting changed on disk.
       const ended =
         (previous.recording && !next.recording) ||
-        (previous.processing && !next.processing);
+        (previous.processing && !next.processing) ||
+        // An AI title or summary just landed.
+        (previous.summarizing && !next.summarizing);
       previous = next;
       if (ended) void reload();
     });
@@ -218,6 +251,23 @@ export function useMeetController(): MeetController {
     [],
   );
 
+  const loadSummary = useCallback(
+    async (sessionId: string) => unwrap(await commands.meetSummary(sessionId)),
+    [],
+  );
+
+  const generateSummary = useCallback(
+    async (sessionId: string) =>
+      unwrap(await commands.meetGenerateSummary(sessionId)),
+    [],
+  );
+
+  const ask = useCallback(
+    async (sessionId: string, question: string, history: AskTurn[]) =>
+      unwrap(await commands.meetAsk(sessionId, question, history)),
+    [],
+  );
+
   const loadPlayback = useCallback(
     async (sessionId: string) => {
       const path = unwrap(await commands.meetPlaybackAudio(sessionId));
@@ -250,6 +300,9 @@ export function useMeetController(): MeetController {
     downloadDiarizer,
     loadTranscript,
     loadPlayback,
+    loadSummary,
+    generateSummary,
+    ask,
   };
 }
 

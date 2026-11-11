@@ -63,6 +63,8 @@ pub struct MeetStatus {
     pub processing: Option<ProcessingStatus>,
     /// The last processing failure, until the next attempt starts.
     pub last_error: Option<String>,
+    /// The meeting whose AI summary or title is being written, if any.
+    pub summarizing: Option<String>,
 }
 
 /// Grain Meet state changed; the payload is the full current status.
@@ -109,12 +111,14 @@ struct Attempt {
 }
 
 #[derive(Default)]
-struct State {
+pub(super) struct State {
     active: Option<Recording>,
     /// A start is opening its devices; a second start is refused meanwhile.
     starting: bool,
     processing: Option<Attempt>,
     last_error: Option<String>,
+    /// [GRAIN] AI summary/title in flight for this meeting.
+    pub(super) summarizing: Option<String>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -122,15 +126,16 @@ static STATE: Mutex<State> = Mutex::new(State {
     starting: false,
     processing: None,
     last_error: None,
+    summarizing: None,
 });
 static NEXT_ATTEMPT: AtomicU64 = AtomicU64::new(1);
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
-fn state() -> std::sync::MutexGuard<'static, State> {
+pub(super) fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn meetings_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(super) fn meetings_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::portable::app_data_dir(app)
         .map_err(|e| e.to_string())?
         .join("meetings"))
@@ -173,10 +178,11 @@ fn snapshot(state: &State) -> MeetStatus {
             stage: attempt.stage,
         }),
         last_error: state.last_error.clone(),
+        summarizing: state.summarizing.clone(),
     }
 }
 
-fn emit_status(app: &AppHandle) {
+pub(super) fn emit_status(app: &AppHandle) {
     let status = snapshot(&state());
     let _ = MeetStatusChanged(status).emit(app);
 }
@@ -401,6 +407,7 @@ pub fn meet_process(app: AppHandle, session_id: String) -> Result<(), String> {
                 processing::process(&dir, engine, &models, &attempt_id.to_string(), &on_stage)
                     .map_err(anyhow::Error::msg)
             });
+            let published = result.as_ref().ok().map(|r| r.session_id.clone());
             {
                 let mut guard = state();
                 guard.processing = None;
@@ -421,6 +428,9 @@ pub fn meet_process(app: AppHandle, session_id: String) -> Result<(), String> {
                 };
             }
             emit_status(&app);
+            if let Some(session_id) = published {
+                super::ai::spawn_auto(app.clone(), session_id);
+            }
         });
     if let Err(error) = spawned {
         state().processing = None;

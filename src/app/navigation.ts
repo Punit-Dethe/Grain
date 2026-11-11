@@ -24,7 +24,7 @@ export type ToolSectionId = (typeof TOOL_SECTION_IDS)[number];
 export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
-  | { page: "meet"; meeting?: string }
+  | { page: "meet"; meeting?: string; settings?: boolean }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
   | { page: "extensions" };
@@ -37,6 +37,7 @@ export function routeFromHash(hash: string): AppRoute {
 
   if (path === "/history") return { page: "history" };
   if (path === "/meet") return { page: "meet" };
+  if (path === "/meet/settings") return { page: "meet", settings: true };
   const meetingMatch = path.match(/^\/meet\/([A-Za-z0-9-]+)$/);
   if (meetingMatch) return { page: "meet", meeting: meetingMatch[1] };
   // Legacy destination from the brief period About was its own tab.
@@ -72,6 +73,7 @@ export function routeFromHash(hash: string): AppRoute {
 export function hashForRoute(route: AppRoute): string {
   if (route.page === "settings") return `#/settings/${route.section}`;
   if (route.page === "tools") return `#/tools/${route.section}`;
+  if (route.page === "meet" && route.settings) return "#/meet/settings";
   if (route.page === "meet" && route.meeting) return `#/meet/${route.meeting}`;
   return `#/${route.page}`;
 }

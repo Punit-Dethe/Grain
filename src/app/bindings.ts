@@ -7,11 +7,11 @@
 export const commands = {
 /**
  * Is there a newer release?
- *
+ * 
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
- *
+ * 
  * Returns `Ok(None)` both when the app is current and when checks are off — to
  * every caller those are the same answer ("nothing to show"), and reporting a
  * disabled setting as an error would surface it as a failure in the UI.
@@ -34,7 +34,7 @@ async getCachedUpdate() : Promise<UpdateInfo | null> {
 },
 /**
  * Download and install the pending update, then restart into it.
- *
+ * 
  * `restart()` does not return, so there is deliberately no success path: either
  * this call diverges into the new build or it returns an error.
  */
@@ -110,7 +110,7 @@ async contextProfiles() : Promise<ContextProfileInfo[]> {
 },
 /**
  * [GRAIN] Set (or clear) one profile's instruction.
- *
+ * 
  * Passing text equal to the default CLEARS the override rather than storing a
  * copy of it. That is what keeps an untouched-in-effect profile tracking the
  * shipped wording as it improves, instead of being pinned by a user who opened
@@ -126,7 +126,7 @@ async setContextProfileInstruction(id: string, instruction: string) : Promise<Re
 },
 /**
  * [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
- *
+ * 
  * Async and one host per call, so the settings UI paints immediately and each
  * icon appears as it resolves. A batch command would make the whole row wait
  * for the slowest site — and these are cached after the first fetch, so the
@@ -137,7 +137,7 @@ async siteIcon(host: string) : Promise<string | null> {
 },
 /**
  * [GRAIN] Every application this user can launch, for the profile app picker.
- *
+ * 
  * Async and off the runtime's threads: this walks a Shell namespace and reads
  * two properties per entry, which on a well-populated machine is a couple of
  * hundred milliseconds. The picker asks once when it opens and filters the
@@ -148,7 +148,7 @@ async installedApps() : Promise<InstalledApp[]> {
 },
 /**
  * [GRAIN] An installed application's icon as a PNG data URL, or `None`.
- *
+ * 
  * One app per call for the same reason [`site_icon`] is: the list paints at
  * once and each icon lands as it resolves, rather than the whole picker waiting
  * on the slowest entry.
@@ -158,7 +158,7 @@ async appIcon(id: string) : Promise<string | null> {
 },
 /**
  * [GRAIN] The user's own context profiles, as stored.
- *
+ * 
  * Read back through a command rather than off the settings blob so the UI sees
  * the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
  * showing what was typed instead of what was saved is how a user ends up
@@ -169,7 +169,7 @@ async contextCustomProfiles() : Promise<CustomContextProfile[]> {
 },
 /**
  * [GRAIN] Replace the whole set of user-made context profiles.
- *
+ * 
  * Whole-set rather than per-profile because the UI edits a list and the list is
  * small; a partial update API would only add ordering questions. Targets are
  * normalised here rather than trusted, since precedence and icon eligibility
@@ -603,6 +603,30 @@ async changeAgentScreenImageSetting(enabled: boolean) : Promise<Result<null, str
 }
 },
 /**
+ * [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
+ * by default; see `Settings::meet_auto_summary`.
+ */
+async changeMeetAutoSummarySetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meet_auto_summary_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Recall: title a freshly transcribed meeting from what was said. OFF
+ * by default; see `Settings::meet_auto_title`.
+ */
+async changeMeetAutoTitleSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meet_auto_title_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
  * matcher is never invoked for it).
  */
@@ -933,7 +957,7 @@ async changeTranscribeGpuDevice(device: string | null) : Promise<Result<null, st
 },
 /**
  * Return which accelerators and GPU devices are available for this build.
- *
+ * 
  * First-call cost is dominated by enumerating GPU devices through the
  * transcribe.cpp Metal/Vulkan backend, which loads dynamic libraries and
  * probes hardware. Run it on the blocking pool so the webview thread
@@ -1692,6 +1716,45 @@ async meetDownloadDiarizer() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Whether an AI provider and model are configured for Recall to use.
+ */
+async meetAiAvailable() : Promise<boolean> {
+    return await TAURI_INVOKE("meet_ai_available");
+},
+/**
+ * The saved summary of a meeting, if one has been written.
+ */
+async meetSummary(sessionId: string) : Promise<Result<MeetSummaryDoc | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_summary", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Write (or rewrite) a meeting's summary now.
+ */
+async meetGenerateSummary(sessionId: string) : Promise<Result<MeetSummaryDoc, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_generate_summary", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Answer a question about one meeting from its transcript.
+ */
+async meetAsk(sessionId: string, question: string, history: AskTurn[]) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_ask", { sessionId, question, history }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -1785,7 +1848,7 @@ export type AgentInstruction = { text: string; generation: number; is_error: boo
 /**
  * One conversation turn from the frontend.
  */
-export type AgentMessage = {
+export type AgentMessage = { 
 /**
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
@@ -1802,81 +1865,81 @@ export type AgentReply = { text: string; confirm_action: AgentConfirm | null }
  * object, so a partial store can never fail the whole load (upstream #1619).
  * Field-level defaults below take precedence where present.
  */
-export type AppSettings = {
+export type AppSettings = { 
 /**
  * Missing in pre-schema settings files; the field-level default of zero
  * intentionally triggers one-time migrations instead of using `Self::default()`.
  */
-settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; shortcut_activation: ShortcutActivation;
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; shortcut_activation: ShortcutActivation; 
 /**
  * Setup is committed only after the final shortcut screen succeeds.
  */
-onboarding_completed?: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
+onboarding_completed?: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; 
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
-default_panel?: DefaultPanel;
+default_panel?: DefaultPanel; 
 /**
  * [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
  */
-theme?: ThemeMode;
+theme?: ThemeMode; 
 /**
  * [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
  * routes the transcript to AI. On by default — this is what replaces the
  * separate "Send to AI (End)" row that only ever appeared with
  * push-to-talk off.
  */
-capture_end_with_ai?: boolean;
+capture_end_with_ai?: boolean; 
 /**
  * [GRAIN] Send every capture to AI, whichever shortcut started it. With
  * this on there is exactly one key to remember for the whole product.
  */
-capture_always_ai?: boolean; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string;
+capture_always_ai?: boolean; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; 
 /**
  * Languages used to rank and filter the model catalogue (Handy).
  */
-spoken_languages?: string[]; always_on_microphone?: boolean; selected_microphone?: string | null;
+spoken_languages?: string[]; always_on_microphone?: boolean; selected_microphone?: string | null; 
 /**
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; chinese_script?: ChineseScript; vad_backend?: VadBackend; vad_enabled?: boolean; long_form_chunking?: boolean; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle;
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; chinese_script?: ChineseScript; vad_backend?: VadBackend; vad_enabled?: boolean; long_form_chunking?: boolean; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle; 
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will
  * later be folded into Context Awareness and shown only for surfaces Grain
  * actually differentiates.
  */
-pill_show_app_icon?: boolean;
+pill_show_app_icon?: boolean; 
 /**
  * Hide only the compact recording/working pill's close control.
  */
-pill_hide_close_button?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
+pill_hide_close_button?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
 /**
  * Offer to save a spelling after a local edit to a recent dictation.
  */
-learn_from_edits?: boolean;
+learn_from_edits?: boolean; 
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
-snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap;
+snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
 /**
  * [GRAIN] Try enabled, configured providers in their saved order on failure.
  * When false, use only the selected provider.
  */
-post_process_fallback_enabled?: boolean; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number;
+post_process_fallback_enabled?: boolean; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting;
+reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
 /**
  * Stable transcribe.cpp device selector, derived from the backend's
  * `device_id` when available (or its name for backends such as Metal).
  * Never persist process-local registry indices.
  */
-transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; 
 /**
  * [GRAIN] Context awareness (post-processing only): when on, the backend
  * detects the foreground app/site right before LLM post-processing and layers
@@ -1885,28 +1948,28 @@ transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
  * in, and it only affects installs that also run post-processing. HARD
  * per-app formatting is the App Modes extension's job, not a setting here.
  */
-context_awareness_enabled?: boolean;
+context_awareness_enabled?: boolean; 
 /**
  * [GRAIN] Per-profile instruction edits, stored SPARSELY — see
  * [`ContextProfileInstruction`]. Empty on a fresh install and for anyone
  * who never edits a profile, which is the common case, so this costs one
  * empty `Vec` in `AppSettings` and nothing on the prompt path.
  */
-context_profile_instructions?: ContextProfileInstruction[];
+context_profile_instructions?: ContextProfileInstruction[]; 
 /**
  * [GRAIN] User-made context profiles. These OUTRANK the built-in category
  * for any app or site they claim — see [`CustomContextProfile`]. Empty for
  * everyone who has not made one, which is the default.
  */
-context_custom_profiles?: CustomContextProfile[];
+context_custom_profiles?: CustomContextProfile[]; 
 /**
  * Enable spoken snippet expansion.
  */
-snippets_enabled?: boolean;
+snippets_enabled?: boolean; 
 /**
  * Enable the Agent and its summon shortcut.
  */
-agent_enabled?: boolean;
+agent_enabled?: boolean; 
 /**
  * [GRAIN] Paste Catch: when a dictation paste provably misses the text
  * field, keep it privately until the copy offer resolves
@@ -1914,34 +1977,46 @@ agent_enabled?: boolean;
  * paste currently loses the transcript outright, and the detection only
  * fires on positive evidence, so the failure mode is "no offer shown".
  */
-paste_catch_enabled?: boolean;
+paste_catch_enabled?: boolean; 
 /**
  * [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
  * separate from diagnostic `debug_mode`: only this switch allows native
  * folder selection and load-unpacked projects. OFF by default.
  */
-extension_developer_mode?: boolean;
+extension_developer_mode?: boolean; 
 /**
  * [GRAIN] Hosted MCP providers admitted to the Agent directory while the
  * development integration layer is enabled. IDs are resolved exclusively
  * through Grain's compiled HTTPS catalog; this is never an endpoint list.
  */
-mcp_enabled_providers?: string[];
+mcp_enabled_providers?: string[]; 
 /**
  * [GRAIN] Non-secret OAuth client IDs for hosted MCP providers that do not
  * support dynamic registration. Client secrets and tokens stay in the OS
  * credential vault and never enter AppSettings.
  */
-mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
+mcp_oauth_client_ids?: Partial<{ [key in string]: string }>; 
 /**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it
  * can answer about what is actually on screen — a chart, a diff, an error
  * dialog, a page that has no accessibility text at all.
- *
+ * 
  * OFF by default and off is free: no capture, no permission, no bytes.
  */
-agent_screen_image?: boolean;
+agent_screen_image?: boolean; 
+/**
+ * [GRAIN] Recall: write a summary of each meeting as soon as its transcript
+ * is published, through the configured AI provider. OFF by default while
+ * the feature is in development; off costs nothing.
+ */
+meet_auto_summary?: boolean; 
+/**
+ * [GRAIN] Recall: give a freshly transcribed meeting a title drawn from what
+ * was said. Only replaces the default title, never one you chose. OFF by
+ * default while the feature is in development.
+ */
+meet_auto_title?: boolean; 
 /**
  * [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
  * mid-dictation discards everything spoken before it — the transcript starts
@@ -1950,11 +2025,19 @@ agent_screen_image?: boolean;
  * resets and collapses back to the compact capsule until the next word.
  */
 scrap_that_enabled?: boolean }
-export type Attribution = { Speaker: number } |
+/**
+ * One earlier message in an "ask" conversation.
+ */
+export type AskTurn = { 
+/**
+ * `user` or `assistant`.
+ */
+role: string; content: string }
+export type Attribution = { Speaker: number } | 
 /**
  * The diarizer found no speech on this track.
  */
-"Unassigned" |
+"Unassigned" | 
 /**
  * Speaker detection did not run or failed for this track.
  */
@@ -1973,32 +2056,32 @@ export type ClipboardOffer = { id: number; expires_at_ms: number }
 export type ConnectionView = { id: string; revision: string; name: string; url: string; authentication: string; headers: Partial<{ [key in string]: string }>; oauthClient: McpPublicOAuthClient | null; state: string }
 /**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
- *
+ * 
  * Carries BOTH texts on purpose. The UI has to be able to show the effective
  * instruction, tell whether it has been edited, and put the shipped wording
  * back — and deriving "edited" from a copy of the defaults kept in TypeScript
  * is how the two drift apart. Rust ships the text; the frontend owns only the
  * label and the icon.
  */
-export type ContextProfileInfo = {
+export type ContextProfileInfo = { 
 /**
  * `email` / `work` / `casual` / `technical`.
  */
-id: string;
+id: string; 
 /**
  * What is sent to the model today: the user's edit, or the default.
  */
-instruction: string;
+instruction: string; 
 /**
  * The shipped wording, for "reset to default".
  */
-default_instruction: string;
+default_instruction: string; 
 /**
  * Whether the user has edited this profile. An override trimmed to empty
  * counts as edited — "this profile says nothing" is a deliberate choice,
  * not an absent one.
  */
-edited: boolean;
+edited: boolean; 
 /**
  * A few real hosts this profile covers, for the card's icon stack. Derived
  * from the site table, so the card cannot claim a site the profile does
@@ -2007,14 +2090,14 @@ edited: boolean;
 sample_sites: string[] }
 /**
  * [GRAIN] A user's edit to one context-awareness profile's instruction.
- *
+ * 
  * **Overrides only.** A profile the user has never touched does not appear
  * here at all, and keeps using the instruction compiled into the binary. That
  * is the whole reason this is a sparse list rather than a full copy of the
  * four texts: storing them all would freeze every user on whatever wording
  * shipped the day they first opened the tab, and improvements to the defaults
  * would then only ever reach people who had never looked at the feature.
- *
+ * 
  * `id` is [`AppCategory::profile_id`] — "email" / "work" / "casual" /
  * "technical". An unknown id is ignored rather than rejected, so a settings
  * file written by a newer build (or a profile that is later renamed) degrades
@@ -2023,13 +2106,13 @@ sample_sites: string[] }
 export type ContextProfileInstruction = { id: string; instruction: string }
 /**
  * [GRAIN] One app or website a custom context profile claims.
- *
+ * 
  * `value` is an executable stem for `application` (lowercased, no extension,
  * e.g. `figma`) and a bare host for `website` (no scheme, no path, e.g.
  * `figma.com`). Anything else is ignored at match time rather than rejected at
  * write time — a target that names nothing simply never matches.
  */
-export type ContextProfileTarget = {
+export type ContextProfileTarget = { 
 /**
  * `application` or `website`.
  */
@@ -2037,7 +2120,7 @@ kind: string; value: string }
 /**
  * [GRAIN] A profile the user made, which OUTRANKS the built-in category for
  * every app and site it claims.
- *
+ * 
  * The precedence is the whole point: naming a surface is a statement that the
  * built-in guess is wrong for it. A profile is allowed exactly one target —
  * that is how "this one app gets its own instruction" is expressed, and it
@@ -2051,26 +2134,26 @@ export type DefaultPanel = "settings" | "quick_panel"
  * focused app" button when creating a mode. Backend-side detection so the same
  * exe-stem normalization used at match time pre-fills the matcher exactly.
  */
-export type DetectedApp = {
+export type DetectedApp = { 
 /**
  * Executable stem (the value a `Process` mode matches on).
  */
-exe: string;
+exe: string; 
 /**
  * Full, launchable executable path (for voice actions' app capture). Empty
  * when it couldn't be resolved.
  */
-exe_path: string;
+exe_path: string; 
 /**
  * Human-facing name (window title, for display).
  */
-name: string;
+name: string; 
 /**
  * Browser address-bar host, when the foreground app is a browser and the
  * URL reader resolved it. `None` otherwise.
  */
 url_host: string | null }
-export type DictionarySuggestion = { id: number; original: string; corrected: string;
+export type DictionarySuggestion = { id: number; original: string; corrected: string; 
 /**
  * Wall-clock deadline for the renderer's countdown. Cleared on save failure.
  */
@@ -2080,7 +2163,7 @@ export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
 export type GrainOverlayPosition = OverlayPosition
 export type HideOverlay = null
-export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean;
+export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean; 
 /**
  * The name of the file this entry was transcribed from; `None` for a
  * dictation.
@@ -2090,7 +2173,7 @@ export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { 
 /**
  * Result of changing keyboard implementation
  */
-export type ImplementationChangeResult = { success: boolean;
+export type ImplementationChangeResult = { success: boolean; 
 /**
  * List of binding IDs that were reset to defaults due to incompatibility
  */
@@ -2098,17 +2181,17 @@ reset_bindings: string[] }
 /**
  * One launchable application.
  */
-export type InstalledApp = {
+export type InstalledApp = { 
 /**
  * What the Start menu calls it.
  */
-name: string;
+name: string; 
 /**
  * The identity a context profile stores: a lowercased executable stem for a
  * desktop app (`code`), an AppUserModelID for a packaged one
  * (`Claude_pzs8sxrjxfjjc!Claude`). Matched against the foreground window.
  */
-target: string;
+target: string; 
 /**
  * What to ask the Shell for a picture of: the executable's full path, or
  * the AppUserModelID. Distinct from `target` because matching wants the
@@ -2116,7 +2199,7 @@ target: string;
  * icons want the most specific one.
  */
 icon_id: string }
-export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null;
+export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
  * Counts only — key identity is deliberately never captured.
  */
@@ -2125,7 +2208,7 @@ export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
-export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean;
+export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean; 
 /**
  * Stored credentials are not a live health check.
  * Storage inventory plus the last generation-owned recovery observation.
@@ -2145,30 +2228,42 @@ export type MeetDiarizerProgress = { downloaded: number; total: number }
  * Recall's audio sources and what this device can offer.
  */
 export type MeetSources = { settings: SourceSettings; microphones: SourceDevice[]; outputs: SourceDevice[]; system_audio_supported: boolean }
-export type MeetStatus = { recording: RecordingStatus | null; processing: ProcessingStatus | null;
+export type MeetStatus = { recording: RecordingStatus | null; processing: ProcessingStatus | null; 
 /**
  * The last processing failure, until the next attempt starts.
  */
-last_error: string | null }
+last_error: string | null; 
+/**
+ * The meeting whose AI summary or title is being written, if any.
+ */
+summarizing: string | null }
 /**
  * Grain Meet state changed; the payload is the full current status.
  */
 export type MeetStatusChanged = MeetStatus
-export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null;
+/**
+ * A saved AI summary, tied to the transcript revision it was written from.
+ */
+export type MeetSummaryDoc = { transcript_revision: number; created_unix_ms: number; 
+/**
+ * Markdown.
+ */
+text: string }
+export type MeetingSummary = { id: string; title: string; created_unix_ms: number; state: SessionState; duration_ms: number; transcript_revision: number | null; 
 /**
  * The opening words of the newest transcript, for the list.
  */
-preview: string | null;
+preview: string | null; 
 /**
  * Speakers in the newest transcript (0 before transcription).
  */
-speaker_count: number;
+speaker_count: number; 
 /**
  * What each track recorded, in track order.
  */
 sources: SourceKind[] }
 export type MicLevel = number[]
-export type MicrophoneChoice = { enabled: boolean;
+export type MicrophoneChoice = { enabled: boolean; 
 /**
  * A `handy-recorder` device id; `None` follows the system default.
  */
@@ -2204,21 +2299,21 @@ export type ModelRef = { file: string; arch: string; variant: string; backend: s
  * Where a model comes from and how Handy obtains it — the routing discriminant
  * for downloading and on-disk resolution.
  */
-export type ModelSource =
+export type ModelSource = 
 /**
  * Direct HTTP download from a URL (current blob.handy.computer hosting).
  */
-{ Url: { url: string;
+{ Url: { url: string; 
 /**
  * Expected SHA-256 for integrity verification; `None` skips it.
  */
-sha256: string | null } } |
+sha256: string | null } } | 
 /**
  * A file inside a Hugging Face Hub repo, fetched via hf-hub into the shared
  * HF cache (so other tools reuse it). The file within the repo is
  * [`ModelInfo::filename`].
  */
-{ HuggingFace: { repo_id: string; revision: string } } |
+{ HuggingFace: { repo_id: string; revision: string } } | 
 /**
  * Already present on disk — a user-provided custom model, or one discovered
  * in a shared cache. Nothing to download.
@@ -2238,12 +2333,12 @@ export type ModelVerificationCompleted = string
  * Checksum verification began.
  */
 export type ModelVerificationStarted = string
-export type OnboardingState = { step: OnboardingStep;
+export type OnboardingState = { step: OnboardingStep; 
 /**
  * Has models already. Decides where "permissions granted" goes next: a
  * returning user goes straight to the app, a new user picks a model first.
  */
-is_returning_user: boolean;
+is_returning_user: boolean; 
 /**
  * True when `step` is `Accessibility` *because a permission is missing*
  * rather than because this is a first run. Lets the UI say "Grain lost
@@ -2253,20 +2348,20 @@ blocked_on_permissions: boolean }
 /**
  * Which screen the app should open on.
  */
-export type OnboardingStep =
+export type OnboardingStep = 
 /**
  * Permissions screen — either first-run, or a returning user who has since
  * had a permission revoked.
  */
-"accessibility" |
+"accessibility" | 
 /**
  * Choose and download the models for a new user.
  */
-"model" |
+"model" | 
 /**
  * Choose the everyday capture mode and configure its real global shortcut.
  */
-"shortcuts" |
+"shortcuts" | 
 /**
  * Nothing in the way; show the app.
  */
@@ -2292,7 +2387,7 @@ export type PasteError = null
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessApiFormat = "open_ai" | "anthropic"
-export type PostProcessProvider = { api_format?: PostProcessApiFormat; id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean;
+export type PostProcessProvider = { api_format?: PostProcessApiFormat; id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean; 
 /**
  * [GRAIN] Included in ordered fallback when true.
  */
@@ -2317,7 +2412,7 @@ export type RecordingStatus = { session_id: string; elapsed_ms: number; sources:
  * resolved against the OS. Lives in the SDK because it crosses the wire inside
  * [`DaemonEvent::ThemeConfig`]; grain-core re-exports it next to the
  * `ThemeMode` preference that produces it.
- *
+ * 
  * Only the resolved answer travels. A surface that received `System` would
  * have to ask the OS itself. The settings window, pill and Agent panel must
  * paint the same resolved answer.
@@ -2328,43 +2423,43 @@ export type ResolvedTheme = "light" | "dark"
  * [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
  */
 export type SecretMap = Partial<{ [key in string]: string }>
-export type SecureInputStatus = {
+export type SecureInputStatus = { 
 /**
  * Secure input is currently enabled (live check)
  */
-enabled: boolean;
+enabled: boolean; 
 /**
  * Enabled continuously long enough to be considered stuck (not just a
  * password field gaining momentary focus)
  */
-sustained: boolean; culprit_pid: number | null; culprit_name: string | null;
+sustained: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
  * Carbon fallback registrations are currently active
  */
-fallback_active: boolean;
+fallback_active: boolean; 
 /**
  * Binding ids shadow-registered with identical semantics
  */
-covered_bindings: string[];
+covered_bindings: string[]; 
 /**
  * Side-specific binding ids widened to match either side while shadowed
  */
-degraded_bindings: string[];
+degraded_bindings: string[]; 
 /**
  * Binding ids that cannot fire at all (e.g. fn+key, registration failure)
  */
-uncovered_bindings: string[];
+uncovered_bindings: string[]; 
 /**
  * The user tried to record a shortcut while secure input was active.
  * Treated as user impact even when every binding is covered, so the
  * warning banner appears and explains why recording refused.
  */
 recorder_blocked: boolean }
-export type SessionState =
+export type SessionState = 
 /**
  * Capture may still append; unsealed chunks may exist.
  */
-"Recording" |
+"Recording" | 
 /**
  * Every chunk is sealed; the recording is complete or recovered.
  */
@@ -2386,24 +2481,24 @@ export type SoundTheme = "marimba" | "pop" | "custom"
 export type SourceDevice = { id: string; name: string; is_default: boolean }
 export type SourceKind = "Microphone" | "SystemAudio"
 export type SourceSettings = { microphone: MicrophoneChoice; system_audio: SystemAudioChoice }
-export type SourceStatus = { kind: SourceKind;
+export type SourceStatus = { kind: SourceKind; 
 /**
  * The device being recorded.
  */
-name: string; recorded_ms: number;
+name: string; recorded_ms: number; 
 /**
  * Peak audio level since the previous status read, 0 to 1.
  */
-level: number;
+level: number; 
 /**
  * False while this source is not delivering audio.
  */
 active: boolean }
-export type Speaker = {
+export type Speaker = { 
 /**
  * Stable within a revision: `t{track}-s{slot}`.
  */
-id: string; track: number; slot: number;
+id: string; track: number; slot: number; 
 /**
  * Anonymous label, numbered across the meeting.
  */
@@ -2415,13 +2510,13 @@ export type Stage = "Preparing" | "IdentifyingSpeakers" | "Transcribing" | "Publ
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
-export type StreamPhase =
+export type StreamPhase = 
 /**
  * Receiving audio / live text (or waiting for the stream to begin). Rust
  * does not emit this today; the frontend starts in this phase and Rust only
  * emits transitions away from it.
  */
-"listening" |
+"listening" | 
 /**
  * Finalizing or post-processing — show a spinner.
  */
@@ -2429,7 +2524,7 @@ export type StreamPhase =
 /**
  * Emitted to switch the streaming overlay to a working spinner.
  */
-export type StreamPhaseEvent = { phase: StreamPhase;
+export type StreamPhaseEvent = { phase: StreamPhase; 
 /**
  * Present only when `phase` is `Working`.
  */
@@ -2444,7 +2539,7 @@ export type StreamTextEvent = { committed: string; tentative: string }
  * Semantic kind of "working" phase, used to localize the spinner label.
  */
 export type StreamWorkKind = "transcribing" | "polishing"
-export type SystemAudioChoice = { enabled: boolean;
+export type SystemAudioChoice = { enabled: boolean; 
 /**
  * A cpal output device id; `None` follows the default output.
  */
@@ -2456,10 +2551,10 @@ device_id: string | null }
 export type ThemeChanged = { mode: ThemeMode; resolved: ResolvedTheme }
 /**
  * [GRAIN] Which colour scheme the user asked for.
- *
+ * 
  * This is the *preference*, not the answer — `System` still has to be resolved
  * against what the OS is currently doing. See `grain_theme` for that half.
- *
+ * 
  * It lives in settings rather than `localStorage` because Grain paints more
  * surfaces than the settings window: recording pills, Agent and host-owned
  * Extension Mode windows all need the same authoritative preference.
@@ -2470,28 +2565,28 @@ export type ThemeMode = "system" | "light" | "dark"
  * immediately *and* show the right radio button without a second round trip.
  */
 export type ThemeState = { mode: ThemeMode; resolved: ResolvedTheme }
-export type TrackStatus = "Complete" |
+export type TrackStatus = "Complete" | 
 /**
  * Text without speakers; the transcript is still useful.
  */
-{ SpeakersUnavailable: { reason: string } } |
+{ SpeakersUnavailable: { reason: string } } | 
 /**
  * No text for this track; its audio is kept for a retry.
  */
-{ Failed: { reason: string } } |
+{ Failed: { reason: string } } | 
 /**
  * Longer than the per-track processing cap; its audio is kept.
  */
-{ TooLong: { minutes: number; limit_minutes: number } } |
+{ TooLong: { minutes: number; limit_minutes: number } } | 
 /**
  * The track holds no audio.
  */
 "Empty"
-export type TrackTranscript = { track: number; status: TrackStatus;
+export type TrackTranscript = { track: number; status: TrackStatus; 
 /**
  * The reviewed full-sequence text of the track's ASR.
  */
-text: string; words: Word[];
+text: string; words: Word[]; 
 /**
  * Raw diarizer activity kept as evidence, so attribution can be
  * recomputed without repeating capture or inference.
@@ -2510,15 +2605,15 @@ export type TranscriptRevision = { version: number; revision: number; session_id
  * A background transcription of one History entry.
  */
 export type TranscriptionJob = { entry_id: number; status: TranscriptionJobStatus }
-export type TranscriptionJobStatus =
+export type TranscriptionJobStatus = 
 /**
  * Waiting behind another job.
  */
-{ state: "queued" } |
+{ state: "queued" } | 
 /**
  * `percent` of the audio is transcribed.
  */
-{ state: "running"; percent: number } |
+{ state: "running"; percent: number } | 
 /**
  * The entry has its new text.
  */
@@ -2532,7 +2627,7 @@ export type UpdateAvailable = { update: UpdateInfo }
 /**
  * Download progress for an update, so a 100 MB installer is not a dead button.
  */
-export type UpdateDownloadProgress = { downloaded: number;
+export type UpdateDownloadProgress = { downloaded: number; 
 /**
  * `0` when the server sends no content length.
  */
@@ -2540,22 +2635,22 @@ total: number; percentage: number }
 /**
  * A release newer than the running build.
  */
-export type UpdateInfo = {
+export type UpdateInfo = { 
 /**
  * Version of the available release, e.g. `0.0.2`.
  */
-version: string;
+version: string; 
 /**
  * Release notes, when the release carried a body.
  */
-notes: string | null;
+notes: string | null; 
 /**
  * RFC 3339 publication date as `latest.json` reported it.
  */
 date: string | null }
 export type VadBackend = "silero" | "earshot"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
-export type Word = { text: string;
+export type Word = { text: string; 
 /**
  * Meeting clock, milliseconds from the session start.
  */

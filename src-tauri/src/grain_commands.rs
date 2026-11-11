@@ -587,6 +587,28 @@ pub fn change_agent_screen_image_setting(app: AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
+/// [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
+/// by default; see `Settings::meet_auto_summary`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meet_auto_summary_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meet_auto_summary = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Recall: title a freshly transcribed meeting from what was said. OFF
+/// by default; see `Settings::meet_auto_title`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meet_auto_title_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meet_auto_title = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be
 /// resolved (unsupported platform, no foreground window). Silent — no UI.
 #[tauri::command]

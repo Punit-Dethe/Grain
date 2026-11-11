@@ -790,6 +790,16 @@ pub struct AppSettings {
     /// OFF by default and off is free: no capture, no permission, no bytes.
     #[serde(default)]
     pub agent_screen_image: bool,
+    /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
+    /// is published, through the configured AI provider. OFF by default while
+    /// the feature is in development; off costs nothing.
+    #[serde(default)]
+    pub meet_auto_summary: bool,
+    /// [GRAIN] Recall: give a freshly transcribed meeting a title drawn from what
+    /// was said. Only replaces the default title, never one you chose. OFF by
+    /// default while the feature is in development.
+    #[serde(default)]
+    pub meet_auto_title: bool,
     /// [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
     /// mid-dictation discards everything spoken before it — the transcript starts
     /// fresh from that point. Reuses the snippet matcher (no new engine), so OFF
@@ -1580,6 +1590,8 @@ pub fn get_default_settings() -> AppSettings {
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),
         agent_screen_image: false,
+        meet_auto_summary: false,
+        meet_auto_title: false,
         scrap_that_enabled: false,
     }
 }

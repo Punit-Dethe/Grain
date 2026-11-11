@@ -32,6 +32,9 @@ import type {
   TranscriptRevision,
 } from "@/bindings";
 import { Dropdown } from "../components/ui/Dropdown";
+import { AskTab } from "../meet/AskTab";
+import { SummaryTab } from "../meet/SummaryTab";
+import { MeetSettingsPage } from "./MeetSettingsPage";
 import { hashForRoute } from "../navigation";
 import studioFeatureContextBg from "../overview/studio-feature-context.webp";
 import {
@@ -68,6 +71,8 @@ const STAGES: Stage[] = [
   "Publishing",
 ];
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
+const MEET_TABS = ["transcript", "summary", "ask"] as const;
+type MeetTab = (typeof MEET_TABS)[number];
 const SKIP_MS = 10_000;
 
 function errorText(error: unknown): string {
@@ -1145,6 +1150,7 @@ function MeetingView({
   const [transcript, setTranscript] = useState<TranscriptRevision | null>(null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<MeetTab>("transcript");
   const processing = meet.status.processing;
   const isProcessing = processing?.session_id === meeting.id;
   const isRecording = meet.status.recording?.session_id === meeting.id;
@@ -1246,6 +1252,9 @@ function MeetingView({
       behavior: reduce ? "auto" : "smooth",
     });
   }, [heardKey, playback.playing]);
+  const hasTranscript = meeting.transcript_revision != null;
+  // Summary and Ask AI read the transcript, so they wait for one.
+  const activeTab: MeetTab = hasTranscript ? tab : "transcript";
   const multiSource = new Set(meeting.sources).size > 1;
   const { seek } = playback;
   const onSeek = useCallback((ms: number) => void seek(ms), [seek]);
@@ -1526,6 +1535,58 @@ function MeetingView({
               {sourcesText}
             </span>
           </p>
+          {!isRecording && (
+            <div
+              className="meet-tabs"
+              role="tablist"
+              aria-label={t("ui2.meet.tabs.label")}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowRight" && event.key !== "ArrowLeft")
+                  return;
+                const enabled = MEET_TABS.filter(
+                  (id) => id === "transcript" || hasTranscript,
+                );
+                const at = enabled.indexOf(activeTab);
+                const next =
+                  enabled[
+                    (at +
+                      (event.key === "ArrowRight" ? 1 : -1) +
+                      enabled.length) %
+                      enabled.length
+                  ];
+                setTab(next);
+                document.getElementById(`meet-tab-${next}`)?.focus();
+                event.preventDefault();
+              }}
+            >
+              {MEET_TABS.map((id) => {
+                const unavailable = id !== "transcript" && !hasTranscript;
+                return (
+                  <button
+                    key={id}
+                    id={`meet-tab-${id}`}
+                    className="meet-tab"
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === id}
+                    aria-controls="meet-tabpanel"
+                    aria-disabled={unavailable}
+                    tabIndex={activeTab === id ? 0 : -1}
+                    title={
+                      unavailable
+                        ? t("ui2.meet.tabs.needsTranscript")
+                        : undefined
+                    }
+                    onClick={() => {
+                      if (!unavailable) setTab(id);
+                    }}
+                  >
+                    {t(`ui2.meet.tabs.${id}`)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </header>
 
         {isProcessing && processing && (
@@ -1543,7 +1604,20 @@ function MeetingView({
           </p>
         )}
 
-        <div className="meet-view-body">{body}</div>
+        <div
+          className="meet-view-body"
+          id="meet-tabpanel"
+          role={isRecording ? undefined : "tabpanel"}
+          aria-labelledby={isRecording ? undefined : `meet-tab-${activeTab}`}
+        >
+          {!isRecording && activeTab === "summary" ? (
+            <SummaryTab meet={meet} meeting={meeting} />
+          ) : !isRecording && activeTab === "ask" ? (
+            <AskTab meet={meet} meeting={meeting} />
+          ) : (
+            body
+          )}
+        </div>
       </article>
       {!isRecording && (
         <Player
@@ -1557,7 +1631,22 @@ function MeetingView({
   );
 }
 
-export function MeetPage({ meetingId }: { meetingId: string | null }) {
+/** Recall: the recordings list, one meeting, or Recall's own settings page. */
+export function MeetPage({
+  meetingId,
+  settings = false,
+}: {
+  meetingId: string | null;
+  settings?: boolean;
+}) {
+  return settings ? (
+    <MeetSettingsPage />
+  ) : (
+    <MeetWorkspace meetingId={meetingId} />
+  );
+}
+
+function MeetWorkspace({ meetingId }: { meetingId: string | null }) {
   const { t } = useTranslation();
   const meet = useMeetController();
   const [filters, setFilters] = useState<RecordingFilters>({
@@ -1607,7 +1696,12 @@ export function MeetPage({ meetingId }: { meetingId: string | null }) {
             <button
               className="button meet-hero-settings"
               type="button"
-              disabled
+              onClick={() =>
+                (window.location.hash = hashForRoute({
+                  page: "meet",
+                  settings: true,
+                }))
+              }
             >
               <Glyph name="sliders" />
               {t("ui2.nav.settings")}

@@ -1098,6 +1098,53 @@
         "downloading": "Downloading speaker model, {{percent}}%",
         "ready": "Speaker model installed"
       },
+      "tabs": {
+        "label": "Meeting views",
+        "transcript": "Transcript",
+        "summary": "Summary",
+        "ask": "Ask AI",
+        "needsTranscript": "Transcribe this recording to use this view."
+      },
+      "ai": {
+        "requiredTitle": "Connect an AI provider",
+        "requiredBody": "Summaries and questions use the AI provider you set up for cleanup. Add one with a model in AI settings.",
+        "openSettings": "Open AI settings"
+      },
+      "summary": {
+        "emptyTitle": "No summary yet",
+        "emptyBody": "Let Grain read the transcript and write the notes: what was said, what was decided and who said what.",
+        "write": "Write summary",
+        "rewrite": "Rewrite",
+        "writing": "Writing the summary…",
+        "writingBody": "This takes a few seconds for a short meeting and longer for a long one.",
+        "written": "Written {{time}}",
+        "stale": "From an earlier transcript",
+        "copy": "Copy summary",
+        "copied": "Summary copied",
+        "automatic": "Write summaries automatically in Recall settings"
+      },
+      "ask": {
+        "title": "Ask about this meeting",
+        "body": "Answers come from the transcript only. Speakers are Speaker 1, Speaker 2 and so on.",
+        "placeholder": "Ask a question…",
+        "send": "Send",
+        "thinking": "Reading the transcript…",
+        "suggestions": {
+          "decisions": "What were the main decisions?",
+          "actions": "List the action items.",
+          "wants": "What did each speaker want?"
+        }
+      },
+      "settings": {
+        "title": "Recall settings",
+        "subtitle": "Choose what Recall does on its own after a meeting is transcribed.",
+        "automatic": "Automatic notes",
+        "autoSummary": "Auto summary",
+        "autoSummaryDescription": "Write a summary of every meeting as soon as it is transcribed, using your AI provider.",
+        "autoTitle": "Auto title",
+        "autoTitleDescription": "Name new meetings from what was said. Only replaces the default title, never one you chose.",
+        "aiMissing": "No AI provider is set up yet, so these have nothing to run on."
+      },
       "list": {
         "heading": "Recordings",
         "search": "Search recordings",

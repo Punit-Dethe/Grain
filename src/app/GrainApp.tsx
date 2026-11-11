@@ -685,7 +685,10 @@ function NextShell() {
         {route.page === "history" ? (
           <HistorySettings variant="next" controller={history} />
         ) : route.page === "meet" ? (
-          <MeetPage meetingId={route.meeting ?? null} />
+          <MeetPage
+            meetingId={route.meeting ?? null}
+            settings={route.settings === true}
+          />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (

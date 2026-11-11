@@ -1381,6 +1381,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_enabled_setting,
             grain_commands::change_snippets_enabled_setting,
             grain_commands::change_agent_screen_image_setting,
+            grain_commands::change_meet_auto_summary_setting, // [GRAIN]
+            grain_commands::change_meet_auto_title_setting,   // [GRAIN]
             grain_commands::change_scrap_that_enabled_setting,
             grain_commands::change_paste_catch_enabled_setting,
             grain_dictionary::set_learn_from_edits,
@@ -1512,6 +1514,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::commands::meet_playback_audio,
             grain_meet::commands::meet_diarizer_installed,
             grain_meet::commands::meet_download_diarizer,
+            grain_meet::ai::meet_ai_available,    // [GRAIN]
+            grain_meet::ai::meet_summary,         // [GRAIN]
+            grain_meet::ai::meet_generate_summary, // [GRAIN]
+            grain_meet::ai::meet_ask,             // [GRAIN]
         ])
         .events(collect_events![
             grain_update::UpdateAvailable,

@@ -244,6 +244,10 @@ const settingUpdaters: {
     commands.changeScrapThatEnabledSetting(value as boolean),
   agent_screen_image: (value) =>
     commands.changeAgentScreenImageSetting(value as boolean),
+  meet_auto_summary: (value) =>
+    commands.changeMeetAutoSummarySetting(value as boolean),
+  meet_auto_title: (value) =>
+    commands.changeMeetAutoTitleSetting(value as boolean),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>

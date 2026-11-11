@@ -10,6 +10,7 @@
 // Wired by capture and the Meet commands; exercised by tests until then.
 #![cfg_attr(not(test), allow(dead_code))]
 
+pub mod ai;
 pub mod analysis;
 pub mod commands;
 pub mod processing;
