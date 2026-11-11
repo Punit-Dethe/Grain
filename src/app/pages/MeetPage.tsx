@@ -179,6 +179,7 @@ function SourceControl({
         ) : (
           <MutedIcon className="icon sm" aria-hidden="true" />
         )}
+        <span className="meet-source-name">{name}</span>
       </button>
       <Dropdown
         compact
@@ -247,12 +248,15 @@ function CaptureDock({ meet }: { meet: MeetController }) {
       )}
       <div className="meet-toolbar">
         {recording ? (
-          <span
-            className="meet-record-clock"
-            role="timer"
-            aria-label={t("ui2.meet.live.label")}
-          >
-            {formatClock(recording.elapsed_ms)}
+          <span className="meet-record-live">
+            <span className="meet-record-dot" aria-hidden="true" />
+            <span
+              className="meet-record-clock"
+              role="timer"
+              aria-label={t("ui2.meet.live.label")}
+            >
+              {formatClock(recording.elapsed_ms)}
+            </span>
           </span>
         ) : (
           <div
@@ -291,7 +295,7 @@ function CaptureDock({ meet }: { meet: MeetController }) {
           </div>
         )}
         <button
-          className="button meet-record-action"
+          className="button primary meet-record-action"
           type="button"
           aria-disabled={recordDisabled}
           onClick={() => {
