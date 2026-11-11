@@ -213,19 +213,17 @@ html[data-window="agent-panel"] body {
   transition-delay: 90ms, 0ms;
 }
 
-.agent-notch-wave {
-  display: flex;
-  flex: none;
-  align-items: center;
-  color: #dcdce2;
-}
-
-.agent-notch-wave .swave {
-  display: flex;
-}
-
-.agent-notch-wave svg {
-  height: 17px;
+/* The voice: the bottom fade, lifted and brightened by the mic level
+   (AgentVoiceFade writes transform and opacity). Scales from the bottom edge. */
+.agent-notch-voice {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: bottom;
+  will-change: transform, opacity;
+  background: linear-gradient(to top, #ffffff3d, #ffffff0d 55%, transparent);
 }
 
 .agent-notch-control,

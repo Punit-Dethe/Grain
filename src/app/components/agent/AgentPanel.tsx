@@ -10,7 +10,7 @@ import {
   type AgentReply,
 } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
-import { CaptureWaveform } from "../../overlay/CaptureWaveform";
+import { AgentVoiceFade } from "./AgentVoiceFade";
 import { AgentWorkingLabel } from "./AgentWorkingLabel";
 
 type Role = "user" | "assistant";
@@ -482,6 +482,11 @@ export function AgentPanel() {
         }
         aria-label={t("agent.brand")}
       >
+        {!revealed && (
+          <AgentVoiceFade
+            active={!!capture?.listening && !capture.working && !closing}
+          />
+        )}
         {/* One header for both states: the compact status crossfades into the
             brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">
@@ -506,11 +511,6 @@ export function AgentPanel() {
               {t("agent.brand")}
             </span>
           </span>
-          {!revealed && capture?.listening && !capture.working && (
-            <div className="agent-notch-wave">
-              <CaptureWaveform ready session={capture?.generation ?? 0} />
-            </div>
-          )}
           <button
             type="button"
             className="agent-notch-control agent-notch-close"
