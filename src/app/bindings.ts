@@ -1618,8 +1618,9 @@ async meetSetSources(settings: SourceSettings) : Promise<Result<null, string>> {
 }
 },
 /**
- * [GRAIN] Mute or unmute one source of the recording in progress. A muted
- * source keeps running and is written as silence.
+ * [GRAIN] Mute or unmute one source of the recording in progress. Muting
+ * closes its device; unmuting reopens it. A source that was off when the
+ * recording began is opened the first time it is turned on.
  */
 async meetSetSourceMuted(kind: SourceKind, muted: boolean) : Promise<Result<null, string>> {
     try {
