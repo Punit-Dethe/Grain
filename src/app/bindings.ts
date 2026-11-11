@@ -627,6 +627,18 @@ async changeMeetAutoTitleSetting(enabled: boolean) : Promise<Result<null, string
 }
 },
 /**
+ * [GRAIN] Recall: transcribe a meeting as soon as it is stopped. OFF by
+ * default; see `Settings::meet_auto_transcribe`.
+ */
+async changeMeetAutoTranscribeSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_meet_auto_transcribe_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
  * matcher is never invoked for it).
  */
@@ -1606,6 +1618,18 @@ async meetSetSources(settings: SourceSettings) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Mute or unmute one source of the recording in progress. A muted
+ * source keeps running and is written as silence.
+ */
+async meetSetSourceMuted(kind: SourceKind, muted: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_set_source_muted", { kind, muted }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Start recording the enabled sources into a new meeting. Returns its id.
  */
 async meetStartRecording(title: string | null) : Promise<Result<string, string>> {
@@ -1683,8 +1707,9 @@ async meetDelete(sessionId: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * The meeting's playback file (created on first request): every track mixed
- * on the meeting clock. Only that one file is opened to the webview.
+ * The meeting's playback file (built once, normally right after
+ * transcription): every track mixed on the meeting clock. Only that one file
+ * is opened to the webview.
  */
 async meetPlaybackAudio(sessionId: string) : Promise<Result<string, string>> {
     try {
@@ -2011,6 +2036,12 @@ agent_screen_image?: boolean;
  * the feature is in development; off costs nothing.
  */
 meet_auto_summary?: boolean; 
+/**
+ * [GRAIN] Recall: start transcribing a meeting the moment it is stopped,
+ * instead of waiting for the Transcribe button. OFF by default while the
+ * feature is in development.
+ */
+meet_auto_transcribe?: boolean; 
 /**
  * [GRAIN] Recall: give a freshly transcribed meeting a title drawn from what
  * was said. Only replaces the default title, never one you chose. OFF by
@@ -2493,7 +2524,11 @@ level: number;
 /**
  * False while this source is not delivering audio.
  */
-active: boolean }
+active: boolean; 
+/**
+ * Muted for the rest of this recording (or until unmuted).
+ */
+muted: boolean }
 export type Speaker = { 
 /**
  * Stable within a revision: `t{track}-s{slot}`.

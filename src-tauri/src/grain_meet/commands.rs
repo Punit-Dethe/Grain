@@ -41,6 +41,8 @@ pub struct SourceStatus {
     pub level: f32,
     /// False while this source is not delivering audio.
     pub active: bool,
+    /// Muted for the rest of this recording (or until unmuted).
+    pub muted: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -164,6 +166,7 @@ fn snapshot(state: &State) -> MeetStatus {
                     recorded_ms: source.frames_ns.load(Ordering::Acquire) / 1_000_000,
                     level: f32::from_bits(source.level.swap(0, Ordering::AcqRel)),
                     active: source.active.load(Ordering::Acquire),
+                    muted: source.muted.load(Ordering::Acquire),
                 })
                 .collect(),
             error: recording
@@ -340,7 +343,36 @@ pub async fn meet_stop_recording(app: AppHandle) -> Result<MeetingSummary, Strin
     emit_status(&app);
     let manifest = result?;
     let dir = storage::session_dir(&meetings_root(&app)?, &manifest.id)?;
+    // [GRAIN] Start transcribing right away when the user asked for it. A
+    // refusal (no speaker model yet, wrong model) is shown like any other
+    // processing failure; the meeting itself is already safe.
+    if crate::settings::get_settings(&app).meet_auto_transcribe {
+        if let Err(error) = meet_process(app.clone(), manifest.id.clone()) {
+            state().last_error = Some(error);
+            emit_status(&app);
+        }
+    }
     summary(&dir, &manifest)
+}
+
+/// [GRAIN] Mute or unmute one source of the recording in progress. A muted
+/// source keeps running and is written as silence.
+#[tauri::command]
+#[specta::specta]
+pub fn meet_set_source_muted(app: AppHandle, kind: SourceKind, muted: bool) -> Result<(), String> {
+    {
+        let guard = state();
+        let recording = guard.active.as_ref().ok_or("No meeting is recording")?;
+        let source = recording
+            .progress
+            .sources
+            .iter()
+            .find(|source| source.kind == kind)
+            .ok_or("That source is not being recorded")?;
+        source.muted.store(muted, Ordering::Release);
+    }
+    emit_status(&app);
+    Ok(())
 }
 
 /// Start processing a recorded meeting in the background.

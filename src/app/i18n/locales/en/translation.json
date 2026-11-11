@@ -1090,7 +1090,9 @@
       },
       "live": {
         "label": "Recording in progress",
-        "recording": "Recording · transcribed on this device after you stop"
+        "recording": "Recording · transcribed on this device after you stop",
+        "mute": "Mute {{source}}",
+        "unmute": "Unmute {{source}}"
       },
       "speakerModel": {
         "body": "Labelling who spoke needs a one-time 106 MB download. Recording works without it.",
@@ -1137,7 +1139,10 @@
       },
       "settings": {
         "title": "Recall settings",
-        "subtitle": "Choose what Recall does on its own after a meeting is transcribed.",
+        "subtitle": "Choose what Recall does on its own after a meeting.",
+        "afterRecording": "After recording",
+        "autoTranscribe": "Transcribe when I stop",
+        "autoTranscribeDescription": "Start transcribing the moment a meeting ends, instead of waiting for you to press Transcribe.",
         "automatic": "Automatic notes",
         "autoSummary": "Auto summary",
         "autoSummaryDescription": "Write a summary of every meeting as soon as it is transcribed, using your AI provider.",

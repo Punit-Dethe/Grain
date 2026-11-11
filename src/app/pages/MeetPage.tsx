@@ -17,6 +17,7 @@ import {
   CalendarDays,
   Info,
   FileText,
+  Users,
   MicOff,
   Pencil,
   VolumeOff,
@@ -25,6 +26,7 @@ import { toast } from "sonner";
 import type {
   MeetingSummary,
   SourceDevice,
+  SourceStatus,
   SourceKind,
   SourceSettings,
   Stage,
@@ -49,7 +51,6 @@ import {
 import {
   groupByDay,
   highlightParts,
-  speakerShares,
   turnAt,
   wordAt,
   type RecordingFilters,
@@ -213,6 +214,66 @@ function SourceControl({
   );
 }
 
+const METER_SEGMENTS = 8;
+/** Peak amplitude to a 0..1 meter fill: -50 dB is empty, -6 dB is full. */
+function meterFill(peak: number): number {
+  const db = 20 * Math.log10(Math.max(peak, 1e-5));
+  return Math.min(1, Math.max(0, (db + 50) / 44));
+}
+
+/** Stacked bars that darken from the bottom up with the signal. The level
+ * rises at once and falls away smoothly. */
+function LevelMeter({ source }: { source: SourceStatus }) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    setShown((previous) =>
+      source.muted ? 0 : Math.max(meterFill(source.level), previous * 0.7),
+    );
+  }, [source]);
+  const lit = shown < 0.04 ? 0 : Math.ceil(shown * METER_SEGMENTS);
+  return (
+    <span className="meet-meter" aria-hidden="true">
+      {Array.from({ length: METER_SEGMENTS }, (_, index) => (
+        <i key={index} className={index < lit ? "is-lit" : undefined} />
+      ))}
+    </span>
+  );
+}
+
+/** One source while recording: its icon and level. Pressing it mutes or
+ * unmutes that source for the rest of the recording. */
+function LiveSource({
+  source,
+  onToggle,
+}: {
+  source: SourceStatus;
+  onToggle: (muted: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const name = sourceName(source.kind, t);
+  const MutedIcon = source.kind === "Microphone" ? MicOff : VolumeOff;
+  const label = source.muted
+    ? t("ui2.meet.live.unmute", { source: name })
+    : t("ui2.meet.live.mute", { source: name });
+  return (
+    <button
+      className="meet-live-source"
+      type="button"
+      aria-pressed={!source.muted}
+      aria-label={label}
+      title={label}
+      onClick={() => onToggle(!source.muted)}
+    >
+      {source.muted ? (
+        <MutedIcon className="icon sm" aria-hidden="true" />
+      ) : (
+        <Glyph name={SOURCE_ICON[source.kind]} />
+      )}
+      <LevelMeter source={source} />
+    </button>
+  );
+}
+
 type CaptureCommand = "sources" | "start" | "stop";
 
 function CaptureDock({ meet }: { meet: MeetController }) {
@@ -261,16 +322,35 @@ function CaptureDock({ meet }: { meet: MeetController }) {
       )}
       <div className="meet-toolbar">
         {recording ? (
-          <span className="meet-record-live">
-            <span className="meet-record-dot" aria-hidden="true" />
-            <span
-              className="meet-record-clock"
-              role="timer"
-              aria-label={t("ui2.meet.live.label")}
-            >
-              {formatClock(recording.elapsed_ms)}
+          <>
+            <span className="meet-record-live">
+              <span className="meet-record-dot" aria-hidden="true" />
+              <span
+                className="meet-record-clock"
+                role="timer"
+                aria-label={t("ui2.meet.live.label")}
+              >
+                {formatClock(recording.elapsed_ms)}
+              </span>
             </span>
-          </span>
+            <div
+              className="meet-live-sources"
+              role="group"
+              aria-label={t("ui2.meet.sources.label")}
+            >
+              {recording.sources.map((source) => (
+                <LiveSource
+                  key={source.kind}
+                  source={source}
+                  onToggle={(muted) =>
+                    void meet
+                      .setSourceMuted(source.kind, muted)
+                      .catch((error) => toast.error(errorText(error)))
+                  }
+                />
+              ))}
+            </div>
+          </>
         ) : (
           <div
             className="meet-source-controls"
@@ -724,10 +804,13 @@ function Player({
   fallbackDuration,
   title,
   now,
+  visible,
 }: {
   playback: Playback;
   fallbackDuration: number;
   title: string;
+  /** Hidden on the other tabs; the audio element stays mounted. */
+  visible: boolean;
   /** The speaker at the playback position, if the transcript has one. */
   now: SpeakerLook | null;
 }) {
@@ -737,6 +820,7 @@ function Player({
   const progress = duration > 0 ? (playback.position / duration) * 100 : 0;
   return (
     <div
+      hidden={!visible}
       className="meet-dock"
       role="region"
       aria-label={t("ui2.meet.player.label")}
@@ -1220,11 +1304,6 @@ function MeetingView({
     [t],
   );
   const visible = useMemo(() => filterTurns(turns, query), [turns, query]);
-  const shares = useMemo(() => speakerShares(turns), [turns]);
-  const percent = useMemo(
-    () => new Intl.NumberFormat(i18n.language, { style: "percent" }),
-    [i18n.language],
-  );
   // The turn being heard, once audio is loaded (paused keeps its place).
   const heardKey =
     playback.state === "ready" ? turnAt(turns, playback.position) : null;
@@ -1264,7 +1343,10 @@ function MeetingView({
   // Summary and Ask AI read the transcript, so they wait for one.
   const activeTab: MeetTab = hasTranscript ? tab : "transcript";
   const multiSource = new Set(meeting.sources).size > 1;
-  const { seek } = playback;
+  const { seek, audioRef } = playback;
+  useEffect(() => {
+    if (activeTab !== "transcript") audioRef.current?.pause();
+  }, [activeTab, audioRef]);
   const onSeek = useCallback((ms: number) => void seek(ms), [seek]);
 
   const runProcess = async () => {
@@ -1344,7 +1426,19 @@ function MeetingView({
     body = (
       <div className="meet-reader">
         <div className="meet-reader-main">
-          <div className="meet-transcript-bar">
+          <div className="meet-info-bar">
+            <span className="meet-info-stats">
+              <Users className="icon sm" aria-hidden="true" />
+              {transcript.speakers.length > 0 && (
+                <>
+                  {t("ui2.meet.list.speakers", {
+                    count: transcript.speakers.length,
+                  })}
+                  <span aria-hidden="true">•</span>
+                </>
+              )}
+              {formatClock(meeting.duration_ms)}
+            </span>
             <label className="meet-search">
               <Glyph name="search" />
               <input
@@ -1355,28 +1449,6 @@ function MeetingView({
                 aria-label={t("ui2.meet.detail.search")}
               />
             </label>
-            {transcript.speakers.length > 0 && (
-              <ul
-                className="meet-speakers"
-                aria-label={t("ui2.meet.detail.speakers")}
-              >
-                {transcript.speakers.map((speaker) => {
-                  const look = looks.get(speaker.id) ?? unknown;
-                  return (
-                    <li key={speaker.id}>
-                      <span
-                        className={`meet-dot${look.tone ? ` tone-${look.tone}` : ""}`}
-                        aria-hidden="true"
-                      />
-                      {look.label}
-                      <span className="meet-speaker-share">
-                        {percent.format(shares.get(speaker.id) ?? 0)}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
           </div>
           {visible.length === 0 ? (
             <p className="meet-empty-line">
@@ -1528,10 +1600,6 @@ function MeetingView({
               </button>
               <span className="meet-info-card" role="tooltip">
                 <span>
-                  <small>{t("ui2.meet.detail.duration")}</small>
-                  {formatClock(meeting.duration_ms)}
-                </span>
-                <span>
                   <small>{t("ui2.meet.detail.recordedWith")}</small>
                   {sourcesText}
                 </span>
@@ -1628,6 +1696,7 @@ function MeetingView({
           fallbackDuration={meeting.duration_ms}
           title={meeting.title}
           now={now}
+          visible={activeTab === "transcript"}
         />
       )}
     </>

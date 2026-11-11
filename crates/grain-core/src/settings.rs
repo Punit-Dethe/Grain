@@ -795,6 +795,11 @@ pub struct AppSettings {
     /// the feature is in development; off costs nothing.
     #[serde(default)]
     pub meet_auto_summary: bool,
+    /// [GRAIN] Recall: start transcribing a meeting the moment it is stopped,
+    /// instead of waiting for the Transcribe button. OFF by default while the
+    /// feature is in development.
+    #[serde(default)]
+    pub meet_auto_transcribe: bool,
     /// [GRAIN] Recall: give a freshly transcribed meeting a title drawn from what
     /// was said. Only replaces the default title, never one you chose. OFF by
     /// default while the feature is in development.
@@ -1591,6 +1596,7 @@ pub fn get_default_settings() -> AppSettings {
         mcp_oauth_client_ids: HashMap::new(),
         agent_screen_image: false,
         meet_auto_summary: false,
+        meet_auto_transcribe: false,
         meet_auto_title: false,
         scrap_that_enabled: false,
     }

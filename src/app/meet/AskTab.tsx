@@ -117,34 +117,36 @@ export function AskTab({
           {error}
         </p>
       )}
-      <form className="meet-ask-composer" onSubmit={submit}>
-        <textarea
-          rows={1}
-          value={draft}
-          placeholder={t("ui2.meet.ask.placeholder")}
-          aria-label={t("ui2.meet.ask.placeholder")}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
-              event.preventDefault();
-              void send(draft);
-            }
-          }}
-        />
-        <button
-          className="meet-ask-send"
-          type="submit"
-          disabled={pending || draft.trim() === ""}
-          aria-label={t("ui2.meet.ask.send")}
-          title={t("ui2.meet.ask.send")}
-        >
-          <ArrowUp className="icon sm" aria-hidden="true" />
-        </button>
-      </form>
+      <div className="meet-ask-dock">
+        <form className="meet-ask-composer" onSubmit={submit}>
+          <textarea
+            rows={1}
+            value={draft}
+            placeholder={t("ui2.meet.ask.placeholder")}
+            aria-label={t("ui2.meet.ask.placeholder")}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                void send(draft);
+              }
+            }}
+          />
+          <button
+            className="meet-ask-send"
+            type="submit"
+            disabled={pending || draft.trim() === ""}
+            aria-label={t("ui2.meet.ask.send")}
+            title={t("ui2.meet.ask.send")}
+          >
+            <ArrowUp className="icon sm" aria-hidden="true" />
+          </button>
+        </form>
+      </div>
       <div ref={endRef} className="meet-ask-end" />
     </section>
   );

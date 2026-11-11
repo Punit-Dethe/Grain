@@ -10,6 +10,7 @@ import {
   type MeetStatus,
   type MeetingSummary,
   type RecordingStatus,
+  type SourceKind,
   type SourceSettings,
   type TranscriptRevision,
 } from "@/bindings";
@@ -22,8 +23,9 @@ const IDLE: MeetStatus = {
   summarizing: null,
 };
 
-/** The recording clock shows whole seconds. */
-const LIVE_POLL_MS = 1_000;
+/** The level meters need a fast read; the clock only shows whole seconds.
+ * Only polled while a recording is on screen. */
+const LIVE_POLL_MS = 120;
 
 function unwrap<T>(
   result: { status: "ok"; data: T } | { status: "error"; error: string },
@@ -46,6 +48,8 @@ export interface MeetController {
   setSources: (settings: SourceSettings) => Promise<void>;
   startRecording: (title: string | null) => Promise<string>;
   stopRecording: () => Promise<MeetingSummary>;
+  /** Mute or unmute one source of the recording in progress. */
+  setSourceMuted: (kind: SourceKind, muted: boolean) => Promise<void>;
   process: (sessionId: string) => Promise<void>;
   cancelProcessing: () => Promise<void>;
   renameMeeting: (sessionId: string, title: string) => Promise<void>;
@@ -282,6 +286,13 @@ export function useMeetController(): MeetController {
     [osType],
   );
 
+  const setSourceMuted = useCallback(
+    async (kind: SourceKind, muted: boolean) => {
+      unwrap(await commands.meetSetSourceMuted(kind, muted));
+    },
+    [],
+  );
+
   const warmPlayback = useCallback(async (sessionId: string) => {
     unwrap(await commands.meetPlaybackAudio(sessionId));
   }, []);
@@ -307,6 +318,7 @@ export function useMeetController(): MeetController {
     loadTranscript,
     loadPlayback,
     warmPlayback,
+    setSourceMuted,
     loadSummary,
     generateSummary,
     ask,

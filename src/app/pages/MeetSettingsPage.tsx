@@ -22,6 +22,7 @@ export function MeetSettingsPage() {
   const ai = useMeetAiAvailable();
   const autoSummary = getSetting("meet_auto_summary") ?? false;
   const autoTitle = getSetting("meet_auto_title") ?? false;
+  const autoTranscribe = getSetting("meet_auto_transcribe") ?? false;
 
   return (
     <section className="page active" data-page-panel="meet">
@@ -50,6 +51,16 @@ export function MeetSettingsPage() {
         )}
 
         <div className="meet-settings-groups">
+          <SettingsGroup title={t("ui2.meet.settings.afterRecording")}>
+            <ToggleSwitch
+              label={t("ui2.meet.settings.autoTranscribe")}
+              description={t("ui2.meet.settings.autoTranscribeDescription")}
+              grouped
+              checked={autoTranscribe}
+              isUpdating={isUpdating("meet_auto_transcribe")}
+              onChange={(value) => updateSetting("meet_auto_transcribe", value)}
+            />
+          </SettingsGroup>
           <SettingsGroup title={t("ui2.meet.settings.automatic")}>
             <ToggleSwitch
               label={t("ui2.meet.settings.autoSummary")}

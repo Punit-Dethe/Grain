@@ -246,6 +246,8 @@ const settingUpdaters: {
     commands.changeAgentScreenImageSetting(value as boolean),
   meet_auto_summary: (value) =>
     commands.changeMeetAutoSummarySetting(value as boolean),
+  meet_auto_transcribe: (value) =>
+    commands.changeMeetAutoTranscribeSetting(value as boolean),
   meet_auto_title: (value) =>
     commands.changeMeetAutoTitleSetting(value as boolean),
   word_correction_threshold: (value) =>

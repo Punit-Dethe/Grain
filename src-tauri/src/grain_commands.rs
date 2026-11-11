@@ -598,6 +598,17 @@ pub fn change_meet_auto_summary_setting(app: AppHandle, enabled: bool) -> Result
     Ok(())
 }
 
+/// [GRAIN] Recall: transcribe a meeting as soon as it is stopped. OFF by
+/// default; see `Settings::meet_auto_transcribe`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_meet_auto_transcribe_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.meet_auto_transcribe = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Recall: title a freshly transcribed meeting from what was said. OFF
 /// by default; see `Settings::meet_auto_title`.
 #[tauri::command]

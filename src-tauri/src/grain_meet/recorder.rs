@@ -52,6 +52,10 @@ pub(crate) struct SourceProgress {
     /// f32 bits order like the values, so etch_max keeps the peak).
     pub level: AtomicU32,
     pub active: AtomicBool,
+    /// [GRAIN] Muted mid-recording: the source keeps running but its audio is
+    /// written as silence, so the meeting clock stays whole and unmuting is
+    /// instant.
+    pub muted: AtomicBool,
 }
 
 #[derive(Default)]
@@ -197,6 +201,7 @@ impl Recording {
                     frames_ns: AtomicU64::new(0),
                     level: AtomicU32::new(0),
                     active: AtomicBool::new(false),
+                    muted: AtomicBool::new(false),
                 }),
                 dropped,
                 failed,
@@ -277,10 +282,13 @@ fn write_loop(
     opener: impl Opener,
 ) -> Result<Manifest, String> {
     let mut failure: Option<String> = None;
-    let write = |writer: &mut SessionWriter, sources: &mut [Source], frame: Frame| {
+    let write = |writer: &mut SessionWriter, sources: &mut [Source], mut frame: Frame| {
         let source = &mut sources[frame.source];
         source.last_arrival = frame.arrived;
         source.progress.active.store(true, Ordering::Release);
+        if source.progress.muted.load(Ordering::Acquire) {
+            frame.samples.fill(0.0);
+        }
         let peak = frame
             .samples
             .iter()

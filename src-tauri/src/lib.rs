@@ -1383,6 +1383,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
             grain_commands::change_meet_auto_title_setting,   // [GRAIN]
+            grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]
             grain_commands::change_scrap_that_enabled_setting,
             grain_commands::change_paste_catch_enabled_setting,
             grain_dictionary::set_learn_from_edits,
@@ -1504,6 +1505,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::commands::meet_list,
             grain_meet::commands::meet_sources,
             grain_meet::commands::meet_set_sources,
+            grain_meet::commands::meet_set_source_muted,
             grain_meet::commands::meet_start_recording,
             grain_meet::commands::meet_stop_recording,
             grain_meet::commands::meet_process,

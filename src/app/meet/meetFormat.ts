@@ -104,18 +104,3 @@ export function turnAt(turns: Turn[], ms: number): string | null {
   }
   return found?.key ?? null;
 }
-
-/** Each speaker's share (0..1) of the attributed speaking time. */
-export function speakerShares(turns: Turn[]): Map<string, number> {
-  const spoken = new Map<string, number>();
-  let total = 0;
-  for (const turn of turns) {
-    if (!turn.speakerId) continue;
-    const span = Math.max(0, turn.endMs - turn.startMs);
-    spoken.set(turn.speakerId, (spoken.get(turn.speakerId) ?? 0) + span);
-    total += span;
-  }
-  const shares = new Map<string, number>();
-  for (const [id, span] of spoken) shares.set(id, total > 0 ? span / total : 0);
-  return shares;
-}

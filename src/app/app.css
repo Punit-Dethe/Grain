@@ -5348,6 +5348,97 @@ html[data-theme="light"] .dropdown-compact-menu {
   border-radius: 2px;
 }
 
+.meet-live-sources {
+  display: flex;
+  gap: 8px;
+}
+
+.meet-live-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  min-height: var(--meet-dock-button-height);
+  padding-inline: 13px 15px;
+  border-radius: var(--meet-dock-button-radius);
+  color: var(--text-1);
+  background-color: var(--meet-dock-button-bg);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms var(--ease-out);
+}
+
+.meet-live-source:hover {
+  background-color: var(--meet-dock-button-hover);
+}
+
+.meet-live-source:active {
+  transform: scale(0.97);
+}
+
+.meet-live-source[aria-pressed="false"] {
+  color: var(--text-4);
+}
+
+.meet-live-source .icon.sm {
+  width: 18px;
+  height: 18px;
+}
+
+/* Level meter: thin bars stacked bottom to top, no colour; the signal
+   darkens them from the bottom up. */
+.meet-meter {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  width: 16px;
+}
+
+.meet-meter i {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  transition: background-color 90ms linear;
+}
+
+.meet-meter i.is-lit {
+  background: color-mix(in srgb, currentColor var(--o), transparent);
+}
+
+.meet-meter i:nth-child(1) {
+  --o: 40%;
+}
+
+.meet-meter i:nth-child(2) {
+  --o: 47%;
+}
+
+.meet-meter i:nth-child(3) {
+  --o: 54%;
+}
+
+.meet-meter i:nth-child(4) {
+  --o: 62%;
+}
+
+.meet-meter i:nth-child(5) {
+  --o: 70%;
+}
+
+.meet-meter i:nth-child(6) {
+  --o: 80%;
+}
+
+.meet-meter i:nth-child(7) {
+  --o: 90%;
+}
+
+.meet-meter i:nth-child(8) {
+  --o: 100%;
+}
+
 .meet-record-clock {
   color: var(--text-1);
   font-size: 14px;
@@ -5960,13 +6051,41 @@ html[data-theme="light"] .meet-info-card {
   min-height: 160px;
 }
 
-.meet-transcript-bar {
+.meet-info-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px 20px;
-  padding-bottom: 4px;
+  gap: 8px 16px;
+  margin-bottom: 4px;
+  padding: 6px 8px 6px 16px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+}
+
+.meet-info-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+.meet-info-stats .icon.sm {
+  width: 15px;
+  height: 15px;
+  color: var(--text-4);
+}
+
+.meet-info-bar .meet-search {
+  width: min(260px, 100%);
+  height: 32px;
+  padding-inline: 10px;
+  background: transparent;
 }
 
 .meet-search {
@@ -6019,52 +6138,6 @@ html[data-theme="light"] .meet-info-card {
   gap: 7px;
   color: var(--text-2);
   font-size: 12.5px;
-}
-
-.meet-speakers {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 16px;
-  margin: 0;
-  padding: 0;
-  color: var(--text-2);
-  font-size: 12.5px;
-  list-style: none;
-}
-
-.meet-speakers li {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.meet-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-3);
-}
-
-.meet-dot.tone-peach {
-  background: var(--peach);
-}
-
-.meet-dot.tone-sage {
-  background: var(--sage);
-}
-
-.meet-dot.tone-lilac {
-  background: var(--lilac);
-}
-
-.meet-dot.tone-sky {
-  background: var(--sky);
-}
-
-.meet-speaker-share {
-  color: var(--text-4);
-  font-variant-numeric: tabular-nums;
 }
 
 .meet-transcript {
@@ -6465,9 +6538,33 @@ html[data-theme="light"] .meet-info-card {
 }
 
 .meet-ask {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   max-width: 760px;
+  min-height: max(380px, calc(100dvh - 330px));
+  margin-inline: auto;
   gap: 18px;
+}
+
+.meet-ask-dock {
+  position: sticky;
+  z-index: 5;
+  bottom: 16px;
+  margin-top: auto;
+}
+
+/* Thread text fades out behind the composer instead of running into it. */
+.meet-ask-dock::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -28px calc(-1 * var(--meet-pad-x)) -16px;
+  background: linear-gradient(
+    to top,
+    var(--meet-page) 55%,
+    color-mix(in srgb, var(--meet-page) 0%, transparent)
+  );
+  pointer-events: none;
 }
 
 .meet-ask-intro {
@@ -6475,7 +6572,7 @@ html[data-theme="light"] .meet-info-card {
   justify-items: center;
   gap: 8px;
   max-width: 48ch;
-  margin: 36px auto 12px;
+  margin: auto;
   text-align: center;
 }
 
