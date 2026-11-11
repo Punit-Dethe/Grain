@@ -6119,6 +6119,8 @@ html[data-theme="light"] .meet-info-card {
   letter-spacing: 0.07em;
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
+  /* Mirrors the search icon inset on the left (16px bar + 10px field). */
+  padding-inline-end: 18px;
 }
 
 .meet-info-stats .icon.sm {
