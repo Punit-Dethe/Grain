@@ -1070,8 +1070,6 @@
       "processFailed": "Transcription failed.",
       "studio": {
         "label": "Recording controls",
-        "title": "Ready to capture",
-        "hint": "Record a meeting from your microphone and system audio. Transcribed on this device.",
         "start": "Start recording",
         "starting": "Starting…",
         "stop": "Stop recording"
@@ -1100,17 +1098,9 @@
         "downloading": "Downloading speaker model, {{percent}}%",
         "ready": "Speaker model installed"
       },
-      "stats": {
-        "label": "Recording summary",
-        "recordings": "Recordings",
-        "totalTime": "Time recorded",
-        "recent": "Last 7 days"
-      },
       "list": {
         "heading": "Recordings",
         "search": "Search recordings",
-        "dayCount_one": "{{count}} recording",
-        "dayCount_other": "{{count}} recordings",
         "sortByDate": "Sort recordings by date",
         "newestFirst": "Newest first",
         "oldestFirst": "Oldest first",

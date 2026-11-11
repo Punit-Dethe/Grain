@@ -105,37 +105,24 @@ export function turnAt(turns: Turn[], ms: number): string | null {
   return found?.key ?? null;
 }
 
-/** Sum of the recorded durations. */
-export function totalDurationMs(meetings: MeetingSummary[]): number {
-  let total = 0;
-  for (const meeting of meetings) total += meeting.duration_ms;
-  return total;
-}
-
-/** How many recordings were started within the last `days` days of `now`. */
-export function recentCount(
-  meetings: MeetingSummary[],
-  now: number,
-  days: number,
-): number {
-  const since = now - days * 86_400_000;
-  return meetings.filter((meeting) => meeting.created_unix_ms >= since).length;
-}
-
-/** "3h 20m", "45m" or "<1m": a coarse total, localised through Intl units. */
-export function formatTotal(ms: number, locale: string): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 1) return ms > 0 ? "<1m" : "0m";
-  const unit = (value: number, name: "hour" | "minute") =>
-    new Intl.NumberFormat(locale, {
-      style: "unit",
-      unit: name,
-      unitDisplay: "narrow",
-    }).format(value);
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (hours === 0) return unit(rest, "minute");
-  return rest === 0
-    ? unit(hours, "hour")
-    : `${unit(hours, "hour")} ${unit(rest, "minute")}`;
+/**
+ * A short, stable bar pattern for a recording's glyph. It is decoration keyed
+ * on the id, so each recording keeps its own recognisable shape; it is not
+ * derived from the audio.
+ */
+export function waveBars(id: string, count = 9): number[] {
+  let state = 2166136261;
+  for (let index = 0; index < id.length; index++) {
+    state = Math.imul(state ^ id.charCodeAt(index), 16777619) >>> 0;
+  }
+  const bars: number[] = [];
+  for (let index = 0; index < count; index++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    // Taller toward the middle so the glyph reads as one soft waveform.
+    const envelope = 1 - Math.abs(index - (count - 1) / 2) / count;
+    bars.push(
+      Math.round(24 + ((state % 1000) / 1000) * 50 * envelope + 26 * envelope),
+    );
+  }
+  return bars;
 }
