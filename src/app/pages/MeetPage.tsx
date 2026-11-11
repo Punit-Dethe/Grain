@@ -13,7 +13,14 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { FileText, MicOff, Pencil, VolumeOff } from "lucide-react";
+import {
+  CalendarDays,
+  Clock3,
+  FileText,
+  MicOff,
+  Pencil,
+  VolumeOff,
+} from "lucide-react";
 import { toast } from "sonner";
 import type {
   MeetingSummary,
@@ -39,6 +46,7 @@ import {
 import {
   groupByDay,
   highlightParts,
+  speakerShares,
   turnAt,
   wordAt,
   type RecordingFilters,
@@ -1198,6 +1206,11 @@ function MeetingView({
     [t],
   );
   const visible = useMemo(() => filterTurns(turns, query), [turns, query]);
+  const shares = useMemo(() => speakerShares(turns), [turns]);
+  const percent = useMemo(
+    () => new Intl.NumberFormat(i18n.language, { style: "percent" }),
+    [i18n.language],
+  );
   // The turn being heard, once audio is loaded (paused keeps its place).
   const heardKey =
     playback.state === "ready" ? turnAt(turns, playback.position) : null;
@@ -1312,25 +1325,60 @@ function MeetingView({
     );
   } else if (transcript) {
     body = (
-      <>
-        <div className="meet-transcript-bar">
-          <label className="meet-search">
-            <Glyph name="search" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("ui2.meet.detail.search")}
-              aria-label={t("ui2.meet.detail.search")}
-            />
-          </label>
-          {transcript.speakers.length > 0 && (
-            <ul
-              className="meet-legend"
-              aria-label={t("ui2.meet.detail.speakers")}
-            >
+      <div
+        className={`meet-reader${transcript.speakers.length > 0 ? " has-aside" : ""}`}
+      >
+        <div className="meet-reader-main">
+          <div className="meet-transcript-bar">
+            <label className="meet-search">
+              <Glyph name="search" />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("ui2.meet.detail.search")}
+                aria-label={t("ui2.meet.detail.search")}
+              />
+            </label>
+          </div>
+          {visible.length === 0 ? (
+            <p className="meet-empty-line">
+              {turns.length === 0
+                ? t("ui2.meet.detail.noSpeech")
+                : t("ui2.meet.detail.noMatches")}
+            </p>
+          ) : (
+            <ol className="meet-transcript">
+              {visible.map((turn) => (
+                <TurnRow
+                  key={turn.key}
+                  turn={turn}
+                  look={
+                    turn.speakerId
+                      ? (looks.get(turn.speakerId) ?? unknown)
+                      : unknown
+                  }
+                  source={
+                    multiSource ? (meeting.sources[turn.track] ?? null) : null
+                  }
+                  heard={turn.key === heardKey ? heard : null}
+                  query={query}
+                  onSeek={onSeek}
+                />
+              ))}
+            </ol>
+          )}
+        </div>
+        {transcript.speakers.length > 0 && (
+          <aside
+            className="meet-aside"
+            aria-label={t("ui2.meet.detail.speakers")}
+          >
+            <h2>{t("ui2.meet.detail.speakers")}</h2>
+            <ul>
               {transcript.speakers.map((speaker) => {
                 const look = looks.get(speaker.id) ?? unknown;
+                const share = shares.get(speaker.id) ?? 0;
                 return (
                   <li key={speaker.id}>
                     <span
@@ -1339,41 +1387,23 @@ function MeetingView({
                     >
                       {look.mark}
                     </span>
-                    {look.label}
+                    <span className="meet-aside-name">{look.label}</span>
+                    <span className="meet-aside-share">
+                      {percent.format(share)}
+                    </span>
+                    <span
+                      className={`meet-aside-bar${look.tone ? ` tone-${look.tone}` : ""}`}
+                      aria-hidden="true"
+                    >
+                      <i style={{ width: `${Math.round(share * 100)}%` }} />
+                    </span>
                   </li>
                 );
               })}
             </ul>
-          )}
-        </div>
-        {visible.length === 0 ? (
-          <p className="meet-empty-line">
-            {turns.length === 0
-              ? t("ui2.meet.detail.noSpeech")
-              : t("ui2.meet.detail.noMatches")}
-          </p>
-        ) : (
-          <ol className="meet-transcript">
-            {visible.map((turn) => (
-              <TurnRow
-                key={turn.key}
-                turn={turn}
-                look={
-                  turn.speakerId
-                    ? (looks.get(turn.speakerId) ?? unknown)
-                    : unknown
-                }
-                source={
-                  multiSource ? (meeting.sources[turn.track] ?? null) : null
-                }
-                heard={turn.key === heardKey ? heard : null}
-                query={query}
-                onSeek={onSeek}
-              />
-            ))}
-          </ol>
+          </aside>
         )}
-      </>
+      </div>
     );
   } else if (meeting.transcript_revision != null && !transcriptError) {
     body = <p className="meet-empty-line">{t("ui2.meet.detail.loading")}</p>;
@@ -1439,11 +1469,6 @@ function MeetingView({
                   onRename={(title) => meet.renameMeeting(meeting.id, title)}
                 />
               )}
-              <p className="meet-meta">
-                <span>{when}</span>
-                <span>{formatClock(meeting.duration_ms)}</span>
-                <span>{sourcesText}</span>
-              </p>
             </div>
             <div className="meet-view-actions">
               {isProcessing ? (
@@ -1485,6 +1510,22 @@ function MeetingView({
               </button>
             </div>
           </div>
+          <p className="meet-meta">
+            <span>
+              <CalendarDays className="icon sm" aria-hidden="true" />
+              {when}
+            </span>
+            <span>
+              <Clock3 className="icon sm" aria-hidden="true" />
+              {formatClock(meeting.duration_ms)}
+            </span>
+            <span>
+              {[...new Set(meeting.sources)].map((kind) => (
+                <Glyph key={kind} name={SOURCE_ICON[kind]} />
+              ))}
+              {sourcesText}
+            </span>
+          </p>
         </header>
 
         {isProcessing && processing && (

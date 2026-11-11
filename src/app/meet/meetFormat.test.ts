@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingSummary } from "@/bindings";
-import { groupByDay, highlightParts, turnAt, wordAt } from "./meetFormat";
+import {
+  groupByDay,
+  highlightParts,
+  speakerShares,
+  turnAt,
+  wordAt,
+} from "./meetFormat";
 import type { Turn } from "./transcriptTurns";
 
 function meeting(id: string, created: Date): MeetingSummary {
@@ -114,5 +120,17 @@ describe("wordAt", () => {
     expect(wordAt(words, 300)).toBe(1);
     expect(wordAt(words, 5_000)).toBe(2);
     expect(wordAt([], 10)).toBe(-1);
+  });
+});
+
+describe("speakerShares", () => {
+  it("splits attributed speaking time and ignores unattributed turns", () => {
+    const a = { ...turn("a", 0, 3_000), speakerId: "t0-s0" };
+    const b = { ...turn("b", 3_000, 4_000), speakerId: "t0-s1" };
+    const c = { ...turn("c", 4_000, 9_000), speakerId: null };
+    const shares = speakerShares([a, b, c]);
+    expect(shares.get("t0-s0")).toBeCloseTo(0.75);
+    expect(shares.get("t0-s1")).toBeCloseTo(0.25);
+    expect(shares.size).toBe(2);
   });
 });
