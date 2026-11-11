@@ -47,6 +47,9 @@ export function AgentPanel() {
   const [flashedId, setFlashedId] = useState<string | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  // True once the shell has finished growing; the compact status (and its
+  // phrase timer) stays mounted until then so it can fade out with the growth.
+  const [grown, setGrown] = useState(false);
   const revealedRef = useRef(false);
   const [capture, setCapture] = useState<AgentNotchStatus | null>(null);
   const generationRef = useRef<number | null>(null);
@@ -269,6 +272,13 @@ export function AgentPanel() {
   }, [busy, error, revealed, firstReply]);
 
   useEffect(() => {
+    if (!revealed) return;
+    // Matches --notch-grow in agent.css (and NOTCH_GROW in agent.rs).
+    const timer = window.setTimeout(() => setGrown(true), 460);
+    return () => window.clearTimeout(timer);
+  }, [revealed]);
+
+  useEffect(() => {
     if (revealed && hasFollowups)
       endRef.current?.scrollIntoView({ block: "end" });
   }, [messages, hasFollowups, busy, revealed]);
@@ -444,24 +454,29 @@ export function AgentPanel() {
         className={revealed ? "agent-notch is-reply" : "agent-notch"}
         aria-label={t("agent.brand")}
       >
+        {/* One header for both states: the compact status crossfades into the
+            brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">
-          {!revealed && (
-            <span className="agent-notch-indicator" aria-hidden="true" />
-          )}
+          <span className="agent-notch-indicator" aria-hidden="true" />
           <span className="agent-notch-label">
-            {revealed ? (
-              t("agent.brand")
-            ) : capture?.working ? (
-              <AgentWorkingLabel />
-            ) : (
-              <span role="status">
-                {t(
-                  capture?.listening
-                    ? "agent.notchListening"
-                    : "agent.notchStarting",
+            {!grown && (
+              <span className="agent-notch-status" aria-hidden={revealed}>
+                {capture?.working ? (
+                  <AgentWorkingLabel />
+                ) : (
+                  <span role="status">
+                    {t(
+                      capture?.listening
+                        ? "agent.notchListening"
+                        : "agent.notchStarting",
+                    )}
+                  </span>
                 )}
               </span>
             )}
+            <span className="agent-notch-brand" aria-hidden={!revealed}>
+              {t("agent.brand")}
+            </span>
           </span>
           {!revealed && capture?.listening && !capture.working && (
             <div className="agent-notch-wave">
@@ -482,7 +497,7 @@ export function AgentPanel() {
                 void commands.agentCancelNotch(capture.generation);
             }}
           >
-            <X size={revealed ? 12 : 15} />
+            <X size={14} />
           </button>
         </header>
 

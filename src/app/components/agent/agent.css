@@ -20,6 +20,8 @@ html[data-window="agent-panel"] body {
   --agc-muted: #b4b3c2;
   --notch-line: #ffffff21;
   --notch-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* NOTCH_GROW in agent.rs and the grown timer in AgentPanel wait for this. */
+  --notch-grow: 420ms;
   --notch-reply-header: 32px;
   box-sizing: border-box;
   position: relative;
@@ -37,9 +39,9 @@ html[data-window="agent-panel"] body {
   border-radius: 0 0 14px 14px;
   font-family: "IBM Plex Sans Variable", "Segoe UI", system-ui, sans-serif;
   transition:
-    width 420ms var(--notch-ease),
-    height 420ms var(--notch-ease),
-    border-radius 420ms var(--notch-ease);
+    width var(--notch-grow) var(--notch-ease),
+    height var(--notch-grow) var(--notch-ease),
+    border-radius var(--notch-grow) var(--notch-ease);
 }
 
 .agent-notch::before {
@@ -53,7 +55,7 @@ html[data-window="agent-panel"] body {
     radial-gradient(ellipse at 82% 140%, #c363367d, transparent 57%),
     radial-gradient(ellipse at 53% 130%, #6946a271, transparent 64%);
   animation: agent-notch-color 9s ease-in-out infinite alternate;
-  transition: opacity 300ms ease;
+  transition: opacity var(--notch-grow) ease;
 }
 
 .agent-notch.is-reply {
@@ -64,7 +66,8 @@ html[data-window="agent-panel"] body {
 
 .agent-notch.is-reply::before {
   opacity: 0;
-  animation: none;
+  /* Freeze in place while it fades; `animation: none` snapped the glow. */
+  animation-play-state: paused;
 }
 
 @keyframes agent-notch-color {
@@ -84,6 +87,10 @@ html[data-window="agent-panel"] body {
   align-items: center;
   gap: 8px;
   padding-inline: 13px;
+  transition:
+    flex-basis var(--notch-grow) var(--notch-ease),
+    padding var(--notch-grow) var(--notch-ease),
+    gap var(--notch-grow) var(--notch-ease);
 }
 
 .is-reply .agent-notch-header {
@@ -97,16 +104,56 @@ html[data-window="agent-panel"] body {
   height: 5px;
   border-radius: 50%;
   background: #a8baff;
+  transition:
+    width var(--notch-grow) var(--notch-ease),
+    opacity 200ms ease;
 }
 
+.is-reply .agent-notch-indicator {
+  width: 0;
+  opacity: 0;
+}
+
+.is-reply .agent-notch-header {
+  gap: 0;
+}
+
+/* Compact status and brand share one cell and crossfade. */
 .agent-notch-label {
   flex: 1;
   min-width: 0;
+  display: grid;
   overflow: hidden;
   font-size: 13px;
   font-weight: 550;
   white-space: nowrap;
+}
+
+.agent-notch-status,
+.agent-notch-brand {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+  transition:
+    opacity 220ms ease,
+    transform var(--notch-grow) var(--notch-ease);
+}
+
+.agent-notch-brand {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.is-reply .agent-notch-status {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.is-reply .agent-notch-brand {
+  opacity: 1;
+  transform: none;
+  transition-delay: 90ms, 0ms;
 }
 
 .agent-notch-wave {

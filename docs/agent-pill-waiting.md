@@ -116,3 +116,19 @@ from the retired Agent UI. The composer still supports typed follow-ups.
 The composer is text-only. Each reply has its own Copy control below the
 text, revealed on hover or keyboard focus. The first reply retains Retry in
 that same row. Removed Agent's direct paste command and foreground restore.
+
+## Reply growth without native changes
+
+The reply handoff still made three native changes to the visible window: the
+height resize, `set_focusable(true)` and focus. Tao applies focusability as a
+style change with `SWP_FRAMECHANGED`, so WebView2 re-presented the window in
+the middle of the CSS growth as well. React also replaced the header at once.
+
+The Windows host now opens at reply size. A native window region, computed
+from the compact shell size with some slack, limits drawing and clicks to the
+compact notch. Reveal only lifts that region. Focusability and focus wait until
+the 420 ms growth ends. The header keeps its dot, crossfades the status into
+the brand and unmounts the working label once the growth is finished.
+
+Live check: watch the first reply expand with no blink, then click the app
+under the area beside or below the compact notch while Agent is working.

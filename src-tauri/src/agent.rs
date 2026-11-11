@@ -44,9 +44,11 @@ const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
 const NOTCH_REPLY: (f64, f64) = (680.0, 384.0);
-// Keep the Windows host's left edge fixed when it grows downward. The compact
-// shell still draws at 300px and stays centered in the wider viewport.
-const NOTCH_CAPTURE: (f64, f64) = (if cfg!(windows) { NOTCH_REPLY.0 } else { 300.0 }, 30.0);
+/// The compact shell, in CSS px (`.agent-notch` in agent.css).
+const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
+/// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.
+/// Native window work waits for it: any restyle mid-growth re-presents WebView2.
+const NOTCH_GROW: Duration = Duration::from_millis(460);
 
 /// The Agent's system instruction. The user's dictated/typed instruction is the
 /// task; the selected text (if any) is supplied as context separately.
@@ -786,6 +788,72 @@ fn place_notch_at_text_scale(window: &tauri::WebviewWindow, (width, height): (f6
     place_notch(window, (width, height));
 }
 
+/// Windows opens the notch at its REPLY size so the expansion never resizes a
+/// visible WebView (a resize re-presents WebView2 and the shell blinks). While
+/// compact, a window region keeps the transparent rest of it from eating clicks.
+/// Computed natively, with slack: everything outside the shell is transparent.
+#[cfg(windows)]
+fn set_compact_notch_region(window: &tauri::WebviewWindow, compact: bool) {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    unsafe {
+        if !compact {
+            // No redraw: the newly exposed pixels are transparent until CSS grows.
+            let _ = SetWindowRgn(hwnd, None, false);
+            return;
+        }
+        let mut outer = RECT::default();
+        let Ok(scale) = window.scale_factor() else {
+            return;
+        };
+        if GetWindowRect(hwnd, &mut outer).is_err() {
+            return;
+        }
+        let (width, height) = (outer.right - outer.left, outer.bottom - outer.top);
+        let zoom = scale * windows_notch_text_scale();
+        let region_width = (((NOTCH_COMPACT.0 + 24.0) * zoom).ceil() as i32).min(width);
+        let region_height = (((NOTCH_COMPACT.1 + 10.0) * zoom).ceil() as i32).min(height);
+        let x = (width - region_width) / 2;
+        let region = CreateRectRgn(x, 0, x + region_width, region_height);
+        if region.0.is_null() {
+            return;
+        }
+        // On success the system owns the region.
+        if SetWindowRgn(hwnd, Some(region), false) == 0 {
+            let _ = DeleteObject(HGDIOBJ(region.0));
+        }
+    }
+}
+
+/// Make the revealed notch focusable and take focus once its shell has grown.
+/// tao applies `focusable` with SWP_FRAMECHANGED, so doing it at reveal made
+/// the WebView re-present in the middle of the expansion.
+fn focus_revealed_notch(app: &AppHandle, generation: u64) {
+    let state = app.state::<AgentState>();
+    if state.summon_gen.load(Ordering::SeqCst) != generation
+        || state.notch_generation.load(Ordering::SeqCst) != generation
+        || !state.reply_visible.load(Ordering::SeqCst)
+    {
+        return;
+    }
+    let Some(window) = app.get_webview_window(PANEL_LABEL) else {
+        return;
+    };
+    let _ = window.set_focusable(true);
+    // Dictation may already be transcribing even though its microphone is idle.
+    if !ordinary_dictation_live(app)
+        && state.dictation_session_at_summon.load(Ordering::SeqCst)
+            == crate::grain_actions::current_session_id()
+    {
+        let _ = window.set_focus();
+    }
+}
+
 fn ensure_capture_notch(app: &AppHandle, generation: u64) {
     let state = app.state::<AgentState>();
     if state.summon_gen.load(Ordering::SeqCst) != generation
@@ -801,9 +869,16 @@ fn ensure_capture_notch(app: &AppHandle, generation: u64) {
             return Ok(());
         }
         state.notch_generation.store(generation, Ordering::SeqCst);
-        let window = build_window(app, generation, NOTCH_CAPTURE.0, NOTCH_CAPTURE.1)
-            .map_err(|error| error.to_string())?;
-        place_notch_at_text_scale(&window, NOTCH_CAPTURE);
+        let size = if cfg!(windows) {
+            NOTCH_REPLY
+        } else {
+            NOTCH_COMPACT
+        };
+        let window =
+            build_window(app, generation, size.0, size.1).map_err(|error| error.to_string())?;
+        place_notch_at_text_scale(&window, size);
+        #[cfg(windows)]
+        set_compact_notch_region(&window, true);
         window.show().map_err(|error| error.to_string())?;
         Ok(())
     };
@@ -1206,17 +1281,19 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
             return;
         };
+        // Windows: the viewport is already reply-sized; only lift the click region.
+        #[cfg(windows)]
+        set_compact_notch_region(&window, false);
+        #[cfg(not(windows))]
         place_notch_at_text_scale(&window, NOTCH_REPLY);
         state.reply_visible.store(true, Ordering::SeqCst);
-        let _ = window.set_focusable(true);
-        // Dictation may already be transcribing even though its microphone is idle.
-        if !ordinary_dictation_live(&handle)
-            && state.dictation_session_at_summon.load(Ordering::SeqCst)
-                == crate::grain_actions::current_session_id()
-        {
-            let _ = window.set_focus();
-        }
         let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
+        let app = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(NOTCH_GROW).await;
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || focus_revealed_notch(&handle, generation));
+        });
     })
     .map_err(|error| error.to_string())
 }
