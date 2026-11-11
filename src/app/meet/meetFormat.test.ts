@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingSummary } from "@/bindings";
-import { groupByDay, highlightParts, turnAt, wordAt } from "./meetFormat";
+import {
+  formatTotal,
+  groupByDay,
+  highlightParts,
+  recentCount,
+  totalDurationMs,
+  turnAt,
+  wordAt,
+} from "./meetFormat";
 import type { Turn } from "./transcriptTurns";
 
 function meeting(id: string, created: Date): MeetingSummary {
@@ -114,5 +122,22 @@ describe("wordAt", () => {
     expect(wordAt(words, 300)).toBe(1);
     expect(wordAt(words, 5_000)).toBe(2);
     expect(wordAt([], 10)).toBe(-1);
+  });
+});
+
+describe("recording totals", () => {
+  it("sums durations and counts recent recordings", () => {
+    const now = new Date(2026, 5, 15, 12).getTime();
+    const a = { ...meeting("a", new Date(2026, 5, 14)), duration_ms: 60_000 };
+    const b = { ...meeting("b", new Date(2026, 4, 1)), duration_ms: 120_000 };
+    expect(totalDurationMs([a, b])).toBe(180_000);
+    expect(recentCount([a, b], now, 7)).toBe(1);
+  });
+
+  it("formats coarse totals", () => {
+    expect(formatTotal(0, "en")).toBe("0m");
+    expect(formatTotal(20_000, "en")).toBe("<1m");
+    expect(formatTotal(45 * 60_000, "en")).toBe("45m");
+    expect(formatTotal(200 * 60_000, "en")).toBe("3h 20m");
   });
 });
