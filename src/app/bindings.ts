@@ -1042,6 +1042,21 @@ async agentPresentReply(generation: number) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Open the capture notch to full size before its first reply: while
+ * listening or working, the user hovers or clicks it to see the chat. The
+ * request is untouched; its reply lands in the open chat (and
+ * `agent_present_reply` then only ends the wait). Stop or a newer summon makes
+ * it a no-op.
+ */
+async agentOpenSummon(generation: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_open_summon", { generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Copy a reply on explicit user request.
  */
 async agentCopy(text: string) : Promise<Result<null, string>> {

@@ -1438,6 +1438,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_get_context,
             agent::agent_take_instruction,
             agent::agent_present_reply,
+            agent::agent_open_summon,
             agent::agent_copy,
             agent::agent_run,
             agent::agent_confirm_action,

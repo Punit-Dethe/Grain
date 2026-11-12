@@ -1485,3 +1485,54 @@ html[data-window="agent-panel"] body {
     transition: none;
   }
 }
+
+/* Hovering a listening or working notch fills a bar, as the resting sliver
+   does (BAR and FILL in grain_notch_sliver.rs); full, the chat opens early. */
+.agent-notch:not(.is-reply):not([data-opened]):not(.is-closing) {
+  cursor: pointer;
+}
+
+.agent-notch-fill {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 999px;
+  background: #ceced6;
+  transform: scaleX(0);
+  transform-origin: left;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 160ms ease,
+    opacity 160ms ease;
+}
+
+.agent-notch[data-phase="working"] .agent-notch-fill {
+  left: 9px;
+  right: 9px;
+  top: 1.75px;
+  bottom: auto;
+  height: 2.25px;
+}
+
+.agent-notch[data-hover] .agent-notch-fill {
+  opacity: 1;
+  transform: scaleX(1);
+  transition:
+    transform 650ms linear,
+    opacity 120ms ease;
+}
+
+/* Opened while still listening: the request has not been heard yet. */
+.agc-c-pending {
+  color: var(--agc-faint);
+  font-size: 12.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-notch-fill {
+    transition: opacity 120ms ease;
+  }
+}

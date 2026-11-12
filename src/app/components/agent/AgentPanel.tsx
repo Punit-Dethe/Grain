@@ -71,6 +71,9 @@ function whenSettled(
 const HISTORY_CONTEXT = 12;
 /** The Recall shell width, in CSS px (`.agent-notch.is-recall` in agent.css). */
 const RECALL_WIDTH = 380;
+/** Hover time that opens a listening or working notch (FILL in
+ * grain_notch_sliver.rs). */
+const HOVER_OPEN_MS = 650;
 
 const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
   messages.map((m) => ({ role: m.role, content: m.content }));
@@ -426,12 +429,35 @@ export function AgentPanel() {
 
   // Reveal only after reply/error state has committed. The host verifies that
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
+  // Opened early, the call only ends the host's wait (once).
+  const presentedRef = useRef<number | null>(null);
   useEffect(() => {
     const generation = firstTurnGenerationRef.current;
-    if (!busy && !revealed && generation !== null && (firstReply || error)) {
+    if (
+      !busy &&
+      generation !== null &&
+      presentedRef.current !== generation &&
+      (firstReply || error)
+    ) {
+      presentedRef.current = generation;
       void commands.agentPresentReply(generation).catch(console.error);
     }
-  }, [busy, error, revealed, firstReply]);
+  }, [busy, error, firstReply]);
+
+  // Hovering the notch while it listens or works fills a bar, as the resting
+  // sliver does; when it is full (or on a click) the chat opens early.
+  const [hoverOpening, setHoverOpening] = useState(false);
+  const canOpenEarly = !revealed && !closing && !!capture && !capture.opened;
+  const openEarly = useCallback(() => {
+    setHoverOpening(false);
+    if (capture)
+      void commands.agentOpenSummon(capture.generation).catch(console.error);
+  }, [capture]);
+  useEffect(() => {
+    if (!hoverOpening || !canOpenEarly) return;
+    const timer = window.setTimeout(openEarly, HOVER_OPEN_MS);
+    return () => window.clearTimeout(timer);
+  }, [hoverOpening, canOpenEarly, openEarly]);
 
   /** Close the reply the same way the host closes it: retract, then close. */
   const dismiss = useCallback(() => {
@@ -777,8 +803,14 @@ export function AgentPanel() {
   const canClear = !busy && (history.length > 0 || thread.length > 0);
 
   return (
-    <div className="agent-panel-root">
+    <div
+      className="agent-panel-root"
+      onPointerEnter={() => canOpenEarly && setHoverOpening(true)}
+      onPointerLeave={() => setHoverOpening(false)}
+    >
       <section
+        onClick={() => canOpenEarly && openEarly()}
+        data-hover={canOpenEarly && hoverOpening ? "" : undefined}
         ref={shellRef}
         className={`agent-notch${entering ? " is-entering" : ""}${revealed ? " is-reply" : ""}${recall ? " is-recall" : ""}${closing ? " is-closing" : ""}`}
         data-opened={capture?.opened ? "" : undefined}
@@ -805,6 +837,7 @@ export function AgentPanel() {
           />
         )}
         {!revealed && <span className="agent-notch-work" aria-hidden />}
+        {canOpenEarly && <span className="agent-notch-fill" aria-hidden />}
         {/* One header for both states: the compact status crossfades into the
             brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">
@@ -881,7 +914,9 @@ export function AgentPanel() {
               revealed ? t("agent.notchClose") : t("agent.notchCancel")
             }
             disabled={!revealed && !capture}
-            onClick={() => {
+            onClick={(event) => {
+              // Not the shell's click-to-open.
+              event.stopPropagation();
               if (closing) return;
               if (revealed) dismiss();
               else if (capture)
@@ -1011,6 +1046,14 @@ export function AgentPanel() {
                   </div>
                 ))}
 
+                {busy &&
+                  !thread.length &&
+                  capture?.listening &&
+                  !capture.working && (
+                    <div className="agc-c-pending" role="status">
+                      {t("agent.notchListening")}
+                    </div>
+                  )}
                 {busy && (
                   <div className="agent-typing" aria-hidden="true">
                     <span />

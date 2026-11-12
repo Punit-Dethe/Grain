@@ -684,7 +684,7 @@ fn build_window(
             if generation == built_for {
                 state.opened.store(false, Ordering::SeqCst);
                 state.open_shown.store(false, Ordering::SeqCst);
-                if blocks_dictation(&app) || waiting_for_reply(&app) {
+                if blocks_dictation(&app) || (waiting_for_reply(&app) && !reply_shown(&app)) {
                     cancel_notch_capture(&app);
                 } else {
                     let mut image = state.screen_image.lock().unwrap();
@@ -1470,6 +1470,10 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
             .waiting_for_reply
             .store(false, Ordering::SeqCst);
         drop(pending);
+        // Opened early (`agent_open_summon`): already full size and focusable.
+        if state.reply_visible.load(Ordering::SeqCst) {
+            return;
+        }
         let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
             return;
         };
@@ -1490,9 +1494,53 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
     .map_err(|error| error.to_string())
 }
 
+/// [GRAIN] Open the capture notch to full size before its first reply: while
+/// listening or working, the user hovers or clicks it to see the chat. The
+/// request is untouched; its reply lands in the open chat (and
+/// `agent_present_reply` then only ends the wait). Stop or a newer summon makes
+/// it a no-op.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_open_summon(app: AppHandle, generation: u64) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let state = handle.state::<AgentState>();
+        if state.summon_gen.load(Ordering::SeqCst) != generation
+            || state.notch_generation.load(Ordering::SeqCst) != generation
+            || state.reply_visible.load(Ordering::SeqCst)
+            || !(blocks_dictation(&handle) || waiting_for_reply(&handle))
+        {
+            return;
+        }
+        let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
+            return;
+        };
+        #[cfg(windows)]
+        set_compact_notch_region(&window, false);
+        #[cfg(not(windows))]
+        place_notch_at_text_scale(&window, NOTCH_REPLY);
+        state.reply_visible.store(true, Ordering::SeqCst);
+        let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
+        let app = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(NOTCH_GROW).await;
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || focus_revealed_notch(&handle, generation));
+        });
+    })
+    .map_err(|error| error.to_string())
+}
+
 fn waiting_for_reply(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.waiting_for_reply.load(Ordering::SeqCst))
+}
+
+/// The notch is open at full size. Opened early (before the first reply), closing
+/// it no longer stops the request: it keeps running and lands in the chat.
+fn reply_shown(app: &AppHandle) -> bool {
+    app.try_state::<AgentState>()
+        .is_some_and(|state| state.reply_visible.load(Ordering::SeqCst))
 }
 
 pub(crate) fn reply_wait_is_current(app: &AppHandle, generation: u64) -> bool {
@@ -1861,7 +1909,9 @@ pub fn global_close(app: &AppHandle) {
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
     let dictation_live = ordinary_dictation_live(app);
-    match escape_target(input_live, dictation_live, waiting_for_reply(app)) {
+    // Opened early, Escape closes the notch and the request carries on.
+    let waiting = waiting_for_reply(app) && !reply_shown(app);
+    match escape_target(input_live, dictation_live, waiting) {
         EscapeTarget::AgentInput => {
             input_cancel(app);
             return;
