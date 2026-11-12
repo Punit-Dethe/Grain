@@ -2338,7 +2338,7 @@ pub async fn agent_run(
         }
         state.execution.begin()?
     };
-    let _chat = record.then(|| ChatRun::start(&app, &messages));
+    let chat_run = record.then(|| ChatRun::start(&app, &messages));
     let reply = run
         .wait(registration, agent_run_owned(&app, messages, context, &run))
         .await?;
@@ -2348,6 +2348,7 @@ pub async fn agent_run(
             if reply.confirm_action.is_none() {
                 crate::grain_agent_history::record(
                     &app,
+                    chat_run.as_ref().and_then(|run| run.chat.as_deref()),
                     vec![AgentMessage {
                         role: "assistant".into(),
                         content: reply.text.clone(),
@@ -2364,18 +2365,27 @@ pub async fn agent_run(
 /// notch to reload the chat, and stops the sliver's working line.
 struct ChatRun {
     app: AppHandle,
+    /// The chat the request went into; its reply follows it there.
+    chat: Option<String>,
 }
 
 impl ChatRun {
     fn start(app: &AppHandle, messages: &[AgentMessage]) -> Self {
-        if let Some(request) = messages.iter().rev().find(|m| m.role != "assistant") {
-            crate::grain_agent_history::record(app, vec![request.clone()]);
-        }
+        let chat = messages
+            .iter()
+            .rev()
+            .find(|m| m.role != "assistant")
+            .and_then(|request| {
+                crate::grain_agent_history::record(app, None, vec![request.clone()])
+            });
         app.state::<AgentState>()
             .chat_running
             .store(true, Ordering::SeqCst);
         crate::grain_notch_sliver::set_working(app, true);
-        Self { app: app.clone() }
+        Self {
+            app: app.clone(),
+            chat,
+        }
     }
 }
 

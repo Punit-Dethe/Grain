@@ -298,6 +298,44 @@ html[data-window="agent-panel"] body {
   color: var(--agc-ink);
 }
 
+/* Open: the modes and History sit left; the spacer pushes the rest right. */
+.is-reply .agent-notch-label {
+  flex: 0 1 auto;
+}
+
+.agent-notch-spacer {
+  flex: 0;
+}
+
+.is-reply .agent-notch-spacer {
+  flex: 1;
+}
+
+.agent-notch-control.agent-notch-history {
+  display: inline-flex;
+  gap: 5px;
+  width: auto;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  color: var(--agc-faint);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.agent-notch-history:hover:not(:disabled) {
+  background: transparent;
+}
+
+.agent-notch-history[aria-pressed="true"] {
+  background: #ffffff1a;
+  color: var(--agc-ink);
+}
+
+.agent-notch-history[aria-pressed="true"]:hover {
+  background: #ffffff1a;
+}
+
 .is-reply .agent-notch-status {
   opacity: 0;
   transform: translateY(4px);
@@ -435,6 +473,11 @@ html[data-window="agent-panel"] body {
     #000 62%,
     transparent 88%
   );
+}
+
+/* The chat stays mounted under the chat list, so a draft survives it. */
+.agent-notch-reply.is-away {
+  display: none;
 }
 
 .agc-c-scroll {
@@ -1200,4 +1243,176 @@ html[data-window="agent-panel"] body {
 }
 .agc-markdown p {
   white-space: normal;
+}
+
+/* The chat list: same shell as the chat, one row per chat, grouped by day. */
+.agent-notch-chats {
+  position: absolute;
+  top: var(--notch-reply-header);
+  left: 50%;
+  width: calc(100vw - 2px);
+  height: max(0px, calc(100vh - var(--notch-reply-header) - 1px));
+  transform: translateX(-50%);
+  animation: agent-notch-fade-in 200ms ease backwards;
+}
+
+.agh {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agh-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff2e transparent;
+  padding: 4px 10px 14px;
+  mask-image: linear-gradient(to bottom, transparent, #000 10px);
+}
+
+.agh-group + .agh-group {
+  margin-top: 10px;
+}
+
+.agh-group-label {
+  margin: 0;
+  padding: 8px 10px 4px;
+  color: var(--agc-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.agh-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agh-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  transition: background-color 140ms ease;
+}
+
+.agh-row:hover,
+.agh-row:focus-within {
+  background: var(--agc-raise);
+}
+
+.agh-row[aria-current="true"] {
+  background: #ffffff10;
+}
+
+.agh-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 12px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--agc-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  align-items: center;
+  cursor: pointer;
+}
+
+.agh-row:hover .agh-open,
+.agh-row[aria-current="true"] .agh-open {
+  color: var(--agc-ink);
+}
+
+.agh-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agh-when {
+  flex: none;
+  color: var(--agc-faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 120ms ease;
+}
+
+/* Delete takes the time's place on hover; a second click confirms it. */
+.agh-delete {
+  position: absolute;
+  right: 4px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--agc-faint);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  opacity: 0;
+  cursor: pointer;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.agh-row:hover .agh-delete,
+.agh-row:focus-within .agh-delete,
+.agh-row.is-confirming .agh-delete {
+  opacity: 1;
+}
+
+.agh-row:hover .agh-when,
+.agh-row:focus-within .agh-when,
+.agh-row.is-confirming .agh-when {
+  opacity: 0;
+}
+
+.agh-delete:hover:not(:disabled) {
+  background: #ffffff14;
+  color: var(--agc-ink);
+}
+
+.agh-row.is-confirming .agh-delete {
+  background: #f0525226;
+  color: #ff8a8a;
+}
+
+.agh-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--agc-faint);
+  font-size: 12.5px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-notch-chats,
+  .agh-row,
+  .agh-when,
+  .agh-delete {
+    animation: none;
+    transition: none;
+  }
 }

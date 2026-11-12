@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ArrowUp, Copy, RotateCcw, X, Check, SquarePen } from "lucide-react";
+import {
+  ArrowUp,
+  Copy,
+  RotateCcw,
+  X,
+  Check,
+  SquarePen,
+  History as HistoryIcon,
+} from "lucide-react";
 import {
   commands,
+  type AgentChatList,
+  type AgentHistoryMessage,
   type AgentNotchMode,
   type AgentNotchStatus,
   type AgentMessage,
@@ -11,6 +21,7 @@ import {
   type AgentReply,
 } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
+import { AgentHistory } from "./AgentHistory";
 import { AgentRecall } from "./AgentRecall";
 import { AgentVoiceFade } from "./AgentVoiceFade";
 import { AgentWorkingLabel } from "./AgentWorkingLabel";
@@ -39,6 +50,13 @@ const RECALL_WIDTH = 380;
 
 const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
   messages.map((m) => ({ role: m.role, content: m.content }));
+
+const toChat = (messages: AgentHistoryMessage[]): ChatMessage[] =>
+  messages.map((message, index) => ({
+    id: `h${index}`,
+    role: message.role === "assistant" ? "assistant" : "user",
+    content: message.content,
+  }));
 
 /** Store what was said in a finished turn; a reply still awaiting approval
  * is stored once it resolves. */
@@ -78,6 +96,9 @@ export function AgentPanel() {
   // The shell first paints as the resting sliver and grows out of it.
   const [entering, setEntering] = useState(true);
   const [mode, setMode] = useState<AgentNotchMode>("chat");
+  // The chat list replaces the chat or Recall pane while it is open.
+  const [view, setView] = useState<"main" | "history">("main");
+  const [chatList, setChatList] = useState<AgentChatList | null>(null);
   // Earlier turns of the one running chat (this session's turns are below).
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const historyRef = useRef<ChatMessage[]>([]);
@@ -113,14 +134,7 @@ export function AgentPanel() {
   /** Load the one running chat (the host records every turn). */
   const loadHistory = useCallback(async () => {
     const memory = await commands.agentHistory().catch(() => null);
-    if (memory)
-      setHistory(
-        (memory.messages ?? []).map((message, index) => ({
-          id: `h${index}`,
-          role: message.role === "assistant" ? "assistant" : "user",
-          content: message.content,
-        })),
-      );
+    if (memory) setHistory(toChat(memory.messages));
     return memory;
   }, []);
 
@@ -405,12 +419,12 @@ export function AgentPanel() {
   }, [revealed]);
 
   useEffect(() => {
-    if (!revealed || mode !== "chat") return;
+    if (!revealed || mode !== "chat" || view !== "main") return;
     // The first reply reads from its request down; later turns follow the end.
     const start = !hasFollowups ? currentStartRef.current : null;
     if (start) start.scrollIntoView({ block: "start" });
     else endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, history, hasFollowups, busy, revealed, mode]);
+  }, [messages, history, hasFollowups, busy, revealed, mode, view]);
 
   // A hand-opened notch has no global Escape (it may stay open for a whole
   // meeting); its own keydown closes it. A summon's Escape is the host's.
@@ -419,18 +433,20 @@ export function AgentPanel() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
-      dismiss();
+      // The chat list steps back to the chat first.
+      if (view === "history") setView("main");
+      else dismiss();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [revealed, dismiss]);
+  }, [revealed, dismiss, view]);
 
   // Clip the window to the shell so its transparent rest never eats clicks.
   // Lift the clip first so growth is never cut off; tighten once it settles.
   useEffect(() => {
     if (!revealed || closing) return;
     void commands.agentNotchShape(null).catch(console.error);
-    if (mode !== "recall" || recallMenu) return;
+    if (mode !== "recall" || recallMenu || view === "history") return;
     const timer = window.setTimeout(
       () =>
         void commands
@@ -439,26 +455,86 @@ export function AgentPanel() {
       NOTCH_GROW_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [revealed, closing, mode, recallHeight, recallMenu]);
+  }, [revealed, closing, mode, recallHeight, recallMenu, view]);
 
   const switchMode = (next: AgentNotchMode) => {
+    setView("main");
     if (next === mode) return;
     setMode(next);
     void commands.agentNotchSetMode(next).catch(console.error);
   };
 
-  /** Start the one chat over. */
-  const newChat = useCallback(() => {
-    if (busyRef.current) return;
-    void commands.agentHistoryClear().catch(console.error);
+  /** Show `earlier` as the chat, with no turn of this open on top of it. */
+  const showChat = useCallback((earlier: ChatMessage[]) => {
     instructionRef.current = "";
-    setHistory([]);
+    setHistory(earlier);
     setMessages([]);
     setFirstReply(null);
     setHasFollowups(true);
     setError(null);
-    composerRef.current?.focus();
   }, []);
+
+  /** Start a new chat; earlier ones stay in the history. */
+  const newChat = useCallback(() => {
+    if (busyRef.current) return;
+    void commands.agentHistoryNew().catch(console.error);
+    showChat([]);
+    setView("main");
+    setMode("chat");
+    void commands.agentNotchSetMode("chat").catch(console.error);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [showChat]);
+
+  const toggleHistory = useCallback(() => {
+    if (view === "history") {
+      setView("main");
+      return;
+    }
+    setView("history");
+    void commands.agentHistoryList().then(setChatList).catch(console.error);
+  }, [view]);
+
+  /** Continue an earlier chat. */
+  const openChat = useCallback(
+    async (id: string) => {
+      if (busyRef.current) return;
+      if (id !== chatList?.current) {
+        const res = await commands.agentHistoryOpen(id);
+        if (res.status !== "ok") {
+          setChatList((list) =>
+            list
+              ? { ...list, chats: list.chats.filter((c) => c.id !== id) }
+              : list,
+          );
+          return;
+        }
+        showChat(toChat(res.data.messages));
+      }
+      setView("main");
+      setMode("chat");
+      void commands.agentNotchSetMode("chat").catch(console.error);
+      requestAnimationFrame(() => composerRef.current?.focus());
+    },
+    [chatList, showChat],
+  );
+
+  const deleteChat = useCallback(
+    async (id: string) => {
+      if (busyRef.current) return;
+      const res = await commands.agentHistoryDelete(id);
+      if (res.status !== "ok") return;
+      if (id === chatList?.current) showChat([]);
+      setChatList((list) =>
+        list
+          ? {
+              current: list.current === id ? null : list.current,
+              chats: list.chats.filter((c) => c.id !== id),
+            }
+          : list,
+      );
+    },
+    [chatList, showChat],
+  );
 
   const runFollowup = useCallback(
     async (text: string) => {
@@ -631,7 +707,8 @@ export function AgentPanel() {
           : []),
       ];
   const canRetry = !hasFollowups && !busy && !firstReply?.confirm_action;
-  const recall = revealed && mode === "recall";
+  const listing = revealed && view === "history";
+  const recall = revealed && mode === "recall" && !listing;
   const canClear = !busy && (history.length > 0 || thread.length > 0);
 
   return (
@@ -705,7 +782,20 @@ export function AgentPanel() {
               </span>
             </span>
           </span>
-          {revealed && mode === "chat" && (
+          {revealed && (
+            <button
+              type="button"
+              className="agent-notch-control agent-notch-history"
+              aria-pressed={listing}
+              title={t("agent.history")}
+              onClick={toggleHistory}
+            >
+              <HistoryIcon size={13} />
+              <span>{t("agent.history")}</span>
+            </button>
+          )}
+          <span className="agent-notch-spacer" />
+          {revealed && (mode === "chat" || listing) && (
             <button
               type="button"
               className="agent-notch-control agent-notch-close"
@@ -739,6 +829,18 @@ export function AgentPanel() {
         {/* Mounted (hidden, clipped by the compact shell) as soon as the first
             reply is known, so reveal is only a class change: mounting the
             reply in the reveal frame stalled the start of the growth. */}
+        {listing && (
+          <div className="agent-notch-chats">
+            <AgentHistory
+              chats={chatList?.chats ?? null}
+              current={chatList?.current ?? null}
+              busy={busy}
+              onOpen={(id) => void openChat(id)}
+              onDelete={(id) => void deleteChat(id)}
+            />
+          </div>
+        )}
+
         {recall && (
           <div className="agent-notch-recall">
             <AgentRecall
@@ -750,7 +852,10 @@ export function AgentPanel() {
 
         {mode === "chat" &&
           (revealed || (!busy && (!!firstReply || !!error))) && (
-            <div className="agent-notch-reply" aria-hidden={!revealed}>
+            <div
+              className={`agent-notch-reply${listing ? " is-away" : ""}`}
+              aria-hidden={!revealed || listing}
+            >
               <div className="agc-c-scroll">
                 {history.map((m) => (
                   <div key={m.id} className={`agc-c-turn is-${m.role}`}>

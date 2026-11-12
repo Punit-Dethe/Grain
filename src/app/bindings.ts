@@ -1095,13 +1095,13 @@ async agentNotchShape(shape: AgentNotchShape | null) : Promise<void> {
     await TAURI_INVOKE("agent_notch_shape", { shape });
 },
 /**
- * The notch's chat and last mode.
+ * The notch's mode and the chat it continues.
  */
 async agentHistory() : Promise<AgentNotchMemory> {
     return await TAURI_INVOKE("agent_history");
 },
 /**
- * Append finished turns (what was said, never tool traffic) to the chat.
+ * Append finished turns (what was said, never tool traffic) to the current chat.
  */
 async agentHistoryAppend(messages: AgentMessage[]) : Promise<Result<null, string>> {
     try {
@@ -1112,11 +1112,39 @@ async agentHistoryAppend(messages: AgentMessage[]) : Promise<Result<null, string
 }
 },
 /**
- * Start the chat over. The mode is kept.
+ * Start a new chat with the next turn. Earlier chats are kept.
  */
-async agentHistoryClear() : Promise<Result<null, string>> {
+async agentHistoryNew() : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_history_clear") };
+    return { status: "ok", data: await TAURI_INVOKE("agent_history_new") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every chat, newest first.
+ */
+async agentHistoryList() : Promise<AgentChatList> {
+    return await TAURI_INVOKE("agent_history_list");
+},
+/**
+ * Continue chat `id` from now on; returns its messages.
+ */
+async agentHistoryOpen(id: string) : Promise<Result<AgentNotchMemory, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_history_open", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete one chat.
+ */
+async agentHistoryDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_history_delete", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1902,6 +1930,11 @@ updateDownloadProgress: "update-download-progress"
  */
 export type Activity = { slot: number; start_ns: number; end_ns: number }
 /**
+ * Every chat (newest first) and the one the notch continues.
+ */
+export type AgentChatList = { current: string | null; chats: AgentChatSummary[] }
+export type AgentChatSummary = { id: string; title: string; updated_unix_ms: number }
+/**
  * [GRAIN] A risky action awaiting the user's approval. Carries the exact
  * prepared-call `token` the host resumes on approval (`agent_confirm_action`),
  * plus everything the panel needs to show what will happen. `markdown` is the
@@ -1930,7 +1963,10 @@ export type AgentMessage = {
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
 role: string; content: string }
-export type AgentNotchMemory = { mode?: AgentNotchMode; messages?: AgentHistoryMessage[] }
+/**
+ * What the notch opens with: its mode and the chat it continues.
+ */
+export type AgentNotchMemory = { mode: AgentNotchMode; chat: string | null; messages: AgentHistoryMessage[] }
 export type AgentNotchMode = "chat" | "recall"
 /**
  * The shell size the hand-opened notch is animating to, in CSS px.
