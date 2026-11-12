@@ -446,7 +446,8 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "atlassian",
-        bundled_preset: true,
+        // Hidden: Atlassian needs extra setup before sign-in works (2026-11-12).
+        bundled_preset: false,
         name: "Jira & Confluence",
         description: "Jira and Confluence work across one Atlassian account.",
         endpoint: "https://mcp.atlassian.com/v1/mcp/authv2",
@@ -533,7 +534,7 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://help.raindrop.io/mcp",
         ownership: None,
     },
-    // On trial (2026-11-12): monday.com, Canva, and Jira & Confluence above.
+    // On trial (2026-11-12): monday.com (sign-in callback fails; diagnosing).
     CatalogProvider {
         id: "monday",
         bundled_preset: true,
@@ -1569,6 +1570,36 @@ fn parse_callback(
     })
 }
 
+/// Diagnostic text for a failed code exchange. Quoted spans are dropped because
+/// a token parse error can echo response values; the error kind stays readable.
+fn callback_failure_detail(message: &str) -> String {
+    let mut out = String::with_capacity(message.len().min(300));
+    let mut quote = None;
+    for ch in message.chars() {
+        match quote {
+            Some(open) if ch == open => {
+                out.push_str("…");
+                out.push(ch);
+                quote = None;
+            }
+            Some(_) => {}
+            None if matches!(ch, '"' | '\'' | '`') => {
+                out.push(ch);
+                quote = Some(ch);
+            }
+            None if ch.is_control() => out.push(' '),
+            None => out.push(ch),
+        }
+        if out.chars().count() >= 300 {
+            break;
+        }
+    }
+    if quote.is_some() {
+        out.push('…');
+    }
+    out
+}
+
 async fn read_callback_request(stream: &mut TcpStream) -> Result<Vec<u8>, String> {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut request = Vec::with_capacity(1024);
@@ -1889,7 +1920,14 @@ async fn connect_oauth(
     oauth
         .handle_callback_with_issuer(&callback.code, &callback.state, callback.issuer.as_deref())
         .await
-        .map_err(|_| "OAuth callback failed. Try signing in again.")?;
+        .map_err(|error| {
+            log::warn!(
+                "[GRAIN] MCP sign-in callback failed: provider={} {}",
+                item.id,
+                callback_failure_detail(&error.to_string())
+            );
+            "OAuth callback failed. Try signing in again."
+        })?;
     // A successful connection should be immediately useful. Requiring a second
     // Enable click left the provider invisible to the Agent and also disabled
     // the discovery check, which made a completed OAuth flow look broken.
@@ -3107,7 +3145,6 @@ mod tests {
             ("coda", Registration::Dynamic),
             ("readwise", Registration::Dynamic),
             ("raindrop", Registration::Dynamic),
-            ("atlassian", Registration::Dynamic),
             ("monday", Registration::Dynamic),
             ("canva", Registration::Dynamic),
         ] {
@@ -3399,6 +3436,27 @@ mod tests {
             assert!(url.password().is_none());
             assert!(url.fragment().is_none());
         }
+    }
+
+    #[test]
+    fn callback_failure_detail_keeps_the_kind_and_drops_quoted_values() {
+        assert_eq!(
+            callback_failure_detail(
+                "OAuth token exchange failed: invalid type: string \"secret-token\", expected u64"
+            ),
+            "OAuth token exchange failed: invalid type: string \"…\", expected u64"
+        );
+        assert_eq!(
+            callback_failure_detail("Server returned error response: invalid_client"),
+            "Server returned error response: invalid_client"
+        );
+        assert_eq!(callback_failure_detail("cut 'open"), "cut '…");
+        assert!(callback_failure_detail(&"x".repeat(1000)).chars().count() <= 300);
+    }
+
+    #[test]
+    fn hidden_atlassian_row_stays_out_of_extensions() {
+        assert!(!is_preset(provider("atlassian").unwrap()));
     }
 
     #[test]
