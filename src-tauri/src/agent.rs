@@ -627,6 +627,11 @@ fn build_window(
     .focused(false)
     .focusable(false)
     .shadow(false)
+    // [GRAIN] Transparent window paint, not just a transparent WebView: the
+    // window erases newly uncovered pixels to clear (GDI black with zero alpha
+    // under DWM blur-behind) instead of leaving them unpainted, which showed
+    // as a white or stale flash whenever the clip region grew on screen.
+    .background_color(tauri::window::Color(0, 0, 0, 0))
     .visible(false);
 
     if let Some(data_dir) = crate::portable::data_dir() {
@@ -840,6 +845,23 @@ fn set_compact_notch_region(window: &tauri::WebviewWindow, compact: bool) {
 
 /// Clip the notch window to a top-centred shell of `shape` CSS px (with
 /// slack), or lift the clip with `None`.
+/// Whether the window is clipped at all: lifting no clip must not repaint.
+#[cfg(windows)]
+fn has_region(hwnd: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::Graphics::Gdi::{
+        CreateRectRgn, DeleteObject, GetWindowRgn, GDI_REGION_TYPE, HGDIOBJ,
+    };
+    unsafe {
+        let probe = CreateRectRgn(0, 0, 0, 0);
+        if probe.0.is_null() {
+            return true;
+        }
+        let kind = GetWindowRgn(hwnd, probe);
+        let _ = DeleteObject(HGDIOBJ(probe.0));
+        kind != GDI_REGION_TYPE(0)
+    }
+}
+
 #[cfg(windows)]
 fn set_notch_region(window: &tauri::WebviewWindow, shape: Option<(f64, f64)>) {
     use windows::Win32::Foundation::RECT;
@@ -851,8 +873,11 @@ fn set_notch_region(window: &tauri::WebviewWindow, shape: Option<(f64, f64)>) {
     };
     unsafe {
         let Some(shape) = shape else {
-            // No redraw: the newly exposed pixels are transparent until CSS grows.
-            let _ = SetWindowRgn(hwnd, None, false);
+            if has_region(hwnd) {
+                // Redraw so the uncovered pixels are erased to clear (see the
+                // background colour in `build_window`), never left unpainted.
+                let _ = SetWindowRgn(hwnd, None, true);
+            }
             return;
         };
         let mut outer = RECT::default();
@@ -872,7 +897,7 @@ fn set_notch_region(window: &tauri::WebviewWindow, shape: Option<(f64, f64)>) {
             return;
         }
         // On success the system owns the region.
-        if SetWindowRgn(hwnd, Some(region), false) == 0 {
+        if SetWindowRgn(hwnd, Some(region), true) == 0 {
             let _ = DeleteObject(HGDIOBJ(region.0));
         }
     }
@@ -1001,6 +1026,10 @@ pub(crate) fn open_notch(app: &AppHandle) {
         state.open_shown.store(false, Ordering::SeqCst);
         return;
     };
+    // Lift the prewarm clip while still hidden: the shell grows to full size,
+    // and a clip lifted on screen flashes the pixels it uncovers.
+    #[cfg(windows)]
+    set_notch_region(&window, None);
     if let Err(error) = window.show() {
         warn!("[GRAIN] agent: failed to show the notch: {error}");
         let _ = window.destroy();
