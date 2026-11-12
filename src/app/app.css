@@ -5009,6 +5009,13 @@ html[data-theme="light"] .qp-overlay {
 /* [GRAIN] Meeting workspace (user-facing name from `ui2.meet.name`). */
 .grain-root {
   --meet-live: #ff5f57;
+  /* Speaker colours: six bright, distinct hues, lifted a step on dark. */
+  --speaker-amber: #f0ae62;
+  --speaker-green: #52c08a;
+  --speaker-blue: #5c9df2;
+  --speaker-violet: #a78bf5;
+  --speaker-rose: #f0789f;
+  --speaker-teal: #3cc3c6;
   --meet-error-ink: color-mix(in srgb, var(--danger) 55%, var(--text-1));
   --meet-page: var(--bg-1);
   --meet-surface: #292929;
@@ -5024,6 +5031,12 @@ html[data-theme="light"] .qp-overlay {
    on white, with no shadow. */
 html[data-theme="light"] .grain-root {
   --meet-live: #e5484d;
+  --speaker-amber: #e89f4d;
+  --speaker-green: #3e9e6e;
+  --speaker-blue: #3b82e0;
+  --speaker-violet: #8b6bdd;
+  --speaker-rose: #db5b8c;
+  --speaker-teal: #1f9fa3;
   --meet-page: #fcfcfb;
   --meet-surface: #f3f1ec;
   --meet-surface-hover: #ebe8e1;
@@ -6396,20 +6409,28 @@ html[data-theme="light"] .meet-info-card {
   font-size: 10px;
 }
 
-.meet-avatar.tone-peach {
-  background: color-mix(in srgb, var(--peach) 34%, var(--meet-surface));
+.meet-avatar.tone-amber {
+  background: color-mix(in srgb, var(--speaker-amber) 34%, var(--meet-surface));
 }
 
-.meet-avatar.tone-sage {
-  background: color-mix(in srgb, var(--sage) 34%, var(--meet-surface));
+.meet-avatar.tone-green {
+  background: color-mix(in srgb, var(--speaker-green) 34%, var(--meet-surface));
 }
 
-.meet-avatar.tone-lilac {
-  background: color-mix(in srgb, var(--lilac) 30%, var(--meet-surface));
+.meet-avatar.tone-blue {
+  background: color-mix(in srgb, var(--speaker-blue) 34%, var(--meet-surface));
 }
 
-.meet-avatar.tone-sky {
-  background: color-mix(in srgb, var(--sky) 26%, var(--meet-surface));
+.meet-avatar.tone-violet {
+  background: color-mix(in srgb, var(--speaker-violet) 34%, var(--meet-surface));
+}
+
+.meet-avatar.tone-rose {
+  background: color-mix(in srgb, var(--speaker-rose) 34%, var(--meet-surface));
+}
+
+.meet-avatar.tone-teal {
+  background: color-mix(in srgb, var(--speaker-teal) 34%, var(--meet-surface));
 }
 
 .meet-turn-body {
@@ -6430,20 +6451,28 @@ html[data-theme="light"] .meet-info-card {
   font-weight: 620;
 }
 
-.meet-turn-head strong.tone-peach {
-  color: color-mix(in srgb, var(--peach) 80%, var(--text-1));
+.meet-turn-head strong.tone-amber {
+  color: var(--speaker-amber);
 }
 
-.meet-turn-head strong.tone-sage {
-  color: color-mix(in srgb, var(--sage) 80%, var(--text-1));
+.meet-turn-head strong.tone-green {
+  color: var(--speaker-green);
 }
 
-.meet-turn-head strong.tone-lilac {
-  color: color-mix(in srgb, var(--lilac) 80%, var(--text-1));
+.meet-turn-head strong.tone-blue {
+  color: var(--speaker-blue);
 }
 
-.meet-turn-head strong.tone-sky {
-  color: color-mix(in srgb, var(--sky) 80%, var(--text-1));
+.meet-turn-head strong.tone-violet {
+  color: var(--speaker-violet);
+}
+
+.meet-turn-head strong.tone-rose {
+  color: var(--speaker-rose);
+}
+
+.meet-turn-head strong.tone-teal {
+  color: var(--speaker-teal);
 }
 
 .meet-turn-source {

@@ -64,7 +64,14 @@ import {
 type T = (key: string, options?: Record<string, unknown>) => string;
 
 /** Speaker accents, cycled in speaker order. */
-const SPEAKER_TONES = ["peach", "sage", "lilac", "sky"] as const;
+const SPEAKER_TONES = [
+  "amber",
+  "green",
+  "blue",
+  "violet",
+  "rose",
+  "teal",
+] as const;
 const STAGES: Stage[] = [
   "Preparing",
   "IdentifyingSpeakers",
