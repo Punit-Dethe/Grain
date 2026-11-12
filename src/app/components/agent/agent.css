@@ -1236,6 +1236,75 @@ html[data-window="agent-panel"] body {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* A line of nothing but links: buttons, title first, the host beside it so a
+   misleading title cannot hide where the link goes. */
+.agc-markdown .agc-md-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0.55em 0;
+}
+
+.agc-markdown .agc-md-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 0 10px 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff12;
+  box-shadow: inset 0 0 0 1px #ffffff14;
+  color: var(--agc-ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.agc-markdown .agc-md-link:hover {
+  background: #ffffff1f;
+  box-shadow: inset 0 0 0 1px #ffffff26;
+}
+
+.agc-markdown .agc-md-link:active {
+  background: #ffffff29;
+}
+
+.agc-markdown .agc-md-link:focus-visible {
+  outline: 2px solid var(--agc-light);
+  outline-offset: 1px;
+}
+
+.agc-md-link-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agc-md-link-host {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--agc-faint);
+  font-weight: 450;
+  font-size: 11.5px;
+}
+
+.agc-md-link > svg {
+  flex: none;
+  color: var(--agc-mid);
+}
 .agc-markdown hr {
   margin: 0.9em 0;
   border: 0;

@@ -2266,7 +2266,9 @@ mod agent_routing_tests {
         ];
         let full = build_messages(&messages, Some("  explicitly selected subject  "));
         assert_eq!(full.len(), messages.len() + 2);
-        assert_eq!(full[0], ("system".into(), AGENT_SYSTEM_PROMPT.into()));
+        assert_eq!(full[0].0, "system");
+        assert!(full[0].1.starts_with(AGENT_SYSTEM_PROMPT));
+        assert!(full[0].1.ends_with(crate::grain_agent_link::LINK_RULE));
         assert_eq!(full[1].0, "system");
         assert!(full[1].1.ends_with("explicitly selected subject"));
         assert_eq!(full[2], ("user".into(), "rewrite it".into()));
@@ -3832,7 +3834,13 @@ pub(crate) async fn run_messages(
 /// turns. The selection is the subject of the instruction, not field background.
 fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(String, String)> {
     let mut full: Vec<(String, String)> = Vec::with_capacity(messages.len() + 2);
-    full.push(("system".to_string(), AGENT_SYSTEM_PROMPT.to_string()));
+    full.push((
+        "system".to_string(),
+        format!(
+            "{AGENT_SYSTEM_PROMPT} {}",
+            crate::grain_agent_link::LINK_RULE
+        ),
+    ));
 
     if let Some(ctx) = context.map(str::trim).filter(|c| !c.is_empty()) {
         full.push((

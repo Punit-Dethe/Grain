@@ -1,4 +1,6 @@
 import { Fragment, type ReactNode } from "react";
+import { ArrowUpRight } from "lucide-react";
+import { commands } from "@/bindings";
 
 type Block =
   | { type: "paragraph"; lines: string[] }
@@ -17,6 +19,19 @@ type Block =
 
 type TableAlignment = "left" | "center" | "right";
 
+/** How a block renders. `onLink` (the Agent panel) routes every link through
+ * the host instead of letting the webview navigate, and turns a line holding
+ * nothing but links into buttons. */
+interface Render {
+  soft: boolean;
+  onLink?: (url: string) => void;
+}
+
+interface LinkButton {
+  title: string;
+  url: string;
+}
+
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const UNORDERED_ITEM = /^\s*[-*+]\s+(.+)$/;
 const ORDERED_ITEM = /^\s*(\d+)\.\s+(.+)$/;
@@ -31,6 +46,9 @@ const LIST_CONTINUATION = /^\s{1,}\S/;
  * a trailing backslash. Everything else that looks like a newline is a SOFT
  * break — the author's wrapping, not their intent. */
 const HARD_BREAK = /( {2,}|\\)$/;
+const LINK = /\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/g;
+/** A line that is nothing but one or more links. */
+const LINK_ONLY = /^\s*(?:\[[^\]]+]\(https?:\/\/[^\s)]+\)\s*)+$/;
 
 /**
  * [GRAIN] The app's ONE stateless, safe Markdown renderer. Written for Agent
@@ -49,9 +67,12 @@ export function Markdown({
   markdown,
   className = "gm-markdown",
   softBreaks = false,
+  onLink,
 }: {
   markdown: string;
   className?: string;
+  /** Open links through this instead of the webview (see `Render`). */
+  onLink?: (url: string) => void;
   /** Treat a lone newline inside a paragraph as a SPACE (CommonMark), not a
    * line break. Authored documents are hard-wrapped by their author — a README
    * wrapped at 80 columns rendered with every one of those breaks preserved,
@@ -63,16 +84,82 @@ export function Markdown({
   return (
     <div className={className}>
       {parseBlocks(markdown).map((block, index) =>
-        renderBlock(block, index, softBreaks),
+        renderBlock(block, index, { soft: softBreaks, onLink }),
       )}
     </div>
   );
 }
 
+/** Links in a reply are model output: the host checks and opens them in the
+ * default browser; the panel's webview never navigates. */
+function openAgentLink(url: string) {
+  void commands
+    .agentOpenLink(url)
+    .then((result) => {
+      if (result.status === "error") console.warn(result.error);
+    })
+    .catch(console.error);
+}
+
 /** The Agent panel's dark-surface binding. Keeps break-per-newline: a reply is
- * written as it is meant to be read, not wrapped to a column. */
+ * written as it is meant to be read, not wrapped to a column. A line holding
+ * only links renders as buttons. */
 export function AgentMarkdown({ markdown }: { markdown: string }) {
-  return <Markdown markdown={markdown} className="agc-markdown" />;
+  return (
+    <Markdown
+      markdown={markdown}
+      className="agc-markdown"
+      onLink={openAgentLink}
+    />
+  );
+}
+
+/** The links of `lines` when every line is nothing but links, else null. */
+function linkButtons(lines: string[]): LinkButton[] | null {
+  if (!lines.length || !lines.every((line) => LINK_ONLY.test(line)))
+    return null;
+  return lines.flatMap((line) =>
+    [...line.matchAll(LINK)].map((match) => ({
+      title: match[1].trim(),
+      url: match[2],
+    })),
+  );
+}
+
+/** Where a link goes, shown beside its title so a misleading title can't
+ * hide the destination. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function renderLinkButtons(
+  links: LinkButton[],
+  key: number,
+  onLink: (url: string) => void,
+): ReactNode {
+  return (
+    <div key={key} className="agc-md-links">
+      {links.map((link, index) => (
+        <button
+          key={index}
+          type="button"
+          className="agc-md-link"
+          title={link.url}
+          onClick={() => onLink(link.url)}
+        >
+          <span className="agc-md-link-title">
+            {inline(link.title, { soft: false })}
+          </span>
+          <span className="agc-md-link-host">{hostOf(link.url)}</span>
+          <ArrowUpRight size={13} strokeWidth={2} aria-hidden />
+        </button>
+      ))}
+    </div>
+  );
 }
 
 function parseBlocks(markdown: string): Block[] {
@@ -275,30 +362,39 @@ function normalizeTableRow(cells: string[], columns: number): string[] {
   return Array.from({ length: columns }, (_, index) => cells[index] ?? "");
 }
 
-function renderBlock(block: Block, key: number, soft: boolean): ReactNode {
+function renderBlock(block: Block, key: number, render: Render): ReactNode {
   switch (block.type) {
     case "heading": {
       const Tag = `h${block.depth}` as keyof JSX.IntrinsicElements;
-      return <Tag key={key}>{inline(block.text)}</Tag>;
+      return <Tag key={key}>{inline(block.text, render)}</Tag>;
     }
-    case "unordered-list":
+    case "unordered-list": {
+      // A list of nothing but links is a row of buttons.
+      const links = render.onLink
+        ? linkButtons(block.items.map((item) => item.join(" ")))
+        : null;
+      if (links && render.onLink)
+        return renderLinkButtons(links, key, render.onLink);
       return (
         <ul key={key}>
           {block.items.map((item, i) => (
-            <li key={i}>{joinLines(item, soft)}</li>
+            <li key={i}>{joinLines(item, render)}</li>
           ))}
         </ul>
       );
+    }
     case "ordered-list":
       return (
         <ol key={key} start={block.start}>
           {block.items.map((item, i) => (
-            <li key={i}>{joinLines(item, soft)}</li>
+            <li key={i}>{joinLines(item, render)}</li>
           ))}
         </ol>
       );
     case "quote":
-      return <blockquote key={key}>{joinLines(block.lines, soft)}</blockquote>;
+      return (
+        <blockquote key={key}>{joinLines(block.lines, render)}</blockquote>
+      );
     case "code":
       return (
         <pre key={key} data-language={block.language || undefined}>
@@ -316,7 +412,7 @@ function renderBlock(block: Block, key: number, soft: boolean): ReactNode {
                     key={index}
                     className={`agc-md-align-${block.alignments[index]}`}
                   >
-                    {inline(cell)}
+                    {inline(cell, render)}
                   </th>
                 ))}
               </tr>
@@ -329,7 +425,7 @@ function renderBlock(block: Block, key: number, soft: boolean): ReactNode {
                       key={index}
                       className={`agc-md-align-${block.alignments[index]}`}
                     >
-                      {inline(cell)}
+                      {inline(cell, render)}
                     </td>
                   ))}
                 </tr>
@@ -340,26 +436,33 @@ function renderBlock(block: Block, key: number, soft: boolean): ReactNode {
       );
     case "rule":
       return <hr key={key} />;
-    case "paragraph":
-      return <p key={key}>{joinLines(block.lines, soft)}</p>;
+    case "paragraph": {
+      // A paragraph of nothing but links is a row of buttons.
+      const links = render.onLink ? linkButtons(block.lines) : null;
+      if (links && render.onLink)
+        return renderLinkButtons(links, key, render.onLink);
+      return <p key={key}>{joinLines(block.lines, render)}</p>;
+    }
   }
 }
 
 /** Lines of one paragraph-like block, joined per the chosen break rule: a
  * newline becomes a space when `soft`, otherwise a `<br>`. An explicit
  * CommonMark break (two trailing spaces, or a backslash) is always honoured. */
-function joinLines(lines: string[], soft: boolean): ReactNode[] {
-  if (!soft) {
+function joinLines(lines: string[], render: Render): ReactNode[] {
+  if (!render.soft) {
     return lines.flatMap((line, index) => [
       ...(index ? [<br key={`break-${index}`} />] : []),
-      <Fragment key={`line-${index}`}>{inline(line)}</Fragment>,
+      <Fragment key={`line-${index}`}>{inline(line, render)}</Fragment>,
     ]);
   }
   const out: ReactNode[] = [];
   let run: string[] = [];
   const flush = (key: number) => {
     if (run.length)
-      out.push(<Fragment key={`run-${key}`}>{inline(run.join(" "))}</Fragment>);
+      out.push(
+        <Fragment key={`run-${key}`}>{inline(run.join(" "), render)}</Fragment>,
+      );
     run = [];
   };
   lines.forEach((line, index) => {
@@ -375,7 +478,7 @@ function joinLines(lines: string[], soft: boolean): ReactNode[] {
   return out;
 }
 
-function inline(text: string): ReactNode[] {
+function inline(text: string, render: Render): ReactNode[] {
   const parts: ReactNode[] = [];
   const token =
     /(\[([^\]]+)]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|\*([^*\n]+)\*|_([^_\n]+)_)/g;
@@ -385,22 +488,40 @@ function inline(text: string): ReactNode[] {
   while ((match = token.exec(text))) {
     if (match.index > cursor) parts.push(text.slice(cursor, match.index));
     if (match[2] && match[3]) {
+      const url = match[3];
+      const { onLink } = render;
       parts.push(
-        <a key={match.index} href={match[3]} target="_blank" rel="noreferrer">
-          {inline(match[2])}
-        </a>,
+        onLink ? (
+          <a
+            key={match.index}
+            href={url}
+            title={url}
+            onClick={(event) => {
+              event.preventDefault();
+              onLink(url);
+            }}
+          >
+            {inline(match[2], render)}
+          </a>
+        ) : (
+          <a key={match.index} href={url} target="_blank" rel="noreferrer">
+            {inline(match[2], render)}
+          </a>
+        ),
       );
     } else if (match[4]) {
       parts.push(<code key={match.index}>{match[4]}</code>);
     } else if (match[5] || match[6]) {
       parts.push(
-        <strong key={match.index}>{inline(match[5] ?? match[6])}</strong>,
+        <strong key={match.index}>
+          {inline(match[5] ?? match[6], render)}
+        </strong>,
       );
     } else if (match[7]) {
-      parts.push(<del key={match.index}>{inline(match[7])}</del>);
+      parts.push(<del key={match.index}>{inline(match[7], render)}</del>);
     } else {
       parts.push(
-        <em key={match.index}>{inline(match[8] ?? match[9] ?? "")}</em>,
+        <em key={match.index}>{inline(match[8] ?? match[9] ?? "", render)}</em>,
       );
     }
     cursor = token.lastIndex;

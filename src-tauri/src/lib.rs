@@ -62,6 +62,7 @@ mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicate
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
 mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
+mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the host
 mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebView)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
@@ -1450,6 +1451,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_agent_history::agent_history_open,
             grain_agent_history::agent_history_delete,
             grain_agent_history::agent_notch_set_mode,
+            grain_agent_link::agent_open_link,
             commands::cancel_operation,
             commands::is_portable,
             commands::get_app_dir_path,

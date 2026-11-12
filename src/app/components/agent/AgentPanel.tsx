@@ -41,10 +41,34 @@ function resizeComposer(input: HTMLTextAreaElement) {
   input.style.height = `${Math.min(input.scrollHeight, 76)}px`;
 }
 
+/** Call `done` once `shell` has sat at `width` x `height` CSS px for a few
+ * frames (its transition finished and painted), or after a cap. Returns a
+ * cancel. */
+function whenSettled(
+  shell: HTMLElement | null,
+  width: number,
+  height: number,
+  done: () => void,
+): () => void {
+  const start = performance.now();
+  let still = 0;
+  let frame = 0;
+  const tick = () => {
+    const rect = shell?.getBoundingClientRect();
+    const there =
+      !!rect &&
+      Math.abs(rect.width - width) < 1 &&
+      Math.abs(rect.height - height) < 1;
+    still = there ? still + 1 : 0;
+    if (still >= 3 || performance.now() - start > 1500) done();
+    else frame = requestAnimationFrame(tick);
+  };
+  frame = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(frame);
+}
+
 /** Earlier turns sent with each request, so the chat continues. */
 const HISTORY_CONTEXT = 12;
-/** Matches --notch-grow in agent.css (and NOTCH_GROW in agent.rs). */
-const NOTCH_GROW_MS = 460;
 /** The Recall shell width, in CSS px (`.agent-notch.is-recall` in agent.css). */
 const RECALL_WIDTH = 380;
 
@@ -107,8 +131,11 @@ export function AgentPanel() {
   // A Recall device menu floats below the shell; lift the click clip for it.
   const [recallMenu, setRecallMenu] = useState(false);
   const currentStartRef = useRef<HTMLDivElement>(null);
-  // The window is clipped to the Recall shell (see the shape effect).
-  const clippedRef = useRef(false);
+  // The Recall height the window is clipped to: `null` unclipped, `undefined`
+  // not yet known (the host may still hold the compact clip). See the shape
+  // effect.
+  const clipRef = useRef<number | null | undefined>(undefined);
+  const shellRef = useRef<HTMLElement>(null);
   historyRef.current = history;
   const revealedRef = useRef(false);
   const [capture, setCapture] = useState<AgentNotchStatus | null>(null);
@@ -443,31 +470,51 @@ export function AgentPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [revealed, dismiss, view]);
 
-  // Clip the window to the shell so its transparent rest never eats clicks.
-  // Lift the clip first so growth is never cut off; tighten once it settles.
+  // Clip the window to the Recall shell so its transparent rest never eats
+  // clicks. Pixels outside the clip are not refreshed while it holds: lifting
+  // or widening it shows whatever was drawn there when it was applied. So the
+  // clip only ever tightens once the shell has SETTLED (painted transparent
+  // outside it), and widens before the shell grows, never after.
   useEffect(() => {
     if (!revealed || closing) return;
-    clippedRef.current = false;
-    void commands.agentNotchShape(null).catch(console.error);
-    if (mode !== "recall" || recallMenu || view === "history") return;
-    const timer = window.setTimeout(() => {
-      clippedRef.current = true;
+    const clip = mode === "recall" && !recallMenu && view !== "history";
+    if (!clip) {
+      if (clipRef.current !== null) {
+        clipRef.current = null;
+        void commands.agentNotchShape(null).catch(console.error);
+      }
+      return;
+    }
+    const apply = () => {
+      clipRef.current = recallHeight;
       void commands
         .agentNotchShape({ width: RECALL_WIDTH, height: recallHeight })
         .catch(console.error);
-    }, NOTCH_GROW_MS);
-    return () => window.clearTimeout(timer);
+    };
+    const held = clipRef.current;
+    if (held !== null && (held === undefined || recallHeight >= held)) {
+      // Growing within Recall (or the first clip): widen now.
+      apply();
+      return;
+    }
+    // From unclipped, or shrinking: tighten once the shell has settled.
+    return whenSettled(
+      shellRef.current,
+      Math.min(RECALL_WIDTH, window.innerWidth),
+      Math.min(recallHeight, window.innerHeight),
+      apply,
+    );
   }, [revealed, closing, mode, recallHeight, recallMenu, view]);
 
   /** Apply a change that may grow the shell. While the window is clipped to
    * Recall, lift the clip first and wait until it is gone: a growth started
    * under the old clip is cut off for a frame or two (the glitch). */
   const unclipThen = useCallback((change: () => void) => {
-    if (!clippedRef.current) {
+    if (clipRef.current === null) {
       change();
       return;
     }
-    clippedRef.current = false;
+    clipRef.current = null;
     void commands
       .agentNotchShape(null)
       .catch(console.error)
@@ -732,6 +779,7 @@ export function AgentPanel() {
   return (
     <div className="agent-panel-root">
       <section
+        ref={shellRef}
         className={`agent-notch${entering ? " is-entering" : ""}${revealed ? " is-reply" : ""}${recall ? " is-recall" : ""}${closing ? " is-closing" : ""}`}
         data-opened={capture?.opened ? "" : undefined}
         style={
