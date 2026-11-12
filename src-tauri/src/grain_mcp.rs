@@ -468,11 +468,11 @@ const CATALOG: &[CatalogProvider] = &[
             "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
         ownership: None,
     },
-    // Admission: a row becomes a bundled preset only after one real Connect
-    // and one real tool call pass on a release build.
+    // On trial: listed so they can be tested in the app. Each stays only if
+    // one real Connect and one real tool call pass; otherwise remove the row.
     CatalogProvider {
         id: "todoist",
-        bundled_preset: false,
+        bundled_preset: true,
         name: "Todoist",
         description: "Tasks, projects, due dates, and labels.",
         endpoint: "https://ai.todoist.net/mcp",
@@ -482,7 +482,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "dropbox",
-        bundled_preset: false,
+        bundled_preset: true,
         name: "Dropbox",
         description: "Find, read, and share files and folders.",
         endpoint: "https://mcp.dropbox.com/mcp",
@@ -492,7 +492,7 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "asana",
-        bundled_preset: false,
+        bundled_preset: true,
         name: "Asana",
         description: "Tasks, projects, and team work.",
         endpoint: "https://mcp.asana.com/v2/mcp",
@@ -3048,14 +3048,14 @@ mod tests {
     }
 
     #[test]
-    fn candidate_rows_stay_developer_only_until_admitted() {
+    fn trial_rows_are_listed_with_their_sign_in_kind() {
         for (id, registration) in [
             ("todoist", Registration::Dynamic),
             ("dropbox", Registration::Dynamic),
             ("asana", Registration::PreRegistered),
         ] {
             let item = provider(id).unwrap();
-            assert!(!is_preset(item), "{id} must pass a real Connect first");
+            assert!(is_preset(item));
             assert!(item.registration == registration);
             assert!(item.endpoint.starts_with("https://"));
         }
