@@ -472,8 +472,8 @@ const CATALOG: &[CatalogProvider] = &[
             "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
         ownership: None,
     },
-    // Admitted rows passed one real Connect and one real tool call. Rows
-    // marked "on trial" are listed for that test and removed if it fails.
+    // Listed rows passed one real Connect and one real tool call. New rows go
+    // in "on trial" for that test; a failure is hidden (bundled_preset false).
     CatalogProvider {
         id: "todoist",
         bundled_preset: true,
@@ -558,7 +558,6 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://www.canva.dev/docs/connect/canva-mcp-server-setup",
         ownership: None,
     },
-    // On trial (2026-11-12): Gamma, Miro, Zapier.
     CatalogProvider {
         id: "gamma",
         bundled_preset: true,
@@ -589,7 +588,6 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://zapier.com/mcp",
         ownership: None,
     },
-    // On trial (2026-11-12): Cal.com, Granola, Fireflies, Otter.
     CatalogProvider {
         id: "calcom",
         bundled_preset: true,
@@ -630,9 +628,8 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://help.otter.ai/hc/en-us/search?query=MCP",
         ownership: None,
     },
-    // On trial (2026-11-12): Stripe, Razorpay. Payment providers: Stripe lets
-    // the user pick accounts/sandboxes at sign-in and holds money movement for
-    // Dashboard approval; Razorpay's remote server has no refund or payout tool.
+    // Payment providers. Stripe lets the user pick accounts or sandboxes at
+    // sign-in and holds money movement for Dashboard approval.
     CatalogProvider {
         id: "stripe",
         bundled_preset: true,
@@ -645,7 +642,10 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "razorpay",
-        bundled_preset: true,
+        // Hidden: sign-in ends in a 403 on Razorpay's side (2026-11-12). Its
+        // docs require an activated account with API access. No refund or
+        // payout tool on the remote server.
+        bundled_preset: false,
         name: "Razorpay",
         description: "Payments, orders, payment links, and settlements.",
         endpoint: "https://mcp.razorpay.com/mcp",
@@ -3276,7 +3276,7 @@ mod tests {
     }
 
     #[test]
-    fn trial_rows_are_listed_with_their_sign_in_kind() {
+    fn admitted_rows_are_listed_with_their_sign_in_kind() {
         for (id, registration) in [
             ("todoist", Registration::Dynamic),
             ("dropbox", Registration::Dynamic),
@@ -3294,7 +3294,6 @@ mod tests {
             ("fireflies", Registration::Dynamic),
             ("otter", Registration::Dynamic),
             ("stripe", Registration::Dynamic),
-            ("razorpay", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3603,8 +3602,10 @@ mod tests {
     }
 
     #[test]
-    fn hidden_atlassian_row_stays_out_of_extensions() {
-        assert!(!is_preset(provider("atlassian").unwrap()));
+    fn hidden_rows_stay_out_of_extensions() {
+        for id in ["atlassian", "razorpay"] {
+            assert!(!is_preset(provider(id).unwrap()), "{id}");
+        }
     }
 
     #[test]
