@@ -1154,9 +1154,8 @@
       "list": {
         "heading": "Recordings",
         "search": "Search recordings",
-        "sortByDate": "Sort recordings by date",
-        "newestFirst": "Newest first",
-        "oldestFirst": "Oldest first",
+        "openSearch": "Search recordings",
+        "closeSearch": "Close search",
         "noMatches": "No recordings match your search.",
         "loading": "Loading recordings…",
         "loadError": "Recordings could not be loaded.",

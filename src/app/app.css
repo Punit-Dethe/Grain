@@ -5020,32 +5020,25 @@ html[data-theme="light"] .grain-root {
   padding-bottom: 56px;
 }
 
-.studio-feature-hero.meet-hero {
-  --accent-focus: rgba(252, 252, 251, 0.65);
-  --accent-glow: transparent;
-  grid-template-columns: minmax(0, 1fr) auto;
+/* Recall's list page: a quiet title row, then the recordings. */
+.meet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 16px;
-  margin-block-end: 0;
-  padding: 24px clamp(16px, 3vw, 28px) 16px;
-  color-scheme: dark;
-  background-color: #151515;
+  padding-block: 6px 14px;
 }
 
-.meet-hero::before {
-  background:
-    linear-gradient(to top, #000, rgba(0, 0, 0, 0.84) 30px, transparent 88px),
-    linear-gradient(90deg, rgba(10, 11, 12, 0.82), rgba(10, 11, 12, 0.28));
+.meet-head h1 {
+  font-size: 24px;
+  font-weight: 520;
+  letter-spacing: -0.03em;
 }
 
-.grain-root .meet-hero-settings {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  min-height: 32px;
-  gap: 9px;
-  padding-inline: 11px;
-  border-radius: 9px;
-  font-size: 12px;
+.grain-root .meet-head-settings {
+  min-height: 34px;
+  padding-inline: 13px;
+  border-radius: 10px;
 }
 
 .meet-capture-dock {
@@ -5348,6 +5341,73 @@ html[data-theme="light"] .dropdown-compact-menu {
   border-radius: 2px;
 }
 
+.meet-dock-icon {
+  width: var(--meet-dock-button-height);
+  height: var(--meet-dock-button-height);
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--meet-dock-button-radius);
+  color: var(--text-2);
+  background-color: var(--meet-dock-button-bg);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms var(--ease-out);
+}
+
+.meet-dock-icon:hover {
+  color: var(--text-1);
+  background-color: var(--meet-dock-button-hover);
+}
+
+.meet-dock-icon:active {
+  transform: scale(0.96);
+}
+
+.meet-dock-icon .icon.sm {
+  width: 18px;
+  height: 18px;
+}
+
+.meet-dock-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meet-dock-search-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(300px, 46vw);
+  min-height: var(--meet-dock-button-height);
+  padding-inline: 14px;
+  border-radius: var(--meet-dock-button-radius);
+  color: var(--text-4);
+  background-color: var(--meet-dock-button-bg);
+}
+
+.meet-dock-search-field input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: var(--text-1);
+  background: transparent;
+  font-size: 14px;
+}
+
+.meet-dock-search-field input::placeholder {
+  color: var(--text-4);
+}
+
+.grain-root .meet-dock-search-field input:focus-visible {
+  outline: none;
+  box-shadow: none !important;
+}
+
 .meet-live-sources {
   display: flex;
   gap: 8px;
@@ -5553,50 +5613,7 @@ html[data-theme="light"] .dropdown-compact-menu {
 /* --- Recordings list: one rounded group per day, rows divided by a hairline */
 
 .meet-recordings {
-  margin-block-start: 16px;
-}
-
-.meet-recordings-controls {
-  display: flex;
-  grid-column: 1 / -1;
-  grid-row: 3;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 10px;
-}
-
-.grain-root .meet-hero .meet-hero-settings,
-.grain-root .meet-hero .meet-recordings-controls :is(.search-field, .select) {
-  color: #fcfcfb;
-  background-color: rgba(38, 38, 38, 0.65);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
-}
-
-.grain-root .meet-hero .search-field input {
-  color: #fcfcfb;
-}
-
-.grain-root .meet-hero .search-field input::placeholder {
-  color: rgba(252, 252, 251, 0.78);
-}
-
-.grain-root .meet-recordings-controls .search-field {
-  flex: 1 1 160px;
-  min-width: min(160px, 100%);
-  height: 32px;
-}
-
-.grain-root .meet-recordings-sort {
-  min-width: 0;
-  max-width: 100%;
-  border-radius: 9px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.meet-recordings-sort option {
-  color: #fcfcfb;
-  background: #222;
+  margin-block-start: 8px;
 }
 
 .meet-day h2 {

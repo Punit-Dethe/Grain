@@ -48,7 +48,7 @@ describe("groupByDay", () => {
     ]);
   });
 
-  it("filters titles and previews, then reverses days and rows for oldest first", () => {
+  it("filters titles and previews and keeps newest first", () => {
     const now = new Date(2026, 10, 2, 15, 0);
     const meetings = [
       meeting("Plan review", new Date(2026, 10, 2, 14, 0)),
@@ -62,18 +62,17 @@ describe("groupByDay", () => {
 
     const groups = groupByDay(meetings, now, {
       query: " PLAN ",
-      oldestFirst: true,
     });
 
     expect(
       groups.map((group) => [group.kind, group.meetings.map((m) => m.id)]),
     ).toEqual([
+      ["today", ["Plan review", "Planning call"]],
       ["yesterday", ["Weekly sync"]],
-      ["today", ["Planning call", "Plan review"]],
     ]);
     expect(meetings[0].id).toBe("Plan review");
     expect(
-      groupByDay(meetings, now, { query: "missing", oldestFirst: false }),
+      groupByDay(meetings, now, { query: "missing" }),
     ).toEqual([]);
   });
 });

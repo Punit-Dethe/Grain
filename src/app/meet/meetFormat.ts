@@ -18,7 +18,6 @@ function localDay(ms: number): Date {
 
 export interface RecordingFilters {
   query: string;
-  oldestFirst: boolean;
 }
 
 /** Filter meetings received newest first and group them by local calendar day. */
@@ -54,10 +53,6 @@ export function groupByDay(
       groups.push(group);
     }
     group.meetings.push(meeting);
-  }
-  if (filters?.oldestFirst) {
-    groups.reverse();
-    for (const group of groups) group.meetings.reverse();
   }
   return groups;
 }

@@ -13,7 +13,16 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { Info, FileText, Users, MicOff, Pencil, VolumeOff } from "lucide-react";
+import {
+  Info,
+  FileText,
+  Users,
+  MicOff,
+  Pencil,
+  Search,
+  VolumeOff,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import type {
   MeetingSummary,
@@ -30,7 +39,6 @@ import { AskTab } from "../meet/AskTab";
 import { SummaryTab } from "../meet/SummaryTab";
 import { MeetSettingsPage } from "./MeetSettingsPage";
 import { hashForRoute } from "../navigation";
-import studioFeatureContextBg from "../overview/studio-feature-context.webp";
 import {
   buildTurns,
   filterTurns,
@@ -282,8 +290,25 @@ function LiveSource({
 
 type CaptureCommand = "sources" | "start" | "stop";
 
-function CaptureDock({ meet }: { meet: MeetController }) {
+function CaptureDock({
+  meet,
+  query,
+  onQuery,
+}: {
+  meet: MeetController;
+  query: string;
+  onQuery: (query: string) => void;
+}) {
   const { t } = useTranslation();
+  const [searching, setSearching] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (searching) searchRef.current?.focus();
+  }, [searching]);
+  const closeSearch = () => {
+    onQuery("");
+    setSearching(false);
+  };
   const [pending, setPending] = useState<CaptureCommand | null>(null);
   const commandInFlight = useRef(false);
   const currentRecording = meet.status.recording;
@@ -366,41 +391,78 @@ function CaptureDock({ meet }: { meet: MeetController }) {
               ))}
             </div>
           </>
-        ) : (
-          <div
-            className="meet-source-controls"
-            role="group"
-            aria-busy={!sources}
-            aria-label={t("ui2.meet.sources.label")}
-          >
-            <SourceControl
-              kind="Microphone"
-              choice={settings?.microphone}
-              devices={sources?.microphones}
-              pending={pending !== null}
-              locked={micOn && !systemOn}
-              onChange={(microphone) => {
-                if (settings)
-                  void run("sources", () =>
-                    meet.setSources({ ...settings, microphone }),
-                  );
-              }}
-            />
-            <SourceControl
-              kind="SystemAudio"
-              choice={settings?.system_audio}
-              devices={sources?.outputs}
-              pending={pending !== null}
-              locked={systemOn && !micOn}
-              unsupported={sources?.system_audio_supported === false}
-              onChange={(system_audio) => {
-                if (settings)
-                  void run("sources", () =>
-                    meet.setSources({ ...settings, system_audio }),
-                  );
-              }}
-            />
+        ) : searching ? (
+          <div className="meet-dock-search">
+            <label className="meet-dock-search-field">
+              <Search className="icon sm" aria-hidden="true" />
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(event) => onQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") closeSearch();
+                }}
+                placeholder={t("ui2.meet.list.search")}
+                aria-label={t("ui2.meet.list.search")}
+              />
+            </label>
+            <button
+              className="meet-dock-icon"
+              type="button"
+              aria-label={t("ui2.meet.list.closeSearch")}
+              title={t("ui2.meet.list.closeSearch")}
+              onClick={closeSearch}
+            >
+              <X className="icon sm" aria-hidden="true" />
+            </button>
           </div>
+        ) : (
+          <>
+            <div
+              className="meet-source-controls"
+              role="group"
+              aria-busy={!sources}
+              aria-label={t("ui2.meet.sources.label")}
+            >
+              <SourceControl
+                kind="Microphone"
+                choice={settings?.microphone}
+                devices={sources?.microphones}
+                pending={pending !== null}
+                locked={micOn && !systemOn}
+                onChange={(microphone) => {
+                  if (settings)
+                    void run("sources", () =>
+                      meet.setSources({ ...settings, microphone }),
+                    );
+                }}
+              />
+              <SourceControl
+                kind="SystemAudio"
+                choice={settings?.system_audio}
+                devices={sources?.outputs}
+                pending={pending !== null}
+                locked={systemOn && !micOn}
+                unsupported={sources?.system_audio_supported === false}
+                onChange={(system_audio) => {
+                  if (settings)
+                    void run("sources", () =>
+                      meet.setSources({ ...settings, system_audio }),
+                    );
+                }}
+              />
+            </div>
+            <button
+              className="meet-dock-icon"
+              type="button"
+              aria-label={t("ui2.meet.list.openSearch")}
+              title={t("ui2.meet.list.openSearch")}
+              onClick={() => setSearching(true)}
+            >
+              <Search className="icon sm" aria-hidden="true" />
+            </button>
+          </>
         )}
         <button
           className="button primary meet-record-action"
@@ -1725,10 +1787,8 @@ export function MeetPage({
 function MeetWorkspace({ meetingId }: { meetingId: string | null }) {
   const { t } = useTranslation();
   const meet = useMeetController();
-  const [filters, setFilters] = useState<RecordingFilters>({
-    query: "",
-    oldestFirst: false,
-  });
+  const [query, setQuery] = useState("");
+  const filters = useMemo<RecordingFilters>(() => ({ query }), [query]);
   const pageRef = useRef<HTMLElement>(null);
   const meeting = meetingId
     ? (meet.meetings.find((m) => m.id === meetingId) ?? null)
@@ -1759,18 +1819,10 @@ function MeetWorkspace({ meetingId }: { meetingId: string | null }) {
     content = (
       <>
         <div className="page-wrap meet-wrap">
-          <header className="studio-feature-hero meet-hero">
-            <img
-              className="studio-feature-image"
-              src={studioFeatureContextBg}
-              alt=""
-            />
-            <div className="studio-feature-copy">
-              <h1>{t("ui2.meet.name")}</h1>
-              <p className="page-subtitle">{t("ui2.meet.subtitle")}</p>
-            </div>
+          <header className="meet-head">
+            <h1>{t("ui2.meet.name")}</h1>
             <button
-              className="button meet-hero-settings"
+              className="button meet-head-settings"
               type="button"
               onClick={() =>
                 (window.location.hash = hashForRoute({
@@ -1782,38 +1834,10 @@ function MeetWorkspace({ meetingId }: { meetingId: string | null }) {
               <Glyph name="sliders" />
               {t("ui2.nav.settings")}
             </button>
-            <div className="meet-recordings-controls">
-              <select
-                className="select meet-recordings-sort"
-                value={filters.oldestFirst ? "oldest" : "newest"}
-                onChange={(event) =>
-                  setFilters({
-                    ...filters,
-                    oldestFirst: event.target.value === "oldest",
-                  })
-                }
-                aria-label={t("ui2.meet.list.sortByDate")}
-              >
-                <option value="newest">{t("ui2.meet.list.newestFirst")}</option>
-                <option value="oldest">{t("ui2.meet.list.oldestFirst")}</option>
-              </select>
-              <label className="search-field">
-                <Glyph name="search" />
-                <input
-                  type="search"
-                  value={filters.query}
-                  onChange={(event) =>
-                    setFilters({ ...filters, query: event.target.value })
-                  }
-                  placeholder={t("ui2.meet.list.search")}
-                  aria-label={t("ui2.meet.list.search")}
-                />
-              </label>
-            </div>
           </header>
           <Recordings meet={meet} filters={filters} />
         </div>
-        <CaptureDock meet={meet} />
+        <CaptureDock meet={meet} query={query} onQuery={setQuery} />
       </>
     );
   }
