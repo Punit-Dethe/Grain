@@ -1384,6 +1384,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_capture_always_ai_setting,
             grain_commands::change_context_awareness_enabled_setting,
             grain_commands::change_agent_enabled_setting,
+            grain_commands::change_agent_notch_autohide_setting,
             grain_commands::change_snippets_enabled_setting,
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]

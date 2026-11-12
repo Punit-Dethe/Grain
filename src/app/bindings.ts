@@ -580,6 +580,17 @@ async changeAgentEnabledSetting(enabled: boolean) : Promise<Result<null, string>
 }
 },
 /**
+ * [GRAIN] Hide the resting Agent notch until the pointer reaches it.
+ */
+async changeAgentNotchAutohideSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_notch_autohide_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Enable core snippet matching independently of extensions.
  */
 async changeSnippetsEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -2127,6 +2138,11 @@ snippets_enabled?: boolean;
  * Enable the Agent and its summon shortcut.
  */
 agent_enabled?: boolean; 
+/**
+ * [GRAIN] Hide the resting Agent notch until the pointer reaches the top
+ * centre of the screen; it then slides down and its hover timer starts.
+ */
+agent_notch_autohide?: boolean; 
 /**
  * [GRAIN] Paste Catch: when a dictation paste provably misses the text
  * field, keep it privately until the copy offer resolves

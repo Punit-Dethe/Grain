@@ -8,6 +8,11 @@
 //! full (or on a click) the Agent notch opens from this same spot. The WebView
 //! is pre-created when the hover starts and destroyed again if it is abandoned.
 //!
+//! With `agent_notch_autohide` the sliver is drawn out of sight above the top
+//! edge (its hover target stays) and slides down when the pointer arrives, the
+//! fill starting once it is down; it slides back up when the pointer leaves.
+//! A running request keeps it down so its working line shows.
+//!
 //! Windows only for now; elsewhere every call is a no-op.
 
 use tauri::AppHandle;
@@ -74,6 +79,9 @@ mod imp {
     const HIT: (f64, f64) = (180.0, 12.0);
     /// How long the pointer must rest before the notch opens.
     const FILL: Duration = Duration::from_millis(650);
+    /// Auto-hide: the sliver slides down from above the screen edge (and back
+    /// up) in this long; the fill starts once it is down.
+    const SLIDE: Duration = Duration::from_millis(180);
     const TIMER_ID: usize = 1;
     /// Animates the working line (~30 fps) only while a request runs.
     const WORK_TIMER_ID: usize = 2;
@@ -95,6 +103,47 @@ mod imp {
     ];
 
     static WORKING: AtomicBool = AtomicBool::new(false);
+    /// `agent_notch_autohide`: invisible until hovered (or working).
+    static AUTOHIDE: AtomicBool = AtomicBool::new(false);
+
+    /// How far the sliver is down: 0 tucked above the screen edge, 1 resting.
+    #[derive(Clone, Copy)]
+    struct Slide {
+        from: f64,
+        to: f64,
+        at: Instant,
+    }
+
+    impl Slide {
+        fn rest(at: f64) -> Self {
+            Self {
+                from: at,
+                to: at,
+                at: Instant::now(),
+            }
+        }
+
+        fn value(&self) -> f64 {
+            let t = (self.at.elapsed().as_secs_f64() / SLIDE.as_secs_f64()).min(1.0);
+            let eased = 1.0 - (1.0 - t).powi(3);
+            self.from + (self.to - self.from) * eased
+        }
+
+        fn settled(&self) -> bool {
+            self.from == self.to || self.at.elapsed() >= SLIDE
+        }
+
+        /// Head for `to` from wherever it is now.
+        fn toward(&mut self, to: f64) {
+            if self.to != to {
+                *self = Self {
+                    from: self.value(),
+                    to,
+                    at: Instant::now(),
+                };
+            }
+        }
+    }
 
     struct Sliver {
         hwnd: HWND,
@@ -107,6 +156,59 @@ mod imp {
         geometry: Option<Geometry>,
         /// Phase origin of the working gradient.
         epoch: Instant,
+        /// Auto-hide position; ignored (fully down) otherwise.
+        slide: Slide,
+    }
+
+    impl Sliver {
+        /// How far down it is drawn: always fully unless auto-hiding, and a
+        /// running request keeps it down so its line stays visible.
+        fn shown(&self) -> f64 {
+            if !AUTOHIDE.load(Ordering::SeqCst) || WORKING.load(Ordering::SeqCst) {
+                1.0
+            } else {
+                self.slide.value()
+            }
+        }
+
+        /// The hover fill waits for an auto-hidden sliver to slide down.
+        fn fill_delay(&self) -> Duration {
+            if AUTOHIDE.load(Ordering::SeqCst) && !WORKING.load(Ordering::SeqCst) {
+                SLIDE
+            } else {
+                Duration::ZERO
+            }
+        }
+
+        /// Fill progress of the current hover, if any.
+        fn progress(&self) -> Option<f64> {
+            let since = self.hover_since?;
+            let elapsed = since.elapsed().saturating_sub(self.fill_delay());
+            Some((elapsed.as_secs_f64() / FILL.as_secs_f64()).min(1.0))
+        }
+    }
+
+    /// Slide an auto-hidden sliver back up, ticking the animation timer.
+    /// Main thread only.
+    fn tuck_away() {
+        let Some(hwnd) = SLIVER.with(|cell| {
+            let mut slot = cell.try_borrow_mut().ok()?;
+            let sliver = slot.as_mut()?;
+            if sliver.hover_since.is_some() {
+                return None;
+            }
+            sliver.slide = Slide {
+                from: 1.0,
+                to: 0.0,
+                at: Instant::now(),
+            };
+            Some(sliver.hwnd)
+        }) else {
+            return;
+        };
+        unsafe {
+            SetTimer(Some(hwnd), TIMER_ID, 15, None);
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -165,12 +267,26 @@ mod imp {
     pub fn sync(app: &AppHandle) {
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            let enabled = crate::settings::get_settings(&handle).agent_enabled;
+            let settings = crate::settings::get_settings(&handle);
+            let enabled = settings.agent_enabled;
+            let autohide = settings.agent_notch_autohide;
+            let changed = AUTOHIDE.swap(autohide, Ordering::SeqCst) != autohide;
             let exists = SLIVER.with(|cell| cell.borrow().is_some());
             if enabled && !exists {
                 create(&handle);
             } else if !enabled && exists {
                 destroy();
+            } else if changed && exists {
+                // Turned on: slide up out of sight. Off: simply rest down.
+                SLIVER.with(|cell| {
+                    if let Some(sliver) = cell.borrow_mut().as_mut() {
+                        sliver.slide = Slide::rest(1.0);
+                    }
+                });
+                if autohide {
+                    tuck_away();
+                }
+                repaint();
             }
         });
     }
@@ -186,6 +302,9 @@ mod imp {
                 sliver.hidden = hidden;
                 sliver.hover_since = None;
                 sliver.fired = false;
+                // Auto-hiding, the closing notch hands back a sliver that is
+                // down; it then slides away.
+                sliver.slide = Slide::rest(if hidden { 0.0 } else { 1.0 });
                 Some(sliver.hwnd)
             }) else {
                 return;
@@ -199,6 +318,9 @@ mod imp {
                     let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
             }
+            if !hidden && AUTOHIDE.load(Ordering::SeqCst) {
+                tuck_away();
+            }
             sync_work_timer();
         });
     }
@@ -207,7 +329,11 @@ mod imp {
         if WORKING.swap(working, Ordering::SeqCst) == working {
             return;
         }
-        let _ = app.run_on_main_thread(|| {
+        let _ = app.run_on_main_thread(move || {
+            // Auto-hiding, the finished request's line slides away with it.
+            if !working && AUTOHIDE.load(Ordering::SeqCst) {
+                tuck_away();
+            }
             sync_work_timer();
             repaint();
         });
@@ -284,6 +410,7 @@ mod imp {
                     hidden,
                     geometry: measure(app),
                     epoch: Instant::now(),
+                    slide: Slide::rest(0.0),
                 });
             });
             repaint();
@@ -326,9 +453,8 @@ mod imp {
                 height,
                 zoom,
             } = sliver.geometry?;
-            let progress = sliver
-                .hover_since
-                .map(|since| (since.elapsed().as_secs_f64() / FILL.as_secs_f64()).min(1.0));
+            let progress = sliver.progress();
+            let shown = sliver.shown();
             Some(Frame {
                 hwnd: sliver.hwnd,
                 x,
@@ -339,6 +465,7 @@ mod imp {
                     width,
                     height,
                     zoom,
+                    shown,
                     progress,
                     WORKING
                         .load(Ordering::SeqCst)
@@ -377,15 +504,18 @@ mod imp {
     /// Premultiplied BGRA pixels: the shape flush with the top edge, bottom
     /// corners rounded and anti-aliased, the working line (while a request
     /// runs, `work` is its phase) and the hover fill bar. Everything else is
-    /// alpha 1/255: invisible, but it still takes the hover.
+    /// alpha 1/255: invisible, but it still takes the hover. `shown` slides the
+    /// whole shape up past the top edge (0 is out of sight).
     fn render(
         width: i32,
         height: i32,
         zoom: f64,
+        shown: f64,
         progress: Option<f64>,
         work: Option<f64>,
     ) -> Vec<u32> {
         let (sw, sh) = (REST.0 * zoom, REST.1 * zoom);
+        let lift = (1.0 - shown.clamp(0.0, 1.0)) * sh;
         // Fully rounded bottom corners: the radius is the whole height.
         let radius = sh;
         let half = sw / 2.0;
@@ -395,7 +525,8 @@ mod imp {
         let (bar_left, bar_right) = (cx - half + pad, cx + half - pad);
         let mut pixels = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
-            let py = y as f64 + 0.5;
+            // In shape space: the shape is drawn `lift` px higher.
+            let py = y as f64 + 0.5 + lift;
             for x in 0..width {
                 let px = x as f64 + 0.5;
                 let dx = (px - cx).abs();
@@ -524,6 +655,7 @@ mod imp {
             }
             sliver.hover_since = Some(Instant::now());
             sliver.fired = false;
+            sliver.slide.toward(1.0);
             Some(sliver.app.clone())
         }) else {
             return;
@@ -547,12 +679,16 @@ mod imp {
             let mut slot = cell.try_borrow_mut().ok()?;
             let sliver = slot.as_mut()?;
             sliver.hover_since.take()?;
+            sliver.slide.toward(0.0);
             Some((sliver.app.clone(), std::mem::take(&mut sliver.fired)))
         }) else {
             return;
         };
-        unsafe {
-            let _ = KillTimer(Some(hwnd), TIMER_ID);
+        // Auto-hiding, the timer keeps ticking until it has slid away.
+        if !AUTOHIDE.load(Ordering::SeqCst) {
+            unsafe {
+                let _ = KillTimer(Some(hwnd), TIMER_ID);
+            }
         }
         repaint();
         if !fired {
@@ -568,11 +704,7 @@ mod imp {
             if sliver.hidden || sliver.fired {
                 return None;
             }
-            if require_full
-                && !sliver
-                    .hover_since
-                    .is_some_and(|since| since.elapsed() >= FILL)
-            {
+            if require_full && sliver.progress().is_none_or(|progress| progress < 1.0) {
                 return None;
             }
             sliver.fired = true;
@@ -604,7 +736,18 @@ mod imp {
             }
             WM_TIMER if wparam.0 == TIMER_ID => {
                 repaint();
-                fire(hwnd, true);
+                // Not hovering: only an auto-hide slide is left to animate.
+                let idle = SLIVER.with(|cell| {
+                    cell.try_borrow().ok().and_then(|slot| {
+                        slot.as_ref()
+                            .map(|s| s.hover_since.is_none() && s.slide.settled())
+                    })
+                });
+                if idle == Some(true) {
+                    let _ = KillTimer(Some(hwnd), TIMER_ID);
+                } else {
+                    fire(hwnd, true);
+                }
                 LRESULT(0)
             }
             WM_TIMER if wparam.0 == WORK_TIMER_ID => {

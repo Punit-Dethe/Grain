@@ -760,6 +760,10 @@ pub struct AppSettings {
     /// Enable the Agent and its summon shortcut.
     #[serde(default = "default_true")]
     pub agent_enabled: bool,
+    /// [GRAIN] Hide the resting Agent notch until the pointer reaches the top
+    /// centre of the screen; it then slides down and its hover timer starts.
+    #[serde(default)]
+    pub agent_notch_autohide: bool,
     /// [GRAIN] Paste Catch: when a dictation paste provably misses the text
     /// field, keep it privately until the copy offer resolves
     /// instead of letting the restore destroy it. ON by default — a missed
@@ -1590,6 +1594,7 @@ pub fn get_default_settings() -> AppSettings {
         context_custom_profiles: Vec::new(),
         snippets_enabled: false,
         agent_enabled: true,
+        agent_notch_autohide: false,
         paste_catch_enabled: default_paste_catch_enabled(),
         extension_developer_mode: false,
         mcp_enabled_providers: Vec::new(),

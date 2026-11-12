@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { AccelerationSelector } from "@/components/settings/AccelerationSelector";
+import { AgentNotchAutohide } from "@/components/settings/AgentNotchAutohide";
 import { AppearanceMode } from "@/components/settings/AppearanceMode";
 import { AutostartToggle } from "@/components/settings/AutostartToggle";
 import DefaultPanel from "@/components/settings/DefaultPanel";
@@ -43,6 +44,7 @@ export function ApplicationPane() {
         <ShowOverlay descriptionMode="tooltip" grouped />
         <PillAppIcon descriptionMode="tooltip" grouped />
         <PillCloseButton />
+        <AgentNotchAutohide descriptionMode="tooltip" grouped />
       </SettingsGroup>
 
       <SettingsGroup

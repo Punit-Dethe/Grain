@@ -232,6 +232,12 @@ const settingUpdaters: {
     const result = await commands.changeAgentEnabledSetting(value as boolean);
     if (result.status === "error") throw new Error(result.error);
   },
+  agent_notch_autohide: async (value) => {
+    const result = await commands.changeAgentNotchAutohideSetting(
+      value as boolean,
+    );
+    if (result.status === "error") throw new Error(result.error);
+  },
   spoken_languages: (value) =>
     commands.changeSpokenLanguagesSetting(value as string[]),
   capture_end_with_ai: (value) =>

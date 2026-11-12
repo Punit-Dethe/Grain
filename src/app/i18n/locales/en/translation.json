@@ -469,6 +469,10 @@
         "label": "Show Tray Icon",
         "description": "Display the Handy icon in the system tray."
       },
+      "agentNotchAutohide": {
+        "label": "Hide the Agent notch",
+        "description": "Keep the notch at the top of the screen out of sight until you move the pointer there. It slides down, and resting on it opens the Agent as usual."
+      },
       "overlay": {
         "title": "Pill Position",
         "description": "Choose whether recording pills appear at the top or bottom of the screen.",

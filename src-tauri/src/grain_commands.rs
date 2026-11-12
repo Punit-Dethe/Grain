@@ -563,6 +563,25 @@ pub fn change_agent_enabled_setting(
     Ok(())
 }
 
+/// [GRAIN] Hide the resting Agent notch until the pointer reaches it.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_notch_autohide_setting(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    require_main_window(&window)?;
+    let mut settings = settings::get_settings(&app);
+    if settings.agent_notch_autohide == enabled {
+        return Ok(());
+    }
+    settings.agent_notch_autohide = enabled;
+    settings::write_settings(&app, settings);
+    crate::grain_notch_sliver::sync(&app);
+    Ok(())
+}
+
 /// Enable core snippet matching independently of extensions.
 #[tauri::command]
 #[specta::specta]
