@@ -301,29 +301,12 @@ function LiveSource({
 
 type CaptureCommand = "sources" | "start" | "stop";
 
-function CaptureDock({
-  meet,
-  query,
-  onQuery,
-}: {
-  meet: MeetController;
-  query: string;
-  onQuery: (query: string) => void;
-}) {
+function CaptureDock({ meet }: { meet: MeetController }) {
   const { t } = useTranslation();
-  const [searching, setSearching] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
   // The dock glides between its idle and recording widths: the toolbar is given
   // the width its contents want and CSS animates the change.
   const mainRef = useRef<HTMLDivElement>(null);
   const [dockWidth, setDockWidth] = useState<number | null>(null);
-  useEffect(() => {
-    if (searching) searchRef.current?.focus();
-  }, [searching]);
-  const closeSearch = () => {
-    onQuery("");
-    setSearching(false);
-  };
   const [pending, setPending] = useState<CaptureCommand | null>(null);
   const commandInFlight = useRef(false);
   const currentRecording = meet.status.recording;
@@ -378,7 +361,7 @@ function CaptureDock({
         </p>
       )}
       <div
-        className={`meet-toolbar${searching && !recording ? " is-searching" : ""}`}
+        className="meet-toolbar"
         style={dockWidth ? { width: dockWidth } : undefined}
       >
         <div
@@ -427,15 +410,6 @@ function CaptureDock({
             </>
           ) : (
             <>
-              <button
-                className="meet-dock-icon"
-                type="button"
-                aria-label={t("ui2.meet.list.openSearch")}
-                title={t("ui2.meet.list.openSearch")}
-                onClick={() => setSearching(true)}
-              >
-                <Search className="icon sm" aria-hidden="true" />
-              </button>
               <div
                 className="meet-source-controls"
                 role="group"
@@ -500,35 +474,63 @@ function CaptureDock({
                 : t("ui2.meet.studio.start")}
           </button>
         </div>
-        {!recording && (
-          <div className="meet-toolbar-find" aria-hidden={!searching}>
-            <label className="meet-dock-search-field">
-              <Search className="icon sm" aria-hidden="true" />
-              <input
-                ref={searchRef}
-                type="search"
-                value={query}
-                onChange={(event) => onQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") closeSearch();
-                }}
-                placeholder={t("ui2.meet.list.search")}
-                aria-label={t("ui2.meet.list.search")}
-              />
-            </label>
-            <button
-              className="meet-dock-icon"
-              type="button"
-              aria-label={t("ui2.meet.list.closeSearch")}
-              title={t("ui2.meet.list.closeSearch")}
-              onClick={closeSearch}
-            >
-              <X className="icon sm" aria-hidden="true" />
-            </button>
-          </div>
-        )}
       </div>
     </section>
+  );
+}
+
+/** The list's search: an icon beside Settings that opens into a field. */
+function HeaderSearch({
+  query,
+  onQuery,
+}: {
+  query: string;
+  onQuery: (query: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(query !== "");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+  const close = () => {
+    onQuery("");
+    setOpen(false);
+  };
+  return (
+    <div className={`meet-head-search${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        aria-label={t("ui2.meet.list.openSearch")}
+        title={t("ui2.meet.list.openSearch")}
+        aria-expanded={open}
+        onClick={() => (open ? inputRef.current?.focus() : setOpen(true))}
+      >
+        <Search className="icon sm" aria-hidden="true" />
+      </button>
+      <input
+        ref={inputRef}
+        type="search"
+        value={query}
+        tabIndex={open ? 0 : -1}
+        onChange={(event) => onQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") close();
+        }}
+        placeholder={t("ui2.meet.list.search")}
+        aria-label={t("ui2.meet.list.search")}
+      />
+      <button
+        type="button"
+        className="meet-head-search-clear"
+        tabIndex={open ? 0 : -1}
+        aria-label={t("ui2.meet.list.closeSearch")}
+        title={t("ui2.meet.list.closeSearch")}
+        onClick={close}
+      >
+        <X className="icon sm" aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 
@@ -1873,23 +1875,26 @@ function MeetWorkspace({ meetingId }: { meetingId: string | null }) {
         <div className="page-wrap meet-wrap">
           <header className="meet-head">
             <h1>{t("ui2.meet.name")}</h1>
-            <button
-              className="button meet-head-settings"
-              type="button"
-              onClick={() =>
-                (window.location.hash = hashForRoute({
-                  page: "meet",
-                  settings: true,
-                }))
-              }
-            >
-              <Glyph name="sliders" />
-              {t("ui2.nav.settings")}
-            </button>
+            <div className="meet-head-actions">
+              <HeaderSearch query={query} onQuery={setQuery} />
+              <button
+                className="button meet-head-settings"
+                type="button"
+                onClick={() =>
+                  (window.location.hash = hashForRoute({
+                    page: "meet",
+                    settings: true,
+                  }))
+                }
+              >
+                <Glyph name="sliders" />
+                {t("ui2.nav.settings")}
+              </button>
+            </div>
           </header>
           <Recordings meet={meet} filters={filters} />
         </div>
-        <CaptureDock meet={meet} query={query} onQuery={setQuery} />
+        <CaptureDock meet={meet} />
       </>
     );
   }

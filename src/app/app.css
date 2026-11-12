@@ -5108,6 +5108,89 @@ html[data-theme="light"] .grain-root {
   border-radius: 10px;
 }
 
+.meet-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* A search icon that opens into a field, growing leftwards from Settings. */
+.meet-head-search {
+  display: flex;
+  align-items: center;
+  width: 34px;
+  height: 34px;
+  overflow: hidden;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: var(--bg-3);
+  transition:
+    width 280ms var(--ease-out),
+    color 140ms ease;
+}
+
+.meet-head-search:hover,
+.meet-head-search.is-open {
+  color: var(--text-1);
+}
+
+.meet-head-search.is-open {
+  width: min(300px, 46vw);
+}
+
+.meet-head-search button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  place-items: center;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.meet-head-search .icon.sm {
+  width: 16px;
+  height: 16px;
+}
+
+.meet-head-search input,
+.meet-head-search .meet-head-search-clear {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 160ms ease,
+    visibility 0s linear 160ms;
+}
+
+.meet-head-search.is-open input,
+.meet-head-search.is-open .meet-head-search-clear {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 200ms ease 80ms,
+    visibility 0s;
+}
+
+.meet-head-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: var(--text-1);
+  background: transparent;
+  font-size: 13.5px;
+}
+
+.meet-head-search input::placeholder {
+  color: var(--text-4);
+}
+
+.grain-root .meet-head-search input:focus-visible {
+  outline: none;
+  box-shadow: none !important;
+}
+
 .meet-capture-dock {
   position: sticky;
   z-index: 5;
@@ -5411,36 +5494,6 @@ html[data-theme="light"] .dropdown-compact-menu {
   border-radius: 2px;
 }
 
-.meet-dock-icon {
-  width: var(--meet-dock-button-height);
-  height: var(--meet-dock-button-height);
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: var(--meet-dock-button-radius);
-  color: var(--text-2);
-  background-color: var(--meet-dock-button-bg);
-  cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease,
-    transform 140ms var(--ease-out);
-}
-
-.meet-dock-icon:hover {
-  color: var(--text-1);
-  background-color: var(--meet-dock-button-hover);
-}
-
-.meet-dock-icon:active {
-  transform: scale(0.96);
-}
-
-.meet-dock-icon .icon.sm {
-  width: 18px;
-  height: 18px;
-}
-
 .meet-toolbar-main {
   display: flex;
   flex: none;
@@ -5458,78 +5511,6 @@ html[data-theme="light"] .dropdown-compact-menu {
     opacity: 0;
     transform: scale(0.97);
   }
-}
-
-/* Searching: the dock's contents fade away and the search field takes the
-   whole dock. */
-.meet-toolbar.is-searching .meet-toolbar-main {
-  opacity: 0;
-  visibility: hidden;
-  transform: scale(0.985);
-  pointer-events: none;
-  transition:
-    opacity 160ms ease,
-    transform 200ms var(--ease-out),
-    visibility 0s linear 160ms;
-}
-
-.meet-toolbar-find {
-  position: absolute;
-  inset: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  opacity: 0;
-  visibility: hidden;
-  transform: scale(1.01);
-  pointer-events: none;
-  transition:
-    opacity 160ms ease,
-    transform 200ms var(--ease-out),
-    visibility 0s linear 160ms;
-}
-
-.meet-toolbar.is-searching .meet-toolbar-find {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  pointer-events: auto;
-  transition:
-    opacity 220ms ease 80ms,
-    transform 260ms var(--ease-out) 80ms,
-    visibility 0s;
-}
-
-.meet-dock-search-field {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  flex: 1;
-  min-height: var(--meet-dock-button-height);
-  padding-inline: 14px;
-  border-radius: var(--meet-dock-button-radius);
-  color: var(--text-4);
-  background-color: var(--meet-dock-button-bg);
-}
-
-.meet-dock-search-field input {
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: 0;
-  color: var(--text-1);
-  background: transparent;
-  font-size: 14px;
-}
-
-.meet-dock-search-field input::placeholder {
-  color: var(--text-4);
-}
-
-.grain-root .meet-dock-search-field input:focus-visible {
-  outline: none;
-  box-shadow: none !important;
 }
 
 .meet-live-sources {
@@ -7244,7 +7225,7 @@ html[data-theme="light"] .meet-dock-inner {
   .dropdown-compact-option,
   .meet-toolbar,
   .meet-toolbar-main,
-  .meet-toolbar-find {
+  .meet-head-search {
     transition: none;
     animation: none;
   }
