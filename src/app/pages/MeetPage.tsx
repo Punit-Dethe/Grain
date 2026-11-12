@@ -713,16 +713,7 @@ function Recordings({
                 >
                   <RecordingLead meeting={meeting} state={state} t={t} />
                   <span className="meet-row-main">
-                    <span className="meet-row-top">
-                      <span className="meet-row-title">{meeting.title}</span>
-                      <span className="meet-row-duration">
-                        {formatClock(
-                          state === "recording"
-                            ? now - meeting.created_unix_ms
-                            : meeting.duration_ms,
-                        )}
-                      </span>
-                    </span>
+                    <span className="meet-row-title">{meeting.title}</span>
                     {state === "recording" ? (
                       <span className="sr-only">
                         {t("ui2.meet.list.state.recording")}
@@ -735,6 +726,13 @@ function Recordings({
                             : t(`ui2.meet.list.state.${state}`)}
                         </span>
                       )
+                    )}
+                  </span>
+                  <span className="meet-row-duration">
+                    {formatClock(
+                      state === "recording"
+                        ? now - meeting.created_unix_ms
+                        : meeting.duration_ms,
                     )}
                   </span>
                   <span className="meet-row-go" aria-hidden="true">

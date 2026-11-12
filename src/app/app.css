@@ -5697,7 +5697,7 @@ html[data-theme="light"] .dropdown-compact-menu {
 .meet-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 18px;
+  grid-template-columns: 52px minmax(0, 1fr) auto 18px;
   align-items: center;
   gap: 14px;
   padding: 14px 16px 14px 14px;
@@ -5756,15 +5756,9 @@ html[data-theme="light"] .dropdown-compact-menu {
 
 .meet-row-main {
   min-width: 0;
+  max-width: 64ch;
   display: grid;
   gap: 3px;
-}
-
-.meet-row-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
 }
 
 .meet-row-title {
