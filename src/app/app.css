@@ -5950,6 +5950,12 @@ html[data-theme="light"] .dropdown-compact-menu {
   padding-top: 20px;
 }
 
+/* Search and the speaker count live in the fixed header on the Transcript tab. */
+.meet-view .meet-view-head .meet-info-bar {
+  margin-top: 14px;
+  margin-bottom: 0;
+}
+
 .meet-view-nav {
   display: flex;
   align-items: center;

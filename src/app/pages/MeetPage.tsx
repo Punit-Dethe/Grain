@@ -1520,30 +1520,6 @@ function MeetingView({
     body = (
       <div className="meet-reader">
         <div className="meet-reader-main">
-          <div className="meet-info-bar">
-            <label className="meet-search">
-              <Glyph name="search" />
-              <input
-                type="search"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={t("ui2.meet.detail.search")}
-                aria-label={t("ui2.meet.detail.search")}
-              />
-            </label>
-            <span className="meet-info-stats">
-              <Users className="icon sm" aria-hidden="true" />
-              {transcript.speakers.length > 0 && (
-                <>
-                  {t("ui2.meet.list.speakers", {
-                    count: transcript.speakers.length,
-                  })}
-                  <span aria-hidden="true">•</span>
-                </>
-              )}
-              {formatClock(meeting.duration_ms)}
-            </span>
-          </div>
           {visible.length === 0 ? (
             <p className="meet-empty-line">
               {turns.length === 0
@@ -1757,6 +1733,32 @@ function MeetingView({
                   </button>
                 );
               })}
+            </div>
+          )}
+          {!isRecording && activeTab === "transcript" && transcript && (
+            <div className="meet-info-bar">
+              <label className="meet-search">
+                <Glyph name="search" />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={t("ui2.meet.detail.search")}
+                  aria-label={t("ui2.meet.detail.search")}
+                />
+              </label>
+              <span className="meet-info-stats">
+                <Users className="icon sm" aria-hidden="true" />
+                {transcript.speakers.length > 0 && (
+                  <>
+                    {t("ui2.meet.list.speakers", {
+                      count: transcript.speakers.length,
+                    })}
+                    <span aria-hidden="true">•</span>
+                  </>
+                )}
+                {formatClock(meeting.duration_ms)}
+              </span>
             </div>
           )}
         </header>
