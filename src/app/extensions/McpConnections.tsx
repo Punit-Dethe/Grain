@@ -30,10 +30,13 @@ const cancelSignIn = (row: Connection) =>
 export function McpConnections({
   query,
   search,
+  header,
   children,
 }: {
   query: string;
   search: ReactNode;
+  /** Shown above the toolbar; the two stay fixed while the page scrolls. */
+  header?: ReactNode;
   children: (customConnections: ReactNode) => ReactNode;
 }) {
   const titleId = useId();
@@ -229,18 +232,21 @@ export function McpConnections({
   );
   return (
     <>
-      <div className="extension-toolbar">
-        {search}
-        <button
-          ref={addButton}
-          type="button"
-          className="button"
-          disabled={busy !== null || adding}
-          onClick={(event) => openForm(null, event.currentTarget)}
-        >
-          <Plus size={15} aria-hidden="true" />
-          Add custom MCP
-        </button>
+      <div className="extensions-head">
+        {header}
+        <div className="extension-toolbar">
+          {search}
+          <button
+            ref={addButton}
+            type="button"
+            className="button"
+            disabled={busy !== null || adding}
+            onClick={(event) => openForm(null, event.currentTarget)}
+          >
+            <Plus size={15} aria-hidden="true" />
+            Add custom MCP
+          </button>
+        </div>
       </div>
       {error && (
         <p className="extension-inline-error mcp-custom-error" role="alert">

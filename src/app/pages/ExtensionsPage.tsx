@@ -15,16 +15,18 @@ export function ExtensionsPage() {
       data-page-panel="extensions"
     >
       <div className="page-wrap extensions-page-wrap">
-        <header className="page-header">
-          <div>
-            <h1>Extensions</h1>
-            <p className="page-subtitle">
-              Connect the apps and tools Grain can use.
-            </p>
-          </div>
-        </header>
         <McpConnections
           query={query}
+          header={
+            <header className="page-header">
+              <div>
+                <h1>Extensions</h1>
+                <p className="page-subtitle">
+                  Connect the apps and tools Grain can use.
+                </p>
+              </div>
+            </header>
+          }
           search={
             <label className="search-field">
               <svg className="icon sm" aria-hidden="true">
