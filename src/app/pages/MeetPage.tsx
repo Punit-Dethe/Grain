@@ -64,9 +64,10 @@ import {
 type T = (key: string, options?: Record<string, unknown>) => string;
 
 /** Speaker accents, cycled in speaker order. */
+/** Speaker colours in order: green, yellow, blue, then the rest. */
 const SPEAKER_TONES = [
-  "amber",
   "green",
+  "amber",
   "blue",
   "violet",
   "rose",
@@ -600,7 +601,7 @@ function RecordingLead({
     );
   }
   if (meeting.speaker_count > 0) {
-    // Always a stack of two or three avatars; the real count is on the last.
+    // Always a stack of two or three avatars; the real count is on the top one.
     const shown = Math.min(Math.max(meeting.speaker_count, 2), 3);
     return (
       <span
@@ -615,9 +616,7 @@ function RecordingLead({
             key={index}
             className={`meet-avatar is-stack tone-${SPEAKER_TONES[index]}`}
           >
-            {index === shown - 1 &&
-              meeting.speaker_count > 1 &&
-              meeting.speaker_count}
+            {index === shown - 1 && meeting.speaker_count}
           </span>
         ))}
       </span>
