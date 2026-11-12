@@ -15,19 +15,24 @@ import {
   unwrapResult,
 } from "./extensionRuntime";
 import asanaIcon from "./icons/asana.svg";
+import calcomIcon from "./icons/calcom.svg";
+import calcomDarkIcon from "./icons/calcom-light.svg";
 import atlassianIcon from "./icons/atlassian.svg";
 import atlassianDarkIcon from "./icons/atlassian-light.svg";
 import canvaIcon from "./icons/canva.png";
 import codaIcon from "./icons/coda.svg";
 import dropboxIcon from "./icons/dropbox.svg";
+import firefliesIcon from "./icons/fireflies.png";
 import gammaIcon from "./icons/gamma.svg";
 import gammaDarkIcon from "./icons/gamma-light.svg";
 import githubIcon from "./icons/github.svg";
+import granolaIcon from "./icons/granola.png";
 import linearIcon from "./icons/linear.svg";
 import linearDarkIcon from "./icons/linear-light.svg";
 import miroIcon from "./icons/miro.png";
 import mondayIcon from "./icons/monday.png";
 import notionIcon from "./icons/notion.png";
+import otterIcon from "./icons/otter.png";
 import raindropIcon from "./icons/raindrop.png";
 import readwiseIcon from "./icons/readwise.png";
 import todoistIcon from "./icons/todoist.svg";
@@ -37,15 +42,19 @@ import "./mcp-presets.css";
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["asana", { src: asanaIcon }],
   ["atlassian", { src: atlassianIcon, darkSrc: atlassianDarkIcon }],
+  ["calcom", { src: calcomIcon, darkSrc: calcomDarkIcon }],
   ["canva", { src: canvaIcon }],
   ["coda", { src: codaIcon }],
   ["dropbox", { src: dropboxIcon }],
+  ["fireflies", { src: firefliesIcon }],
   ["gamma", { src: gammaIcon, darkSrc: gammaDarkIcon }],
   ["github", { src: githubIcon }],
+  ["granola", { src: granolaIcon }],
   ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
   ["miro", { src: miroIcon }],
   ["monday", { src: mondayIcon }],
   ["notion", { src: notionIcon }],
+  ["otter", { src: otterIcon }],
   ["raindrop", { src: raindropIcon }],
   ["readwise", { src: readwiseIcon }],
   ["todoist", { src: todoistIcon }],

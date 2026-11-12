@@ -589,6 +589,47 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://zapier.com/mcp",
         ownership: None,
     },
+    // On trial (2026-11-12): Cal.com, Granola, Fireflies, Otter.
+    CatalogProvider {
+        id: "calcom",
+        bundled_preset: true,
+        name: "Cal.com",
+        description: "Bookings, availability, and event types.",
+        endpoint: "https://mcp.cal.com/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://cal.com/docs/mcp-server",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "granola",
+        bundled_preset: true,
+        name: "Granola",
+        description: "Search and read your meeting notes.",
+        endpoint: "https://mcp.granola.ai/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://docs.granola.ai/help-center/sharing/integrations/mcp",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "fireflies",
+        bundled_preset: true,
+        name: "Fireflies",
+        description: "Meeting transcripts, summaries, and action items.",
+        endpoint: "https://api.fireflies.ai/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://docs.fireflies.ai/getting-started/mcp-configuration",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "otter",
+        bundled_preset: true,
+        name: "Otter",
+        description: "Search and read your meeting transcripts.",
+        endpoint: "https://mcp.otter.ai/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://help.otter.ai/hc/en-us/search?query=MCP",
+        ownership: None,
+    },
 ];
 
 #[derive(Clone)]
@@ -3225,6 +3266,10 @@ mod tests {
             ("gamma", Registration::Dynamic),
             ("miro", Registration::Dynamic),
             ("zapier", Registration::Dynamic),
+            ("calcom", Registration::Dynamic),
+            ("granola", Registration::Dynamic),
+            ("fireflies", Registration::Dynamic),
+            ("otter", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3260,7 +3305,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 15);
+        assert_eq!(production_catalog().count(), 19);
     }
 
     #[test]
@@ -3558,7 +3603,11 @@ mod tests {
                 "canva",
                 "gamma",
                 "miro",
-                "zapier"
+                "zapier",
+                "calcom",
+                "granola",
+                "fireflies",
+                "otter"
             ]
         );
     }
