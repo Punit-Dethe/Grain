@@ -103,10 +103,26 @@ export function AgentPanel() {
   // event (whichever wins the race) only trigger it once.
   const firstRunStartedRef = useRef(false);
   const firstTurnGenerationRef = useRef<number | null>(null);
+  // A chat turn sent from an earlier open is still running on the host.
+  const backgroundRef = useRef(false);
   messagesRef.current = messages;
   firstReplyRef.current = firstReply;
   hasFollowupsRef.current = hasFollowups;
   busyRef.current = busy;
+
+  /** Load the one running chat (the host records every turn). */
+  const loadHistory = useCallback(async () => {
+    const memory = await commands.agentHistory().catch(() => null);
+    if (memory)
+      setHistory(
+        (memory.messages ?? []).map((message, index) => ({
+          id: `h${index}`,
+          role: message.role === "assistant" ? "assistant" : "user",
+          content: message.content,
+        })),
+      );
+    return memory;
+  }, []);
 
   const reveal = useCallback(() => {
     revealedRef.current = true;
@@ -121,7 +137,7 @@ export function AgentPanel() {
 
   /** Run the FIRST instruction (or a retry of it) — compact stage. */
   const runFirst = useCallback(
-    async (instruction: string) => {
+    async (instruction: string, record = true) => {
       // The panel may already be busy while speech is being transcribed. Seed
       // visible state now: updating instructionRef or busy=true alone need not
       // trigger another render before the model finishes.
@@ -137,10 +153,13 @@ export function AgentPanel() {
           payload,
           contextRef.current,
           revealedRef.current ? null : firstTurnGenerationRef.current,
+          // The host records the turn itself, so it survives a close mid-run.
+          // A retry asks again: only its new reply is stored.
+          record,
         );
         if (res.status === "ok") {
           setFirstReply(res.data);
-          remember(instruction, res.data);
+          if (!record) remember(null, res.data);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -163,10 +182,14 @@ export function AgentPanel() {
           ...toPayload(historyRef.current.slice(-HISTORY_CONTEXT)),
           ...toPayload(history),
         ];
-        const res = await commands.agentRun(payload, contextRef.current, null);
+        const res = await commands.agentRun(
+          payload,
+          contextRef.current,
+          null,
+          true,
+        );
         if (res.status === "ok") {
           const reply = res.data;
-          remember(history[history.length - 1]?.content ?? null, reply);
           setMessages((prev) => [
             // Any new turn after a pending action either resolved or cancelled
             // that host token. Keep historical text, but never leave a stale
@@ -203,7 +226,7 @@ export function AgentPanel() {
       firstReplyRef.current?.confirm_action
     )
       return;
-    void runFirst(instructionRef.current);
+    void runFirst(instructionRef.current, false);
   }, [runFirst]);
 
   /** Take the queued first instruction and run it — guarded so the mount-take
@@ -263,6 +286,16 @@ export function AgentPanel() {
           );
         })
         .then(track),
+      // A turn left running by an earlier open finished: show its reply.
+      win
+        .listen("agent-chat-done", () => {
+          if (!backgroundRef.current) return;
+          backgroundRef.current = false;
+          void loadHistory().then(() => {
+            if (!dead) setBusy(false);
+          });
+        })
+        .then(track),
       win
         .listen("agent-instruction", () => void startFirstIfQueued())
         .then(track),
@@ -308,22 +341,28 @@ export function AgentPanel() {
             if (!dead) setEntering(false);
           });
         } else {
-          // Hand-opened: no first turn is coming; the composer is free.
-          setBusy(false);
+          // Hand-opened: no first turn is coming. The composer is free unless
+          // a turn sent before the last close is still running.
+          backgroundRef.current = status.chat_busy;
+          setBusy(status.chat_busy);
         }
         // The chat continues: load it before the first turn is sent.
-        const memory = await commands.agentHistory().catch(() => null);
+        const memory = await loadHistory();
         if (dead) return;
         if (memory) {
-          setHistory(
-            (memory.messages ?? []).map((message, index) => ({
-              id: `h${index}`,
-              role: message.role === "assistant" ? "assistant" : "user",
-              content: message.content,
-            })),
-          );
           // A summon is always a chat; a hand-opened notch keeps its mode.
           if (status.opened) setMode(memory.mode ?? "chat");
+        }
+        if (backgroundRef.current) {
+          // The turn may have ended before this window was listening.
+          const now = await commands.agentNotchStatus().catch(() => null);
+          if (dead) return;
+          if (now && !now.chat_busy && backgroundRef.current) {
+            backgroundRef.current = false;
+            await loadHistory();
+            if (dead) return;
+            setBusy(false);
+          }
         }
         if (status.opened && status.shown) open();
         generationRef.current = status.generation;
@@ -340,7 +379,7 @@ export function AgentPanel() {
       dead = true;
       unlisten.forEach((release) => release());
     };
-  }, [reveal, open, startFirstIfQueued, win]);
+  }, [reveal, open, startFirstIfQueued, loadHistory, win]);
 
   // Reveal only after reply/error state has committed. The host verifies that
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
@@ -622,6 +661,7 @@ export function AgentPanel() {
             active={!!capture?.listening && !capture.working && !closing}
           />
         )}
+        {!revealed && <span className="agent-notch-work" aria-hidden />}
         {/* One header for both states: the compact status crossfades into the
             brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">

@@ -110,6 +110,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agent-notch.is-entering::before,
+.agent-notch[data-phase="working"]::before,
 .agent-notch.is-closing::before {
   opacity: 0;
 }
@@ -127,6 +128,57 @@ html[data-window="agent-panel"] body {
 @keyframes agent-notch-fade-in {
   from {
     opacity: 0;
+  }
+}
+
+/* Working: once the request is understood the compact status steps back into
+   the resting sliver, and its line runs the same warm sweep the native sliver
+   shows for a turn left running after a close. The reply grows out of it. */
+.agent-notch[data-phase="working"] {
+  width: min(120px, 100vw);
+  height: min(6px, 100vh);
+  background: var(--notch-sliver);
+  box-shadow: none;
+  border-radius: 0 0 6px 6px;
+}
+
+.agent-notch[data-phase="working"] .agent-notch-header > *,
+.agent-notch[data-phase="working"] .agent-notch-voice {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+/* Matches the native line: inset 9px, y 1.75..4px, one stop cycle per bar
+   length every 1.4s (WORK and WORK_PERIOD in grain_notch_sliver.rs). */
+.agent-notch-work {
+  --work-span: 102px;
+  position: absolute;
+  top: 1.75px;
+  left: 9px;
+  right: 9px;
+  height: 2.25px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(
+      90deg,
+      #ff7a18,
+      #ffb347 33.3%,
+      #ffd166 66.6%,
+      #ff7a18
+    )
+    0 0 / var(--work-span) 100% repeat-x;
+  transition: opacity 160ms ease;
+}
+
+.agent-notch[data-phase="working"]:not(.is-closing) .agent-notch-work {
+  opacity: 1;
+  animation: agent-notch-work 1.4s linear infinite;
+}
+
+@keyframes agent-notch-work {
+  to {
+    background-position-x: var(--work-span);
   }
 }
 
@@ -1016,6 +1068,7 @@ html[data-window="agent-panel"] body {
   .agent-notch-reply,
   .agent-working-phrases > span,
   .agent-typing > span,
+  .agent-notch-work,
   .agc-c-send,
   .agent-notch.is-closing,
   .agent-notch.is-closing .agent-notch-header > *,

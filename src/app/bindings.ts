@@ -1058,9 +1058,9 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
  * fallback pool (enabled providers in saved order). The
  * Explicitly selected text is supplied as the subject of the instruction.
  */
-async agentRun(messages: AgentMessage[], context: string | null, generation: number | null) : Promise<Result<AgentReply, string>> {
+async agentRun(messages: AgentMessage[], context: string | null, generation: number | null, record: boolean) : Promise<Result<AgentReply, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context, generation }) };
+    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context, generation, record }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1944,7 +1944,11 @@ opened: boolean;
 /**
  * The hand-opened notch is on screen (`agent-open` may predate mount).
  */
-shown: boolean }
+shown: boolean; 
+/**
+ * A chat request from an earlier open is still running.
+ */
+chat_busy: boolean }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */

@@ -154,6 +154,14 @@ impl AgentRunControl {
         state.pending_action.take()
     }
 
+    /// [GRAIN] Drop a pending confirmation but let a running request finish:
+    /// closing the notch keeps chat work going in the background.
+    pub(crate) fn discard_pending(&self) -> Option<String> {
+        let mut state = self.state.lock().unwrap();
+        clear_pending_state(&mut state);
+        state.pending_action.take()
+    }
+
     fn expire_pending(&self, expected: &str) -> bool {
         let mut state = self.state.lock().unwrap();
         if state.pending_action.as_deref() != Some(expected)
@@ -351,6 +359,8 @@ pub struct AgentState {
     /// The hand-opened notch is on screen (it may be pre-created hidden while
     /// the sliver fills).
     open_shown: AtomicBool,
+    /// [GRAIN] A recorded chat request is running (it may outlive the notch).
+    chat_running: AtomicBool,
 }
 
 /// One conversation turn from the frontend.
@@ -690,7 +700,7 @@ fn build_window(
                     {
                         *image = None;
                         state.reply_visible.store(false, Ordering::SeqCst);
-                        clear_pending_action(&app);
+                        close_keeping_chat(&app);
                         crate::capability::prefetch::clear();
                     }
                 }
@@ -1327,6 +1337,22 @@ fn clear_pending_action(app: &AppHandle) {
     }
 }
 
+/// [GRAIN] Closing the notch: forget its queued first turn and any pending
+/// confirmation (nothing is left to show it), but a chat request already
+/// running keeps going and records its reply (see `agent_run`).
+fn close_keeping_chat(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AgentState>() {
+        {
+            let mut pending = state.pending_instruction.lock().unwrap();
+            pending.take();
+            state.waiting_for_reply.store(false, Ordering::SeqCst);
+        }
+        if let Some(token) = state.execution.discard_pending() {
+            crate::action_exec::discard(&token);
+        }
+    }
+}
+
 // ============================================================================
 // Commands
 // ============================================================================
@@ -1380,6 +1406,8 @@ pub struct AgentNotchStatus {
     opened: bool,
     /// The hand-opened notch is on screen (`agent-open` may predate mount).
     shown: bool,
+    /// A chat request from an earlier open is still running.
+    chat_busy: bool,
 }
 
 #[tauri::command]
@@ -1391,6 +1419,7 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
         generation,
         opened: state.opened.load(Ordering::SeqCst),
         shown: state.open_shown.load(Ordering::SeqCst),
+        chat_busy: state.chat_running.load(Ordering::SeqCst),
         listening: input_is_current(&state, generation)
             && state.dictation_capture.lock().unwrap().is_some(),
         working: reply_wait_is_current(&app, generation),
@@ -1853,7 +1882,7 @@ pub fn global_close(app: &AppHandle) {
     else {
         return;
     };
-    clear_pending_action(app);
+    close_keeping_chat(app);
     close_panel_animated(app, closing_session);
 }
 
@@ -1879,7 +1908,7 @@ fn close_panel_animated(app: &AppHandle, generation: u64) {
             } else {
                 // No Destroyed event will release them.
                 unregister_transient_shortcuts_deferred(&handle);
-                clear_pending_action(&handle);
+                close_keeping_chat(&handle);
             }
         });
     });
@@ -2293,6 +2322,9 @@ pub async fn agent_run(
     messages: Vec<AgentMessage>,
     context: Option<String>,
     generation: Option<u64>,
+    // [GRAIN] A notch chat turn: the host records it in the running chat (the
+    // request now, the reply when it lands), so it survives the notch closing.
+    record: bool,
 ) -> Result<AgentReply, String> {
     let state = app
         .try_state::<AgentState>()
@@ -2306,8 +2338,56 @@ pub async fn agent_run(
         }
         state.execution.begin()?
     };
-    run.wait(registration, agent_run_owned(&app, messages, context, &run))
-        .await?
+    let _chat = record.then(|| ChatRun::start(&app, &messages));
+    let reply = run
+        .wait(registration, agent_run_owned(&app, messages, context, &run))
+        .await?;
+    if record {
+        if let Ok(reply) = &reply {
+            // A confirmation is recorded once it resolves (by the panel).
+            if reply.confirm_action.is_none() {
+                crate::grain_agent_history::record(
+                    &app,
+                    vec![AgentMessage {
+                        role: "assistant".into(),
+                        content: reply.text.clone(),
+                    }],
+                );
+            }
+        }
+    }
+    reply
+}
+
+/// [GRAIN] A recorded chat request in flight. Records the request on start;
+/// on drop (done, failed or cancelled) clears the flag, tells a (re)opened
+/// notch to reload the chat, and stops the sliver's working line.
+struct ChatRun {
+    app: AppHandle,
+}
+
+impl ChatRun {
+    fn start(app: &AppHandle, messages: &[AgentMessage]) -> Self {
+        if let Some(request) = messages.iter().rev().find(|m| m.role != "assistant") {
+            crate::grain_agent_history::record(app, vec![request.clone()]);
+        }
+        app.state::<AgentState>()
+            .chat_running
+            .store(true, Ordering::SeqCst);
+        crate::grain_notch_sliver::set_working(app, true);
+        Self { app: app.clone() }
+    }
+}
+
+impl Drop for ChatRun {
+    fn drop(&mut self) {
+        // Runs after the reply is recorded (it is dropped at the end of `agent_run`).
+        if let Some(state) = self.app.try_state::<AgentState>() {
+            state.chat_running.store(false, Ordering::SeqCst);
+        }
+        crate::grain_notch_sliver::set_working(&self.app, false);
+        let _ = self.app.emit_to(PANEL_LABEL, "agent-chat-done", ());
+    }
 }
 
 async fn agent_run_owned(

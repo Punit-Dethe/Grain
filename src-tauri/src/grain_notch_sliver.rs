@@ -20,6 +20,15 @@ pub fn sync(app: &AppHandle) {
     let _ = app;
 }
 
+/// [GRAIN] A chat request runs in the background: the sliver's line animates
+/// an orange-to-yellow gradient until it ends.
+pub fn set_working(app: &AppHandle, working: bool) {
+    #[cfg(windows)]
+    imp::set_working(app, working);
+    #[cfg(not(windows))]
+    let _ = (app, working);
+}
+
 /// Hide the sliver while the notch itself is on screen; show it again after.
 pub fn set_hidden(app: &AppHandle, hidden: bool) {
     #[cfg(windows)]
@@ -66,6 +75,10 @@ mod imp {
     /// How long the pointer must rest before the notch opens.
     const FILL: Duration = Duration::from_millis(650);
     const TIMER_ID: usize = 1;
+    /// Animates the working line (~30 fps) only while a request runs.
+    const WORK_TIMER_ID: usize = 2;
+    /// One sweep of the working gradient; `agent-notch-work` in agent.css.
+    const WORK_PERIOD: f64 = 1.4;
     /// `WM_MOUSELEAVE` (winuser.h); its binding lives in the unused Controls feature.
     const WM_MOUSELEAVE: u32 = 0x02A3;
     const CLASS: windows::core::PCWSTR = w!("GrainAgentNotchSliver");
@@ -74,6 +87,14 @@ mod imp {
     const BASE: [f64; 3] = [3.0, 3.0, 5.0];
     const TRACK: [f64; 3] = [30.0, 30.0, 35.0];
     const BAR: [f64; 3] = [206.0, 206.0, 214.0];
+    /// The working gradient, cycled: orange, amber, yellow.
+    const WORK: [[f64; 3]; 3] = [
+        [255.0, 122.0, 24.0],
+        [255.0, 179.0, 71.0],
+        [255.0, 214.0, 102.0],
+    ];
+
+    static WORKING: AtomicBool = AtomicBool::new(false);
 
     struct Sliver {
         hwnd: HWND,
@@ -84,6 +105,8 @@ mod imp {
         hidden: bool,
         /// Cached on the main loop: the window procedure never calls Tauri.
         geometry: Option<Geometry>,
+        /// Phase origin of the working gradient.
+        epoch: Instant,
     }
 
     #[derive(Clone, Copy)]
@@ -176,7 +199,36 @@ mod imp {
                     let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 }
             }
+            sync_work_timer();
         });
+    }
+
+    pub fn set_working(app: &AppHandle, working: bool) {
+        if WORKING.swap(working, Ordering::SeqCst) == working {
+            return;
+        }
+        let _ = app.run_on_main_thread(|| {
+            sync_work_timer();
+            repaint();
+        });
+    }
+
+    /// The working line ticks only while a request runs and the sliver shows.
+    fn sync_work_timer() {
+        let Some((hwnd, hidden)) = SLIVER.with(|cell| {
+            let slot = cell.try_borrow().ok()?;
+            let sliver = slot.as_ref()?;
+            Some((sliver.hwnd, sliver.hidden))
+        }) else {
+            return;
+        };
+        unsafe {
+            if WORKING.load(Ordering::SeqCst) && !hidden {
+                SetTimer(Some(hwnd), WORK_TIMER_ID, 33, None);
+            } else {
+                let _ = KillTimer(Some(hwnd), WORK_TIMER_ID);
+            }
+        }
     }
 
     fn create(app: &AppHandle) {
@@ -231,6 +283,7 @@ mod imp {
                     fired: false,
                     hidden,
                     geometry: measure(app),
+                    epoch: Instant::now(),
                 });
             });
             repaint();
@@ -238,6 +291,7 @@ mod imp {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
         }
+        sync_work_timer();
     }
 
     fn destroy() {
@@ -246,6 +300,7 @@ mod imp {
         };
         unsafe {
             let _ = KillTimer(Some(sliver.hwnd), TIMER_ID);
+            let _ = KillTimer(Some(sliver.hwnd), WORK_TIMER_ID);
             let _ = DestroyWindow(sliver.hwnd);
         }
     }
@@ -280,7 +335,15 @@ mod imp {
                 y,
                 width,
                 height,
-                pixels: render(width, height, zoom, progress),
+                pixels: render(
+                    width,
+                    height,
+                    zoom,
+                    progress,
+                    WORKING
+                        .load(Ordering::SeqCst)
+                        .then(|| (sliver.epoch.elapsed().as_secs_f64() / WORK_PERIOD).fract()),
+                ),
             })
         })
     }
@@ -296,10 +359,32 @@ mod imp {
         ((p + 0.5).min(hi) - (p - 0.5).max(lo)).clamp(0.0, 1.0)
     }
 
+    /// The cycled working gradient at `t` in [0, 1).
+    fn work_color(t: f64) -> [f64; 3] {
+        let scaled = t * WORK.len() as f64;
+        let index = (scaled.floor() as usize) % WORK.len();
+        let next = (index + 1) % WORK.len();
+        let f = scaled.fract();
+        // Smoothstep between stops: no visible seams in the sweep.
+        let f = f * f * (3.0 - 2.0 * f);
+        let mut color = [0.0; 3];
+        for i in 0..3 {
+            color[i] = WORK[index][i] + (WORK[next][i] - WORK[index][i]) * f;
+        }
+        color
+    }
+
     /// Premultiplied BGRA pixels: the shape flush with the top edge, bottom
-    /// corners rounded and anti-aliased, and (while hovering) the fill bar.
-    /// Everything else is alpha 1/255: invisible, but it still takes the hover.
-    fn render(width: i32, height: i32, zoom: f64, progress: Option<f64>) -> Vec<u32> {
+    /// corners rounded and anti-aliased, the working line (while a request
+    /// runs, `work` is its phase) and the hover fill bar. Everything else is
+    /// alpha 1/255: invisible, but it still takes the hover.
+    fn render(
+        width: i32,
+        height: i32,
+        zoom: f64,
+        progress: Option<f64>,
+        work: Option<f64>,
+    ) -> Vec<u32> {
         let (sw, sh) = (REST.0 * zoom, REST.1 * zoom);
         // Fully rounded bottom corners: the radius is the whole height.
         let radius = sh;
@@ -331,12 +416,27 @@ mod imp {
                     continue;
                 }
                 let mut color = BASE;
+                if let Some(phase) = work {
+                    let line = span(py, bar_top, bar_bottom) * span(px, bar_left, bar_right);
+                    if line > 0.0 {
+                        let along = (px - bar_left) / (bar_right - bar_left);
+                        let hue = work_color((along - phase).rem_euclid(1.0));
+                        for i in 0..3 {
+                            color[i] += (hue[i] - color[i]) * line;
+                        }
+                    }
+                }
                 if let Some(progress) = progress {
                     let row = span(py, bar_top, bar_bottom);
                     if row > 0.0 {
                         let eased = 1.0 - (1.0 - progress).powi(2);
                         let filled = bar_left + (bar_right - bar_left) * eased;
-                        let track = row * span(px, bar_left, bar_right);
+                        // Over the working line the hover fill alone shows.
+                        let track = if work.is_some() {
+                            0.0
+                        } else {
+                            row * span(px, bar_left, bar_right)
+                        };
                         let fill = row * span(px, bar_left, filled);
                         for i in 0..3 {
                             color[i] += (TRACK[i] - color[i]) * track;
@@ -505,6 +605,19 @@ mod imp {
             WM_TIMER if wparam.0 == TIMER_ID => {
                 repaint();
                 fire(hwnd, true);
+                LRESULT(0)
+            }
+            WM_TIMER if wparam.0 == WORK_TIMER_ID => {
+                // While hovering, the hover timer already repaints.
+                let hovering = SLIVER.with(|cell| {
+                    cell.try_borrow()
+                        .ok()
+                        .and_then(|slot| slot.as_ref().map(|s| s.hover_since.is_some()))
+                        .unwrap_or(false)
+                });
+                if !hovering {
+                    repaint();
+                }
                 LRESULT(0)
             }
             WM_LBUTTONDOWN => {

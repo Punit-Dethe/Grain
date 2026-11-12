@@ -105,6 +105,14 @@ fn append_to(memory: &mut AgentNotchMemory, messages: Vec<AgentMessage>, at_unix
     memory.messages.drain(..excess);
 }
 
+/// [GRAIN] Host-side recording of a chat turn (see `agent::agent_run`). A
+/// failure is logged: losing a history line must never fail the request.
+pub(crate) fn record(app: &AppHandle, messages: Vec<AgentMessage>) {
+    if let Err(error) = update(app, |memory| append_to(memory, messages, now_ms())) {
+        log::warn!("[GRAIN] agent: could not record the chat: {error}");
+    }
+}
+
 /// The notch's chat and last mode.
 #[tauri::command]
 #[specta::specta]
