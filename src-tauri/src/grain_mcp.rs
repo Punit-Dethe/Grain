@@ -537,8 +537,7 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://help.raindrop.io/mcp",
         ownership: None,
     },
-    // On trial (2026-11-12): monday.com (its token exceeds one Windows
-    // credential; see vault_parts).
+    // monday.com's token exceeds one Windows credential; see vault_parts.
     CatalogProvider {
         id: "monday",
         bundled_preset: true,
@@ -557,6 +556,37 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.canva.com/mcp",
         registration: Registration::Dynamic,
         setup_url: "https://www.canva.dev/docs/connect/canva-mcp-server-setup",
+        ownership: None,
+    },
+    // On trial (2026-11-12): Gamma, Miro, Zapier.
+    CatalogProvider {
+        id: "gamma",
+        bundled_preset: true,
+        name: "Gamma",
+        description: "Generate presentations, documents, and web pages.",
+        endpoint: "https://mcp.gamma.app/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://developers.gamma.app/mcp/gamma-mcp-server",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "miro",
+        bundled_preset: true,
+        name: "Miro",
+        description: "Read and add to boards.",
+        endpoint: "https://mcp.miro.com/",
+        registration: Registration::Dynamic,
+        setup_url: "https://developers.miro.com/docs/miro-mcp",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "zapier",
+        bundled_preset: true,
+        name: "Zapier",
+        description: "Run your Zapier actions across thousands of apps.",
+        endpoint: "https://mcp.zapier.com/api/mcp/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://zapier.com/mcp",
         ownership: None,
     },
 ];
@@ -3192,6 +3222,9 @@ mod tests {
             ("raindrop", Registration::Dynamic),
             ("monday", Registration::Dynamic),
             ("canva", Registration::Dynamic),
+            ("gamma", Registration::Dynamic),
+            ("miro", Registration::Dynamic),
+            ("zapier", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3227,7 +3260,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 12);
+        assert_eq!(production_catalog().count(), 15);
     }
 
     #[test]
@@ -3522,7 +3555,10 @@ mod tests {
                 "readwise",
                 "raindrop",
                 "monday",
-                "canva"
+                "canva",
+                "gamma",
+                "miro",
+                "zapier"
             ]
         );
     }

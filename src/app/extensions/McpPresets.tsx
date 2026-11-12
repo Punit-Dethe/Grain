@@ -20,14 +20,18 @@ import atlassianDarkIcon from "./icons/atlassian-light.svg";
 import canvaIcon from "./icons/canva.png";
 import codaIcon from "./icons/coda.svg";
 import dropboxIcon from "./icons/dropbox.svg";
+import gammaIcon from "./icons/gamma.svg";
+import gammaDarkIcon from "./icons/gamma-light.svg";
 import githubIcon from "./icons/github.svg";
 import linearIcon from "./icons/linear.svg";
 import linearDarkIcon from "./icons/linear-light.svg";
+import miroIcon from "./icons/miro.png";
 import mondayIcon from "./icons/monday.png";
 import notionIcon from "./icons/notion.png";
 import raindropIcon from "./icons/raindrop.png";
 import readwiseIcon from "./icons/readwise.png";
 import todoistIcon from "./icons/todoist.svg";
+import zapierIcon from "./icons/zapier.svg";
 import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
@@ -36,13 +40,16 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["canva", { src: canvaIcon }],
   ["coda", { src: codaIcon }],
   ["dropbox", { src: dropboxIcon }],
+  ["gamma", { src: gammaIcon, darkSrc: gammaDarkIcon }],
   ["github", { src: githubIcon }],
   ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
+  ["miro", { src: miroIcon }],
   ["monday", { src: mondayIcon }],
   ["notion", { src: notionIcon }],
   ["raindrop", { src: raindropIcon }],
   ["readwise", { src: readwiseIcon }],
   ["todoist", { src: todoistIcon }],
+  ["zapier", { src: zapierIcon }],
 ]);
 
 export function McpPresets({
