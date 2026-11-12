@@ -83,6 +83,8 @@ export function AgentPanel() {
   const historyRef = useRef<ChatMessage[]>([]);
   // The height Recall asks for (AgentRecall owns its layout numbers).
   const [recallHeight, setRecallHeight] = useState(200);
+  // A Recall device menu floats below the shell; lift the click clip for it.
+  const [recallMenu, setRecallMenu] = useState(false);
   const currentStartRef = useRef<HTMLDivElement>(null);
   historyRef.current = history;
   const revealedRef = useRef(false);
@@ -389,7 +391,7 @@ export function AgentPanel() {
   useEffect(() => {
     if (!revealed || closing) return;
     void commands.agentNotchShape(null).catch(console.error);
-    if (mode !== "recall") return;
+    if (mode !== "recall" || recallMenu) return;
     const timer = window.setTimeout(
       () =>
         void commands
@@ -398,7 +400,7 @@ export function AgentPanel() {
       NOTCH_GROW_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [revealed, closing, mode, recallHeight]);
+  }, [revealed, closing, mode, recallHeight, recallMenu]);
 
   const switchMode = (next: AgentNotchMode) => {
     if (next === mode) return;
@@ -700,7 +702,10 @@ export function AgentPanel() {
             reply in the reveal frame stalled the start of the growth. */}
         {recall && (
           <div className="agent-notch-recall">
-            <AgentRecall onHeightChange={setRecallHeight} />
+            <AgentRecall
+              onHeightChange={setRecallHeight}
+              onMenuChange={setRecallMenu}
+            />
           </div>
         )}
 

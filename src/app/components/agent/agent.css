@@ -5,18 +5,9 @@ html[data-window="agent-panel"] body {
   background: transparent;
 }
 
+/* Tokens live on the root so popovers floating outside the shell (the Recall
+   device menu) share them. */
 .agent-panel-root {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  background: transparent;
-  color-scheme: dark;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* The notch: one near-black shell fused to the top edge of the screen. It is
-   compact while capturing and grows, as the same element, into the reply. */
-.agent-notch {
   --agc-bg: #0a0a0e;
   --agc-raise: #ffffff0b;
   --agc-ink: #f4f3f8;
@@ -37,6 +28,23 @@ html[data-window="agent-panel"] body {
   --notch-reply-header: 34px;
   /* The resting sliver (BASE in grain_notch_sliver.rs). */
   --notch-sliver: #030305;
+  /* The hairline edge, drawn inside the shell so it takes no layout space:
+     the compact header then spans the full visible height and its dot sits
+     exactly in the middle. */
+  --notch-edge:
+    inset 1px 0 0 var(--notch-line), inset -1px 0 0 var(--notch-line),
+    inset 0 -1px 0 var(--notch-line);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: transparent;
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The notch: one near-black shell fused to the top edge of the screen. It is
+   compact while capturing and grows, as the same element, into the reply. */
+.agent-notch {
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -48,15 +56,15 @@ html[data-window="agent-panel"] body {
   isolation: isolate;
   color: var(--agc-ink);
   background: var(--agc-bg);
-  border: 1px solid var(--notch-line);
-  border-top: 0;
+  box-shadow: var(--notch-edge);
   border-radius: 0 0 14px 14px;
   font-family: "IBM Plex Sans Variable", "Segoe UI", system-ui, sans-serif;
   transition:
     width var(--notch-grow) var(--notch-ease),
     height var(--notch-grow) var(--notch-ease),
     border-radius var(--notch-grow) var(--notch-ease),
-    background-color var(--notch-grow) ease;
+    background-color var(--notch-grow) ease,
+    box-shadow var(--notch-grow) ease;
 }
 
 /* A single light-gray fade rising from the shell's bottom edge. It is sized
@@ -96,8 +104,8 @@ html[data-window="agent-panel"] body {
   width: min(120px, 100vw);
   height: min(6px, 100vh);
   background: var(--notch-sliver);
-  border-color: transparent;
-  border-radius: 0 0 5px 5px;
+  box-shadow: none;
+  border-radius: 0 0 6px 6px;
 }
 
 .agent-notch.is-entering::before,
@@ -129,13 +137,13 @@ html[data-window="agent-panel"] body {
   width: min(120px, 100vw);
   height: min(6px, 100vh);
   background: var(--notch-sliver);
-  border-color: transparent;
-  border-radius: 0 0 5px 5px;
+  box-shadow: none;
+  border-radius: 0 0 6px 6px;
   pointer-events: none;
   transition:
     width var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
     height var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
-    border-color var(--notch-close) ease,
+    box-shadow var(--notch-close) ease,
     border-radius var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
     background-color var(--notch-close) ease;
 }
@@ -150,7 +158,7 @@ html[data-window="agent-panel"] body {
 
 .agent-notch-header {
   box-sizing: border-box;
-  flex: 0 0 min(29px, 100vh);
+  flex: 0 0 min(30px, 100vh);
   min-width: 0;
   display: flex;
   align-items: center;
@@ -599,13 +607,11 @@ html[data-window="agent-panel"] body {
 }
 
 .agr-menu {
-  position: absolute;
-  z-index: 2;
-  top: calc(100% + 4px);
-  right: 0;
+  /* Floats over the screen below the notch; AgentRecall places it. */
+  position: fixed;
+  z-index: 10;
   box-sizing: border-box;
-  width: min(236px, 100%);
-  max-height: 158px;
+  width: min(236px, calc(100vw - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;

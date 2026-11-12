@@ -301,7 +301,8 @@ mod imp {
     /// Everything else is alpha 1/255: invisible, but it still takes the hover.
     fn render(width: i32, height: i32, zoom: f64, progress: Option<f64>) -> Vec<u32> {
         let (sw, sh) = (REST.0 * zoom, REST.1 * zoom);
-        let radius = (sh * 0.5).min(5.0 * zoom);
+        // Fully rounded bottom corners: the radius is the whole height.
+        let radius = sh;
         let half = sw / 2.0;
         let cx = width as f64 / 2.0;
         let pad = 9.0 * zoom;

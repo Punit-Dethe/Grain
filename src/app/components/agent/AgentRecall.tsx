@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   Check,
@@ -32,17 +39,19 @@ const MESSAGE = 24;
 const LIVE_TOP = 10;
 const CLOCK = 28;
 const LIVE_GAP = 12;
-const MENU_ITEM = 30;
-const MENU_PAD = 8;
-const MENU_MAX_ITEMS = 5;
+/** `.agr-menu` max-height; shorter when the window has less room below. */
+const MENU_MAX_HEIGHT = 158;
 
 /** The notch's Recall: pick sources, start a meeting, then mute or stop it.
  * Mounted only while Recall is shown, so its listener and clock go with it. */
 export function AgentRecall({
   onHeightChange,
+  onMenuChange,
 }: {
   /** The shell height this view needs, in CSS px. */
   onHeightChange: (height: number) => void;
+  /** A device menu is open (it floats below the shell). */
+  onMenuChange: (open: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<MeetStatus | null>(null);
@@ -97,27 +106,21 @@ export function AgentRecall({
       return;
     }
     const rows = systemSupported ? 2 : 1;
-    const content =
-      PAD_TOP +
-      rows * ROW +
-      (rows - 1) * ROW_GAP +
-      BEFORE_START +
-      BUTTON +
-      PAD_BOTTOM +
-      (message ? MESSAGE : 0);
-    // An open device menu drops below its row; the shell grows to fit it.
-    let extra = 0;
-    if (menu && sources) {
-      const index = menu === "Microphone" ? 0 : 1;
-      const items =
-        (menu === "Microphone" ? sources.microphones : sources.outputs).length +
-        1;
-      const top = PAD_TOP + index * (ROW + ROW_GAP) + ROW + 4;
-      const height = Math.min(items, MENU_MAX_ITEMS) * MENU_ITEM + MENU_PAD;
-      extra = Math.max(0, top + height + 12 - content);
-    }
-    onHeightChange(HEADER + content + extra);
-  }, [recording, systemSupported, message, menu, sources, onHeightChange]);
+    onHeightChange(
+      HEADER +
+        PAD_TOP +
+        rows * ROW +
+        (rows - 1) * ROW_GAP +
+        BEFORE_START +
+        BUTTON +
+        PAD_BOTTOM +
+        (message ? MESSAGE : 0),
+    );
+  }, [recording, systemSupported, message, onHeightChange]);
+
+  // The device menu floats outside the shell; the window must take clicks there.
+  useEffect(() => onMenuChange(menu !== null), [menu, onMenuChange]);
+  useEffect(() => () => onMenuChange(false), [onMenuChange]);
 
   useEffect(() => {
     if (!recording) return;
@@ -385,20 +388,51 @@ function DeviceMenu({
   const current =
     devices.find((device) => device.id === value)?.name ??
     t("agent.recallDefaultDevice");
+  // Where the list floats, measured from the trigger once it opens.
+  const [place, setPlace] = useState<{
+    top: number;
+    right: number;
+    maxHeight: number;
+    host: Element;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const trigger = triggerRef.current;
+    if (!open || !trigger) {
+      setPlace(null);
+      return;
+    }
+    const rect = trigger.getBoundingClientRect();
+    const top = rect.bottom + 6;
+    setPlace({
+      top,
+      right: Math.max(8, window.innerWidth - rect.right),
+      maxHeight: Math.max(
+        60,
+        Math.min(MENU_MAX_HEIGHT, window.innerHeight - top - 8),
+      ),
+      host: trigger.closest(".agent-panel-root") ?? document.body,
+    });
+  }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!place) return;
     const selected =
       listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]') ??
       listRef.current?.querySelector<HTMLElement>('[role="option"]');
     selected?.focus({ preventScroll: true });
     selected?.scrollIntoView({ block: "nearest" });
     const outside = (event: PointerEvent) => {
-      if (!wrapRef.current?.contains(event.target as Node)) onOpenChange(false);
+      const target = event.target as Node;
+      if (
+        !wrapRef.current?.contains(target) &&
+        !listRef.current?.contains(target)
+      )
+        onOpenChange(false);
     };
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
-  }, [open, onOpenChange]);
+  }, [place, onOpenChange]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (!open) return;
@@ -435,32 +469,43 @@ function DeviceMenu({
         <span className="agr-menu-value">{current}</span>
         <ChevronDown size={13} aria-hidden="true" />
       </button>
-      {open && (
-        <div
-          ref={listRef}
-          className="agr-menu"
-          role="listbox"
-          aria-label={label}
-        >
-          {options.map((option) => {
-            const selected = (value ?? "") === option.id;
-            return (
-              <button
-                key={option.id || "default"}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                className="agr-menu-item"
-                title={option.name}
-                onClick={() => onPick(option.id || null)}
-              >
-                <span>{option.name}</span>
-                {selected && <Check size={13} aria-hidden="true" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* Rendered outside the shell so it floats over the screen below the
+          notch instead of making the notch grow to hold it. React still
+          bubbles its keys to the wrapper above. */}
+      {open &&
+        place &&
+        createPortal(
+          <div
+            ref={listRef}
+            className="agr-menu"
+            role="listbox"
+            aria-label={label}
+            style={{
+              top: place.top,
+              right: place.right,
+              maxHeight: place.maxHeight,
+            }}
+          >
+            {options.map((option) => {
+              const selected = (value ?? "") === option.id;
+              return (
+                <button
+                  key={option.id || "default"}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className="agr-menu-item"
+                  title={option.name}
+                  onClick={() => onPick(option.id || null)}
+                >
+                  <span>{option.name}</span>
+                  {selected && <Check size={13} aria-hidden="true" />}
+                </button>
+              );
+            })}
+          </div>,
+          place.host,
+        )}
     </div>
   );
 }
