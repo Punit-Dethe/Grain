@@ -5919,6 +5919,37 @@ html[data-theme="light"] .dropdown-compact-menu {
   margin-bottom: 24px;
 }
 
+/* Inside a meeting, everything down to the tab line stays fixed; only the
+   content below it scrolls. Sticky offsets begin inside the page's 26px top
+   padding, so the block reaches back up by that much and pads itself down. */
+.meet-view .meet-view-head {
+  position: sticky;
+  z-index: 4;
+  top: -26px;
+  margin-top: -26px;
+  margin-bottom: 0;
+  padding-top: 26px;
+  background: var(--meet-page);
+}
+
+.meet-view .meet-view-head::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 18px;
+  background: linear-gradient(
+    to bottom,
+    var(--meet-page),
+    color-mix(in srgb, var(--meet-page) 0%, transparent)
+  );
+  pointer-events: none;
+}
+
+.meet-view .meet-view-body {
+  padding-top: 20px;
+}
+
 .meet-view-nav {
   display: flex;
   align-items: center;

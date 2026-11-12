@@ -1402,12 +1402,19 @@ function MeetingView({
     if (!row || !page) return;
     const box = row.getBoundingClientRect();
     const view = page.getBoundingClientRect();
-    if (box.top >= view.top + 24 && box.bottom <= view.bottom - 140) return;
+    // The header is fixed at the top, so the visible area starts below it.
+    const head = page.querySelector<HTMLElement>(".meet-view-head");
+    const clearTop = head ? head.getBoundingClientRect().bottom : view.top;
+    if (box.top >= clearTop + 24 && box.bottom <= view.bottom - 140) return;
     const reduce = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
     page.scrollTo({
-      top: page.scrollTop + box.top - view.top - view.height / 3,
+      top:
+        page.scrollTop +
+        box.top -
+        clearTop -
+        Math.max(40, (view.bottom - clearTop) / 3),
       behavior: reduce ? "auto" : "smooth",
     });
   }, [heardKey, playback.playing]);
