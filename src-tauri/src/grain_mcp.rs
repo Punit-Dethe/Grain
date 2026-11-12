@@ -446,8 +446,8 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "atlassian",
-        bundled_preset: false,
-        name: "Atlassian",
+        bundled_preset: true,
+        name: "Jira & Confluence",
         description: "Jira and Confluence work across one Atlassian account.",
         endpoint: "https://mcp.atlassian.com/v1/mcp/authv2",
         registration: Registration::Dynamic,
@@ -503,7 +503,6 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://developers.asana.com/docs/integrating-with-asanas-mcp-server",
         ownership: None,
     },
-    // On trial (2026-11-12): Coda, Readwise, Raindrop.io.
     CatalogProvider {
         id: "coda",
         bundled_preset: true,
@@ -532,6 +531,27 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://api.raindrop.io/rest/v2/ai/mcp",
         registration: Registration::Dynamic,
         setup_url: "https://help.raindrop.io/mcp",
+        ownership: None,
+    },
+    // On trial (2026-11-12): monday.com, Canva, and Jira & Confluence above.
+    CatalogProvider {
+        id: "monday",
+        bundled_preset: true,
+        name: "monday.com",
+        description: "Boards, items, and updates.",
+        endpoint: "https://mcp.monday.com/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://developer.monday.com/apps/docs/mondaycom-mcp-integration",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "canva",
+        bundled_preset: true,
+        name: "Canva",
+        description: "Find, create, and export designs.",
+        endpoint: "https://mcp.canva.com/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://www.canva.dev/docs/connect/canva-mcp-server-setup",
         ownership: None,
     },
 ];
@@ -3087,6 +3107,9 @@ mod tests {
             ("coda", Registration::Dynamic),
             ("readwise", Registration::Dynamic),
             ("raindrop", Registration::Dynamic),
+            ("atlassian", Registration::Dynamic),
+            ("monday", Registration::Dynamic),
+            ("canva", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3122,7 +3145,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 10);
+        assert_eq!(production_catalog().count(), 12);
     }
 
     #[test]
@@ -3379,12 +3402,26 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_three_zero_setup_validation_providers() {
+    fn zero_setup_providers_register_themselves_on_connect() {
         let dynamic: Vec<_> = production_catalog()
             .filter(|item| item.registration == Registration::Dynamic)
             .map(|item| item.id)
             .collect();
-        assert_eq!(dynamic, ["linear", "notion", "atlassian"]);
+        assert_eq!(
+            dynamic,
+            [
+                "linear",
+                "notion",
+                "atlassian",
+                "todoist",
+                "dropbox",
+                "coda",
+                "readwise",
+                "raindrop",
+                "monday",
+                "canva"
+            ]
+        );
     }
 
     #[test]

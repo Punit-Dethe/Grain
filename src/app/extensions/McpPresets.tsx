@@ -15,11 +15,15 @@ import {
   unwrapResult,
 } from "./extensionRuntime";
 import asanaIcon from "./icons/asana.svg";
+import atlassianIcon from "./icons/atlassian.svg";
+import atlassianDarkIcon from "./icons/atlassian-light.svg";
+import canvaIcon from "./icons/canva.svg";
 import codaIcon from "./icons/coda.svg";
 import dropboxIcon from "./icons/dropbox.svg";
 import githubIcon from "./icons/github.svg";
 import linearIcon from "./icons/linear.svg";
 import linearDarkIcon from "./icons/linear-light.svg";
+import mondayIcon from "./icons/monday.png";
 import notionIcon from "./icons/notion.png";
 import raindropIcon from "./icons/raindrop.png";
 import readwiseIcon from "./icons/readwise.png";
@@ -28,10 +32,13 @@ import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["asana", { src: asanaIcon }],
+  ["atlassian", { src: atlassianIcon, darkSrc: atlassianDarkIcon }],
+  ["canva", { src: canvaIcon }],
   ["coda", { src: codaIcon }],
   ["dropbox", { src: dropboxIcon }],
   ["github", { src: githubIcon }],
   ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
+  ["monday", { src: mondayIcon }],
   ["notion", { src: notionIcon }],
   ["raindrop", { src: raindropIcon }],
   ["readwise", { src: readwiseIcon }],
