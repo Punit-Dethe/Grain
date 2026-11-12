@@ -345,6 +345,12 @@ pub struct AgentState {
     dictation_session_at_summon: AtomicU64,
     draining_voice: AtomicBool,
     notch_generation: AtomicU64,
+    /// [GRAIN] The notch was opened by hand from the resting sliver (no
+    /// capture): it shows the chat history or Recall straight away.
+    opened: AtomicBool,
+    /// The hand-opened notch is on screen (it may be pre-created hidden while
+    /// the sliver fills).
+    open_shown: AtomicBool,
 }
 
 /// One conversation turn from the frontend.
@@ -429,6 +435,8 @@ fn summon_inner(app: &AppHandle) {
 
             clear_pending_action(&app);
             *state.context.lock().unwrap() = None;
+            state.opened.store(false, Ordering::SeqCst);
+            state.open_shown.store(false, Ordering::SeqCst);
             let generation = {
                 let mut image = state.screen_image.lock().unwrap();
                 let generation = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
@@ -616,6 +624,23 @@ fn build_window(
     }
 
     let window = builder.build()?;
+    // [GRAIN] The shell animates its own entrance out of the screen edge; the
+    // OS show/hide fade on top of it read as a second, unrelated animation.
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        use windows::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED,
+        };
+        let disabled = windows::core::BOOL(1);
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_TRANSITIONS_FORCEDISABLED,
+                (&disabled as *const windows::core::BOOL).cast(),
+                std::mem::size_of::<windows::core::BOOL>() as u32,
+            );
+        }
+    }
 
     // [GRAIN] Release the transient global Enter/Escape shortcuts when this
     // surface is destroyed and no other agent window remains. This covers every
@@ -644,7 +669,11 @@ fn build_window(
                 return;
             }
             unregister_transient_shortcuts_deferred(&app);
+            // [GRAIN] The notch is gone; the resting sliver takes its place.
+            crate::grain_notch_sliver::set_hidden(&app, false);
             if generation == built_for {
+                state.opened.store(false, Ordering::SeqCst);
+                state.open_shown.store(false, Ordering::SeqCst);
                 if blocks_dictation(&app) || waiting_for_reply(&app) {
                     cancel_notch_capture(&app);
                 } else {
@@ -772,7 +801,7 @@ fn place_notch(window: &tauri::WebviewWindow, size: (f64, f64)) {
 /// Windows accessibility text size (Settings > Accessibility > Text size), a
 /// separate axis from display scaling that WebView2 applies as a document zoom.
 #[cfg(target_os = "windows")]
-fn windows_notch_text_scale() -> f64 {
+pub(crate) fn windows_notch_text_scale() -> f64 {
     // Absent until the user moves the slider off 100%; stored as a percentage.
     winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
         .open_subkey(r"Software\Microsoft\Accessibility")
@@ -796,6 +825,13 @@ fn place_notch_at_text_scale(window: &tauri::WebviewWindow, (width, height): (f6
 /// Computed natively, with slack: everything outside the shell is transparent.
 #[cfg(windows)]
 fn set_compact_notch_region(window: &tauri::WebviewWindow, compact: bool) {
+    set_notch_region(window, compact.then_some(NOTCH_COMPACT));
+}
+
+/// Clip the notch window to a top-centred shell of `shape` CSS px (with
+/// slack), or lift the clip with `None`.
+#[cfg(windows)]
+fn set_notch_region(window: &tauri::WebviewWindow, shape: Option<(f64, f64)>) {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject, SetWindowRgn, HGDIOBJ};
     use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
@@ -804,11 +840,11 @@ fn set_compact_notch_region(window: &tauri::WebviewWindow, compact: bool) {
         return;
     };
     unsafe {
-        if !compact {
+        let Some(shape) = shape else {
             // No redraw: the newly exposed pixels are transparent until CSS grows.
             let _ = SetWindowRgn(hwnd, None, false);
             return;
-        }
+        };
         let mut outer = RECT::default();
         let Ok(scale) = window.scale_factor() else {
             return;
@@ -818,8 +854,8 @@ fn set_compact_notch_region(window: &tauri::WebviewWindow, compact: bool) {
         }
         let (width, height) = (outer.right - outer.left, outer.bottom - outer.top);
         let zoom = scale * windows_notch_text_scale();
-        let region_width = (((NOTCH_COMPACT.0 + 24.0) * zoom).ceil() as i32).min(width);
-        let region_height = (((NOTCH_COMPACT.1 + 10.0) * zoom).ceil() as i32).min(height);
+        let region_width = (((shape.0 + 24.0) * zoom).ceil() as i32).min(width);
+        let region_height = (((shape.1 + 10.0) * zoom).ceil() as i32).min(height);
         let x = (width - region_width) / 2;
         let region = CreateRectRgn(x, 0, x + region_width, region_height);
         if region.0.is_null() {
@@ -882,12 +918,125 @@ fn ensure_capture_notch(app: &AppHandle, generation: u64) {
         #[cfg(windows)]
         set_compact_notch_region(&window, true);
         window.show().map_err(|error| error.to_string())?;
+        crate::grain_notch_sliver::set_hidden(app, true);
         Ok(())
     };
     if let Err(error) = show() {
         warn!("[GRAIN] agent: failed to show the notch: {error}");
         cancel_notch_capture(app);
     }
+}
+
+// ============================================================================
+// [GRAIN] Hand-opened notch (the resting sliver)
+// ============================================================================
+
+/// Pre-create the hand-opened notch, hidden, while the sliver fills, so the
+/// WebView has loaded by the time it is shown. Main loop only.
+pub(crate) fn prewarm_open(app: &AppHandle) {
+    if !get_settings(app).agent_enabled
+        || app.get_webview_window(PANEL_LABEL).is_some()
+        || blocks_dictation(app)
+        || waiting_for_reply(app)
+    {
+        return;
+    }
+    let state = app.state::<AgentState>();
+    *state.context.lock().unwrap() = None;
+    let generation = {
+        let mut image = state.screen_image.lock().unwrap();
+        *image = None;
+        state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1
+    };
+    state.reply_visible.store(false, Ordering::SeqCst);
+    state.open_shown.store(false, Ordering::SeqCst);
+    state.opened.store(true, Ordering::SeqCst);
+    state.notch_generation.store(generation, Ordering::SeqCst);
+    // One size everywhere: the shell grows inside it and the region clips it.
+    let window = match build_window(app, generation, NOTCH_REPLY.0, NOTCH_REPLY.1) {
+        Ok(window) => window,
+        Err(error) => {
+            warn!("[GRAIN] agent: failed to create the notch: {error}");
+            state.opened.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+    place_notch_at_text_scale(&window, NOTCH_REPLY);
+    #[cfg(windows)]
+    set_notch_region(&window, Some(NOTCH_COMPACT));
+}
+
+/// Drop a pre-created notch the pointer abandoned before it opened.
+pub(crate) fn cancel_prewarm(app: &AppHandle) {
+    let state = app.state::<AgentState>();
+    if !state.opened.load(Ordering::SeqCst) || state.open_shown.load(Ordering::SeqCst) {
+        return;
+    }
+    if let Some(window) = app.get_webview_window(PANEL_LABEL) {
+        let _ = window.destroy();
+    }
+}
+
+/// Show the hand-opened notch (pre-created or not). Main loop only.
+pub(crate) fn open_notch(app: &AppHandle) {
+    let state = app.state::<AgentState>();
+    if app.get_webview_window(PANEL_LABEL).is_none() {
+        prewarm_open(app);
+    }
+    if !state.opened.load(Ordering::SeqCst) || state.open_shown.swap(true, Ordering::SeqCst) {
+        return; // A capture owns the notch, or it is already open.
+    }
+    let generation = state.notch_generation.load(Ordering::SeqCst);
+    let Some(window) = app.get_webview_window(PANEL_LABEL) else {
+        state.open_shown.store(false, Ordering::SeqCst);
+        return;
+    };
+    if let Err(error) = window.show() {
+        warn!("[GRAIN] agent: failed to show the notch: {error}");
+        let _ = window.destroy();
+        return;
+    }
+    crate::grain_notch_sliver::set_hidden(app, true);
+    state.reply_visible.store(true, Ordering::SeqCst);
+    state
+        .dictation_session_at_summon
+        .store(crate::grain_actions::current_session_id(), Ordering::SeqCst);
+    let _ = app.emit_to(PANEL_LABEL, "agent-open", ());
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(NOTCH_GROW).await;
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || focus_revealed_notch(&handle, generation));
+    });
+}
+
+fn hand_opened(app: &AppHandle) -> bool {
+    app.try_state::<AgentState>()
+        .is_some_and(|state| state.opened.load(Ordering::SeqCst))
+}
+
+/// The shell size the hand-opened notch is animating to, in CSS px.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+pub struct AgentNotchShape {
+    pub width: f64,
+    pub height: f64,
+}
+
+/// [GRAIN] Clip the notch window to its shell so the transparent rest of it
+/// never eats clicks. `None` is the full window (the chat).
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_notch_shape(app: AppHandle, shape: Option<AgentNotchShape>) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
+            return;
+        };
+        #[cfg(windows)]
+        set_notch_region(&window, shape.map(|shape| (shape.width, shape.height)));
+        #[cfg(not(windows))]
+        let _ = (window, shape);
+    });
 }
 
 #[cfg(windows)]
@@ -1227,6 +1376,10 @@ pub struct AgentNotchStatus {
     generation: u64,
     listening: bool,
     working: bool,
+    /// Opened by hand from the sliver: no capture, straight to the full notch.
+    opened: bool,
+    /// The hand-opened notch is on screen (`agent-open` may predate mount).
+    shown: bool,
 }
 
 #[tauri::command]
@@ -1236,6 +1389,8 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
     let generation = state.notch_generation.load(Ordering::SeqCst);
     AgentNotchStatus {
         generation,
+        opened: state.opened.load(Ordering::SeqCst),
+        shown: state.open_shown.load(Ordering::SeqCst),
         listening: input_is_current(&state, generation)
             && state.dictation_capture.lock().unwrap().is_some(),
         working: reply_wait_is_current(&app, generation),
@@ -1641,7 +1796,9 @@ pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
     if !binding.eq_ignore_ascii_case(&close_binding().current_binding) {
         return false;
     }
-    if app.get_webview_window(PANEL_LABEL).is_some() {
+    // A hand-opened notch registers no global Escape (it may stay open for a
+    // whole meeting); its own keydown closes it.
+    if app.get_webview_window(PANEL_LABEL).is_some() && !hand_opened(app) {
         return true;
     }
     app.try_state::<AgentState>().is_some_and(|state| {

@@ -1087,6 +1087,52 @@ async agentNotchStatus() : Promise<AgentNotchStatus> {
 async agentCancelNotch(generation: number) : Promise<void> {
     await TAURI_INVOKE("agent_cancel_notch", { generation });
 },
+/**
+ * [GRAIN] Clip the notch window to its shell so the transparent rest of it
+ * never eats clicks. `None` is the full window (the chat).
+ */
+async agentNotchShape(shape: AgentNotchShape | null) : Promise<void> {
+    await TAURI_INVOKE("agent_notch_shape", { shape });
+},
+/**
+ * The notch's chat and last mode.
+ */
+async agentHistory() : Promise<AgentNotchMemory> {
+    return await TAURI_INVOKE("agent_history");
+},
+/**
+ * Append finished turns (what was said, never tool traffic) to the chat.
+ */
+async agentHistoryAppend(messages: AgentMessage[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_history_append", { messages }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Start the chat over. The mode is kept.
+ */
+async agentHistoryClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_history_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remember the mode the notch shows next time it opens.
+ */
+async agentNotchSetMode(mode: AgentNotchMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_notch_set_mode", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
 },
@@ -1867,6 +1913,11 @@ export type AgentConfirm = { token: string; title: string; summary: string; deta
  * [GRAIN] One material argument of a pending action, for the confirmation panel.
  */
 export type AgentConfirmField = { label: string; value: string }
+export type AgentHistoryMessage = { 
+/**
+ * `"user"` or `"assistant"`.
+ */
+role: string; content: string; at_unix_ms: number }
 /**
  * Consume the first instruction (the panel calls this on mount).
  */
@@ -1879,7 +1930,21 @@ export type AgentMessage = {
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
 role: string; content: string }
-export type AgentNotchStatus = { generation: number; listening: boolean; working: boolean }
+export type AgentNotchMemory = { mode?: AgentNotchMode; messages?: AgentHistoryMessage[] }
+export type AgentNotchMode = "chat" | "recall"
+/**
+ * The shell size the hand-opened notch is animating to, in CSS px.
+ */
+export type AgentNotchShape = { width: number; height: number }
+export type AgentNotchStatus = { generation: number; listening: boolean; working: boolean; 
+/**
+ * Opened by hand from the sliver: no capture, straight to the full notch.
+ */
+opened: boolean; 
+/**
+ * The hand-opened notch is on screen (`agent-open` may predate mount).
+ */
+shown: boolean }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */

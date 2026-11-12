@@ -558,6 +558,8 @@ pub fn change_agent_enabled_setting(
     }
     settings.agent_enabled = enabled;
     settings::write_settings(&app, settings);
+    // [GRAIN] The resting notch sliver exists only while the Agent is enabled.
+    crate::grain_notch_sliver::sync(&app);
     Ok(())
 }
 

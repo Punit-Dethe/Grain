@@ -61,6 +61,8 @@ mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
+mod grain_agent_history; // [GRAIN] the Agent notch's single running chat + mode
+mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebView)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
@@ -469,6 +471,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // [GRAIN] Agent: holds the selection captured at summon time until the window
     // reads it on mount. The window itself is created on demand and destroyed on close.
     app_handle.manage(agent::AgentState::default());
+    // [GRAIN] The resting notch sliver (native, Windows): hover it to open the Agent.
+    grain_notch_sliver::sync(app_handle);
     // [GRAIN] Paste Catch: empty at idle — it only holds anything between a
     // confirmed missed paste and the moment the clipboard is handed back.
     app_handle.manage(paste_catch::PasteCatchState::default());
@@ -1438,6 +1442,11 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_confirm_action,
             agent::agent_notch_status,
             agent::agent_cancel_notch,
+            agent::agent_notch_shape,
+            grain_agent_history::agent_history,
+            grain_agent_history::agent_history_append,
+            grain_agent_history::agent_history_clear,
+            grain_agent_history::agent_notch_set_mode,
             commands::cancel_operation,
             commands::is_portable,
             commands::get_app_dir_path,

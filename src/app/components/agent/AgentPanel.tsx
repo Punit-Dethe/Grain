@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { ArrowUp, Copy, RotateCcw, X, Check } from "lucide-react";
+import { ArrowUp, Copy, RotateCcw, X, Check, SquarePen } from "lucide-react";
 import {
   commands,
+  type AgentNotchMode,
   type AgentNotchStatus,
   type AgentMessage,
   type AgentConfirm,
   type AgentReply,
 } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
+import { AgentRecall } from "./AgentRecall";
 import { AgentVoiceFade } from "./AgentVoiceFade";
 import { AgentWorkingLabel } from "./AgentWorkingLabel";
 
@@ -26,6 +28,27 @@ const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 function resizeComposer(input: HTMLTextAreaElement) {
   input.style.height = "auto";
   input.style.height = `${Math.min(input.scrollHeight, 76)}px`;
+}
+
+/** Earlier turns sent with each request, so the chat continues. */
+const HISTORY_CONTEXT = 12;
+/** Matches --notch-grow in agent.css (and NOTCH_GROW in agent.rs). */
+const NOTCH_GROW_MS = 460;
+/** The Recall shell, in CSS px (`.agent-notch.is-recall` in agent.css). */
+const RECALL_WIDTH = 380;
+const RECALL_HEIGHT = { idle: 214, live: 132 };
+
+const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
+  messages.map((m) => ({ role: m.role, content: m.content }));
+
+/** Store what was said in a finished turn; a reply still awaiting approval
+ * is stored once it resolves. */
+function remember(user: string | null, reply: AgentReply | null) {
+  const turn: AgentMessage[] = [];
+  if (user?.trim()) turn.push({ role: "user", content: user });
+  if (reply?.text.trim() && !reply.confirm_action)
+    turn.push({ role: "assistant", content: reply.text });
+  if (turn.length) void commands.agentHistoryAppend(turn).catch(console.error);
 }
 
 export function AgentPanel() {
@@ -53,6 +76,15 @@ export function AgentPanel() {
   const [hasDraft, setHasDraft] = useState(false);
   // Retracting into the screen edge; the window closes when that ends.
   const [closing, setClosing] = useState(false);
+  // The shell first paints as the resting sliver and grows out of it.
+  const [entering, setEntering] = useState(true);
+  const [mode, setMode] = useState<AgentNotchMode>("chat");
+  // Earlier turns of the one running chat (this session's turns are below).
+  const [history, setHistory] = useState<ChatMessage[]>([]);
+  const historyRef = useRef<ChatMessage[]>([]);
+  const [recallLive, setRecallLive] = useState(false);
+  const currentStartRef = useRef<HTMLDivElement>(null);
+  historyRef.current = history;
   const revealedRef = useRef(false);
   const [capture, setCapture] = useState<AgentNotchStatus | null>(null);
   const generationRef = useRef<number | null>(null);
@@ -79,6 +111,12 @@ export function AgentPanel() {
     setRevealed(true);
   }, []);
 
+  /** The hand-opened notch is on screen: grow from the sliver to full size. */
+  const open = useCallback(() => {
+    setEntering(false);
+    reveal();
+  }, [reveal]);
+
   /** Run the FIRST instruction (or a retry of it) — compact stage. */
   const runFirst = useCallback(
     async (instruction: string) => {
@@ -90,6 +128,7 @@ export function AgentPanel() {
       setError(null);
       try {
         const payload: AgentMessage[] = [
+          ...toPayload(historyRef.current.slice(-HISTORY_CONTEXT)),
           { role: "user", content: instruction },
         ];
         const res = await commands.agentRun(
@@ -99,6 +138,7 @@ export function AgentPanel() {
         );
         if (res.status === "ok") {
           setFirstReply(res.data);
+          remember(instruction, res.data);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -117,13 +157,14 @@ export function AgentPanel() {
       setBusy(true);
       setError(null);
       try {
-        const payload: AgentMessage[] = history.map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
+        const payload: AgentMessage[] = [
+          ...toPayload(historyRef.current.slice(-HISTORY_CONTEXT)),
+          ...toPayload(history),
+        ];
         const res = await commands.agentRun(payload, contextRef.current, null);
         if (res.status === "ok") {
           const reply = res.data;
+          remember(history[history.length - 1]?.content ?? null, reply);
           setMessages((prev) => [
             // Any new turn after a pending action either resolved or cancelled
             // that host token. Keep historical text, but never leave a stale
@@ -226,6 +267,13 @@ export function AgentPanel() {
       // The host times the close itself (NOTCH_CLOSE); this only animates it.
       win.listen("agent-dismiss", () => setClosing(true)).then(track),
       win
+        .listen("agent-open", () => {
+          requestAnimationFrame(() => {
+            if (!dead) open();
+          });
+        })
+        .then(track),
+      win
         .listen("agent-reveal", () => {
           // Give the WebView a compact paint after the native bounds change.
           requestAnimationFrame(() => {
@@ -252,6 +300,30 @@ export function AgentPanel() {
       .then(async () => {
         const status = await commands.agentNotchStatus();
         if (dead) return;
+        if (!status.opened) {
+          // Summoned: the window is already on screen as the sliver; grow now.
+          requestAnimationFrame(() => {
+            if (!dead) setEntering(false);
+          });
+        } else {
+          // Hand-opened: no first turn is coming; the composer is free.
+          setBusy(false);
+        }
+        // The chat continues: load it before the first turn is sent.
+        const memory = await commands.agentHistory().catch(() => null);
+        if (dead) return;
+        if (memory) {
+          setHistory(
+            (memory.messages ?? []).map((message, index) => ({
+              id: `h${index}`,
+              role: message.role === "assistant" ? "assistant" : "user",
+              content: message.content,
+            })),
+          );
+          // A summon is always a chat; a hand-opened notch keeps its mode.
+          if (status.opened) setMode(memory.mode ?? "chat");
+        }
+        if (status.opened && status.shown) open();
         generationRef.current = status.generation;
         setCapture({
           ...status,
@@ -266,7 +338,7 @@ export function AgentPanel() {
       dead = true;
       unlisten.forEach((release) => release());
     };
-  }, [reveal, startFirstIfQueued, win]);
+  }, [reveal, open, startFirstIfQueued, win]);
 
   // Reveal only after reply/error state has committed. The host verifies that
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
@@ -292,9 +364,61 @@ export function AgentPanel() {
   }, [revealed]);
 
   useEffect(() => {
-    if (revealed && hasFollowups)
-      endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, hasFollowups, busy, revealed]);
+    if (!revealed || mode !== "chat") return;
+    // The first reply reads from its request down; later turns follow the end.
+    const start = !hasFollowups ? currentStartRef.current : null;
+    if (start) start.scrollIntoView({ block: "start" });
+    else endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, history, hasFollowups, busy, revealed, mode]);
+
+  // A hand-opened notch has no global Escape (it may stay open for a whole
+  // meeting); its own keydown closes it. A summon's Escape is the host's.
+  useEffect(() => {
+    if (!revealed) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      dismiss();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [revealed, dismiss]);
+
+  // Clip the window to the shell so its transparent rest never eats clicks.
+  // Lift the clip first so growth is never cut off; tighten once it settles.
+  const recallHeight = recallLive ? RECALL_HEIGHT.live : RECALL_HEIGHT.idle;
+  useEffect(() => {
+    if (!revealed || closing) return;
+    void commands.agentNotchShape(null).catch(console.error);
+    if (mode !== "recall") return;
+    const timer = window.setTimeout(
+      () =>
+        void commands
+          .agentNotchShape({ width: RECALL_WIDTH, height: recallHeight })
+          .catch(console.error),
+      NOTCH_GROW_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [revealed, closing, mode, recallHeight]);
+
+  const switchMode = (next: AgentNotchMode) => {
+    if (next === mode) return;
+    setMode(next);
+    void commands.agentNotchSetMode(next).catch(console.error);
+  };
+
+  /** Start the one chat over. */
+  const newChat = useCallback(() => {
+    if (busyRef.current) return;
+    void commands.agentHistoryClear().catch(console.error);
+    instructionRef.current = "";
+    setHistory([]);
+    setMessages([]);
+    setFirstReply(null);
+    setHasFollowups(true);
+    setError(null);
+    composerRef.current?.focus();
+  }, []);
 
   const runFollowup = useCallback(
     async (text: string) => {
@@ -401,6 +525,7 @@ export function AgentPanel() {
           throw new Error(response.error || t("agent.error"));
         }
         const reply = response.data;
+        remember(null, reply);
         setFirstReply((current) =>
           current?.confirm_action?.token === pending.token ? reply : current,
         );
@@ -466,11 +591,20 @@ export function AgentPanel() {
           : []),
       ];
   const canRetry = !hasFollowups && !busy && !firstReply?.confirm_action;
+  const recall = revealed && mode === "recall";
+  const canClear = !busy && (history.length > 0 || thread.length > 0);
 
   return (
     <div className="agent-panel-root">
       <section
-        className={`agent-notch${revealed ? " is-reply" : ""}${closing ? " is-closing" : ""}`}
+        className={`agent-notch${entering ? " is-entering" : ""}${revealed ? " is-reply" : ""}${recall ? " is-recall" : ""}${closing ? " is-closing" : ""}`}
+        data-opened={capture?.opened ? "" : undefined}
+        style={
+          {
+            "--recall-w": `${RECALL_WIDTH}px`,
+            "--recall-h": `${recallHeight}px`,
+          } as React.CSSProperties
+        }
         data-phase={
           revealed
             ? "reply"
@@ -492,7 +626,7 @@ export function AgentPanel() {
         <header className="agent-notch-header">
           <span className="agent-notch-indicator" aria-hidden="true" />
           <span className="agent-notch-label">
-            {!grown && (
+            {!grown && !capture?.opened && (
               <span className="agent-notch-status" aria-hidden={revealed}>
                 {capture?.working ? (
                   <AgentWorkingLabel />
@@ -508,9 +642,41 @@ export function AgentPanel() {
               </span>
             )}
             <span className="agent-notch-brand" aria-hidden={!revealed}>
-              {t("agent.brand")}
+              <span
+                className="agent-notch-modes"
+                role="tablist"
+                aria-label={t("agent.brand")}
+              >
+                {(["chat", "recall"] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="tab"
+                    className="agent-notch-mode"
+                    aria-selected={mode === option}
+                    tabIndex={revealed ? 0 : -1}
+                    onClick={() => switchMode(option)}
+                  >
+                    {t(
+                      option === "chat" ? "agent.modeChat" : "agent.modeRecall",
+                    )}
+                  </button>
+                ))}
+              </span>
             </span>
           </span>
+          {revealed && mode === "chat" && (
+            <button
+              type="button"
+              className="agent-notch-control agent-notch-close"
+              title={t("agent.newChat")}
+              aria-label={t("agent.newChat")}
+              disabled={!canClear}
+              onClick={newChat}
+            >
+              <SquarePen size={13} />
+            </button>
+          )}
           <button
             type="button"
             className="agent-notch-control agent-notch-close"
@@ -533,31 +699,25 @@ export function AgentPanel() {
         {/* Mounted (hidden, clipped by the compact shell) as soon as the first
             reply is known, so reveal is only a class change: mounting the
             reply in the reveal frame stalled the start of the growth. */}
-        {(revealed || (!busy && (!!firstReply || !!error))) && (
-          <div className="agent-notch-reply" aria-hidden={!revealed}>
-            <div className="agc-c-scroll">
-              {quoteText && !hasFollowups && (
-                <button
-                  className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
-                  onClick={() => setQuoteOpen((v) => !v)}
-                  type="button"
-                  aria-expanded={quoteOpen}
-                >
-                  {quoteText}
-                </button>
-              )}
+        {recall && (
+          <div className="agent-notch-recall">
+            <AgentRecall onRecordingChange={setRecallLive} />
+          </div>
+        )}
 
-              {thread.map((m) => (
-                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
-                  {m.role === "user" ? (
-                    <div className="agc-c-user">{m.content}</div>
-                  ) : (
-                    <>
-                      <div className="agc-c-answer">
-                        <AgentMarkdown markdown={m.content} />
-                      </div>
-                      {m.confirmAction && renderConfirmAction(m.confirmAction)}
-                      {m.content.trim() && (
+        {mode === "chat" &&
+          (revealed || (!busy && (!!firstReply || !!error))) && (
+            <div className="agent-notch-reply" aria-hidden={!revealed}>
+              <div className="agc-c-scroll">
+                {history.map((m) => (
+                  <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                    {m.role === "user" ? (
+                      <div className="agc-c-user">{m.content}</div>
+                    ) : (
+                      <>
+                        <div className="agc-c-answer">
+                          <AgentMarkdown markdown={m.content} />
+                        </div>
                         <div className="agc-c-tools">
                           <button
                             type="button"
@@ -572,63 +732,110 @@ export function AgentPanel() {
                               <Copy size={13} />
                             )}
                           </button>
-                          {canRetry && (
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+                <div
+                  ref={currentStartRef}
+                  className="agc-c-mark"
+                  aria-hidden="true"
+                />
+                {quoteText && !hasFollowups && (
+                  <button
+                    className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
+                    onClick={() => setQuoteOpen((v) => !v)}
+                    type="button"
+                    aria-expanded={quoteOpen}
+                  >
+                    {quoteText}
+                  </button>
+                )}
+
+                {thread.map((m) => (
+                  <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                    {m.role === "user" ? (
+                      <div className="agc-c-user">{m.content}</div>
+                    ) : (
+                      <>
+                        <div className="agc-c-answer">
+                          <AgentMarkdown markdown={m.content} />
+                        </div>
+                        {m.confirmAction &&
+                          renderConfirmAction(m.confirmAction)}
+                        {m.content.trim() && (
+                          <div className="agc-c-tools">
                             <button
                               type="button"
-                              className="agc-c-tool"
-                              onClick={retry}
-                              aria-label={t("agent.retry")}
-                              title={t("agent.retry")}
+                              className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
+                              onClick={() => copyOne(m.id, m.content)}
+                              aria-label={t("agent.copyReply")}
+                              title={t("agent.copyReply")}
                             >
-                              <RotateCcw size={13} />
+                              {flashedId === m.id ? (
+                                <Check size={13} />
+                              ) : (
+                                <Copy size={13} />
+                              )}
                             </button>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              ))}
+                            {canRetry && m.id === "a0" && (
+                              <button
+                                type="button"
+                                className="agc-c-tool"
+                                onClick={retry}
+                                aria-label={t("agent.retry")}
+                                title={t("agent.retry")}
+                              >
+                                <RotateCcw size={13} />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
 
-              {busy && (
-                <div className="agent-typing" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-              )}
-              {error && <div className="agc-error">{error}</div>}
-              <div ref={endRef} />
-            </div>
+                {busy && (
+                  <div className="agent-typing" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                )}
+                {error && <div className="agc-error">{error}</div>}
+                <div ref={endRef} />
+              </div>
 
-            <div className="agc-c-compose">
-              <div className="agc-c-field">
-                <textarea
-                  ref={composerRef}
-                  rows={1}
-                  className="agc-c-textarea"
-                  aria-label={t("agent.placeholderAsk")}
-                  placeholder={t("agent.placeholderAsk")}
-                  onInput={(event) => {
-                    resizeComposer(event.currentTarget);
-                    setHasDraft(!!event.currentTarget.value.trim());
-                  }}
-                  onKeyDown={onComposerKey}
-                />
-                <button
-                  type="button"
-                  className="agc-c-send"
-                  disabled={!hasDraft || busy}
-                  onClick={sendDraft}
-                  aria-label={t("agent.send")}
-                  title={t("agent.send")}
-                >
-                  <ArrowUp size={15} strokeWidth={2.25} />
-                </button>
+              <div className="agc-c-compose">
+                <div className="agc-c-field">
+                  <textarea
+                    ref={composerRef}
+                    rows={1}
+                    className="agc-c-textarea"
+                    aria-label={t("agent.placeholderAsk")}
+                    placeholder={t("agent.placeholderAsk")}
+                    onInput={(event) => {
+                      resizeComposer(event.currentTarget);
+                      setHasDraft(!!event.currentTarget.value.trim());
+                    }}
+                    onKeyDown={onComposerKey}
+                  />
+                  <button
+                    type="button"
+                    className="agc-c-send"
+                    disabled={!hasDraft || busy}
+                    onClick={sendDraft}
+                    aria-label={t("agent.send")}
+                    title={t("agent.send")}
+                  >
+                    <ArrowUp size={15} strokeWidth={2.25} />
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
       </section>
     </div>
   );
