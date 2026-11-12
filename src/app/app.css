@@ -5021,12 +5021,33 @@ html[data-theme="light"] .grain-root {
 }
 
 /* Recall's list page: a quiet title row, then the recordings. */
+/* Fixed at the top: only the recordings scroll beneath it. The negative margin
+   and matching padding let it cover the page's own top padding. */
 .meet-head {
+  position: sticky;
+  z-index: 4;
+  top: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding-block: 6px 14px;
+  margin-top: -26px;
+  padding-block: 32px 14px;
+  background: var(--meet-page);
+}
+
+.meet-head::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 18px;
+  background: linear-gradient(
+    to bottom,
+    var(--meet-page),
+    color-mix(in srgb, var(--meet-page) 0%, transparent)
+  );
+  pointer-events: none;
 }
 
 .meet-head h1 {
@@ -5765,8 +5786,8 @@ html[data-theme="light"] .dropdown-compact-menu {
   min-width: 0;
   overflow: hidden;
   font-size: 14.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-weight: 500;
+  letter-spacing: -0.005em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
