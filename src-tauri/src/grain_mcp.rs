@@ -468,6 +468,41 @@ const CATALOG: &[CatalogProvider] = &[
             "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
         ownership: None,
     },
+    // Admission: a row becomes a bundled preset only after one real Connect
+    // and one real tool call pass on a release build.
+    CatalogProvider {
+        id: "todoist",
+        bundled_preset: false,
+        name: "Todoist",
+        description: "Tasks, projects, due dates, and labels.",
+        endpoint: "https://ai.todoist.net/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://www.todoist.com/help/articles/use-todoist-with-ai-assistants",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "dropbox",
+        bundled_preset: false,
+        name: "Dropbox",
+        description: "Find, read, and share files and folders.",
+        endpoint: "https://mcp.dropbox.com/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://help.dropbox.com/integrations/connect-dropbox-to-ai",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "asana",
+        bundled_preset: false,
+        name: "Asana",
+        description: "Tasks, projects, and team work.",
+        endpoint: "https://mcp.asana.com/v2/mcp",
+        // Asana's V2 server does not register clients itself. Grain is
+        // registered once as an "MCP app" with distribution "Any workspace";
+        // the build supplies that registration (GRAIN_ASANA_OAUTH_CLIENT_*).
+        registration: Registration::PreRegistered,
+        setup_url: "https://developers.asana.com/docs/integrating-with-asanas-mcp-server",
+        ownership: None,
+    },
 ];
 
 #[derive(Clone)]
@@ -1052,12 +1087,7 @@ fn builtin_client(app: &AppHandle, item: &Provider<'_>) -> Option<builtin::Clien
     if item.ownership.is_some() {
         return None;
     }
-    builtin::github(
-        item.id,
-        item.endpoint,
-        option_env!("GRAIN_GITHUB_OAUTH_CLIENT_ID"),
-        option_env!("GRAIN_GITHUB_OAUTH_CLIENT_SECRET"),
-    )
+    builtin::client(item.id, item.endpoint)
 }
 
 fn preregistered(app: &AppHandle, item: &Provider<'_>) -> bool {
@@ -1082,7 +1112,9 @@ async fn provider_client_secret(
     }
     if let Some(client) = builtin_client(app, item) {
         if client.id != client_id
-            || !builtin::github_metadata(
+            || !builtin::metadata_matches(
+                item.id,
+                item.endpoint,
                 metadata.issuer.as_deref(),
                 &metadata.authorization_endpoint,
                 &metadata.token_endpoint,
@@ -3016,6 +3048,29 @@ mod tests {
     }
 
     #[test]
+    fn candidate_rows_stay_developer_only_until_admitted() {
+        for (id, registration) in [
+            ("todoist", Registration::Dynamic),
+            ("dropbox", Registration::Dynamic),
+            ("asana", Registration::PreRegistered),
+        ] {
+            let item = provider(id).unwrap();
+            assert!(!is_preset(item), "{id} must pass a real Connect first");
+            assert!(item.registration == registration);
+            assert!(item.endpoint.starts_with("https://"));
+        }
+        // A preregistered catalog row is only reachable with a build identity
+        // pinned to that exact resource; GitHub and Asana are the only ones.
+        for item in CATALOG
+            .iter()
+            .filter(|item| item.registration == Registration::PreRegistered)
+            .filter(|item| !item.id.starts_with("grain-harness"))
+        {
+            assert!(matches!(item.id, "github" | "asana"));
+        }
+    }
+
+    #[test]
     fn catalog_connections_preserve_endpoints_auth_and_deployed_vault_keys() {
         use grain_sdk::mcp::McpAuthentication;
         let mut keys = std::collections::BTreeSet::new();
@@ -3033,7 +3088,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 4);
+        assert_eq!(production_catalog().count(), 7);
     }
 
     #[test]
