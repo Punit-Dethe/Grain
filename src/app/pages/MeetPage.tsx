@@ -600,10 +600,11 @@ function RecordingLead({
     );
   }
   if (meeting.speaker_count > 0) {
-    const shown = Math.min(meeting.speaker_count, 3);
+    // Always a stack of two or three avatars; the real count is on the last.
+    const shown = Math.min(Math.max(meeting.speaker_count, 2), 3);
     return (
       <span
-        className={`meet-lead-stack${shown === 1 ? " is-single" : ""}`}
+        className="meet-lead-stack"
         role="img"
         aria-label={t("ui2.meet.list.speakers", {
           count: meeting.speaker_count,
@@ -614,7 +615,9 @@ function RecordingLead({
             key={index}
             className={`meet-avatar is-stack tone-${SPEAKER_TONES[index]}`}
           >
-            {index === shown - 1 && meeting.speaker_count}
+            {index === shown - 1 &&
+              meeting.speaker_count > 1 &&
+              meeting.speaker_count}
           </span>
         ))}
       </span>
