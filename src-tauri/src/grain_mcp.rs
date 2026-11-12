@@ -449,13 +449,15 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "atlassian",
-        // Hidden: Atlassian needs extra setup before sign-in works (2026-11-12).
-        bundled_preset: false,
+        // On trial (2026-11-12). Needs an Atlassian Cloud site with Jira or
+        // Confluence on the signed-in account. V2 is the current server; V1
+        // grants do not carry over.
+        bundled_preset: true,
         name: "Jira & Confluence",
         description: "Jira and Confluence work across one Atlassian account.",
-        endpoint: "https://mcp.atlassian.com/v1/mcp/authv2",
+        endpoint: "https://mcp.atlassian.com/v2/mcp",
         registration: Registration::Dynamic,
-        setup_url: "https://support.atlassian.com/atlassian-ai-gateway/docs/set-up-ides/",
+        setup_url: "https://support.atlassian.com/atlassian-ai-gateway/docs/get-started-with-the-atlassian-remote-mcp-server/",
         ownership: None,
     },
     CatalogProvider {
@@ -628,8 +630,8 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://help.otter.ai/hc/en-us/search?query=MCP",
         ownership: None,
     },
-    // Payment providers. Stripe lets the user pick accounts or sandboxes at
-    // sign-in and holds money movement for Dashboard approval.
+    // Stripe lets the user pick accounts or sandboxes at sign-in and holds
+    // money movement for Dashboard approval.
     CatalogProvider {
         id: "stripe",
         bundled_preset: true,
@@ -638,19 +640,6 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.stripe.com",
         registration: Registration::Dynamic,
         setup_url: "https://docs.stripe.com/mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "razorpay",
-        // Hidden: sign-in ends in a 403 on Razorpay's side (2026-11-12). Its
-        // docs require an activated account with API access. No refund or
-        // payout tool on the remote server.
-        bundled_preset: false,
-        name: "Razorpay",
-        description: "Payments, orders, payment links, and settlements.",
-        endpoint: "https://mcp.razorpay.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://razorpay.com/docs/mcp-server/remote/",
         ownership: None,
     },
 ];
@@ -3294,6 +3283,7 @@ mod tests {
             ("fireflies", Registration::Dynamic),
             ("otter", Registration::Dynamic),
             ("stripe", Registration::Dynamic),
+            ("atlassian", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3329,7 +3319,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 21);
+        assert_eq!(production_catalog().count(), 20);
     }
 
     #[test]
@@ -3602,12 +3592,6 @@ mod tests {
     }
 
     #[test]
-    fn hidden_rows_stay_out_of_extensions() {
-        for id in ["atlassian", "razorpay"] {
-            assert!(!is_preset(provider(id).unwrap()), "{id}");
-        }
-    }
-
     #[test]
     fn zero_setup_providers_register_themselves_on_connect() {
         let dynamic: Vec<_> = production_catalog()
@@ -3634,8 +3618,7 @@ mod tests {
                 "granola",
                 "fireflies",
                 "otter",
-                "stripe",
-                "razorpay"
+                "stripe"
             ]
         );
     }

@@ -33,7 +33,6 @@ import mondayIcon from "./icons/monday.png";
 import notionIcon from "./icons/notion.png";
 import otterIcon from "./icons/otter.png";
 import raindropIcon from "./icons/raindrop.png";
-import razorpayIcon from "./icons/razorpay.png";
 import readwiseIcon from "./icons/readwise.png";
 import stripeIcon from "./icons/stripe.png";
 import todoistIcon from "./icons/todoist.svg";
@@ -57,7 +56,6 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["notion", { src: notionIcon }],
   ["otter", { src: otterIcon }],
   ["raindrop", { src: raindropIcon }],
-  ["razorpay", { src: razorpayIcon }],
   ["readwise", { src: readwiseIcon }],
   ["stripe", { src: stripeIcon }],
   ["todoist", { src: todoistIcon }],
