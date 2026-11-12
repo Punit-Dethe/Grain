@@ -17,7 +17,7 @@ import {
 import asanaIcon from "./icons/asana.svg";
 import atlassianIcon from "./icons/atlassian.svg";
 import atlassianDarkIcon from "./icons/atlassian-light.svg";
-import canvaIcon from "./icons/canva.svg";
+import canvaIcon from "./icons/canva.png";
 import codaIcon from "./icons/coda.svg";
 import dropboxIcon from "./icons/dropbox.svg";
 import githubIcon from "./icons/github.svg";

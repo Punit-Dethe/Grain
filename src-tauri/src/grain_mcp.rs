@@ -38,6 +38,9 @@ pub mod connections;
 #[path = "grain_mcp_builtin.rs"]
 mod builtin;
 
+#[path = "grain_mcp_vault_parts.rs"]
+mod vault_parts;
+
 const VAULT_SERVICE: &str = "com.grain.mcp.oauth";
 const CLIENT_SECRET_SERVICE: &str = "com.grain.mcp.client-secret";
 const CLIENT_REGISTRATION_SERVICE: &str = "com.grain.mcp.client-registration";
@@ -534,7 +537,8 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://help.raindrop.io/mcp",
         ownership: None,
     },
-    // On trial (2026-11-12): monday.com (sign-in callback fails; diagnosing).
+    // On trial (2026-11-12): monday.com (its token exceeds one Windows
+    // credential; see vault_parts).
     CatalogProvider {
         id: "monday",
         bundled_preset: true,
@@ -883,16 +887,58 @@ impl CredentialStore for VaultCredentialStore {
     }
 }
 
-fn vault_error(context: &str, error: keyring::Error) -> AuthError {
-    AuthError::CredentialStoreError(format!("OS credential vault {context} failed: {error}"))
+/// One OS credential service; values too long for one entry are split by
+/// `vault_parts` (Windows caps a credential at 2,560 bytes).
+struct KeyringVault<'a> {
+    service: &'a str,
+}
+
+impl KeyringVault<'_> {
+    fn entry(&self, account: &str) -> Result<keyring::Entry, String> {
+        credential_entry(self.service, account)
+            .map_err(|error| format!("OS credential vault open failed: {error}"))
+    }
+}
+
+impl vault_parts::Io for KeyringVault<'_> {
+    fn get(&mut self, account: &str) -> Result<Option<Vec<u8>>, String> {
+        match self.entry(account)?.get_secret() {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(format!("OS credential vault read failed: {error}")),
+        }
+    }
+    fn set(&mut self, account: &str, value: &[u8]) -> Result<(), String> {
+        self.entry(account)?
+            .set_secret(value)
+            .map_err(|error| format!("OS credential vault write failed: {error}"))
+    }
+    fn delete(&mut self, account: &str) -> Result<(), String> {
+        match self.entry(account)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(format!("OS credential vault delete failed: {error}")),
+        }
+    }
+}
+
+fn vault_generation() -> String {
+    format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    )
 }
 
 fn read_credentials_sync(account: &str) -> Result<Option<StoredCredentials>, AuthError> {
-    let entry = credential_entry(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
-    let mut bytes = match entry.get_secret() {
-        Ok(bytes) => bytes,
-        Err(keyring::Error::NoEntry) => return Ok(None),
-        Err(error) => return Err(vault_error("read", error)),
+    let mut vault = KeyringVault {
+        service: VAULT_SERVICE,
+    };
+    let Some(mut bytes) =
+        vault_parts::read(&mut vault, account).map_err(AuthError::CredentialStoreError)?
+    else {
+        return Ok(None);
     };
     let result = if bytes.len() > 128 * 1024 {
         Err(AuthError::InternalError(
@@ -912,7 +958,6 @@ fn write_credentials_sync(account: &str, credentials: &StoredCredentials) -> Res
     if account == crate::grain_agent_harness_mcp::LINEAR_PROVIDER_ID {
         linear_grant_metadata(credentials, epoch_now()).map_err(AuthError::InternalError)?;
     }
-    let entry = credential_entry(VAULT_SERVICE, account).map_err(|e| vault_error("open", e))?;
     let mut bytes = serde_json::to_vec(credentials)
         .map_err(|error| AuthError::InternalError(error.to_string()))?;
     let result = if bytes.len() > 128 * 1024 {
@@ -920,9 +965,11 @@ fn write_credentials_sync(account: &str, credentials: &StoredCredentials) -> Res
             "MCP credential is too large".into(),
         ))
     } else {
-        entry
-            .set_secret(&bytes)
-            .map_err(|error| vault_error("write", error))
+        let mut vault = KeyringVault {
+            service: VAULT_SERVICE,
+        };
+        vault_parts::write(&mut vault, account, &bytes, &vault_generation())
+            .map_err(AuthError::CredentialStoreError)
     };
     bytes.zeroize();
     result
@@ -993,11 +1040,9 @@ pub(super) async fn harness_linear_grant_metadata() -> Result<serde_json::Value,
 }
 
 fn delete_vault_entry(service: &str, account: &str) -> Result<(), AuthError> {
-    let entry = credential_entry(service, account).map_err(|e| vault_error("open", e))?;
-    match entry.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(vault_error("delete", error)),
-    }
+    // Also removes the parts of a split value, so every caller cleans up fully.
+    vault_parts::delete(&mut KeyringVault { service }, account)
+        .map_err(AuthError::CredentialStoreError)
 }
 
 fn provider(id: &str) -> Result<&'static CatalogProvider, String> {
