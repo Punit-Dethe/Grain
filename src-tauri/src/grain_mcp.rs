@@ -468,8 +468,8 @@ const CATALOG: &[CatalogProvider] = &[
             "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
         ownership: None,
     },
-    // On trial: listed so they can be tested in the app. Each stays only if
-    // one real Connect and one real tool call pass; otherwise remove the row.
+    // Admitted rows passed one real Connect and one real tool call. Rows
+    // marked "on trial" are listed for that test and removed if it fails.
     CatalogProvider {
         id: "todoist",
         bundled_preset: true,
@@ -477,7 +477,7 @@ const CATALOG: &[CatalogProvider] = &[
         description: "Tasks, projects, due dates, and labels.",
         endpoint: "https://ai.todoist.net/mcp",
         registration: Registration::Dynamic,
-        setup_url: "https://www.todoist.com/help/articles/use-todoist-with-ai-assistants",
+        setup_url: "https://github.com/todoist/todoist-mcp",
         ownership: None,
     },
     CatalogProvider {
@@ -487,7 +487,7 @@ const CATALOG: &[CatalogProvider] = &[
         description: "Find, read, and share files and folders.",
         endpoint: "https://mcp.dropbox.com/mcp",
         registration: Registration::Dynamic,
-        setup_url: "https://help.dropbox.com/integrations/connect-dropbox-to-ai",
+        setup_url: "https://help.dropbox.com/integrations/connect-dropbox-mcp-server",
         ownership: None,
     },
     CatalogProvider {
@@ -501,6 +501,37 @@ const CATALOG: &[CatalogProvider] = &[
         // the build supplies that registration (GRAIN_ASANA_OAUTH_CLIENT_*).
         registration: Registration::PreRegistered,
         setup_url: "https://developers.asana.com/docs/integrating-with-asanas-mcp-server",
+        ownership: None,
+    },
+    // On trial (2026-11-12): Coda, Readwise, Raindrop.io.
+    CatalogProvider {
+        id: "coda",
+        bundled_preset: true,
+        name: "Coda",
+        description: "Docs, pages, and tables.",
+        endpoint: "https://coda.io/apis/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://help.coda.io/hc/en-us/articles/44722661982989",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "readwise",
+        bundled_preset: true,
+        name: "Readwise",
+        description: "Highlights and saved articles.",
+        endpoint: "https://mcp2.readwise.io/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://readwise.io/mcp",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "raindrop",
+        bundled_preset: true,
+        name: "Raindrop.io",
+        description: "Bookmarks, collections, and tags.",
+        endpoint: "https://api.raindrop.io/rest/v2/ai/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://help.raindrop.io/mcp",
         ownership: None,
     },
 ];
@@ -3053,6 +3084,9 @@ mod tests {
             ("todoist", Registration::Dynamic),
             ("dropbox", Registration::Dynamic),
             ("asana", Registration::PreRegistered),
+            ("coda", Registration::Dynamic),
+            ("readwise", Registration::Dynamic),
+            ("raindrop", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3088,7 +3122,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 7);
+        assert_eq!(production_catalog().count(), 10);
     }
 
     #[test]

@@ -14,16 +14,28 @@ import {
   signInCancelled,
   unwrapResult,
 } from "./extensionRuntime";
+import asanaIcon from "./icons/asana.svg";
+import codaIcon from "./icons/coda.svg";
+import dropboxIcon from "./icons/dropbox.svg";
 import githubIcon from "./icons/github.svg";
 import linearIcon from "./icons/linear.svg";
 import linearDarkIcon from "./icons/linear-light.svg";
 import notionIcon from "./icons/notion.png";
+import raindropIcon from "./icons/raindrop.png";
+import readwiseIcon from "./icons/readwise.png";
+import todoistIcon from "./icons/todoist.svg";
 import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
+  ["asana", { src: asanaIcon }],
+  ["coda", { src: codaIcon }],
+  ["dropbox", { src: dropboxIcon }],
   ["github", { src: githubIcon }],
   ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
   ["notion", { src: notionIcon }],
+  ["raindrop", { src: raindropIcon }],
+  ["readwise", { src: readwiseIcon }],
+  ["todoist", { src: todoistIcon }],
 ]);
 
 export function McpPresets({

@@ -34,5 +34,8 @@ stay in the application so a catalog update cannot change where credentials
 are sent.
 
 Bundled marks are sourced from [GitHub’s Primer Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-24.svg),
-[Linear’s Brand Guidelines](https://linear.app/brand), and the
-[Notion website favicon](https://www.notion.com/front-static/favicon.ico).
+[Linear’s Brand Guidelines](https://linear.app/brand), the
+[Notion website favicon](https://www.notion.com/front-static/favicon.ico),
+[Simple Icons](https://simpleicons.org/) (CC0; Todoist, Dropbox, Asana and Coda,
+filled with each brand colour), and the Readwise and Raindrop.io website icons.
+Brand colours are allowed.
