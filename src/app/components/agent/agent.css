@@ -40,6 +40,8 @@ html[data-window="agent-panel"] body {
   background: transparent;
   color-scheme: dark;
   -webkit-font-smoothing: antialiased;
+  /* On the root so popovers floating outside the shell use it too. */
+  font-family: "IBM Plex Sans Variable", "Segoe UI", system-ui, sans-serif;
 }
 
 /* The notch: one near-black shell fused to the top edge of the screen. It is
@@ -58,7 +60,6 @@ html[data-window="agent-panel"] body {
   background: var(--agc-bg);
   box-shadow: var(--notch-edge);
   border-radius: 0 0 14px 14px;
-  font-family: "IBM Plex Sans Variable", "Segoe UI", system-ui, sans-serif;
   transition:
     width var(--notch-grow) var(--notch-ease),
     height var(--notch-grow) var(--notch-ease),
@@ -562,8 +563,10 @@ html[data-window="agent-panel"] body {
 .agr-menu-trigger {
   display: inline-flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
-  max-width: 150px;
+  /* One size whatever the device name: long names are cut with an ellipsis. */
+  width: 150px;
   height: 28px;
   padding: 0 8px 0 10px;
   border: 1px solid #ffffff12;
@@ -600,7 +603,9 @@ html[data-window="agent-panel"] body {
 }
 
 .agr-menu-value {
+  flex: 1;
   min-width: 0;
+  text-align: start;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
