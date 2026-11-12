@@ -1,21 +1,48 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Mic, MicOff, Square, Volume2, VolumeX } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Mic,
+  MicOff,
+  Square,
+  Volume2,
+  VolumeOff,
+} from "lucide-react";
 import {
   commands,
   events,
   type MeetSources,
   type MeetStatus,
+  type SourceDevice,
   type SourceKind,
   type SourceSettings,
 } from "@/bindings";
 
+/* Recall's layout, in CSS px. The notch shell is sized from these (it cannot
+   measure content it clips), so they match the `.agr*` rules in agent.css. */
+const HEADER = 34;
+const PAD_TOP = 16;
+const PAD_BOTTOM = 14;
+const ROW = 40;
+const ROW_GAP = 8;
+const BEFORE_START = 14;
+const BUTTON = 34;
+const MESSAGE = 24;
+const LIVE_TOP = 10;
+const CLOCK = 28;
+const LIVE_GAP = 12;
+const MENU_ITEM = 30;
+const MENU_PAD = 8;
+const MENU_MAX_ITEMS = 5;
+
 /** The notch's Recall: pick sources, start a meeting, then mute or stop it.
  * Mounted only while Recall is shown, so its listener and clock go with it. */
 export function AgentRecall({
-  onRecordingChange,
+  onHeightChange,
 }: {
-  onRecordingChange: (recording: boolean) => void;
+  /** The shell height this view needs, in CSS px. */
+  onHeightChange: (height: number) => void;
 }) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<MeetStatus | null>(null);
@@ -24,6 +51,7 @@ export function AgentRecall({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [menu, setMenu] = useState<SourceKind | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -52,13 +80,48 @@ export function AgentRecall({
   }, []);
 
   const recording = status?.recording ?? null;
-  useEffect(
-    () => onRecordingChange(!!recording),
-    [recording, onRecordingChange],
-  );
+  const systemSupported = sources?.system_audio_supported ?? true;
+  const message = error || recording?.error || (!recording && saved);
+
+  useEffect(() => {
+    if (recording) {
+      onHeightChange(
+        HEADER +
+          LIVE_TOP +
+          CLOCK +
+          LIVE_GAP +
+          BUTTON +
+          PAD_BOTTOM +
+          (message ? MESSAGE : 0),
+      );
+      return;
+    }
+    const rows = systemSupported ? 2 : 1;
+    const content =
+      PAD_TOP +
+      rows * ROW +
+      (rows - 1) * ROW_GAP +
+      BEFORE_START +
+      BUTTON +
+      PAD_BOTTOM +
+      (message ? MESSAGE : 0);
+    // An open device menu drops below its row; the shell grows to fit it.
+    let extra = 0;
+    if (menu && sources) {
+      const index = menu === "Microphone" ? 0 : 1;
+      const items =
+        (menu === "Microphone" ? sources.microphones : sources.outputs).length +
+        1;
+      const top = PAD_TOP + index * (ROW + ROW_GAP) + ROW + 4;
+      const height = Math.min(items, MENU_MAX_ITEMS) * MENU_ITEM + MENU_PAD;
+      extra = Math.max(0, top + height + 12 - content);
+    }
+    onHeightChange(HEADER + content + extra);
+  }, [recording, systemSupported, message, menu, sources, onHeightChange]);
 
   useEffect(() => {
     if (!recording) return;
+    setMenu(null);
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [recording]);
@@ -68,6 +131,7 @@ export function AgentRecall({
       if (!sources) return;
       setSources({ ...sources, settings });
       setError(null);
+      setSaved(false);
       void commands.meetSetSources(settings).then((result) => {
         if (result.status !== "ok") setError(result.error);
       });
@@ -81,7 +145,7 @@ export function AgentRecall({
         { status: "ok" } | { status: "error"; error: string }
       >,
     ) => {
-      if (pending) return;
+      if (pending) return false;
       setPending(true);
       setError(null);
       try {
@@ -100,10 +164,11 @@ export function AgentRecall({
 
   const start = () => {
     setSaved(false);
+    setMenu(null);
     void run(() => commands.meetStartRecording(null));
   };
   const stop = () =>
-    void run(() => commands.meetStopRecording()).then((ok) => setSaved(!!ok));
+    void run(() => commands.meetStopRecording()).then((ok) => setSaved(ok));
   const toggle = (kind: SourceKind, muted: boolean) =>
     void run(() => commands.meetSetSourceMuted(kind, muted));
 
@@ -113,7 +178,6 @@ export function AgentRecall({
       recording.sources.find((source) => source.kind === kind)?.muted ?? true;
     const micMuted = isMuted("Microphone");
     const systemMuted = isMuted("SystemAudio");
-    const systemSupported = sources?.system_audio_supported ?? true;
     return (
       <div className="agr agr-live">
         <div className="agr-clock" role="timer">
@@ -155,7 +219,7 @@ export function AgentRecall({
               )}
               onClick={() => toggle("SystemAudio", !systemMuted)}
             >
-              {systemMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              {systemMuted ? <VolumeOff size={15} /> : <Volume2 size={15} />}
             </button>
           )}
           <button
@@ -179,12 +243,15 @@ export function AgentRecall({
   return (
     <div className="agr">
       <SourceRow
-        icon={<Mic size={15} />}
+        on={<Mic size={15} />}
+        off={<MicOff size={15} />}
         label={t("agent.recallMicrophone")}
         enabled={!!settings?.microphone.enabled}
         deviceId={settings?.microphone.device_id ?? null}
         devices={sources?.microphones ?? []}
         disabled={!settings || pending}
+        menuOpen={menu === "Microphone"}
+        onMenuOpen={(open) => setMenu(open ? "Microphone" : null)}
         onChange={(enabled, deviceId) =>
           settings &&
           saveSources({
@@ -193,14 +260,17 @@ export function AgentRecall({
           })
         }
       />
-      {sources?.system_audio_supported !== false && (
+      {systemSupported && (
         <SourceRow
-          icon={<Volume2 size={15} />}
+          on={<Volume2 size={15} />}
+          off={<VolumeOff size={15} />}
           label={t("agent.recallSystemAudio")}
           enabled={!!settings?.system_audio.enabled}
           deviceId={settings?.system_audio.device_id ?? null}
           devices={sources?.outputs ?? []}
           disabled={!settings || pending}
+          menuOpen={menu === "SystemAudio"}
+          onMenuOpen={(open) => setMenu(open ? "SystemAudio" : null)}
           onChange={(enabled, deviceId) =>
             settings &&
             saveSources({
@@ -227,55 +297,170 @@ export function AgentRecall({
   );
 }
 
+/** One source: click its icon or name to turn it on or off (a slashed icon
+ * means off); pick its device on the right. */
 function SourceRow({
-  icon,
+  on,
+  off,
   label,
   enabled,
   deviceId,
   devices,
   disabled,
+  menuOpen,
+  onMenuOpen,
   onChange,
 }: {
-  icon: React.ReactNode;
+  on: React.ReactNode;
+  off: React.ReactNode;
   label: string;
   enabled: boolean;
   deviceId: string | null;
-  devices: { id: string; name: string }[];
+  devices: SourceDevice[];
   disabled: boolean;
+  menuOpen: boolean;
+  onMenuOpen: (open: boolean) => void;
   onChange: (enabled: boolean, deviceId: string | null) => void;
 }) {
   const { t } = useTranslation();
   return (
     <div className={`agr-row${enabled ? "" : " is-off"}`}>
-      <span className="agr-row-icon" aria-hidden="true">
-        {icon}
-      </span>
-      <span className="agr-row-label">{label}</span>
-      <select
-        className="agr-select"
-        aria-label={label}
-        value={deviceId ?? ""}
-        disabled={disabled || !enabled}
-        onChange={(event) => onChange(enabled, event.target.value || null)}
-      >
-        <option value="">{t("agent.recallDefaultDevice")}</option>
-        {devices.map((device) => (
-          <option key={device.id} value={device.id}>
-            {device.name}
-          </option>
-        ))}
-      </select>
       <button
         type="button"
-        role="switch"
-        className="agr-switch"
-        aria-checked={enabled}
-        aria-label={label}
+        className="agr-source"
+        aria-pressed={enabled}
         disabled={disabled}
+        title={t(enabled ? "agent.recallTurnOff" : "agent.recallTurnOn", {
+          source: label,
+        })}
         onClick={() => onChange(!enabled, deviceId)}
       >
-        <span />
+        <span className="agr-row-icon" aria-hidden="true">
+          {enabled ? on : off}
+        </span>
+        <span className="agr-row-label">{label}</span>
       </button>
+      <DeviceMenu
+        label={label}
+        value={deviceId}
+        devices={devices}
+        disabled={disabled}
+        open={menuOpen}
+        onOpenChange={onMenuOpen}
+        onPick={(id) => {
+          onMenuOpen(false);
+          if (id !== deviceId) onChange(enabled, id);
+        }}
+      />
+    </div>
+  );
+}
+
+/** A compact device picker: the current device, and a short list below it. */
+function DeviceMenu({
+  label,
+  value,
+  devices,
+  disabled,
+  open,
+  onOpenChange,
+  onPick,
+}: {
+  label: string;
+  value: string | null;
+  devices: SourceDevice[];
+  disabled: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onPick: (id: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const options = [
+    { id: "", name: t("agent.recallDefaultDevice") },
+    ...devices,
+  ];
+  const current =
+    devices.find((device) => device.id === value)?.name ??
+    t("agent.recallDefaultDevice");
+
+  useEffect(() => {
+    if (!open) return;
+    const selected =
+      listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]') ??
+      listRef.current?.querySelector<HTMLElement>('[role="option"]');
+    selected?.focus({ preventScroll: true });
+    selected?.scrollIntoView({ block: "nearest" });
+    const outside = (event: PointerEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) onOpenChange(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open, onOpenChange]);
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (!open) return;
+    if (event.key === "Escape") {
+      // Close the menu only, not the notch.
+      event.preventDefault();
+      onOpenChange(false);
+      triggerRef.current?.focus();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = Array.from(
+      listRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [],
+    );
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const next = event.key === "ArrowDown" ? at + 1 : at - 1;
+    items[(next + items.length) % items.length]?.focus();
+  };
+
+  return (
+    <div className="agr-menu-wrap" ref={wrapRef} onKeyDown={onKeyDown}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="agr-menu-trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`${label}: ${current}`}
+        title={current}
+        disabled={disabled}
+        onClick={() => onOpenChange(!open)}
+      >
+        <span className="agr-menu-value">{current}</span>
+        <ChevronDown size={13} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          ref={listRef}
+          className="agr-menu"
+          role="listbox"
+          aria-label={label}
+        >
+          {options.map((option) => {
+            const selected = (value ?? "") === option.id;
+            return (
+              <button
+                key={option.id || "default"}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className="agr-menu-item"
+                title={option.name}
+                onClick={() => onPick(option.id || null)}
+              >
+                <span>{option.name}</span>
+                {selected && <Check size={13} aria-hidden="true" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

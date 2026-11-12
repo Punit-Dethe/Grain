@@ -35,6 +35,8 @@ html[data-window="agent-panel"] body {
   /* NOTCH_CLOSE in agent.rs and `dismiss` in AgentPanel wait for this. */
   --notch-close: 300ms;
   --notch-reply-header: 34px;
+  /* The resting sliver (BASE in grain_notch_sliver.rs). */
+  --notch-sliver: #030305;
   box-sizing: border-box;
   position: relative;
   display: flex;
@@ -53,7 +55,8 @@ html[data-window="agent-panel"] body {
   transition:
     width var(--notch-grow) var(--notch-ease),
     height var(--notch-grow) var(--notch-ease),
-    border-radius var(--notch-grow) var(--notch-ease);
+    border-radius var(--notch-grow) var(--notch-ease),
+    background-color var(--notch-grow) ease;
 }
 
 /* A single light-gray fade rising from the shell's bottom edge. It is sized
@@ -92,14 +95,14 @@ html[data-window="agent-panel"] body {
 .agent-notch.is-entering {
   width: min(120px, 100vw);
   height: min(6px, 100vh);
+  background: var(--notch-sliver);
   border-color: transparent;
   border-radius: 0 0 5px 5px;
 }
 
-/* Opened by hover: the sliver had grown to its filling size. */
-.agent-notch.is-entering[data-opened] {
-  width: min(156px, 100vw);
-  height: min(10px, 100vh);
+.agent-notch.is-entering::before,
+.agent-notch.is-closing::before {
+  opacity: 0;
 }
 
 .agent-notch.is-entering .agent-notch-header > *,
@@ -119,10 +122,13 @@ html[data-window="agent-panel"] body {
 }
 
 /* Closing is the growth in reverse: the content fades, then the same shell
-   retracts into the resting sliver, which the native sliver then replaces. */
-.agent-notch.is-closing {
+   retracts into the resting sliver, which the native sliver then replaces.
+   Outranks every open size (chat, compact and Recall alike). */
+.agent-notch.is-closing,
+.agent-notch.is-reply.is-recall.is-closing {
   width: min(120px, 100vw);
   height: min(6px, 100vh);
+  background: var(--notch-sliver);
   border-color: transparent;
   border-radius: 0 0 5px 5px;
   pointer-events: none;
@@ -130,17 +136,15 @@ html[data-window="agent-panel"] body {
     width var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
     height var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
     border-color var(--notch-close) ease,
-    border-radius var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.agent-notch.is-closing .agent-notch-recall {
-  opacity: 0;
-  transition: opacity 110ms ease;
+    border-radius var(--notch-close) cubic-bezier(0.4, 0, 0.2, 1),
+    background-color var(--notch-close) ease;
 }
 
 .agent-notch.is-closing .agent-notch-header > *,
-.agent-notch.is-closing .agent-notch-reply {
+.agent-notch.is-closing .agent-notch-reply,
+.agent-notch.is-closing .agent-notch-recall {
   opacity: 0;
+  animation: none;
   transition: opacity 110ms ease;
 }
 
@@ -159,7 +163,7 @@ html[data-window="agent-panel"] body {
 
 .is-reply .agent-notch-header {
   flex-basis: min(var(--notch-reply-header), 100vh);
-  padding-inline: 18px 10px;
+  padding-inline: 9px 10px;
 }
 
 /* The one element that never changes identity: a dot that listens (light,
@@ -197,9 +201,9 @@ html[data-window="agent-panel"] body {
   animation: agent-notch-turn 1.2s linear infinite;
 }
 
+/* Open, the mode toggle leads the header; the status dot steps aside. */
 .is-reply .agent-notch-indicator {
-  width: 8px;
-  height: 8px;
+  display: none;
 }
 
 @keyframes agent-notch-breathe {
@@ -469,111 +473,208 @@ html[data-window="agent-panel"] body {
   animation: agent-notch-fade-in 240ms ease 120ms backwards;
 }
 
+/* Sizes here are mirrored by the layout constants in AgentRecall.tsx, which
+   size the shell: keep the two in step. */
 .agr {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 8px;
   height: 100%;
-  padding: 8px 14px 14px;
+  padding: 16px 14px 14px;
   font-size: 12.5px;
 }
 
 .agr-row {
+  position: relative;
   display: flex;
+  flex: none;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
-  padding: 0 6px 0 12px;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 0 6px 0 4px;
   border: 1px solid #ffffff10;
   border-radius: 12px;
   background: var(--agc-raise);
-  transition: opacity 160ms ease;
 }
 
-.agr-row.is-off .agr-row-icon,
-.agr-row.is-off .agr-row-label {
-  opacity: 0.5;
+/* The source toggle: its icon and name. Off shows the slashed icon. */
+.agr-source {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--agc-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.agr-source:hover:not(:disabled) {
+  background: #ffffff0d;
 }
 
 .agr-row-icon {
   display: grid;
-  color: var(--agc-muted);
+  flex: none;
+  color: var(--agc-light);
+  transition: color 140ms ease;
 }
 
 .agr-row-label {
-  flex: none;
-  color: var(--agc-ink);
+  min-width: 0;
+  overflow: hidden;
   font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 140ms ease;
 }
 
-.agr-select {
-  flex: 1;
-  min-width: 0;
-  height: 26px;
-  padding: 0 6px;
+.agr-row.is-off .agr-row-icon,
+.agr-row.is-off .agr-row-label {
+  color: var(--agc-faint);
+}
+
+/* The device picker: compact, right-aligned, with its own short list. */
+.agr-menu-wrap {
+  position: static;
+  flex: none;
+}
+
+.agr-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 150px;
+  height: 28px;
+  padding: 0 8px 0 10px;
   border: 1px solid #ffffff12;
   border-radius: 8px;
-  background: #0f0f14;
+  background: #ffffff08;
   color: var(--agc-muted);
   font: inherit;
   font-size: 12px;
-  text-overflow: ellipsis;
   cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
 }
 
-.agr-select:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.agr-select option {
-  background: #15151b;
+.agr-menu-trigger:hover:not(:disabled),
+.agr-menu-trigger[aria-expanded="true"] {
+  border-color: #ffffff24;
+  background: #ffffff12;
   color: var(--agc-ink);
 }
 
-.agr-switch {
-  position: relative;
+.agr-menu-trigger > svg {
   flex: none;
-  width: 32px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: #ffffff1f;
-  cursor: pointer;
-  transition: background-color 160ms ease;
+  transition: transform 180ms var(--notch-ease);
 }
 
-.agr-switch > span {
+.agr-menu-trigger[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
+}
+
+.agr-row.is-off .agr-menu-trigger {
+  color: var(--agc-faint);
+}
+
+.agr-menu-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agr-menu {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--agc-mid);
-  transition:
-    transform 180ms var(--notch-ease),
-    background-color 160ms ease;
+  z-index: 2;
+  top: calc(100% + 4px);
+  right: 0;
+  box-sizing: border-box;
+  width: min(236px, 100%);
+  max-height: 158px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff2e transparent;
+  padding: 4px;
+  border: 1px solid #ffffff1a;
+  border-radius: 11px;
+  background: #121217;
+  box-shadow: 0 10px 28px #00000080;
+  animation: agr-menu-in 160ms var(--notch-ease);
+  transform-origin: top right;
 }
 
-.agr-switch[aria-checked="true"] {
-  background: var(--agc-fill);
+@keyframes agr-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
 }
 
-.agr-switch[aria-checked="true"] > span {
-  background: #0c0c14;
-  transform: translateX(14px);
+.agr-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--agc-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.agr-menu-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agr-menu-item > svg {
+  flex: none;
+  color: var(--agc-light);
+}
+
+.agr-menu-item:hover,
+.agr-menu-item:focus-visible {
+  outline: none;
+  background: #ffffff12;
+  color: var(--agc-ink);
+}
+
+.agr-menu-item[aria-selected="true"] {
+  color: var(--agc-ink);
 }
 
 .agr-start,
 .agr-stop {
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 34px;
+  height: 34px;
   padding: 0 16px;
   border: 0;
   border-radius: 999px;
@@ -587,7 +688,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agr-start {
-  margin-top: 2px;
+  margin-top: 6px;
 }
 
 .agr-start:hover:not(:disabled),
@@ -597,14 +698,15 @@ html[data-window="agent-panel"] body {
 
 .agr-live {
   gap: 12px;
-  padding-top: 4px;
+  padding-top: 10px;
 }
 
 .agr-clock {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
+  height: 28px;
+  flex: none;
   padding-inline: 4px;
 }
 
@@ -673,7 +775,9 @@ html[data-window="agent-panel"] body {
 
 .agr-error,
 .agr-note {
+  flex: none;
   padding-inline: 4px;
+  line-height: 16px;
   color: var(--agc-muted);
   font-size: 12px;
   overflow: hidden;
@@ -961,8 +1065,8 @@ html[data-window="agent-panel"] body {
   .agent-notch-header > *,
   .agent-notch-recall,
   .agent-notch-mode,
-  .agr-switch,
-  .agr-switch > span,
+  .agr-menu,
+  .agr-menu-trigger > svg,
   .agr-rec-dot {
     animation: none;
     transition: none;

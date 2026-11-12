@@ -23,6 +23,8 @@
     "recallMicrophone": "Microphone",
     "recallSystemAudio": "System audio",
     "recallDefaultDevice": "Default",
+    "recallTurnOn": "Turn on {{source}}",
+    "recallTurnOff": "Turn off {{source}}",
     "recallStart": "Start meeting",
     "recallStarting": "Starting…",
     "recallStop": "Stop",

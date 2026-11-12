@@ -34,9 +34,8 @@ function resizeComposer(input: HTMLTextAreaElement) {
 const HISTORY_CONTEXT = 12;
 /** Matches --notch-grow in agent.css (and NOTCH_GROW in agent.rs). */
 const NOTCH_GROW_MS = 460;
-/** The Recall shell, in CSS px (`.agent-notch.is-recall` in agent.css). */
+/** The Recall shell width, in CSS px (`.agent-notch.is-recall` in agent.css). */
 const RECALL_WIDTH = 380;
-const RECALL_HEIGHT = { idle: 214, live: 132 };
 
 const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
   messages.map((m) => ({ role: m.role, content: m.content }));
@@ -82,7 +81,8 @@ export function AgentPanel() {
   // Earlier turns of the one running chat (this session's turns are below).
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const historyRef = useRef<ChatMessage[]>([]);
-  const [recallLive, setRecallLive] = useState(false);
+  // The height Recall asks for (AgentRecall owns its layout numbers).
+  const [recallHeight, setRecallHeight] = useState(200);
   const currentStartRef = useRef<HTMLDivElement>(null);
   historyRef.current = history;
   const revealedRef = useRef(false);
@@ -386,7 +386,6 @@ export function AgentPanel() {
 
   // Clip the window to the shell so its transparent rest never eats clicks.
   // Lift the clip first so growth is never cut off; tighten once it settles.
-  const recallHeight = recallLive ? RECALL_HEIGHT.live : RECALL_HEIGHT.idle;
   useEffect(() => {
     if (!revealed || closing) return;
     void commands.agentNotchShape(null).catch(console.error);
@@ -647,7 +646,7 @@ export function AgentPanel() {
                 role="tablist"
                 aria-label={t("agent.brand")}
               >
-                {(["chat", "recall"] as const).map((option) => (
+                {(["recall", "chat"] as const).map((option) => (
                   <button
                     key={option}
                     type="button"
@@ -701,7 +700,7 @@ export function AgentPanel() {
             reply in the reveal frame stalled the start of the growth. */}
         {recall && (
           <div className="agent-notch-recall">
-            <AgentRecall onRecordingChange={setRecallLive} />
+            <AgentRecall onHeightChange={setRecallHeight} />
           </div>
         )}
 

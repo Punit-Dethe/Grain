@@ -56,11 +56,10 @@ mod imp {
         WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
     };
 
-    /// The resting sliver, in CSS px.
+    /// The sliver, in CSS px. It never changes size: the bar fills inside it.
+    /// `.agent-notch.is-entering` in agent.css starts the WebView shell at
+    /// this size and colour so the hand-off is seamless.
     const REST: (f64, f64) = (120.0, 6.0);
-    /// The sliver while it fills. `.agent-notch.is-entering` in agent.css
-    /// starts the WebView shell at this size so the hand-off is seamless.
-    const HOVER: (f64, f64) = (156.0, 10.0);
     /// The hover target: the window, hit-testable but invisible around the
     /// shape so the pointer need not land on the few visible pixels.
     const HIT: (f64, f64) = (180.0, 12.0);
@@ -71,9 +70,10 @@ mod imp {
     const WM_MOUSELEAVE: u32 = 0x02A3;
     const CLASS: windows::core::PCWSTR = w!("GrainAgentNotchSliver");
 
-    const BASE: [f64; 3] = [10.0, 10.0, 14.0];
-    const TRACK: [f64; 3] = [40.0, 40.0, 46.0];
-    const BAR: [f64; 3] = [214.0, 214.0, 222.0];
+    /// `--notch-sliver` in agent.css.
+    const BASE: [f64; 3] = [3.0, 3.0, 5.0];
+    const TRACK: [f64; 3] = [30.0, 30.0, 35.0];
+    const BAR: [f64; 3] = [206.0, 206.0, 214.0];
 
     struct Sliver {
         hwnd: HWND,
@@ -300,13 +300,12 @@ mod imp {
     /// corners rounded and anti-aliased, and (while hovering) the fill bar.
     /// Everything else is alpha 1/255: invisible, but it still takes the hover.
     fn render(width: i32, height: i32, zoom: f64, progress: Option<f64>) -> Vec<u32> {
-        let (sw, sh) = if progress.is_some() { HOVER } else { REST };
-        let (sw, sh) = (sw * zoom, sh * zoom);
+        let (sw, sh) = (REST.0 * zoom, REST.1 * zoom);
         let radius = (sh * 0.5).min(5.0 * zoom);
         let half = sw / 2.0;
         let cx = width as f64 / 2.0;
-        let pad = 7.0 * zoom;
-        let (bar_top, bar_bottom) = (3.5 * zoom, 6.5 * zoom);
+        let pad = 9.0 * zoom;
+        let (bar_top, bar_bottom) = (1.75 * zoom, 4.0 * zoom);
         let (bar_left, bar_right) = (cx - half + pad, cx + half - pad);
         let mut pixels = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
