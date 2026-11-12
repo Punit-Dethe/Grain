@@ -39,5 +39,5 @@ Bundled marks are sourced from [GitHub’s Primer Octicons](https://github.com/p
 [Simple Icons](https://simpleicons.org/) (CC0; Todoist, Dropbox, Asana, Coda,
 Atlassian and Zapier, filled with each brand colour), and the Readwise,
 Raindrop.io, monday.com, Canva, Gamma, Miro, Granola, Fireflies, Otter, Cal.com,
-and Stripe website icons.
+Stripe, Airtable and ClickUp website icons.
 Brand colours are allowed.

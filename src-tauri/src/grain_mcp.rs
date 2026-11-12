@@ -449,9 +449,8 @@ const CATALOG: &[CatalogProvider] = &[
     },
     CatalogProvider {
         id: "atlassian",
-        // On trial (2026-11-12). Needs an Atlassian Cloud site with Jira or
-        // Confluence on the signed-in account. V2 is the current server; V1
-        // grants do not carry over.
+        // Needs an Atlassian Cloud site with Jira or Confluence on the
+        // signed-in account. V2 is the current server; V1 grants do not carry over.
         bundled_preset: true,
         name: "Jira & Confluence",
         description: "Jira and Confluence work across one Atlassian account.",
@@ -640,6 +639,27 @@ const CATALOG: &[CatalogProvider] = &[
         endpoint: "https://mcp.stripe.com",
         registration: Registration::Dynamic,
         setup_url: "https://docs.stripe.com/mcp",
+        ownership: None,
+    },
+    // On trial (2026-11-12): Airtable, ClickUp.
+    CatalogProvider {
+        id: "airtable",
+        bundled_preset: true,
+        name: "Airtable",
+        description: "Read and update bases, tables, and records.",
+        endpoint: "https://mcp.airtable.com/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://support.airtable.com/using-the-airtable-mcp-server",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "clickup",
+        bundled_preset: true,
+        name: "ClickUp",
+        description: "Tasks, lists, docs, and comments.",
+        endpoint: "https://mcp.clickup.com/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://help.clickup.com/hc/en-us/articles/33335772678423",
         ownership: None,
     },
 ];
@@ -3284,6 +3304,8 @@ mod tests {
             ("otter", Registration::Dynamic),
             ("stripe", Registration::Dynamic),
             ("atlassian", Registration::Dynamic),
+            ("airtable", Registration::Dynamic),
+            ("clickup", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3319,7 +3341,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 20);
+        assert_eq!(production_catalog().count(), 22);
     }
 
     #[test]
@@ -3618,7 +3640,9 @@ mod tests {
                 "granola",
                 "fireflies",
                 "otter",
-                "stripe"
+                "stripe",
+                "airtable",
+                "clickup"
             ]
         );
     }

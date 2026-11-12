@@ -14,11 +14,13 @@ import {
   signInCancelled,
   unwrapResult,
 } from "./extensionRuntime";
+import airtableIcon from "./icons/airtable.png";
 import asanaIcon from "./icons/asana.svg";
 import calcomIcon from "./icons/calcom.png";
 import atlassianIcon from "./icons/atlassian.svg";
 import atlassianDarkIcon from "./icons/atlassian-light.svg";
 import canvaIcon from "./icons/canva.png";
+import clickupIcon from "./icons/clickup.png";
 import codaIcon from "./icons/coda.svg";
 import dropboxIcon from "./icons/dropbox.svg";
 import firefliesIcon from "./icons/fireflies.png";
@@ -40,10 +42,12 @@ import zapierIcon from "./icons/zapier.svg";
 import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
+  ["airtable", { src: airtableIcon }],
   ["asana", { src: asanaIcon }],
   ["atlassian", { src: atlassianIcon, darkSrc: atlassianDarkIcon }],
   ["calcom", { src: calcomIcon }],
   ["canva", { src: canvaIcon }],
+  ["clickup", { src: clickupIcon }],
   ["coda", { src: codaIcon }],
   ["dropbox", { src: dropboxIcon }],
   ["fireflies", { src: firefliesIcon }],
