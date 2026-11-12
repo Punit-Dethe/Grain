@@ -84,6 +84,9 @@ export function McpPresets({
   const mounted = useRef(false);
   const refresh = useCallback(async () => {
     const status = unwrapResult(await commands.mcpProviderStatus(true));
+    status.sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+    );
     if (mounted.current) setRows(status);
   }, []);
 

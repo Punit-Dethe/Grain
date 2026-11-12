@@ -21,8 +21,9 @@ name: "Grain Release (Windows)"
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  contents of ~/.grain-keys/grain.updater.key.password
 #   GRAIN_GITHUB_OAUTH_CLIENT_ID / GRAIN_GITHUB_OAUTH_CLIENT_SECRET
 #     existing desktop registration for the bundled GitHub MCP connection
-#   GRAIN_ASANA_OAUTH_CLIENT_ID / GRAIN_ASANA_OAUTH_CLIENT_SECRET (optional)
-#     Asana "MCP app" registration, distribution "Any workspace"
+#   GRAIN_ASANA_OAUTH_CLIENT_ID / GRAIN_ASANA_OAUTH_CLIENT_SECRET
+#     Asana "MCP app" registration, distribution "Any workspace". Without
+#     them the build hides Asana from Extensions.
 
 on:
   workflow_dispatch:
@@ -272,7 +273,7 @@ jobs:
           # or the GitHub App private key. Used by the bundled GitHub MCP connection.
           GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID }}
           GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET }}
-          # Asana MCP app registration (optional until Asana is admitted).
+          # Asana MCP app registration; Asana is hidden in builds without it.
           GRAIN_ASANA_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_ASANA_OAUTH_CLIENT_ID }}
           GRAIN_ASANA_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_ASANA_OAUTH_CLIENT_SECRET }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

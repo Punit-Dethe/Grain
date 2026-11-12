@@ -473,8 +473,8 @@ const CATALOG: &[CatalogProvider] = &[
             "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
         ownership: None,
     },
-    // Listed rows passed one real Connect and one real tool call. New rows go
-    // in "on trial" for that test; a failure is hidden (bundled_preset false).
+    // Every listed row passed one real Connect and one real tool call. New rows
+    // are tested the same way before release; a failure is hidden or removed.
     CatalogProvider {
         id: "todoist",
         bundled_preset: true,
@@ -641,7 +641,6 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://docs.stripe.com/mcp",
         ownership: None,
     },
-    // On trial (2026-11-12): Airtable, ClickUp.
     CatalogProvider {
         id: "airtable",
         bundled_preset: true,
@@ -1402,6 +1401,12 @@ pub async fn mcp_provider_status(
             continue;
         }
         let client_id_configured = provider_client_id(&app, item).is_some();
+        // A build without a provider's registration (GitHub, Asana) cannot
+        // sign in to it, so the Extensions page never offers a dead Connect.
+        if presets_only && item.registration == Registration::PreRegistered && !client_id_configured
+        {
+            continue;
+        }
         let account_required = requires_account(item);
         let stored = if account_required {
             stored_connected(item.id).await
