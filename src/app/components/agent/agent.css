@@ -175,58 +175,6 @@ html[data-window="agent-panel"] body {
   padding-inline: 9px 10px;
 }
 
-/* The one element that never changes identity: a dot that listens (light,
-   breathing), thinks (a turning gray sweep) and then signs the reply. */
-.agent-notch-indicator {
-  position: relative;
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--agc-faint);
-  transition:
-    width var(--notch-grow) var(--notch-ease),
-    height var(--notch-grow) var(--notch-ease),
-    background-color 200ms ease;
-}
-
-[data-phase="listening"] .agent-notch-indicator {
-  background: var(--agc-light);
-  box-shadow: 0 0 0 0 #ffffff4d;
-  animation: agent-notch-breathe 1.6s ease-out infinite;
-}
-
-[data-phase="working"] .agent-notch-indicator,
-.is-reply .agent-notch-indicator {
-  background: conic-gradient(
-    var(--agc-light),
-    var(--agc-mid),
-    var(--agc-dim),
-    var(--agc-light)
-  );
-}
-
-[data-phase="working"] .agent-notch-indicator {
-  animation: agent-notch-turn 1.2s linear infinite;
-}
-
-/* Open, the mode toggle leads the header; the status dot steps aside. */
-.is-reply .agent-notch-indicator {
-  display: none;
-}
-
-@keyframes agent-notch-breathe {
-  to {
-    box-shadow: 0 0 0 5px #ffffff00;
-  }
-}
-
-@keyframes agent-notch-turn {
-  to {
-    transform: rotate(1turn);
-  }
-}
-
 /* Compact status and brand share one cell and crossfade. */
 .agent-notch-label {
   flex: 1;
@@ -1063,7 +1011,6 @@ html[data-window="agent-panel"] body {
   .agent-notch,
   .agent-notch::before,
   .agent-notch-header,
-  .agent-notch-indicator,
   .agent-notch-status,
   .agent-notch-brand,
   .agent-notch-reply,

@@ -625,7 +625,6 @@ export function AgentPanel() {
         {/* One header for both states: the compact status crossfades into the
             brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">
-          <span className="agent-notch-indicator" aria-hidden="true" />
           <span className="agent-notch-label">
             {!grown && !capture?.opened && (
               <span className="agent-notch-status" aria-hidden={revealed}>
