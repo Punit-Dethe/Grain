@@ -37,7 +37,7 @@ Bundled marks are sourced from [GitHub’s Primer Octicons](https://github.com/p
 [Linear’s Brand Guidelines](https://linear.app/brand), the
 [Notion website favicon](https://www.notion.com/front-static/favicon.ico),
 [Simple Icons](https://simpleicons.org/) (CC0; Todoist, Dropbox, Asana, Coda,
-Atlassian, Zapier and Cal.com, filled with each brand colour), and the Readwise,
-Raindrop.io, monday.com, Canva, Gamma, Miro, Granola, Fireflies and Otter
-website icons.
+Atlassian and Zapier, filled with each brand colour), and the Readwise,
+Raindrop.io, monday.com, Canva, Gamma, Miro, Granola, Fireflies, Otter, Cal.com,
+Stripe and Razorpay website icons (Razorpay on a white tile for dark mode).
 Brand colours are allowed.

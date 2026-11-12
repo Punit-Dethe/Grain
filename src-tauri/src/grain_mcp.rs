@@ -630,6 +630,29 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://help.otter.ai/hc/en-us/search?query=MCP",
         ownership: None,
     },
+    // On trial (2026-11-12): Stripe, Razorpay. Payment providers: Stripe lets
+    // the user pick accounts/sandboxes at sign-in and holds money movement for
+    // Dashboard approval; Razorpay's remote server has no refund or payout tool.
+    CatalogProvider {
+        id: "stripe",
+        bundled_preset: true,
+        name: "Stripe",
+        description: "Payments, customers, invoices, and subscriptions.",
+        endpoint: "https://mcp.stripe.com",
+        registration: Registration::Dynamic,
+        setup_url: "https://docs.stripe.com/mcp",
+        ownership: None,
+    },
+    CatalogProvider {
+        id: "razorpay",
+        bundled_preset: true,
+        name: "Razorpay",
+        description: "Payments, orders, payment links, and settlements.",
+        endpoint: "https://mcp.razorpay.com/mcp",
+        registration: Registration::Dynamic,
+        setup_url: "https://razorpay.com/docs/mcp-server/remote/",
+        ownership: None,
+    },
 ];
 
 #[derive(Clone)]
@@ -3270,6 +3293,8 @@ mod tests {
             ("granola", Registration::Dynamic),
             ("fireflies", Registration::Dynamic),
             ("otter", Registration::Dynamic),
+            ("stripe", Registration::Dynamic),
+            ("razorpay", Registration::Dynamic),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3305,7 +3330,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 19);
+        assert_eq!(production_catalog().count(), 21);
     }
 
     #[test]
@@ -3607,7 +3632,9 @@ mod tests {
                 "calcom",
                 "granola",
                 "fireflies",
-                "otter"
+                "otter",
+                "stripe",
+                "razorpay"
             ]
         );
     }
