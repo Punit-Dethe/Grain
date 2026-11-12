@@ -601,9 +601,9 @@ function RecordingLead({
     );
   }
   if (meeting.speaker_count > 0) {
-    // Always the same stack of three (green, yellow, blue); the real speaker
-    // count is on the top one.
-    const shown = 3;
+    // Always a stack of three; the top avatar's colour and number say how many
+    // speakers there are.
+    const tones = stackTones(meeting.speaker_count);
     return (
       <span
         className="meet-lead-stack"
@@ -612,12 +612,9 @@ function RecordingLead({
           count: meeting.speaker_count,
         })}
       >
-        {Array.from({ length: shown }, (_, index) => (
-          <span
-            key={index}
-            className={`meet-avatar is-stack tone-${SPEAKER_TONES[index]}`}
-          >
-            {index === shown - 1 && meeting.speaker_count}
+        {tones.map((tone, index) => (
+          <span key={index} className={`meet-avatar is-stack tone-${tone}`}>
+            {index === tones.length - 1 && meeting.speaker_count}
           </span>
         ))}
       </span>
@@ -628,6 +625,16 @@ function RecordingLead({
       <Glyph name={SOURCE_ICON[meeting.sources[0] ?? "Microphone"]} />
     </span>
   );
+}
+
+/** The list's avatar stack, back to front. The top avatar's colour is the one
+ * for this many speakers (1 green, 2 yellow, 3 blue, then the rest); the two
+ * behind it are other colours, never the same. */
+function stackTones(count: number): (typeof SPEAKER_TONES)[number][] {
+  const top =
+    SPEAKER_TONES[Math.min(Math.max(count, 1), SPEAKER_TONES.length) - 1];
+  const others = SPEAKER_TONES.filter((tone) => tone !== top).slice(0, 2);
+  return [others[1], others[0], top];
 }
 
 /** A clock that ticks once a second while `active`, for live durations. */
