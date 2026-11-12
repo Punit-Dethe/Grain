@@ -107,6 +107,8 @@ export function AgentPanel() {
   // A Recall device menu floats below the shell; lift the click clip for it.
   const [recallMenu, setRecallMenu] = useState(false);
   const currentStartRef = useRef<HTMLDivElement>(null);
+  // The window is clipped to the Recall shell (see the shape effect).
+  const clippedRef = useRef(false);
   historyRef.current = history;
   const revealedRef = useRef(false);
   const [capture, setCapture] = useState<AgentNotchStatus | null>(null);
@@ -445,24 +447,40 @@ export function AgentPanel() {
   // Lift the clip first so growth is never cut off; tighten once it settles.
   useEffect(() => {
     if (!revealed || closing) return;
+    clippedRef.current = false;
     void commands.agentNotchShape(null).catch(console.error);
     if (mode !== "recall" || recallMenu || view === "history") return;
-    const timer = window.setTimeout(
-      () =>
-        void commands
-          .agentNotchShape({ width: RECALL_WIDTH, height: recallHeight })
-          .catch(console.error),
-      NOTCH_GROW_MS,
-    );
+    const timer = window.setTimeout(() => {
+      clippedRef.current = true;
+      void commands
+        .agentNotchShape({ width: RECALL_WIDTH, height: recallHeight })
+        .catch(console.error);
+    }, NOTCH_GROW_MS);
     return () => window.clearTimeout(timer);
   }, [revealed, closing, mode, recallHeight, recallMenu, view]);
 
-  const switchMode = (next: AgentNotchMode) => {
-    setView("main");
-    if (next === mode) return;
-    setMode(next);
-    void commands.agentNotchSetMode(next).catch(console.error);
-  };
+  /** Apply a change that may grow the shell. While the window is clipped to
+   * Recall, lift the clip first and wait until it is gone: a growth started
+   * under the old clip is cut off for a frame or two (the glitch). */
+  const unclipThen = useCallback((change: () => void) => {
+    if (!clippedRef.current) {
+      change();
+      return;
+    }
+    clippedRef.current = false;
+    void commands
+      .agentNotchShape(null)
+      .catch(console.error)
+      .finally(() => requestAnimationFrame(change));
+  }, []);
+
+  const switchMode = (next: AgentNotchMode) =>
+    unclipThen(() => {
+      setView("main");
+      if (next === mode) return;
+      setMode(next);
+      void commands.agentNotchSetMode(next).catch(console.error);
+    });
 
   /** Show `earlier` as the chat, with no turn of this open on top of it. */
   const showChat = useCallback((earlier: ChatMessage[]) => {
@@ -490,9 +508,9 @@ export function AgentPanel() {
       setView("main");
       return;
     }
-    setView("history");
     void commands.agentHistoryList().then(setChatList).catch(console.error);
-  }, [view]);
+    unclipThen(() => setView("history"));
+  }, [view, unclipThen]);
 
   /** Continue an earlier chat. */
   const openChat = useCallback(
@@ -782,6 +800,7 @@ export function AgentPanel() {
               </span>
             </span>
           </span>
+          <span className="agent-notch-spacer" />
           {revealed && (
             <button
               type="button"
@@ -794,7 +813,6 @@ export function AgentPanel() {
               <span>{t("agent.history")}</span>
             </button>
           )}
-          <span className="agent-notch-spacer" />
           {revealed && (mode === "chat" || listing) && (
             <button
               type="button"

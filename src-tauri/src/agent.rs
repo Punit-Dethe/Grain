@@ -1038,15 +1038,21 @@ pub struct AgentNotchShape {
 #[specta::specta]
 pub async fn agent_notch_shape(app: AppHandle, shape: Option<AgentNotchShape>) {
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
-            return;
-        };
-        #[cfg(windows)]
-        set_notch_region(&window, shape.map(|shape| (shape.width, shape.height)));
-        #[cfg(not(windows))]
-        let _ = (window, shape);
+    // Resolves once the clip is applied, so the panel can lift it and only
+    // then grow: a growth started first is cut off by the old clip for a frame.
+    let (applied, done) = tokio::sync::oneshot::channel();
+    let posted = app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window(PANEL_LABEL) {
+            #[cfg(windows)]
+            set_notch_region(&window, shape.map(|shape| (shape.width, shape.height)));
+            #[cfg(not(windows))]
+            let _ = (window, shape);
+        }
+        let _ = applied.send(());
     });
+    if posted.is_ok() {
+        let _ = done.await;
+    }
 }
 
 #[cfg(windows)]
