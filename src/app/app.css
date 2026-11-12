@@ -5115,6 +5115,8 @@ html[data-theme="light"] .dropdown-compact-menu {
 
 .meet-toolbar {
   position: relative;
+  box-sizing: border-box;
+  transition: width 360ms var(--ease-out);
   --meet-dock-button-bg: var(--accent-soft);
   --meet-dock-button-hover: var(--accent-soft-hover);
   --meet-dock-button-active: var(--accent-soft-hover);
@@ -5374,12 +5376,21 @@ html[data-theme="light"] .dropdown-compact-menu {
 
 .meet-toolbar-main {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   gap: 10px;
+  animation: meet-dock-in 300ms var(--ease-out) backwards;
   transition:
     opacity 200ms ease 60ms,
     transform 240ms var(--ease-out);
+}
+
+@keyframes meet-dock-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
 }
 
 /* Searching: the dock's contents fade away and the search field takes the
@@ -7116,8 +7127,12 @@ html[data-theme="light"] .meet-dock-inner {
   .meet-source-control button,
   .meet-source-control button svg,
   .meet-record-action,
-  .dropdown-compact-option {
+  .dropdown-compact-option,
+  .meet-toolbar,
+  .meet-toolbar-main,
+  .meet-toolbar-find {
     transition: none;
+    animation: none;
   }
 }
 

@@ -228,6 +228,9 @@ function switchedOff(kind: SourceKind): SourceStatus {
   };
 }
 
+/** The toolbar's padding and border, added to its contents' width. */
+const DOCK_CHROME = 18;
+
 const METER_SEGMENTS = 8;
 /** Peak amplitude to a 0..1 meter fill: -50 dB is empty, -6 dB is full. */
 function meterFill(peak: number): number {
@@ -302,6 +305,10 @@ function CaptureDock({
   const { t } = useTranslation();
   const [searching, setSearching] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  // The dock glides between its idle and recording widths: the toolbar is given
+  // the width its contents want and CSS animates the change.
+  const mainRef = useRef<HTMLDivElement>(null);
+  const [dockWidth, setDockWidth] = useState<number | null>(null);
   useEffect(() => {
     if (searching) searchRef.current?.focus();
   }, [searching]);
@@ -339,6 +346,17 @@ function CaptureDock({
     }
   };
 
+  const isRecording = Boolean(recording);
+  useLayoutEffect(() => {
+    const main = mainRef.current;
+    if (!main) return;
+    const measure = () => setDockWidth(main.offsetWidth + DOCK_CHROME);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(main);
+    return () => observer.disconnect();
+  }, [isRecording]);
+
   const recordDisabled =
     pending !== null || (!recording && (!settings || (!micOn && !systemOn)));
   return (
@@ -353,8 +371,13 @@ function CaptureDock({
       )}
       <div
         className={`meet-toolbar${searching && !recording ? " is-searching" : ""}`}
+        style={dockWidth ? { width: dockWidth } : undefined}
       >
-        <div className="meet-toolbar-main">
+        <div
+          key={recording ? "live" : "idle"}
+          ref={mainRef}
+          className="meet-toolbar-main"
+        >
           {recording ? (
             <>
               <span className="meet-record-live">
