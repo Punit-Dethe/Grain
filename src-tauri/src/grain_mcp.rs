@@ -1401,12 +1401,6 @@ pub async fn mcp_provider_status(
             continue;
         }
         let client_id_configured = provider_client_id(&app, item).is_some();
-        // A build without a provider's registration (GitHub, Asana) cannot
-        // sign in to it, so the Extensions page never offers a dead Connect.
-        if presets_only && item.registration == Registration::PreRegistered && !client_id_configured
-        {
-            continue;
-        }
         let account_required = requires_account(item);
         let stored = if account_required {
             stored_connected(item.id).await
@@ -1414,6 +1408,16 @@ pub async fn mcp_provider_status(
             Ok(false)
         };
         let connected = stored.as_ref().is_ok_and(|value| *value);
+        // A build without a provider's registration (GitHub, Asana) cannot
+        // sign in to it, so the Extensions page never offers a dead Connect.
+        // A connected account stays listed so it can still be disconnected.
+        if presets_only
+            && item.registration == Registration::PreRegistered
+            && !client_id_configured
+            && !connected
+        {
+            continue;
+        }
         let observation = provider_control(item.id).ticket().recovery();
         let state = if !account_required {
             "fixture_no_auth"
