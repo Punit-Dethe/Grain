@@ -351,48 +351,126 @@ function CaptureDock({
           {recording.error}
         </p>
       )}
-      <div className="meet-toolbar">
-        {recording ? (
-          <>
-            <span className="meet-record-live">
-              <span className="meet-record-dot" aria-hidden="true" />
-              <span
-                className="meet-record-clock"
-                role="timer"
-                aria-label={t("ui2.meet.live.label")}
-              >
-                {formatClock(recording.elapsed_ms)}
+      <div
+        className={`meet-toolbar${searching && !recording ? " is-searching" : ""}`}
+      >
+        <div className="meet-toolbar-main">
+          {recording ? (
+            <>
+              <span className="meet-record-live">
+                <span className="meet-record-dot" aria-hidden="true" />
+                <span
+                  className="meet-record-clock"
+                  role="timer"
+                  aria-label={t("ui2.meet.live.label")}
+                >
+                  {formatClock(recording.elapsed_ms)}
+                </span>
               </span>
-            </span>
-            <div
-              className="meet-live-sources"
-              role="group"
-              aria-label={t("ui2.meet.sources.label")}
-            >
-              {LIVE_KINDS.filter(
-                (kind) =>
-                  kind === "Microphone" ||
-                  sources?.system_audio_supported !== false,
-              ).map((kind) => (
-                <LiveSource
-                  key={kind}
-                  // A source that began switched off shows as muted; turning
-                  // it on starts it.
-                  source={
-                    recording.sources.find((s) => s.kind === kind) ??
-                    switchedOff(kind)
-                  }
-                  onToggle={(muted) =>
-                    void meet
-                      .setSourceMuted(kind, muted)
-                      .catch((error) => toast.error(errorText(error)))
-                  }
+              <div
+                className="meet-live-sources"
+                role="group"
+                aria-label={t("ui2.meet.sources.label")}
+              >
+                {LIVE_KINDS.filter(
+                  (kind) =>
+                    kind === "Microphone" ||
+                    sources?.system_audio_supported !== false,
+                ).map((kind) => (
+                  <LiveSource
+                    key={kind}
+                    // A source that began switched off shows as muted; turning
+                    // it on starts it.
+                    source={
+                      recording.sources.find((s) => s.kind === kind) ??
+                      switchedOff(kind)
+                    }
+                    onToggle={(muted) =>
+                      void meet
+                        .setSourceMuted(kind, muted)
+                        .catch((error) => toast.error(errorText(error)))
+                    }
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                className="meet-dock-icon"
+                type="button"
+                aria-label={t("ui2.meet.list.openSearch")}
+                title={t("ui2.meet.list.openSearch")}
+                onClick={() => setSearching(true)}
+              >
+                <Search className="icon sm" aria-hidden="true" />
+              </button>
+              <div
+                className="meet-source-controls"
+                role="group"
+                aria-busy={!sources}
+                aria-label={t("ui2.meet.sources.label")}
+              >
+                <SourceControl
+                  kind="Microphone"
+                  choice={settings?.microphone}
+                  devices={sources?.microphones}
+                  pending={pending !== null}
+                  locked={micOn && !systemOn}
+                  onChange={(microphone) => {
+                    if (settings)
+                      void run("sources", () =>
+                        meet.setSources({ ...settings, microphone }),
+                      );
+                  }}
                 />
-              ))}
-            </div>
-          </>
-        ) : searching ? (
-          <div className="meet-dock-search">
+                <SourceControl
+                  kind="SystemAudio"
+                  choice={settings?.system_audio}
+                  devices={sources?.outputs}
+                  pending={pending !== null}
+                  locked={systemOn && !micOn}
+                  unsupported={sources?.system_audio_supported === false}
+                  onChange={(system_audio) => {
+                    if (settings)
+                      void run("sources", () =>
+                        meet.setSources({ ...settings, system_audio }),
+                      );
+                  }}
+                />
+              </div>
+            </>
+          )}
+          <button
+            className="button primary meet-record-action"
+            type="button"
+            aria-disabled={recordDisabled}
+            onClick={() => {
+              if (!recordDisabled) {
+                void run(
+                  recording ? "stop" : "start",
+                  recording
+                    ? meet.stopRecording
+                    : () => meet.startRecording(null),
+                );
+              }
+            }}
+          >
+            <span
+              className={
+                recording ? "meet-record-mark is-stop" : "meet-record-mark"
+              }
+              aria-hidden="true"
+            />
+            {recording
+              ? t("ui2.meet.studio.stop")
+              : pending === "start"
+                ? t("ui2.meet.studio.starting")
+                : t("ui2.meet.studio.start")}
+          </button>
+        </div>
+        {!recording && (
+          <div className="meet-toolbar-find" aria-hidden={!searching}>
             <label className="meet-dock-search-field">
               <Search className="icon sm" aria-hidden="true" />
               <input
@@ -417,80 +495,7 @@ function CaptureDock({
               <X className="icon sm" aria-hidden="true" />
             </button>
           </div>
-        ) : (
-          <>
-            <div
-              className="meet-source-controls"
-              role="group"
-              aria-busy={!sources}
-              aria-label={t("ui2.meet.sources.label")}
-            >
-              <SourceControl
-                kind="Microphone"
-                choice={settings?.microphone}
-                devices={sources?.microphones}
-                pending={pending !== null}
-                locked={micOn && !systemOn}
-                onChange={(microphone) => {
-                  if (settings)
-                    void run("sources", () =>
-                      meet.setSources({ ...settings, microphone }),
-                    );
-                }}
-              />
-              <SourceControl
-                kind="SystemAudio"
-                choice={settings?.system_audio}
-                devices={sources?.outputs}
-                pending={pending !== null}
-                locked={systemOn && !micOn}
-                unsupported={sources?.system_audio_supported === false}
-                onChange={(system_audio) => {
-                  if (settings)
-                    void run("sources", () =>
-                      meet.setSources({ ...settings, system_audio }),
-                    );
-                }}
-              />
-            </div>
-            <button
-              className="meet-dock-icon"
-              type="button"
-              aria-label={t("ui2.meet.list.openSearch")}
-              title={t("ui2.meet.list.openSearch")}
-              onClick={() => setSearching(true)}
-            >
-              <Search className="icon sm" aria-hidden="true" />
-            </button>
-          </>
         )}
-        <button
-          className="button primary meet-record-action"
-          type="button"
-          aria-disabled={recordDisabled}
-          onClick={() => {
-            if (!recordDisabled) {
-              void run(
-                recording ? "stop" : "start",
-                recording
-                  ? meet.stopRecording
-                  : () => meet.startRecording(null),
-              );
-            }
-          }}
-        >
-          <span
-            className={
-              recording ? "meet-record-mark is-stop" : "meet-record-mark"
-            }
-            aria-hidden="true"
-          />
-          {recording
-            ? t("ui2.meet.studio.stop")
-            : pending === "start"
-              ? t("ui2.meet.studio.starting")
-              : t("ui2.meet.studio.start")}
-        </button>
       </div>
     </section>
   );

@@ -5030,7 +5030,7 @@ html[data-theme="light"] .grain-root {
 }
 
 .meet-head h1 {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 520;
   letter-spacing: -0.03em;
 }
@@ -5114,6 +5114,7 @@ html[data-theme="light"] .dropdown-compact-menu {
 }
 
 .meet-toolbar {
+  position: relative;
   --meet-dock-button-bg: var(--accent-soft);
   --meet-dock-button-hover: var(--accent-soft-hover);
   --meet-dock-button-active: var(--accent-soft-hover);
@@ -5371,17 +5372,62 @@ html[data-theme="light"] .dropdown-compact-menu {
   height: 18px;
 }
 
-.meet-dock-search {
+.meet-toolbar-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition:
+    opacity 200ms ease 60ms,
+    transform 240ms var(--ease-out);
+}
+
+/* Searching: the dock's contents fade away and the search field takes the
+   whole dock. */
+.meet-toolbar.is-searching .meet-toolbar-main {
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.985);
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    transform 200ms var(--ease-out),
+    visibility 0s linear 160ms;
+}
+
+.meet-toolbar-find {
+  position: absolute;
+  inset: 8px;
   display: flex;
   align-items: center;
   gap: 8px;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(1.01);
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    transform 200ms var(--ease-out),
+    visibility 0s linear 160ms;
+}
+
+.meet-toolbar.is-searching .meet-toolbar-find {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity 220ms ease 80ms,
+    transform 260ms var(--ease-out) 80ms,
+    visibility 0s;
 }
 
 .meet-dock-search-field {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: min(300px, 46vw);
+  min-width: 0;
+  flex: 1;
   min-height: var(--meet-dock-button-height);
   padding-inline: 14px;
   border-radius: var(--meet-dock-button-radius);
@@ -5805,7 +5851,7 @@ html[data-theme="light"] .dropdown-compact-menu {
 }
 
 .meet-view > :not(.meet-view-head),
-.meet-view-head > :not(.meet-view-nav) {
+.meet-view .meet-view-head > :not(.meet-view-nav) {
   width: min(740px, 100%);
   margin-inline: auto;
 }
@@ -6830,6 +6876,12 @@ html[data-theme="light"] .meet-info-card {
 
 .meet-settings .meet-back {
   text-decoration: none;
+}
+
+.meet-settings .meet-view-head h1 {
+  font-size: 28px;
+  font-weight: 520;
+  letter-spacing: -0.03em;
 }
 
 .meet-settings-groups {
