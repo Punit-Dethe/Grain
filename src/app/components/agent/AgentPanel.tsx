@@ -882,7 +882,7 @@ export function AgentPanel() {
             </span>
           </span>
           <span className="agent-notch-spacer" />
-          {revealed && (
+          {revealed && (mode === "chat" || listing) && (
             <button
               type="button"
               className="agent-notch-control agent-notch-history"
