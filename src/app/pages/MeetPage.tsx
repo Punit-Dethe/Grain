@@ -603,7 +603,7 @@ function RecordingLead({
     const shown = Math.min(meeting.speaker_count, 3);
     return (
       <span
-        className="meet-lead-stack"
+        className={`meet-lead-stack${shown === 1 ? " is-single" : ""}`}
         role="img"
         aria-label={t("ui2.meet.list.speakers", {
           count: meeting.speaker_count,

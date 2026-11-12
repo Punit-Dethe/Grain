@@ -5813,6 +5813,18 @@ html[data-theme="light"] .dropdown-compact-menu {
   transition: box-shadow 0.15s ease;
 }
 
+/* A lone speaker is centred in the column and a touch larger, so it does not
+   look small beside the overlapping stacks. */
+.meet-lead-stack.is-single {
+  justify-content: center;
+}
+
+.meet-lead-stack.is-single .meet-avatar.is-stack {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
 .meet-avatar.is-stack + .meet-avatar.is-stack {
   margin-inline-start: -22px;
 }
