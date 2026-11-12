@@ -601,8 +601,9 @@ function RecordingLead({
     );
   }
   if (meeting.speaker_count > 0) {
-    // Always a stack of two or three avatars; the real count is on the top one.
-    const shown = Math.min(Math.max(meeting.speaker_count, 2), 3);
+    // Always the same stack of three (green, yellow, blue); the real speaker
+    // count is on the top one.
+    const shown = 3;
     return (
       <span
         className="meet-lead-stack"
