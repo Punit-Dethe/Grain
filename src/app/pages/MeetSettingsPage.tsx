@@ -51,7 +51,7 @@ export function MeetSettingsPage() {
         )}
 
         <div className="meet-settings-groups">
-          <SettingsGroup title={t("ui2.meet.settings.afterRecording")}>
+          <SettingsGroup>
             <ToggleSwitch
               label={t("ui2.meet.settings.autoTranscribe")}
               description={t("ui2.meet.settings.autoTranscribeDescription")}
@@ -60,8 +60,6 @@ export function MeetSettingsPage() {
               isUpdating={isUpdating("meet_auto_transcribe")}
               onChange={(value) => updateSetting("meet_auto_transcribe", value)}
             />
-          </SettingsGroup>
-          <SettingsGroup title={t("ui2.meet.settings.automatic")}>
             <ToggleSwitch
               label={t("ui2.meet.settings.autoSummary")}
               description={t("ui2.meet.settings.autoSummaryDescription")}
