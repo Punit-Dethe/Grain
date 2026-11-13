@@ -900,9 +900,10 @@ button.rem-time:hover {
   font-variant-numeric: tabular-nums;
 }
 
-/* Two weeks: a tile per day. The weekday sits small above a large date,
-   then the day's agenda: "• 6 PM Title", all-day items in a soft bar. */
-.rem-cal[data-view="weeks"] .rem-cal-day {
+/* Day tiles (both views). In two weeks the weekday sits small above a
+   large date, then the day's agenda: "• 6 PM Title", all-day items in a
+   soft bar. */
+.rem-cal-day {
   min-height: 128px;
   gap: 2px;
   padding: 10px 10px 11px;
@@ -911,20 +912,24 @@ button.rem-time:hover {
   background: var(--rem-card);
 }
 
-.rem-cal[data-view="weeks"] .rem-cal-day:hover {
+.rem-cal-day:hover {
   background: var(--rem-card-hover);
 }
 
-.rem-cal[data-view="weeks"] .rem-cal-day[data-past] {
+.rem-cal-day[data-past] {
   background: color-mix(in srgb, var(--rem-card) 45%, transparent);
 }
 
-.rem-cal[data-view="weeks"] .rem-cal-day[data-today] {
+.rem-cal-day[data-past]:hover {
+  background: var(--rem-card-hover);
+}
+
+.rem-cal-day[data-today] {
   border-color: color-mix(in srgb, var(--accent) 26%, transparent);
   background: color-mix(in srgb, var(--accent) 6%, var(--rem-card));
 }
 
-.rem-cal[data-view="weeks"] .rem-cal-day[aria-pressed="true"] {
+.rem-cal-day[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--text-1) 34%, transparent);
 }
 
@@ -950,11 +955,11 @@ button.rem-time:hover {
   letter-spacing: -0.02em;
 }
 
-.rem-cal[data-view="weeks"] .rem-cal-day[data-past] .rem-cal-date {
+.rem-cal-day[data-past] .rem-cal-date {
   color: var(--text-4);
 }
 
-.rem-cal[data-view="weeks"] .rem-cal-day[data-past] .rem-cal-agenda {
+.rem-cal-day[data-past] .rem-cal-agenda {
   opacity: 0.65;
 }
 
@@ -1033,34 +1038,31 @@ button.rem-time:hover {
   padding-left: 2px;
 }
 
-/* Month: a compact grid, the date centred over a row of dots. */
-.rem-cal[data-view="month"] .rem-cal-grid {
-  gap: 2px;
+/* Month: the same tiles, smaller, under a weekday row. The date sits top
+   left (today in a filled pill), then up to two entries. */
+.rem-cal[data-view="month"] .rem-cal-weekdays span {
+  padding-left: 10px;
+  text-align: left;
 }
 
 .rem-cal[data-view="month"] .rem-cal-day {
-  min-height: 46px;
-  align-items: center;
-  gap: 3px;
-  padding: 5px 2px 6px;
-}
-
-.rem-cal[data-view="month"] .rem-cal-day[aria-pressed="true"] {
-  background: var(--accent-soft-hover);
-}
-
-.rem-cal[data-view="month"] .rem-cal-day-top {
-  justify-content: center;
+  min-height: 98px;
+  gap: 6px;
+  padding: 7px 8px 8px;
+  border-radius: 12px;
 }
 
 .rem-cal[data-view="month"] .rem-cal-date {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
+  min-width: 24px;
+  height: 24px;
+  margin-left: -3px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: var(--text-1);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 620;
 }
 
 .rem-cal[data-view="month"] .rem-cal-day[data-past] .rem-cal-date {
@@ -1072,39 +1074,17 @@ button.rem-time:hover {
   background: var(--accent);
 }
 
-.rem-cal[data-view="month"] .rem-cal-recorded-mark {
-  position: absolute;
-  top: 6px;
-  right: 7px;
-}
-
-.rem-cal[data-view="month"] .rem-cal-recorded-mark .icon {
-  width: 10px;
-  height: 10px;
-}
-
-.rem-cal-dots {
-  display: flex;
-  justify-content: center;
-  gap: 3px;
-  height: 5px;
-}
-
-.rem-cal-item {
-  display: flex;
-}
-
-.rem-cal-item[data-meeting] .rem-cal-dot {
-  border-radius: 1.5px;
-}
-
-.rem-cal-item[data-status="ringing"] .rem-cal-dot {
-  background: var(--rem-ring);
-}
-
-.rem-cal-item[data-status="done"] .rem-cal-dot {
+/* Days of the next or last month: ghost tiles. */
+.rem-cal[data-view="month"] .rem-cal-day[data-outside] {
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--text-4);
+}
+
+.rem-cal[data-view="month"] .rem-cal-agenda {
+  gap: 4px;
+}
+
+.rem-cal[data-view="month"] .rem-cal-entry {
+  font-size: 11px;
 }
 
 /* A day's sheet, floating over the calendar under its cell. */
@@ -1356,5 +1336,16 @@ button.rem-time:hover {
   .rem-cal-entry-time,
   .rem-cal-agenda .rem-cal-more {
     display: none;
+  }
+  .rem-cal[data-view="month"] .rem-cal-day {
+    min-height: 60px;
+    padding: 5px 4px;
+  }
+  .rem-cal[data-view="month"] .rem-cal-entry-title {
+    display: none;
+  }
+  .rem-cal[data-view="month"] .rem-cal-entry[data-allday] {
+    height: 4px;
+    padding: 0;
   }
 }

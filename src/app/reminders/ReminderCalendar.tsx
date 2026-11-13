@@ -29,10 +29,8 @@ import {
 const SHEET_WIDTH = 320;
 /** Weeks the default view shows. */
 const SPAN_WEEKS = 2;
-/** Entries a two-week day cell lists before "+N more". */
-const WEEK_ITEMS = 3;
-/** Dots a month cell draws before it stops counting. */
-const MONTH_DOTS = 3;
+/** Entries a day tile lists before "+N more", per view. */
+const TILE_ITEMS = { weeks: 3, month: 2 } as const;
 const VIEW_KEY = "grain.reminders.calendarView";
 
 type View = "weeks" | "month";
@@ -441,6 +439,7 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
           const items = byDay.get(day) ?? [];
           const recorded = recordedDays.get(day) ?? 0;
           const outside = view === "month" && !day.startsWith(monthKey);
+          const limit = TILE_ITEMS[view];
           const date = parseIsoDay(day);
           const summary = [
             items.length ? plural(items.length, "reminder", "reminders") : "",
@@ -470,7 +469,7 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
               onClick={(event) => openDay(day, event.currentTarget)}
             >
               <span className="rem-cal-day-top">
-                {view === "weeks" && (
+                {view === "weeks" ? (
                   <span className="rem-cal-wd">
                     {day === today
                       ? "Today"
@@ -480,63 +479,47 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
                     {date.getDate() === 1 &&
                       ` · ${date.toLocaleDateString(undefined, { month: "short" })}`}
                   </span>
-                )}
-                {view === "month" && (
+                ) : (
                   <span className="rem-cal-date">{date.getDate()}</span>
                 )}
                 {recorded > 0 && (
                   <span className="rem-cal-recorded-mark">
                     <Glyph name="mic" />
-                    {view === "weeks" && recorded > 1 && recorded}
+                    {recorded > 1 && recorded}
                   </span>
                 )}
               </span>
               {view === "weeks" && (
                 <span className="rem-cal-date">{date.getDate()}</span>
               )}
-              {view === "weeks"
-                ? items.length > 0 && (
-                    <span className="rem-cal-agenda">
-                      {items.slice(0, WEEK_ITEMS).map((reminder) => (
-                        <span
-                          key={reminder.id}
-                          className="rem-cal-entry"
-                          data-status={reminder.status}
-                          data-allday={reminder.time ? undefined : ""}
-                          data-meeting={isMeeting(reminder) ? "" : undefined}
-                        >
-                          {reminder.time && <span className="rem-cal-dot" />}
-                          {reminder.time && (
-                            <span className="rem-cal-entry-time">
-                              {shortTime(reminder.time)}
-                            </span>
-                          )}
-                          <span className="rem-cal-entry-title">
-                            {reminder.title}
-                          </span>
-                        </span>
-                      ))}
-                      {items.length > WEEK_ITEMS && (
-                        <span className="rem-cal-more">
-                          +{items.length - WEEK_ITEMS} more
+              {items.length > 0 && (
+                <span className="rem-cal-agenda">
+                  {items.slice(0, limit).map((reminder) => (
+                    <span
+                      key={reminder.id}
+                      className="rem-cal-entry"
+                      data-status={reminder.status}
+                      data-allday={reminder.time ? undefined : ""}
+                      data-meeting={isMeeting(reminder) ? "" : undefined}
+                    >
+                      {reminder.time && <span className="rem-cal-dot" />}
+                      {reminder.time && (
+                        <span className="rem-cal-entry-time">
+                          {shortTime(reminder.time)}
                         </span>
                       )}
+                      <span className="rem-cal-entry-title">
+                        {reminder.title}
+                      </span>
                     </span>
-                  )
-                : items.length > 0 && (
-                    <span className="rem-cal-dots">
-                      {items.slice(0, MONTH_DOTS).map((reminder) => (
-                        <span
-                          key={reminder.id}
-                          className="rem-cal-item"
-                          data-status={reminder.status}
-                          data-meeting={isMeeting(reminder) ? "" : undefined}
-                        >
-                          <span className="rem-cal-dot" />
-                        </span>
-                      ))}
+                  ))}
+                  {items.length > limit && (
+                    <span className="rem-cal-more">
+                      +{items.length - limit} more
                     </span>
                   )}
+                </span>
+              )}
             </button>
           );
         })}
