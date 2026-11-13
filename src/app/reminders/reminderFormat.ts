@@ -103,6 +103,52 @@ export function linkLabel(url: string): string {
   }
 }
 
+export interface LinkInfo {
+  /** "Google Meet", or the host for an ordinary page. */
+  name: string;
+  /** The rest worth showing: "meet.google.com/abc-defg-hij", a page path. */
+  detail: string;
+  /** A call to join, a web page, or an app link. */
+  kind: "meeting" | "web" | "app";
+}
+
+const MEETING_HOSTS: Array<[RegExp, string]> = [
+  [/(^|\.)meet\.google\.com$/, "Google Meet"],
+  [/(^|\.)zoom\.us$/, "Zoom"],
+  [/(^|\.)teams\.(microsoft|live)\.com$/, "Microsoft Teams"],
+  [/(^|\.)webex\.com$/, "Webex"],
+  [/(^|\.)whereby\.com$/, "Whereby"],
+  [/(^|\.)gotomeeting\.com$/, "GoTo Meeting"],
+];
+
+const MEETING_SCHEMES: Record<string, string> = {
+  zoommtg: "Zoom",
+  zoomus: "Zoom",
+  msteams: "Microsoft Teams",
+};
+
+/** How a reminder link reads: a named meeting, a page, or an app link. */
+export function linkInfo(url: string): LinkInfo {
+  try {
+    const parsed = new URL(url);
+    const scheme = parsed.protocol.replace(/:$/, "");
+    if (scheme === "http" || scheme === "https") {
+      const host = parsed.hostname.replace(/^www\./, "");
+      const rest = `${parsed.pathname}${parsed.search}`.replace(/^\/$/, "");
+      const meeting = MEETING_HOSTS.find(([pattern]) => pattern.test(host));
+      if (meeting) {
+        return { name: meeting[1], detail: `${host}${rest}`, kind: "meeting" };
+      }
+      return { name: host, detail: decodeURI(rest), kind: "web" };
+    }
+    const meeting = MEETING_SCHEMES[scheme];
+    if (meeting) return { name: meeting, detail: url, kind: "meeting" };
+    return { name: scheme, detail: url.slice(scheme.length + 1), kind: "app" };
+  } catch {
+    return { name: url, detail: "", kind: "web" };
+  }
+}
+
 const byDue = (a: Reminder, b: Reminder) =>
   a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "");
 

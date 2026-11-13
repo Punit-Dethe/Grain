@@ -6,6 +6,7 @@ import {
   groupReminders,
   isMissed,
   isoDay,
+  linkInfo,
   linkLabel,
 } from "./reminderFormat";
 
@@ -71,6 +72,23 @@ describe("reminder formatting", () => {
     expect(dueInstant(reminder("2026-11-13", null)).getHours()).toBe(9);
     expect(isMissed(reminder("2026-11-13", "14:59"), now)).toBe(false);
     expect(isMissed(reminder("2026-11-13", "09:00"), now)).toBe(true);
+  });
+
+  it("names meeting links and keeps page paths", () => {
+    expect(linkInfo("https://meet.google.com/abc-defg-hij")).toEqual({
+      name: "Google Meet",
+      detail: "meet.google.com/abc-defg-hij",
+      kind: "meeting",
+    });
+    expect(linkInfo("https://us02web.zoom.us/j/123").name).toBe("Zoom");
+    expect(linkInfo("https://www.figma.com/file/x?y=1")).toEqual({
+      name: "figma.com",
+      detail: "/file/x?y=1",
+      kind: "web",
+    });
+    expect(linkInfo("https://example.com/").detail).toBe("");
+    expect(linkInfo("zoommtg://zoom.us/join?confno=1").kind).toBe("meeting");
+    expect(linkInfo("spotify:track:1").kind).toBe("app");
   });
 
   it("shows a short host for links", () => {
