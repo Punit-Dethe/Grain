@@ -254,6 +254,8 @@ const settingUpdaters: {
     commands.changeAgentTalkBackSetting(value as boolean),
   agent_compact_voice: (value) =>
     commands.changeAgentCompactVoiceSetting(value as boolean),
+  reach_enabled: (value) =>
+    commands.changeReachEnabledSetting(value as boolean),
   meet_auto_summary: (value) =>
     commands.changeMeetAutoSummarySetting(value as boolean),
   meet_auto_transcribe: (value) =>

@@ -639,6 +639,18 @@ async changeAgentCompactVoiceSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
+ * [GRAIN] Turn Reach on or off (Extensions page). Off removes its tools from
+ * the Agent on the next model round; a running call finishes.
+ */
+async changeReachEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_reach_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
  * by default; see `Settings::meet_auto_summary`.
  */
@@ -2220,6 +2232,12 @@ agent_talk_back?: boolean;
  * talk-back.
  */
 agent_compact_voice?: boolean;
+/**
+ * [GRAIN] Reach: the Agent's first-party OS tools (open links, apps and
+ * app pages, type into the focused field, press Enter, media, settings).
+ * OFF by default; off removes Reach from the Agent's tool directory.
+ */
+reach_enabled?: boolean; 
 /**
  * [GRAIN] Recall: write a summary of each meeting as soon as its transcript
  * is published, through the configured AI provider. OFF by default while

@@ -805,6 +805,11 @@ pub struct AppSettings {
     /// talk-back.
     #[serde(default = "default_true")]
     pub agent_compact_voice: bool,
+    /// [GRAIN] Reach: the Agent's first-party OS tools (open links, apps and
+    /// app pages, type into the focused field, press Enter, media, settings).
+    /// OFF by default; off removes Reach from the Agent's tool directory.
+    #[serde(default)]
+    pub reach_enabled: bool,
     /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
     /// is published, through the configured AI provider. OFF by default while
     /// the feature is in development; off costs nothing.
@@ -1613,6 +1618,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_screen_image: false,
         agent_talk_back: false,
         agent_compact_voice: true,
+        reach_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,
         meet_auto_title: false,

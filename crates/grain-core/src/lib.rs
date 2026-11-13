@@ -61,3 +61,7 @@ pub mod tool_schema;
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{DaemonEvent, SessionMode};
 pub use settings::{AppSettings, PostProcessProvider, SecretMap};
+// [GRAIN] Reach — the Agent's first-party OS tools (docs/Reach/PLAN.md). Pure:
+// tool schemas, argument parsing, the link policy and every URL Reach builds.
+// The desktop crate owns the OS adapters.
+pub mod reach;

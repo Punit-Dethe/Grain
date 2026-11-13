@@ -67,6 +67,7 @@ mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebVi
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
+mod grain_reach; // [GRAIN] Reach: the Agent's first-party OS tools (links, apps, typing, keys, media)
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
 
 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
@@ -1394,6 +1395,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
             grain_commands::change_agent_compact_voice_setting, // [GRAIN]
+            grain_reach::change_reach_enabled_setting, // [GRAIN] Reach on/off
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
             grain_commands::change_meet_auto_title_setting,   // [GRAIN]
             grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]

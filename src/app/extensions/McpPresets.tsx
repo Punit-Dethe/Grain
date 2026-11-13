@@ -6,9 +6,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Box } from "lucide-react";
+import { AppWindow, Box } from "lucide-react";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
+import { useSettings } from "@/hooks/useSettings";
 import {
   filterExtensions,
   signInCancelled,
@@ -67,6 +68,28 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["todoist", { src: todoistIcon }],
   ["zapier", { src: zapierIcon }],
 ]);
+
+/**
+ * Reach is Grain's own Agent tool set, not an MCP server. It is listed with
+ * the no-account extensions and switched by its setting.
+ */
+const REACH_ID = "reach";
+
+function reachRow(enabled: boolean): McpProviderStatus {
+  return {
+    id: REACH_ID,
+    name: "Reach",
+    description:
+      "Lets the Agent open links, apps and app pages, type into the focused field, press Enter, and control media and volume. No mouse control.",
+    endpoint: "",
+    setup_url: "",
+    requires_client_credentials: false,
+    client_id_configured: false,
+    connected: false,
+    enabled,
+    state: "no_account",
+  };
+}
 
 /** Extensions without an account are added and removed, not signed in to. */
 const noAccount = (row: McpProviderStatus) => row.state === "no_account";
@@ -159,12 +182,23 @@ export function McpPresets({
     }
   };
 
-  const visible = filterExtensions(rows ?? [], query);
+  const { getSetting, updateSetting } = useSettings();
+  const reachEnabled = getSetting("reach_enabled") ?? false;
+  const listed = rows
+    ? [...rows, reachRow(reachEnabled)].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      )
+    : [];
+  const visible = filterExtensions(listed, query);
   const connected = visible.filter(added);
   const available = visible.filter((row) => !added(row));
 
   const setEnabled = (row: McpProviderStatus, enabled: boolean) =>
     run(row.id, async () => {
+      if (row.id === REACH_ID) {
+        await updateSetting("reach_enabled", enabled);
+        return;
+      }
       unwrapResult(await commands.mcpSetProviderEnabled(row.id, enabled));
     });
 
@@ -226,7 +260,7 @@ export function McpPresets({
           </>
         ) : (
           <span className="mcp-preset-icon" aria-hidden="true">
-            <Box size={17} />
+            {row.id === REACH_ID ? <AppWindow size={17} /> : <Box size={17} />}
           </span>
         )}
         <div>

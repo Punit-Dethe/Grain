@@ -449,6 +449,7 @@ fn summon_inner(app: &AppHandle) {
         let state = app.state::<AgentState>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
         let hwnd = foreground_hwnd();
+        crate::grain_reach::remember_summon_target(hwnd);
         let start_guard = crate::grain_actions::capture_start_guard();
         let summon_gen = {
             if blocks_dictation(&app) || rm.is_recording() {
@@ -1026,6 +1027,9 @@ pub(crate) fn cancel_prewarm(app: &AppHandle) {
 
 /// Show the hand-opened notch (pre-created or not). Main loop only.
 pub(crate) fn open_notch(app: &AppHandle) {
+    // A hand-opened chat types into the app that was in front, not into
+    // whatever an older summon left behind.
+    crate::grain_reach::remember_summon_target(foreground_hwnd());
     let state = app.state::<AgentState>();
     if app.get_webview_window(PANEL_LABEL).is_none() {
         prewarm_open(app);

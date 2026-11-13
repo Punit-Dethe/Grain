@@ -185,6 +185,7 @@ pub(crate) async fn run_agent_calls(
 ) -> Vec<ActionOutcome> {
     let mut outcomes: Vec<Option<ActionOutcome>> = prepared.iter().map(|_| None).collect();
     let mut mcp: std::collections::BTreeMap<String, Vec<usize>> = Default::default();
+    let mut reach = Vec::new();
     for (index, call) in prepared.iter().enumerate() {
         log::info!(
             "[GRAIN] agent-tool-trace {}",
@@ -193,6 +194,18 @@ pub(crate) async fn run_agent_calls(
                 "risk": call.risk, "side_effect": call.side_effect,
             })
         );
+        if call.extension_id == crate::grain_reach::EXTENSION_ID {
+            match current_manifest_digest(app, call) {
+                Some(digest) if call.still_valid(&digest, now_ms()).is_ok() => reach.push(index),
+                _ => {
+                    outcomes[index] = Some(failed(
+                        FailureClass::Cancelled,
+                        "Reach was turned off or changed before the action could run.",
+                    ))
+                }
+            }
+            continue;
+        }
         let Some(provider_id) = call.extension_id.strip_prefix("mcp.") else {
             outcomes[index] = Some(failed(
                 FailureClass::NotFound,
@@ -228,11 +241,22 @@ pub(crate) async fn run_agent_calls(
             .map(|(index, result)| (index, mcp_outcome(result, &prepared[index])))
             .collect::<Vec<_>>()
     });
-    for (index, outcome) in futures_util::future::join_all(mcp_groups)
-        .await
-        .into_iter()
-        .flatten()
-    {
+    // Reach acts on whatever window is in front, so its calls run one after
+    // another, in the order the model wrote them, alongside the MCP batches.
+    let reach_run = async {
+        let mut done = Vec::with_capacity(reach.len());
+        for index in reach {
+            let call = &prepared[index];
+            done.push((
+                index,
+                crate::grain_reach::call(app, &call.action_id, &call.arguments).await,
+            ));
+        }
+        done
+    };
+    let (mcp_done, reach_done) =
+        futures_util::future::join(futures_util::future::join_all(mcp_groups), reach_run).await;
+    for (index, outcome) in mcp_done.into_iter().flatten().chain(reach_done) {
         outcomes[index] = Some(outcome);
     }
     outcomes
@@ -279,6 +303,11 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
 /// Check that the MCP connection is still enabled. The transport verifies the
 /// loaded tool digest again before dispatch on the same short-lived service.
 fn current_manifest_digest(app: &AppHandle, prepared: &PreparedCall) -> Option<String> {
+    if prepared.extension_id == crate::grain_reach::EXTENSION_ID {
+        // Compiled in: the digest only changes with a new build.
+        return crate::grain_reach::is_enabled(app)
+            .then(grain_core::reach::catalog_digest);
+    }
     crate::grain_mcp::is_enabled_extension(app, &prepared.extension_id)
         .then(|| prepared.manifest_digest.clone())
 }
@@ -303,6 +332,9 @@ async fn execute_revalidated(app: &AppHandle, prepared: &PreparedCall) -> Action
 
 /// Execute a prepared call against its provider.
 async fn execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
+    if prepared.extension_id == crate::grain_reach::EXTENSION_ID {
+        return crate::grain_reach::call(app, &prepared.action_id, &prepared.arguments).await;
+    }
     if let Some(provider_id) = prepared.extension_id.strip_prefix("mcp.") {
         mcp_execute(app, provider_id, prepared).await
     } else {

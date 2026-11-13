@@ -105,6 +105,7 @@ fn empty_session(
 
 pub fn open(app: &AppHandle, reserved_names: &[String]) -> Opened {
     let mut directory = crate::grain_mcp::directory(app);
+    directory.extend(crate::grain_reach::directory(app));
     directory.sort_by(|a, b| a.extension_id.cmp(&b.extension_id));
     directory.dedup_by(|a, b| a.extension_id == b.extension_id);
     let session = empty_session(&directory, reserved_names);
@@ -137,9 +138,38 @@ pub fn specs(session: &CapabilitySession) -> Vec<ToolSpec> {
 }
 
 pub fn prune_disabled(app: &AppHandle, session: &mut CapabilitySession) {
-    retain_extensions(session, |id| {
-        crate::grain_mcp::is_enabled_extension(app, id)
-    });
+    retain_extensions(session, |id| extension_enabled(app, id));
+}
+
+/// Whether an Agent tool provider is on: an MCP connection or Reach.
+pub(crate) fn extension_enabled(app: &AppHandle, extension_id: &str) -> bool {
+    if extension_id == crate::grain_reach::EXTENSION_ID {
+        crate::grain_reach::is_enabled(app)
+    } else {
+        crate::grain_mcp::is_enabled_extension(app, extension_id)
+    }
+}
+
+/// Reach's compiled catalogue in the shape MCP catalogues take.
+fn reach_catalog() -> Catalog {
+    let (digest, tools) = crate::grain_reach::catalog();
+    let entries = tools
+        .into_iter()
+        .map(|tool| {
+            let selected = SessionAction {
+                spec: ToolSpec {
+                    name: capability_agent::tool_name(&tool.action.canonical_id),
+                    description: tool.description,
+                    parameters: tool.parameters,
+                },
+                provider_id: crate::grain_reach::EXTENSION_ID.to_string(),
+                provider_name: tool.action.provider_name.clone(),
+                tool_name: tool.action.action_id.clone(),
+            };
+            (tool.action, selected)
+        })
+        .collect();
+    Catalog { digest, entries }
 }
 
 fn retain_extensions(session: &mut CapabilitySession, enabled: impl Fn(&str) -> bool) {
@@ -255,6 +285,10 @@ async fn fetch_catalog(
     extension_id: &str,
     deadline: Option<tokio::time::Instant>,
 ) -> Result<Catalog, String> {
+    if extension_id == crate::grain_reach::EXTENSION_ID {
+        // Compiled in: no connection, no deadline to miss.
+        return Ok(reach_catalog());
+    }
     if deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
         return Err("Catalogue preparation deadline elapsed; use recovery search.".into());
     }
@@ -865,9 +899,14 @@ fn prepare_action(
     };
     let arguments = parse_mcp_arguments(arguments_json, &session_action.spec.parameters)
         .map_err(|error| ToolResult::Text(format!("The action arguments are invalid: {error}.")))?;
+    let extension_id = if session_action.provider_id == crate::grain_reach::EXTENSION_ID {
+        crate::grain_reach::EXTENSION_ID.to_string()
+    } else {
+        format!("mcp.{}", session_action.provider_id)
+    };
     Ok(crate::action_exec::prepare(
         canonical,
-        &format!("mcp.{}", session_action.provider_id),
+        &extension_id,
         &session_action.tool_name,
         &session_action.provider_name,
         arguments,
