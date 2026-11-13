@@ -19,6 +19,25 @@ required-features = ["agent-harness"]
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
 
+# [GRAIN] Agent talk-back TTS: unoptimized tensor maths is ~60x slower (16 s to
+# first audio, 0.1x real time), so dev builds optimize the voice stack too.
+[profile.dev.package.ptts]
+opt-level = 3
+[profile.dev.package.xn]
+opt-level = 3
+[profile.dev.package.xn-gemm]
+opt-level = 3
+[profile.dev.package.xn-gemm-common]
+opt-level = 3
+[profile.dev.package.xn-gemm-f32]
+opt-level = 3
+[profile.dev.package.xn-gemm-f16]
+opt-level = 3
+[profile.dev.package.pulp]
+opt-level = 3
+[profile.dev.package.tokenizers]
+opt-level = 3
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]

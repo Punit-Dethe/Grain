@@ -116,12 +116,13 @@ pub(crate) fn speak(app: &AppHandle, reply: &str) {
         ensure_installed(app);
         return;
     }
+    info!("[GRAIN] talk-back: speaking {} chars", text.chars().count());
     let spawned = std::thread::Builder::new()
         .name("grain-tts".into())
         .spawn(move || {
             let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
             if GENERATION.load(Ordering::SeqCst) != generation {
-                return;
+                return info!("[GRAIN] talk-back: replaced before it started");
             }
             if let Err(e) = say(&dir, &text, generation) {
                 warn!("[GRAIN] talk-back failed: {e}");
@@ -157,6 +158,7 @@ fn say(dir: &Path, text: &str, generation: u64) -> Result<(), String> {
     checkpoint.register_voices(&mut tts);
     let loaded = started.elapsed();
     if !current() {
+        info!("[GRAIN] talk-back: stopped while loading");
         return Ok(());
     }
 
@@ -178,6 +180,11 @@ fn say(dir: &Path, text: &str, generation: u64) -> Result<(), String> {
     for chunk in stream {
         if !current() {
             player.stop();
+            info!(
+                "[GRAIN] talk-back: stopped after {} ms ({:.1} s spoken)",
+                started.elapsed().as_millis(),
+                seconds
+            );
             return Ok(());
         }
         let pcm = chunk.map_err(|e| format!("speech failed: {e}"))?;
