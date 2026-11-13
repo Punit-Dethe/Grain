@@ -65,6 +65,8 @@ static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// One voice at a time: a new reply waits for the previous worker to exit, so
 /// two models are never loaded together.
 static SPEAKING: Mutex<()> = Mutex::new(());
+/// Id of the newest speech whose worker is still alive (0 = none).
+static LIVE: AtomicU64 = AtomicU64::new(0);
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
 fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -95,34 +97,47 @@ pub(crate) fn stop() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 
+/// The id of the speech playing right now, if any — for a notch opened while
+/// the voice is still talking (it missed the start event).
+pub(crate) fn current_speech() -> Option<u64> {
+    let live = LIVE.load(Ordering::SeqCst);
+    (live != 0 && live == GENERATION.load(Ordering::SeqCst)).then_some(live)
+}
+
 /// Read an Agent reply aloud when talk-back is on. Returns immediately; the
 /// work runs on its own short-lived thread. Before the voice is installed it
 /// starts the download and stays silent for this reply.
 ///
-/// Returns whether speech started. Only then is `on_end` called — once, on the
-/// worker thread, however the speech ends (finished, stopped or failed).
-pub(crate) fn speak(app: &AppHandle, reply: &str, on_end: impl FnOnce() + Send + 'static) -> bool {
+/// Returns the speech's id when it started. Only then is `on_end` called with
+/// that id — once, on the worker thread, however the speech ends (finished,
+/// stopped or failed).
+pub(crate) fn speak(
+    app: &AppHandle,
+    reply: &str,
+    on_end: impl FnOnce(u64) + Send + 'static,
+) -> Option<u64> {
     if !crate::settings::get_settings(app).agent_talk_back {
-        return false;
+        return None;
     }
     let text = speakable(reply);
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     if text.is_empty() {
-        return false;
+        return None;
     }
     let dir = match model_dir(app) {
         Ok(dir) => dir,
         Err(e) => {
             warn!("[GRAIN] talk-back: no model folder: {e}");
-            return false;
+            return None;
         }
     };
     if !installed(&dir) {
         info!("[GRAIN] talk-back: voice not installed yet; downloading");
         ensure_installed(app);
-        return false;
+        return None;
     }
     info!("[GRAIN] talk-back: speaking {} chars", text.chars().count());
+    LIVE.store(generation, Ordering::SeqCst);
     let spawned = std::thread::Builder::new()
         .name("grain-tts".into())
         .spawn(move || {
@@ -134,13 +149,15 @@ pub(crate) fn speak(app: &AppHandle, reply: &str, on_end: impl FnOnce() + Send +
                     warn!("[GRAIN] talk-back failed: {e}");
                 }
             }
-            on_end();
+            let _ = LIVE.compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
+            on_end(generation);
         });
     match spawned {
-        Ok(_) => true,
+        Ok(_) => Some(generation),
         Err(e) => {
+            let _ = LIVE.compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
             warn!("[GRAIN] talk-back: could not start: {e}");
-            false
+            None
         }
     }
 }

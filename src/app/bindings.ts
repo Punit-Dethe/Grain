@@ -1090,6 +1090,13 @@ async agentPresentReply(generation: number) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Stop reading the reply aloud; the notch stays as it is (a compact
+ * one retracts, as it does when speech ends).
+ */
+async agentStopSpeech() : Promise<void> {
+    await TAURI_INVOKE("agent_stop_speech");
+},
+/**
  * [GRAIN] Open the capture notch to full size before its first reply: while
  * listening or working, the user hovers or clicks it to see the chat. The
  * request is untouched; its reply lands in the open chat (and
@@ -2068,11 +2075,15 @@ shown: boolean;
 /**
  * A chat request from an earlier open is still running.
  */
-chat_busy: boolean;
+chat_busy: boolean; 
 /**
  * The first reply is being read aloud with the notch kept compact.
  */
-speaking: boolean }
+speaking: boolean; 
+/**
+ * The speech playing now (any notch state): its Stop button's id.
+ */
+voice: number | null }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */
@@ -2234,14 +2245,14 @@ agent_screen_image?: boolean;
  * Phonon voice (`grain_tts`). OFF by default; off costs nothing — no model
  * is downloaded or loaded.
  */
-agent_talk_back?: boolean;
+agent_talk_back?: boolean; 
 /**
  * [GRAIN] With talk-back on, a spoken first reply keeps the notch compact
  * (a blue speaking bar) instead of opening it; hover or click opens it,
  * and it retracts when the voice ends. ON by default; inert without
  * talk-back.
  */
-agent_compact_voice?: boolean;
+agent_compact_voice?: boolean; 
 /**
  * [GRAIN] Reach: the Agent's first-party OS tools (open links, apps and
  * app pages, type into the focused field, press Enter, media, settings).

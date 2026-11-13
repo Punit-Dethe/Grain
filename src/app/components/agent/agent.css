@@ -938,10 +938,21 @@ html[data-window="agent-panel"] body {
   }
 
   .agc-c-turn:hover .agc-c-tools,
-  .agc-c-turn:focus-within .agc-c-tools {
+  .agc-c-turn:focus-within .agc-c-tools,
+  .agc-c-turn.is-speaking .agc-c-tools {
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+/* Talk-back: always visible while the reply is read aloud, in the speaking
+   sliver's blue. */
+.agc-c-tool.agc-c-stop-speech {
+  color: #6cb6ff;
+}
+
+.agc-c-tool.agc-c-stop-speech:hover {
+  color: #a9d6ff;
 }
 
 .agc-confirm-actions {

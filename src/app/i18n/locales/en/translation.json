@@ -67,6 +67,7 @@
     },
     "processing": "PROCESSING",
     "copyReply": "COPY REPLY",
+    "stopSpeaking": "Stop speaking",
     "copied": "COPIED ✓",
     "autoCopied": "AUTO-COPIED · READY TO PASTE",
     "followupPlaceholder": "Follow up…",

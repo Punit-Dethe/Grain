@@ -9,6 +9,7 @@ import {
   Check,
   Square,
   SquarePen,
+  VolumeX,
   History as HistoryIcon,
 } from "lucide-react";
 import {
@@ -113,6 +114,8 @@ export function AgentPanel() {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [flashedId, setFlashedId] = useState<string | null>(null);
+  // Talk-back: the reply being read aloud, by speech id (null = silent).
+  const [speechId, setSpeechId] = useState<number | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   // True once the shell has finished growing; the compact status (and its
@@ -332,6 +335,8 @@ export function AgentPanel() {
     let listeningGeneration: number | null = null;
     let workingGeneration: number | null = null;
     let speakingGeneration: number | null = null;
+    // Ids only grow, so a start that arrives after its own end is ignored.
+    let lastEndedSpeech = 0;
     void Promise.all([
       win
         .listen<number>("agent-listening", ({ payload }) => {
@@ -363,6 +368,22 @@ export function AgentPanel() {
               : current,
           );
         })
+        .then(track),
+      // Talk-back started or ended: the reply's Stop button follows it.
+      win
+        .listen<{ id: number; active: boolean }>(
+          "agent-speech",
+          ({ payload }) => {
+            if (payload.active) {
+              if (payload.id > lastEndedSpeech) setSpeechId(payload.id);
+            } else {
+              lastEndedSpeech = Math.max(lastEndedSpeech, payload.id);
+              setSpeechId((current) =>
+                current === payload.id ? null : current,
+              );
+            }
+          },
+        )
         .then(track),
       // A turn left running by an earlier open finished: show its reply.
       win
@@ -451,6 +472,9 @@ export function AgentPanel() {
           working: status.working || workingGeneration === status.generation,
           speaking: status.speaking || speakingGeneration === status.generation,
         });
+        // Opened while the voice is still talking: offer its Stop button.
+        if (status.voice !== null && status.voice > lastEndedSpeech)
+          setSpeechId((current) => current ?? status.voice);
         await startFirstIfQueued();
       })
       .catch(console.error);
@@ -853,6 +877,17 @@ export function AgentPanel() {
           : []),
       ];
   const canRetry = !hasFollowups && !busy && !firstReply?.confirm_action;
+  // Talk-back reads the newest reply; its Stop button sits on that reply.
+  const speakingId =
+    speechId === null
+      ? null
+      : ([...thread, ...(thread.length ? [] : history)]
+          .reverse()
+          .find((m) => m.role === "assistant" && m.content.trim())?.id ?? null);
+  const stopSpeech = useCallback(() => {
+    setSpeechId(null);
+    void commands.agentStopSpeech().catch(console.error);
+  }, []);
   const listing = revealed && view === "history";
   const recall = revealed && mode === "recall" && !listing;
   const canClear = !busy && (history.length > 0 || thread.length > 0);
@@ -1026,7 +1061,10 @@ export function AgentPanel() {
           >
             <div className="agc-c-scroll">
               {history.map((m) => (
-                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                <div
+                  key={m.id}
+                  className={`agc-c-turn is-${m.role}${speakingId === m.id ? " is-speaking" : ""}`}
+                >
                   {m.role === "user" ? (
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
@@ -1035,6 +1073,17 @@ export function AgentPanel() {
                         <AgentMarkdown markdown={m.content} />
                       </div>
                       <div className="agc-c-tools">
+                        {speakingId === m.id && (
+                          <button
+                            type="button"
+                            className="agc-c-tool agc-c-stop-speech"
+                            onClick={stopSpeech}
+                            aria-label={t("agent.stopSpeaking")}
+                            title={t("agent.stopSpeaking")}
+                          >
+                            <VolumeX size={13} />
+                          </button>
+                        )}
                         <button
                           type="button"
                           className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
@@ -1070,7 +1119,10 @@ export function AgentPanel() {
               )}
 
               {thread.map((m) => (
-                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                <div
+                  key={m.id}
+                  className={`agc-c-turn is-${m.role}${speakingId === m.id ? " is-speaking" : ""}`}
+                >
                   {m.role === "user" ? (
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
@@ -1081,6 +1133,17 @@ export function AgentPanel() {
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
                       {m.content.trim() && (
                         <div className="agc-c-tools">
+                          {speakingId === m.id && (
+                            <button
+                              type="button"
+                              className="agc-c-tool agc-c-stop-speech"
+                              onClick={stopSpeech}
+                              aria-label={t("agent.stopSpeaking")}
+                              title={t("agent.stopSpeaking")}
+                            >
+                              <VolumeX size={13} />
+                            </button>
+                          )}
                           <button
                             type="button"
                             className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}

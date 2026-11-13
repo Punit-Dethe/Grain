@@ -1471,6 +1471,8 @@ pub struct AgentNotchStatus {
     chat_busy: bool,
     /// The first reply is being read aloud with the notch kept compact.
     speaking: bool,
+    /// The speech playing now (any notch state): its Stop button's id.
+    voice: Option<u64>,
 }
 
 #[tauri::command]
@@ -1487,6 +1489,7 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
             && state.dictation_capture.lock().unwrap().is_some(),
         working: reply_wait_is_current(&app, generation),
         speaking: generation != 0 && state.compact_speech.load(Ordering::SeqCst) == generation,
+        voice: crate::grain_tts::current_speech(),
     }
 }
 
@@ -1543,6 +1546,21 @@ fn compact_speech_current(app: &AppHandle) -> Option<u64> {
     .then_some(generation)
 }
 
+/// [GRAIN] `agent-speech` payload: a reply started or stopped being read aloud.
+#[derive(Clone, Serialize)]
+struct AgentSpeech {
+    id: u64,
+    active: bool,
+}
+
+/// [GRAIN] Stop reading the reply aloud; the notch stays as it is (a compact
+/// one retracts, as it does when speech ends).
+#[tauri::command]
+#[specta::specta]
+pub fn agent_stop_speech() {
+    crate::grain_tts::stop();
+}
+
 /// [GRAIN] Talk-back for a reply. A first reply that will be spoken, with
 /// `agent_compact_voice` on, keeps the notch compact (`agent_present_reply`
 /// then shows the speaking bar instead of growing). Must run before the reply
@@ -1558,8 +1576,16 @@ fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
         state.compact_speech.store(summon, Ordering::SeqCst);
     }
     let handle = app.clone();
-    let speaking = crate::grain_tts::speak(app, text, move || speech_ended(&handle, summon));
-    if compact && !speaking {
+    // The panel's Stop button follows these two events, matched by id so a
+    // replaced speech's late end never hides the newer one's button.
+    let id = crate::grain_tts::speak(app, text, move |id| {
+        let _ = handle.emit_to(PANEL_LABEL, "agent-speech", AgentSpeech { id, active: false });
+        speech_ended(&handle, summon);
+    });
+    if let Some(id) = id {
+        let _ = app.emit_to(PANEL_LABEL, "agent-speech", AgentSpeech { id, active: true });
+    }
+    if compact && id.is_none() {
         // Nothing will be heard: present the reply the normal way.
         let _ = state.compact_speech.compare_exchange(
             summon,
@@ -2095,11 +2121,16 @@ pub fn global_close(app: &AppHandle) {
 /// here, not by the webview, so a wedged webview still goes away. A newer
 /// summon owns the panel by then and is left alone.
 fn close_panel_animated(app: &AppHandle, generation: u64) {
-    // Cleared first, so the stopped speech's end does not close it again.
-    if let Some(state) = app.try_state::<AgentState>() {
-        state.compact_speech.store(0, Ordering::SeqCst);
+    // Talk-back: closing the speaking SLIVER (Escape) silences the voice;
+    // closing an open reply leaves it talking — there only its Stop button
+    // silences it. The mark is cleared first, so the stopped speech's end does
+    // not close the notch a second time.
+    let sliver_speaking = app
+        .try_state::<AgentState>()
+        .is_some_and(|state| state.compact_speech.swap(0, Ordering::SeqCst) != 0);
+    if sliver_speaking {
+        crate::grain_tts::stop();
     }
-    crate::grain_tts::stop();
     let _ = app.emit_to(PANEL_LABEL, "agent-dismiss", ());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
