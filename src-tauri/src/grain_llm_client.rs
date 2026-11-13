@@ -89,6 +89,37 @@ struct ChatMessage {
     tool_call_id: Option<String>,
 }
 
+/// [GRAIN] Fold every system message into ONE, sent first.
+///
+/// Callers stack several (the Agent: its rules, the selected text, the tool
+/// directory). OpenAI accepts that, but providers that apply the model's own
+/// chat template — Cerebras, and vLLM / llama.cpp servers for Qwen, GLM and
+/// others — reject a second system message with "System message must be at
+/// the beginning". One message, parts in their original order joined by a
+/// blank line, means the same thing everywhere. A request with at most one
+/// system message, already first, is left byte-identical.
+fn single_system(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let is_system = |m: &ChatMessage| m.role == "system";
+    let count = messages.iter().filter(|m| is_system(m)).count();
+    if count == 0 || (count == 1 && messages.first().is_some_and(is_system)) {
+        return messages;
+    }
+    let mut parts = Vec::with_capacity(count);
+    let mut rest = Vec::with_capacity(messages.len() - count + 1);
+    for message in messages {
+        match message {
+            ChatMessage {
+                ref role,
+                content: Some(MessageContent::Text(text)),
+                ..
+            } if role == "system" => parts.push(text),
+            other => rest.push(other),
+        }
+    }
+    rest.insert(0, ChatMessage::text("system", parts.join("\n\n")));
+    rest
+}
+
 impl ChatMessage {
     /// A plain text turn (system / user / assistant) — the only shape the
     /// non-tool paths (`send_chat`, post-process) ever build.
@@ -460,7 +491,7 @@ pub async fn send_chat_completion_with_schema(
 
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
-        messages,
+        messages: single_system(messages),
         stream: false,
         response_format,
         reasoning_effort,
@@ -506,7 +537,7 @@ pub async fn send_chat(
 
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
-        messages,
+        messages: single_system(messages),
         stream: false,
         response_format: None,
         reasoning_effort,
@@ -568,7 +599,7 @@ pub async fn send_chat_with_image(
 
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
-        messages,
+        messages: single_system(messages),
         stream: false,
         response_format: None,
         reasoning_effort,
@@ -672,7 +703,7 @@ pub async fn send_chat_with_tools(
 
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
-        messages,
+        messages: single_system(messages),
         stream: false,
         response_format: None,
         reasoning_effort,
@@ -992,6 +1023,52 @@ pub async fn fetch_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wire(messages: &[ChatMessage]) -> Vec<(String, String)> {
+        messages
+            .iter()
+            .map(|m| {
+                let text = match &m.content {
+                    Some(MessageContent::Text(text)) => text.clone(),
+                    _ => String::new(),
+                };
+                (m.role.clone(), text)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stacked_system_messages_become_one_leading_message() {
+        let messages = vec![
+            ChatMessage::text("system", "rules".into()),
+            ChatMessage::text("system", "selection".into()),
+            ChatMessage::text("user", "hi".into()),
+            ChatMessage::text("assistant", "hello".into()),
+            ChatMessage::text("system", "late note".into()),
+            ChatMessage::text("user", "again".into()),
+        ];
+        assert_eq!(
+            wire(&single_system(messages)),
+            [
+                ("system", "rules\n\nselection\n\nlate note"),
+                ("user", "hi"),
+                ("assistant", "hello"),
+                ("user", "again"),
+            ]
+            .map(|(r, t)| (r.to_string(), t.to_string()))
+        );
+    }
+
+    #[test]
+    fn a_single_leading_system_message_is_untouched() {
+        let one = vec![
+            ChatMessage::text("system", "rules".into()),
+            ChatMessage::text("user", "hi".into()),
+        ];
+        assert_eq!(wire(&single_system(one)).len(), 2);
+        let none = vec![ChatMessage::text("user", "hi".into())];
+        assert_eq!(wire(&single_system(none)), [("user".into(), "hi".into())]);
+    }
 
     #[tokio::test]
     async fn finalization_wire_disables_calls_but_preserves_tool_history() {
