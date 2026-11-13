@@ -40,6 +40,21 @@ export function timeLabel(time: string, locale?: string): string {
   });
 }
 
+/** "6 PM" / "6:30 PM" (or "18:00" where the locale is 24-hour), for tight
+ * spaces: the minutes only when they are not zero on a 12-hour clock. */
+export function shortTime(time: string, locale?: string): string {
+  const [h, m] = time.split(":").map(Number);
+  const at = new Date(2000, 0, 1, h, m);
+  const full = at.toLocaleTimeString(locale, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  // A 12-hour clock names the half of the day; drop a bare ":00" there.
+  return m === 0 && /[^\d\s:.,]/.test(full)
+    ? at.toLocaleTimeString(locale, { hour: "numeric" })
+    : full;
+}
+
 /** -1, 0 or 1 for yesterday, today or tomorrow; `null` for any other day. */
 export function relativeDay(iso: string, today: string): -1 | 0 | 1 | null {
   if (iso === today) return 0;

@@ -19,6 +19,7 @@ import {
   relativeDay,
   remindersByDay,
   shiftMonth,
+  shortTime,
   weekGrid,
   weekStart,
   whenLabel,
@@ -28,6 +29,8 @@ import {
 const SHEET_WIDTH = 320;
 /** Weeks the default view shows. */
 const SPAN_WEEKS = 2;
+/** Entries a two-week day cell lists before "+N more". */
+const WEEK_ITEMS = 3;
 /** Dots a month cell draws before it stops counting. */
 const MONTH_DOTS = 3;
 const VIEW_KEY = "grain.reminders.calendarView";
@@ -436,7 +439,6 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
           const items = byDay.get(day) ?? [];
           const recorded = recordedDays.get(day) ?? 0;
           const outside = view === "month" && !day.startsWith(monthKey);
-          const lead = items.find((r) => r.status !== "done") ?? items[0];
           const date = parseIsoDay(day);
           const summary = [
             items.length ? plural(items.length, "reminder", "reminders") : "",
@@ -482,19 +484,30 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
                 )}
               </span>
               {view === "weeks"
-                ? lead && (
-                    <span className="rem-cal-line">
-                      <span
-                        className="rem-cal-item"
-                        data-status={lead.status}
-                        data-meeting={isMeeting(lead) ? "" : undefined}
-                      >
-                        <span className="rem-cal-dot" />
-                        <span className="rem-cal-item-title">{lead.title}</span>
-                      </span>
-                      {items.length > 1 && (
+                ? items.length > 0 && (
+                    <span className="rem-cal-agenda">
+                      {items.slice(0, WEEK_ITEMS).map((reminder) => (
+                        <span
+                          key={reminder.id}
+                          className="rem-cal-entry"
+                          data-status={reminder.status}
+                          data-allday={reminder.time ? undefined : ""}
+                          data-meeting={isMeeting(reminder) ? "" : undefined}
+                        >
+                          {reminder.time && <span className="rem-cal-dot" />}
+                          {reminder.time && (
+                            <span className="rem-cal-entry-time">
+                              {shortTime(reminder.time)}
+                            </span>
+                          )}
+                          <span className="rem-cal-entry-title">
+                            {reminder.title}
+                          </span>
+                        </span>
+                      ))}
+                      {items.length > WEEK_ITEMS && (
                         <span className="rem-cal-more">
-                          +{items.length - 1}
+                          +{items.length - WEEK_ITEMS} more
                         </span>
                       )}
                     </span>

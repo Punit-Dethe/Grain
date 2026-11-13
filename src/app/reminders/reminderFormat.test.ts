@@ -12,6 +12,7 @@ import {
   monthGrid,
   remindersByDay,
   shiftMonth,
+  shortTime,
   weekGrid,
 } from "./reminderFormat";
 
@@ -118,6 +119,12 @@ describe("reminder formatting", () => {
     expect(days[0]).toBe("2026-11-09");
     expect(days[13]).toBe("2026-11-22");
     expect(weekGrid("2026-11-01", 0, 1)[0]).toBe("2026-11-01");
+  });
+
+  it("shortens whole hours on a 12-hour clock only", () => {
+    expect(shortTime("18:00", "en-US")).toBe("6 PM");
+    expect(shortTime("18:30", "en-US")).toBe("6:30 PM");
+    expect(shortTime("18:00", "en-GB")).toBe("18:00");
   });
 
   it("counts instants per local day", () => {
