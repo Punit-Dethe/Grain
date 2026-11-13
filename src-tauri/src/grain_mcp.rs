@@ -661,6 +661,18 @@ const CATALOG: &[CatalogProvider] = &[
         setup_url: "https://help.clickup.com/hc/en-us/articles/33335772678423",
         ownership: None,
     },
+    CatalogProvider {
+        id: "exa",
+        // No account: the hosted server serves search and page reads on a
+        // free rate limit. Adding it only switches it on.
+        bundled_preset: true,
+        name: "Exa Web Search",
+        description: "Search the web and read pages.",
+        endpoint: "https://mcp.exa.ai/mcp",
+        registration: Registration::Anonymous,
+        setup_url: "https://exa.ai/docs/reference/exa-mcp",
+        ownership: None,
+    },
 ];
 
 #[derive(Clone)]
@@ -1419,7 +1431,9 @@ pub async fn mcp_provider_status(
             continue;
         }
         let observation = provider_control(item.id).ticket().recovery();
-        let state = if !account_required {
+        let state = if item.registration == Registration::Anonymous {
+            "no_account"
+        } else if !account_required {
             "fixture_no_auth"
         } else if item.registration == Registration::PreRegistered && !client_id_configured {
             "needs_client_credentials"
@@ -3315,6 +3329,7 @@ mod tests {
             ("atlassian", Registration::Dynamic),
             ("airtable", Registration::Dynamic),
             ("clickup", Registration::Dynamic),
+            ("exa", Registration::Anonymous),
         ] {
             let item = provider(id).unwrap();
             assert!(is_preset(item));
@@ -3350,7 +3365,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 22);
+        assert_eq!(production_catalog().count(), 23);
     }
 
     #[test]

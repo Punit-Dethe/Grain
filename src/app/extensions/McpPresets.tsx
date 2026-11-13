@@ -23,6 +23,7 @@ import canvaIcon from "./icons/canva.png";
 import clickupIcon from "./icons/clickup.png";
 import codaIcon from "./icons/coda.svg";
 import dropboxIcon from "./icons/dropbox.svg";
+import exaIcon from "./icons/exa.png";
 import firefliesIcon from "./icons/fireflies.png";
 import gammaIcon from "./icons/gamma.svg";
 import gammaDarkIcon from "./icons/gamma-light.svg";
@@ -50,6 +51,7 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["clickup", { src: clickupIcon }],
   ["coda", { src: codaIcon }],
   ["dropbox", { src: dropboxIcon }],
+  ["exa", { src: exaIcon }],
   ["fireflies", { src: firefliesIcon }],
   ["gamma", { src: gammaIcon, darkSrc: gammaDarkIcon }],
   ["github", { src: githubIcon }],
@@ -65,6 +67,11 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["todoist", { src: todoistIcon }],
   ["zapier", { src: zapierIcon }],
 ]);
+
+/** Extensions without an account are added and removed, not signed in to. */
+const noAccount = (row: McpProviderStatus) => row.state === "no_account";
+const added = (row: McpProviderStatus) =>
+  row.connected || (noAccount(row) && row.enabled);
 
 export function McpPresets({
   query,
@@ -153,11 +160,25 @@ export function McpPresets({
   };
 
   const visible = filterExtensions(rows ?? [], query);
-  const connected = visible.filter((row) => row.connected);
-  const available = visible.filter((row) => !row.connected);
+  const connected = visible.filter(added);
+  const available = visible.filter((row) => !added(row));
+
+  const setEnabled = (row: McpProviderStatus, enabled: boolean) =>
+    run(row.id, async () => {
+      unwrapResult(await commands.mcpSetProviderEnabled(row.id, enabled));
+    });
 
   const signInButton = (row: McpProviderStatus) =>
-    signingIn === row.id ? (
+    noAccount(row) ? (
+      <button
+        className="button primary"
+        type="button"
+        disabled={busy !== null}
+        onClick={() => void setEnabled(row, true)}
+      >
+        {busy === row.id ? "Adding…" : "Add"}
+      </button>
+    ) : signingIn === row.id ? (
       <button
         className="button"
         type="button"
@@ -254,33 +275,41 @@ export function McpPresets({
               <article key={row.id} className="mcp-preset-connected">
                 {identity(row)}
                 <div className="mcp-preset-actions">
-                  <button
-                    className="button ghost"
-                    type="button"
-                    aria-label={`Disconnect ${row.name}`}
-                    disabled={busy !== null}
-                    onClick={() =>
-                      void run(row.id, async () => {
-                        unwrapResult(
-                          await commands.mcpDisconnectProvider(row.id),
-                        );
-                      })
-                    }
-                  >
-                    Disconnect
-                  </button>
-                  <Switch
-                    checked={row.enabled}
-                    disabled={busy !== null}
-                    ariaLabel={`Enable ${row.name}`}
-                    onChange={(enabled) =>
-                      void run(row.id, async () => {
-                        unwrapResult(
-                          await commands.mcpSetProviderEnabled(row.id, enabled),
-                        );
-                      })
-                    }
-                  />
+                  {noAccount(row) ? (
+                    <button
+                      className="button ghost"
+                      type="button"
+                      aria-label={`Remove ${row.name}`}
+                      disabled={busy !== null}
+                      onClick={() => void setEnabled(row, false)}
+                    >
+                      Remove
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        aria-label={`Disconnect ${row.name}`}
+                        disabled={busy !== null}
+                        onClick={() =>
+                          void run(row.id, async () => {
+                            unwrapResult(
+                              await commands.mcpDisconnectProvider(row.id),
+                            );
+                          })
+                        }
+                      >
+                        Disconnect
+                      </button>
+                      <Switch
+                        checked={row.enabled}
+                        disabled={busy !== null}
+                        ariaLabel={`Enable ${row.name}`}
+                        onChange={(enabled) => void setEnabled(row, enabled)}
+                      />
+                    </>
+                  )}
                 </div>
               </article>
             ))}
