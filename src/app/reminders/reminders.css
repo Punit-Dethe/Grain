@@ -30,18 +30,14 @@
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--rem-card);
-  transition:
-    border-color 0.18s ease,
-    box-shadow 0.25s var(--ease-out);
 }
 
-.rem-composer:not([data-open]):hover {
-  border-color: color-mix(in srgb, var(--text-1) 14%, transparent);
-}
-
-.rem-composer[data-open] {
-  border-color: color-mix(in srgb, var(--text-1) 16%, transparent);
-  box-shadow: var(--shadow-float);
+/* Typing shows no ring, border or glow: the caret is the focus. Overrides
+   the shell's focus ring for text fields on this page only. */
+.grain-root .reminders-page :is(input, textarea):focus,
+.grain-root .reminders-page :is(input, textarea):focus-visible {
+  outline: none;
+  box-shadow: none !important;
 }
 
 .rem-row-editing .rem-composer {
@@ -239,12 +235,6 @@ button.rem-time:hover {
   cursor: pointer;
 }
 
-.rem-seg-date:focus-within,
-.rem-time:focus-within {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 1px;
-}
-
 .rem-time-clear,
 .rem-link-remove {
   display: grid;
@@ -287,7 +277,6 @@ button.rem-time:hover {
   border-radius: 10px;
   color: var(--text-4);
   background: var(--accent-soft);
-  transition: box-shadow 0.15s ease;
 }
 
 .rem-link-row input {
@@ -320,12 +309,6 @@ button.rem-time:hover {
   font: inherit;
   font-size: 13px;
   line-height: 1.5;
-  transition: box-shadow 0.15s ease;
-}
-
-.rem-link-row:focus-within,
-.rem-note:focus {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-1) 22%, transparent);
 }
 
 .rem-composer-foot {
