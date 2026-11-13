@@ -10,6 +10,7 @@ export function AgentSection() {
   const enabled = getSetting("agent_enabled") ?? true;
   const screenImage = getSetting("agent_screen_image") ?? false;
   const talkBack = getSetting("agent_talk_back") ?? false;
+  const compactVoice = getSetting("agent_compact_voice") ?? true;
 
   return (
     <SettingsGroup title={t("ui2.settings.agent.group")}>
@@ -48,6 +49,18 @@ export function AgentSection() {
             isUpdating={isUpdating("agent_talk_back")}
             onChange={(v) => updateSetting("agent_talk_back", v)}
           />
+
+          {talkBack && (
+            <ToggleSwitch
+              label={t("ui2.settings.agent.compactVoice")}
+              description={t("ui2.settings.agent.compactVoiceDescription")}
+              descriptionMode="tooltip"
+              grouped
+              checked={compactVoice}
+              isUpdating={isUpdating("agent_compact_voice")}
+              onChange={(v) => updateSetting("agent_compact_voice", v)}
+            />
+          )}
         </>
       )}
     </SettingsGroup>

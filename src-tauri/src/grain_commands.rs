@@ -625,6 +625,17 @@ pub fn change_agent_talk_back_setting(app: AppHandle, enabled: bool) -> Result<(
     Ok(())
 }
 
+/// [GRAIN] Compact spoken replies: keep the notch compact while the first reply
+/// is read aloud. See `Settings::agent_compact_voice`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_compact_voice_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_compact_voice = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
 /// by default; see `Settings::meet_auto_summary`.
 #[tauri::command]

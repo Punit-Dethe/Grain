@@ -627,6 +627,18 @@ async changeAgentTalkBackSetting(enabled: boolean) : Promise<Result<null, string
 }
 },
 /**
+ * [GRAIN] Compact spoken replies: keep the notch compact while the first reply
+ * is read aloud. See `Settings::agent_compact_voice`.
+ */
+async changeAgentCompactVoiceSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_compact_voice_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
  * by default; see `Settings::meet_auto_summary`.
  */
@@ -2034,7 +2046,11 @@ shown: boolean;
 /**
  * A chat request from an earlier open is still running.
  */
-chat_busy: boolean }
+chat_busy: boolean;
+/**
+ * The first reply is being read aloud with the notch kept compact.
+ */
+speaking: boolean }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */
@@ -2190,13 +2206,20 @@ mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
  * 
  * OFF by default and off is free: no capture, no permission, no bytes.
  */
-agent_screen_image?: boolean;
+agent_screen_image?: boolean; 
 /**
  * [GRAIN] Agent talk-back: read Agent chat replies aloud with the on-device
  * Phonon voice (`grain_tts`). OFF by default; off costs nothing — no model
  * is downloaded or loaded.
  */
 agent_talk_back?: boolean;
+/**
+ * [GRAIN] With talk-back on, a spoken first reply keeps the notch compact
+ * (a blue speaking bar) instead of opening it; hover or click opens it,
+ * and it retracts when the voice ends. ON by default; inert without
+ * talk-back.
+ */
+agent_compact_voice?: boolean;
 /**
  * [GRAIN] Recall: write a summary of each meeting as soon as its transcript
  * is published, through the configured AI provider. OFF by default while

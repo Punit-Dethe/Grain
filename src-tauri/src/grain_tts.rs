@@ -98,38 +98,50 @@ pub(crate) fn stop() {
 /// Read an Agent reply aloud when talk-back is on. Returns immediately; the
 /// work runs on its own short-lived thread. Before the voice is installed it
 /// starts the download and stays silent for this reply.
-pub(crate) fn speak(app: &AppHandle, reply: &str) {
+///
+/// Returns whether speech started. Only then is `on_end` called — once, on the
+/// worker thread, however the speech ends (finished, stopped or failed).
+pub(crate) fn speak(app: &AppHandle, reply: &str, on_end: impl FnOnce() + Send + 'static) -> bool {
     if !crate::settings::get_settings(app).agent_talk_back {
-        return;
+        return false;
     }
     let text = speakable(reply);
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     if text.is_empty() {
-        return;
+        return false;
     }
     let dir = match model_dir(app) {
         Ok(dir) => dir,
-        Err(e) => return warn!("[GRAIN] talk-back: no model folder: {e}"),
+        Err(e) => {
+            warn!("[GRAIN] talk-back: no model folder: {e}");
+            return false;
+        }
     };
     if !installed(&dir) {
         info!("[GRAIN] talk-back: voice not installed yet; downloading");
         ensure_installed(app);
-        return;
+        return false;
     }
     info!("[GRAIN] talk-back: speaking {} chars", text.chars().count());
     let spawned = std::thread::Builder::new()
         .name("grain-tts".into())
         .spawn(move || {
-            let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
-            if GENERATION.load(Ordering::SeqCst) != generation {
-                return info!("[GRAIN] talk-back: replaced before it started");
+            {
+                let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
+                if GENERATION.load(Ordering::SeqCst) != generation {
+                    info!("[GRAIN] talk-back: replaced before it started");
+                } else if let Err(e) = say(&dir, &text, generation) {
+                    warn!("[GRAIN] talk-back failed: {e}");
+                }
             }
-            if let Err(e) = say(&dir, &text, generation) {
-                warn!("[GRAIN] talk-back failed: {e}");
-            }
+            on_end();
         });
-    if let Err(e) = spawned {
-        warn!("[GRAIN] talk-back: could not start: {e}");
+    match spawned {
+        Ok(_) => true,
+        Err(e) => {
+            warn!("[GRAIN] talk-back: could not start: {e}");
+            false
+        }
     }
 }
 

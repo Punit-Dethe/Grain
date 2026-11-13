@@ -311,6 +311,7 @@ export function AgentPanel() {
     };
     let listeningGeneration: number | null = null;
     let workingGeneration: number | null = null;
+    let speakingGeneration: number | null = null;
     void Promise.all([
       win
         .listen<number>("agent-listening", ({ payload }) => {
@@ -328,6 +329,17 @@ export function AgentPanel() {
           setCapture((current) =>
             current?.generation === payload
               ? { ...current, working: true }
+              : current,
+          );
+        })
+        .then(track),
+      // Compact spoken reply: the notch stays small with the speaking bar.
+      win
+        .listen<number>("agent-speaking", ({ payload }) => {
+          speakingGeneration = payload;
+          setCapture((current) =>
+            current?.generation === payload
+              ? { ...current, working: false, speaking: true }
               : current,
           );
         })
@@ -417,6 +429,7 @@ export function AgentPanel() {
           listening:
             status.listening || listeningGeneration === status.generation,
           working: status.working || workingGeneration === status.generation,
+          speaking: status.speaking || speakingGeneration === status.generation,
         });
         await startFirstIfQueued();
       })
@@ -845,17 +858,24 @@ export function AgentPanel() {
         data-phase={
           revealed
             ? "reply"
-            : capture?.working
-              ? "working"
-              : capture?.listening
-                ? "listening"
-                : "starting"
+            : capture?.speaking
+              ? "speaking"
+              : capture?.working
+                ? "working"
+                : capture?.listening
+                  ? "listening"
+                  : "starting"
         }
         aria-label={t("agent.brand")}
       >
         {!revealed && (
           <AgentVoiceFade
-            active={!!capture?.listening && !capture.working && !closing}
+            active={
+              !!capture?.listening &&
+              !capture.working &&
+              !capture.speaking &&
+              !closing
+            }
           />
         )}
         {!revealed && <span className="agent-notch-work" aria-hidden />}
@@ -866,14 +886,16 @@ export function AgentPanel() {
           <span className="agent-notch-label">
             {!grown && !capture?.opened && (
               <span className="agent-notch-status" aria-hidden={revealed}>
-                {capture?.working ? (
+                {capture?.working && !capture.speaking ? (
                   <AgentWorkingLabel />
                 ) : (
                   <span role="status">
                     {t(
-                      capture?.listening
-                        ? "agent.notchListening"
-                        : "agent.notchStarting",
+                      capture?.speaking
+                        ? "agent.notchSpeaking"
+                        : capture?.listening
+                          ? "agent.notchListening"
+                          : "agent.notchStarting",
                     )}
                   </span>
                 )}

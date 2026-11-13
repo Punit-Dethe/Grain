@@ -111,6 +111,7 @@ html[data-window="agent-panel"] body {
 
 .agent-notch.is-entering::before,
 .agent-notch[data-phase="working"]::before,
+.agent-notch[data-phase="speaking"]::before,
 .agent-notch.is-closing::before {
   opacity: 0;
 }
@@ -133,8 +134,10 @@ html[data-window="agent-panel"] body {
 
 /* Working: once the request is understood the compact status steps back into
    the resting sliver, and its line runs the same warm sweep the native sliver
-   shows for a turn left running after a close. The reply grows out of it. */
-.agent-notch[data-phase="working"] {
+   shows for a turn left running after a close. The reply grows out of it.
+   Speaking (a compact spoken reply) is the same sliver with a cool sweep. */
+.agent-notch[data-phase="working"],
+.agent-notch[data-phase="speaking"] {
   width: min(120px, 100vw);
   height: min(6px, 100vh);
   background: var(--notch-sliver);
@@ -143,7 +146,9 @@ html[data-window="agent-panel"] body {
 }
 
 .agent-notch[data-phase="working"] .agent-notch-header > *,
-.agent-notch[data-phase="working"] .agent-notch-voice {
+.agent-notch[data-phase="working"] .agent-notch-voice,
+.agent-notch[data-phase="speaking"] .agent-notch-header > *,
+.agent-notch[data-phase="speaking"] .agent-notch-voice {
   opacity: 0;
   transition: opacity 120ms ease;
 }
@@ -171,9 +176,21 @@ html[data-window="agent-panel"] body {
   transition: opacity 160ms ease;
 }
 
-.agent-notch[data-phase="working"]:not(.is-closing) .agent-notch-work {
+.agent-notch[data-phase="working"]:not(.is-closing) .agent-notch-work,
+.agent-notch[data-phase="speaking"]:not(.is-closing) .agent-notch-work {
   opacity: 1;
   animation: agent-notch-work 1.4s linear infinite;
+}
+
+/* The voice is talking: the same sweep in blues. */
+.agent-notch[data-phase="speaking"] .agent-notch-work {
+  background-image: linear-gradient(
+    90deg,
+    #2f7bff,
+    #4fa8ff 33.3%,
+    #7fd3ff 66.6%,
+    #2f7bff
+  );
 }
 
 @keyframes agent-notch-work {
@@ -1509,7 +1526,8 @@ html[data-window="agent-panel"] body {
     opacity 160ms ease;
 }
 
-.agent-notch[data-phase="working"] .agent-notch-fill {
+.agent-notch[data-phase="working"] .agent-notch-fill,
+.agent-notch[data-phase="speaking"] .agent-notch-fill {
   left: 9px;
   right: 9px;
   top: 1.75px;

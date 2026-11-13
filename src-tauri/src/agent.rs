@@ -361,6 +361,11 @@ pub struct AgentState {
     open_shown: AtomicBool,
     /// [GRAIN] A recorded chat request is running (it may outlive the notch).
     chat_running: AtomicBool,
+    /// [GRAIN] Compact spoken reply (`agent_compact_voice`): the summon whose
+    /// first reply is being read aloud with the notch kept compact; 0 = none.
+    /// When that speech ends the notch retracts on its own; opening it by hand
+    /// clears this so the open reply stays.
+    compact_speech: AtomicU64,
 }
 
 /// One conversation turn from the frontend.
@@ -432,7 +437,12 @@ pub fn summon(app: &AppHandle) {
 
 /// Capture foreground context and present the Agent off the hotkey thread.
 fn summon_inner(app: &AppHandle) {
-    // Listening for a new instruction: stop reading the last reply aloud.
+    // Listening for a new instruction: stop reading the last reply aloud. The
+    // compact mark goes first, so that speech's end cannot retract the notch
+    // this summon is taking over.
+    if let Some(state) = app.try_state::<AgentState>() {
+        state.compact_speech.store(0, Ordering::SeqCst);
+    }
     crate::grain_tts::stop();
     let app = app.clone();
     std::thread::spawn(move || {
@@ -1445,6 +1455,8 @@ pub struct AgentNotchStatus {
     shown: bool,
     /// A chat request from an earlier open is still running.
     chat_busy: bool,
+    /// The first reply is being read aloud with the notch kept compact.
+    speaking: bool,
 }
 
 #[tauri::command]
@@ -1460,6 +1472,7 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
         listening: input_is_current(&state, generation)
             && state.dictation_capture.lock().unwrap().is_some(),
         working: reply_wait_is_current(&app, generation),
+        speaking: generation != 0 && state.compact_speech.load(Ordering::SeqCst) == generation,
     }
 }
 
@@ -1478,7 +1491,69 @@ fn cancel_notch_capture(app: &AppHandle) {
         input_cancel(app);
     } else if waiting_for_reply(app) {
         input_cancel_cleanup(app);
+    } else if let Some(generation) = compact_speech_current(app) {
+        // X on a compact spoken reply: stop the voice and retract.
+        close_keeping_chat(app);
+        close_panel_animated(app, generation);
     }
+}
+
+/// The summon whose first reply is speaking in a compact notch, if it is still
+/// the current one and has not been opened.
+fn compact_speech_current(app: &AppHandle) -> Option<u64> {
+    let state = app.try_state::<AgentState>()?;
+    let generation = state.compact_speech.load(Ordering::SeqCst);
+    (generation != 0
+        && state.summon_gen.load(Ordering::SeqCst) == generation
+        && !state.reply_visible.load(Ordering::SeqCst))
+    .then_some(generation)
+}
+
+/// [GRAIN] Talk-back for a reply. A first reply that will be spoken, with
+/// `agent_compact_voice` on, keeps the notch compact (`agent_present_reply`
+/// then shows the speaking bar instead of growing). Must run before the reply
+/// is returned to the renderer, which is what triggers that presentation.
+fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
+    let state = app.state::<AgentState>();
+    let summon = state.summon_gen.load(Ordering::SeqCst);
+    let compact = crate::settings::get_settings(app).agent_compact_voice
+        && first_turn.is_some_and(|generation| reply_wait_is_current(app, generation))
+        && !reply_shown(app);
+    // Marked before speech starts, so even an instant end finds it and retracts.
+    if compact {
+        state.compact_speech.store(summon, Ordering::SeqCst);
+    }
+    let handle = app.clone();
+    let speaking = crate::grain_tts::speak(app, text, move || speech_ended(&handle, summon));
+    if compact && !speaking {
+        // Nothing will be heard: present the reply the normal way.
+        let _ = state.compact_speech.compare_exchange(
+            summon,
+            0,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+}
+
+/// Speech for a compact reply ended (finished, stopped or failed): retract the
+/// notch unless it was opened by hand or something newer owns it. The reply is
+/// already in the chat, so the sliver reopens it.
+fn speech_ended(app: &AppHandle, generation: u64) {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return;
+    };
+    if state
+        .compact_speech
+        .compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+        || state.summon_gen.load(Ordering::SeqCst) != generation
+        || reply_shown(app)
+    {
+        return;
+    }
+    close_keeping_chat(app);
+    close_panel_animated(app, generation);
 }
 
 /// Expand the capture notch after its renderer commits the first reply or error.
@@ -1503,6 +1578,12 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         drop(pending);
         // Opened early (`agent_open_summon`): already full size and focusable.
         if state.reply_visible.load(Ordering::SeqCst) {
+            return;
+        }
+        // Compact spoken reply: stay compact with the speaking bar; hover or
+        // click opens it (`agent_open_summon`), speech end retracts it.
+        if compact_speech_current(&handle) == Some(generation) {
+            let _ = handle.emit_to(PANEL_LABEL, "agent-speaking", generation);
             return;
         }
         let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
@@ -1536,16 +1617,19 @@ pub async fn agent_open_summon(app: AppHandle, generation: u64) -> Result<(), St
     let handle = app.clone();
     app.run_on_main_thread(move || {
         let state = handle.state::<AgentState>();
+        let speaking = compact_speech_current(&handle) == Some(generation);
         if state.summon_gen.load(Ordering::SeqCst) != generation
             || state.notch_generation.load(Ordering::SeqCst) != generation
             || state.reply_visible.load(Ordering::SeqCst)
-            || !(blocks_dictation(&handle) || waiting_for_reply(&handle))
+            || !(blocks_dictation(&handle) || waiting_for_reply(&handle) || speaking)
         {
             return;
         }
         let Some(window) = handle.get_webview_window(PANEL_LABEL) else {
             return;
         };
+        // Opened while speaking: the voice carries on, the reply stays open.
+        state.compact_speech.store(0, Ordering::SeqCst);
         #[cfg(windows)]
         set_compact_notch_region(&window, false);
         #[cfg(not(windows))]
@@ -1977,6 +2061,10 @@ pub fn global_close(app: &AppHandle) {
 /// here, not by the webview, so a wedged webview still goes away. A newer
 /// summon owns the panel by then and is left alone.
 fn close_panel_animated(app: &AppHandle, generation: u64) {
+    // Cleared first, so the stopped speech's end does not close it again.
+    if let Some(state) = app.try_state::<AgentState>() {
+        state.compact_speech.store(0, Ordering::SeqCst);
+    }
     crate::grain_tts::stop();
     let _ = app.emit_to(PANEL_LABEL, "agent-dismiss", ());
     let app = app.clone();
@@ -2435,7 +2523,7 @@ pub async fn agent_run(
         .wait(registration, agent_run_owned(&app, messages, context, &run))
         .await?;
     if let Ok(reply) = &reply {
-        crate::grain_tts::speak(&app, &reply.text);
+        speak_reply(&app, &reply.text, generation);
     }
     if record {
         if let Ok(reply) = &reply {

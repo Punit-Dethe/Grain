@@ -15,6 +15,7 @@
     "brand": "Grain Assist",
     "notchStarting": "Starting…",
     "notchListening": "Listening…",
+    "notchSpeaking": "Speaking…",
     "notchCancel": "Cancel Agent",
     "notchClose": "Close Agent",
     "modeChat": "Chat",
@@ -1010,7 +1011,9 @@
         "screenImage": "See my screen",
         "screenImageDescription": "Send an image of the active window to the selected AI model when you summon Agent. Grain keeps it only for the conversation.",
         "talkBack": "Read replies aloud",
-        "talkBackDescription": "Agent speaks its replies with an on-device voice. The first time, Grain downloads the 65 MB voice; replies are read aloud once it finishes."
+        "talkBackDescription": "Agent speaks its replies with an on-device voice. The first time, Grain downloads the 65 MB voice; replies are read aloud once it finishes.",
+        "compactVoice": "Compact spoken replies",
+        "compactVoiceDescription": "While a reply is read aloud, the notch stays small with a blue bar instead of opening. Hover or click it to read the reply; it closes when the voice ends."
       },
       "sections": {
         "capture": {

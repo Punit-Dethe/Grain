@@ -1393,6 +1393,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_snippets_enabled_setting,
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
+            grain_commands::change_agent_compact_voice_setting, // [GRAIN]
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
             grain_commands::change_meet_auto_title_setting,   // [GRAIN]
             grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]

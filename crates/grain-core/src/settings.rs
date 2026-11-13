@@ -799,6 +799,12 @@ pub struct AppSettings {
     /// is downloaded or loaded.
     #[serde(default)]
     pub agent_talk_back: bool,
+    /// [GRAIN] With talk-back on, a spoken first reply keeps the notch compact
+    /// (a blue speaking bar) instead of opening it; hover or click opens it,
+    /// and it retracts when the voice ends. ON by default; inert without
+    /// talk-back.
+    #[serde(default = "default_true")]
+    pub agent_compact_voice: bool,
     /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
     /// is published, through the configured AI provider. OFF by default while
     /// the feature is in development; off costs nothing.
@@ -1606,6 +1612,7 @@ pub fn get_default_settings() -> AppSettings {
         mcp_oauth_client_ids: HashMap::new(),
         agent_screen_image: false,
         agent_talk_back: false,
+        agent_compact_voice: true,
         meet_auto_summary: false,
         meet_auto_transcribe: false,
         meet_auto_title: false,
