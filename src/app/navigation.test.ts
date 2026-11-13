@@ -12,6 +12,13 @@ describe("UI 2.0 hash navigation", () => {
       section: "capture",
     });
   });
+  it("round-trips the Reminders tab with the full rail", () => {
+    const route = { page: "reminders" } as const;
+    expect(hashForRoute(route)).toBe("#/reminders");
+    expect(routeFromHash("#/reminders")).toEqual(route);
+    expect(routeUsesCompactGlobalRail(route)).toBe(false);
+  });
+
   it("falls back to overview for the removed Notes route", () => {
     expect(routeFromHash("#/notes")).toEqual({ page: "overview" });
   });

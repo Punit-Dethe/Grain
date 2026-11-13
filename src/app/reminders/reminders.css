@@ -1,0 +1,557 @@
+/* Reminders tab. UI 2.0 tokens only (--bg-*, --text-*, --hairline, --radius-*);
+   light/dark come from the shell's variables. */
+
+.reminders-page {
+  --rem-card: var(--bg-2);
+  --rem-card-hover: color-mix(in srgb, var(--bg-2) 70%, var(--bg-3));
+  --rem-ring: var(--peach);
+}
+
+.grain-root[data-theme="light"] .reminders-page {
+  --rem-card: var(--bg-0);
+  --rem-card-hover: #fffffe;
+}
+
+.reminders-wrap {
+  width: min(760px, 100%);
+}
+
+/* ── Composer ─────────────────────────────────────────────────────────── */
+
+.rem-composer {
+  margin-bottom: 30px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--rem-card);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.2s var(--ease-out);
+}
+
+.rem-composer:focus-within {
+  border-color: color-mix(in srgb, var(--text-1) 18%, transparent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+
+.rem-row-editing .rem-composer {
+  margin: 4px 0;
+}
+
+.rem-composer-title {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 16px;
+  color: var(--text-4);
+}
+
+.rem-composer-title input {
+  flex: 1;
+  min-width: 0;
+  height: 50px;
+  border: 0;
+  outline: none;
+  color: var(--text-1);
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 520;
+  letter-spacing: -0.01em;
+}
+
+.rem-composer-title input::placeholder {
+  color: var(--text-4);
+  font-weight: 450;
+}
+
+.rem-composer-body {
+  display: grid;
+  gap: 10px;
+  padding: 2px 14px 14px;
+  animation: rem-reveal 0.22s var(--ease-out);
+}
+
+@keyframes rem-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+.rem-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rem-link-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.rem-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  background: var(--accent-soft);
+  font-size: 12.5px;
+}
+
+.rem-field > span {
+  color: var(--text-4);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rem-field em {
+  color: var(--text-4);
+  font-style: normal;
+}
+
+.rem-field input {
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--text-1);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-field input::-webkit-calendar-picker-indicator {
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.rem-field input[type="time"]:not(:valid),
+.rem-field input[type="time"][value=""] {
+  color: var(--text-4);
+}
+
+.rem-field-link {
+  display: flex;
+}
+
+.rem-field-link input {
+  flex: 1;
+}
+
+.rem-field-link input::placeholder,
+.rem-details::placeholder {
+  color: var(--text-4);
+}
+
+.rem-field-clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--text-4);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rem-field-clear:hover {
+  color: var(--text-1);
+  background: var(--accent-soft-hover);
+}
+
+.rem-details {
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  outline: none;
+  resize: vertical;
+  color: var(--text-1);
+  background: var(--accent-soft);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.rem-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.rem-composer-actions .button {
+  min-height: 32px;
+}
+
+.rem-composer-actions .button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rem-spacer {
+  flex: 1;
+}
+
+.rem-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.rem-ghost:hover {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+/* ── Groups ───────────────────────────────────────────────────────────── */
+
+.rem-group + .rem-group {
+  margin-top: 26px;
+}
+
+.rem-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin: 0 4px 6px;
+}
+
+.rem-group-head h2 {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rem-group[data-tone="ringing"] .rem-group-head h2 {
+  color: var(--rem-ring);
+}
+
+.rem-group[data-tone="earlier"] .rem-group-head h2,
+.rem-group[data-tone="done"] .rem-group-head h2 {
+  color: var(--text-4);
+}
+
+.rem-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.rem-group-toggle::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid var(--text-4);
+  border-bottom: 1.5px solid var(--text-4);
+  transform: rotate(-45deg);
+  transition: transform 0.2s var(--ease-out);
+}
+
+.rem-group-toggle[aria-expanded="true"]::after {
+  transform: rotate(45deg) translate(-2px, -1px);
+}
+
+.rem-count {
+  color: var(--text-4);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-clear {
+  margin-left: auto;
+  height: 26px;
+  font-size: 12px;
+}
+
+.rem-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ── Rows ─────────────────────────────────────────────────────────────── */
+
+.rem-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 54px;
+  padding: 9px 12px 9px 14px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+
+.rem-row:hover {
+  background: var(--rem-card);
+}
+
+.rem-row[data-status="ringing"] {
+  background: color-mix(in srgb, var(--rem-ring) 9%, var(--rem-card));
+}
+
+.rem-row[data-status="ringing"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--rem-ring);
+}
+
+.rem-check {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid color-mix(in srgb, var(--text-4) 70%, transparent);
+  border-radius: 50%;
+  color: var(--accent-ink);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.2s var(--ease-out);
+}
+
+.rem-check:hover {
+  border-color: var(--text-1);
+}
+
+.rem-check:active {
+  transform: scale(0.9);
+}
+
+.rem-check .icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.6;
+}
+
+.rem-row[data-status="done"] .rem-check {
+  border-color: var(--text-3);
+  background: var(--text-3);
+}
+
+.rem-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.rem-title {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 540;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-row[data-status="done"] .rem-title {
+  color: var(--text-4);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-4) 60%, transparent);
+}
+
+.rem-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 2px;
+  color: var(--text-4);
+  font-size: 12px;
+}
+
+.rem-when {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-row[data-status="ringing"] .rem-when {
+  color: var(--rem-ring);
+}
+
+.rem-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--text-3);
+  background: var(--accent-soft);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.rem-detail-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-row-end {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rem-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    filter 0.15s ease,
+    transform 0.2s var(--ease-out);
+}
+
+.rem-open span {
+  overflow: hidden;
+  opacity: 0.62;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.rem-open:hover {
+  filter: brightness(1.06);
+}
+
+.rem-open:active {
+  transform: scale(0.97);
+}
+
+.rem-row[data-status="done"] .rem-open {
+  color: var(--text-2);
+  background: var(--accent-soft);
+}
+
+.rem-row-tools {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.rem-row:hover .rem-row-tools,
+.rem-row:focus-within .rem-row-tools {
+  opacity: 1;
+}
+
+.rem-icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-4);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.rem-icon-button:hover {
+  color: var(--text-1);
+  background: var(--accent-soft-hover);
+}
+
+.rem-icon-button.danger:hover {
+  color: var(--danger);
+}
+
+/* ── Empty states ─────────────────────────────────────────────────────── */
+
+.rem-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 56px 20px;
+  text-align: center;
+}
+
+.rem-empty-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 8px;
+  border-radius: 14px;
+  color: var(--text-3);
+  background: var(--rem-card);
+}
+
+.rem-empty-mark .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.rem-empty p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.rem-empty span {
+  color: var(--text-4);
+  font-size: 12.5px;
+}
+
+.rem-caught-up {
+  margin: 0 4px 22px;
+  color: var(--text-4);
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .rem-row {
+    flex-wrap: wrap;
+  }
+  .rem-row-end {
+    width: 100%;
+    padding-left: 33px;
+  }
+  .rem-row-tools {
+    opacity: 1;
+    margin-left: auto;
+  }
+}

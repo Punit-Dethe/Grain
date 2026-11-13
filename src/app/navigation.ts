@@ -27,6 +27,7 @@ export type AppRoute =
   | { page: "meet"; meeting?: string; settings?: boolean }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
+  | { page: "reminders" }
   | { page: "extensions" };
 
 const settingsSections = new Set<string>(SETTINGS_SECTION_IDS);
@@ -36,6 +37,7 @@ export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
 
   if (path === "/history") return { page: "history" };
+  if (path === "/reminders") return { page: "reminders" };
   if (path === "/meet") return { page: "meet" };
   if (path === "/meet/settings") return { page: "meet", settings: true };
   const meetingMatch = path.match(/^\/meet\/([A-Za-z0-9-]+)$/);

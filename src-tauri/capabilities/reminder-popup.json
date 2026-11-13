@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "reminder-popup",
+  "description": "Events for the Reminders ring popup",
+  "windows": ["reminder-popup"],
+  "permissions": ["core:default"]
+}

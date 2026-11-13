@@ -1,0 +1,236 @@
+/* The ring popup: a transparent always-on-top window holding one card per
+   ringing reminder. Its own small token set, matching the app shell. */
+
+:root {
+  color-scheme: dark;
+  --rp-bg: rgba(38, 38, 38, 0.97);
+  --rp-line: rgba(255, 255, 255, 0.08);
+  --rp-text-1: #f1f1ef;
+  --rp-text-3: #b0b0ad;
+  --rp-text-4: #8f8f8b;
+  --rp-soft: rgba(228, 228, 223, 0.08);
+  --rp-soft-hover: rgba(228, 228, 223, 0.14);
+  --rp-accent: #e4e4df;
+  --rp-accent-ink: #171717;
+  --rp-ring: #efad90;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --rp-bg: rgba(252, 252, 251, 0.98);
+  --rp-line: rgba(26, 26, 26, 0.1);
+  --rp-text-1: #1a1a1a;
+  --rp-text-3: #625f59;
+  --rp-text-4: #77736b;
+  --rp-soft: rgba(26, 26, 26, 0.06);
+  --rp-soft-hover: rgba(26, 26, 26, 0.1);
+  --rp-accent: #1a1a1a;
+  --rp-accent-ink: #fcfcfb;
+  --rp-ring: #c9805f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family:
+    "IBM Plex Sans Variable", "Segoe UI Variable Text", "Segoe UI", system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+button {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rp-root {
+  display: grid;
+  gap: 8px;
+  /* Room for the card shadow inside the transparent window. */
+  padding: 6px 10px 16px;
+}
+
+.rp-card {
+  padding: 14px 16px 14px;
+  border: 1px solid var(--rp-line);
+  border-radius: 16px;
+  color: var(--rp-text-1);
+  background: var(--rp-bg);
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.26),
+    0 1px 3px rgba(0, 0, 0, 0.18);
+  animation: rp-in 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes rp-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+.rp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rp-mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: var(--rp-ring);
+  background: color-mix(in srgb, var(--rp-ring) 16%, transparent);
+}
+
+.rp-mark svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: rp-swing 1.2s ease-in-out 2;
+  transform-origin: 50% 15%;
+}
+
+@keyframes rp-swing {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  20% {
+    transform: rotate(14deg);
+  }
+  40% {
+    transform: rotate(-11deg);
+  }
+  60% {
+    transform: rotate(7deg);
+  }
+  80% {
+    transform: rotate(-4deg);
+  }
+}
+
+.rp-when {
+  color: var(--rp-ring);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+
+.rp-card[data-missed] .rp-when {
+  color: var(--rp-text-3);
+}
+
+.rp-title {
+  margin: 10px 0 0;
+  font-size: 15.5px;
+  font-weight: 620;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+}
+
+.rp-details {
+  display: -webkit-box;
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--rp-text-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.rp-links {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.rp-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  color: var(--rp-accent-ink);
+  background: var(--rp-accent);
+  font-size: 13px;
+  font-weight: 620;
+  transition:
+    filter 0.15s ease,
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rp-open span {
+  overflow: hidden;
+  opacity: 0.6;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rp-open:hover {
+  filter: brightness(1.06);
+}
+
+.rp-open:active,
+.rp-quiet:active,
+.rp-done:active {
+  transform: scale(0.97);
+}
+
+.rp-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.rp-quiet,
+.rp-done {
+  flex: 1;
+  height: 32px;
+  border-radius: 10px;
+  color: var(--rp-text-1);
+  background: var(--rp-soft);
+  font-size: 12.5px;
+  font-weight: 560;
+  transition: background 0.15s ease;
+}
+
+.rp-quiet {
+  color: var(--rp-text-3);
+}
+
+.rp-quiet:hover,
+.rp-done:hover {
+  background: var(--rp-soft-hover);
+}
+
+.rp-all {
+  justify-self: end;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--rp-text-3);
+  background: var(--rp-bg);
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}

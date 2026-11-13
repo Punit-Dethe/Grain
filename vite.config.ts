@@ -23,6 +23,7 @@ export default defineConfig({
         main: resolve(__dirname, "index.html"),
         agentNotch: resolve(__dirname, "agent-notch.html"),
         recordingOverlay: resolve(__dirname, "recording-overlay.html"),
+        reminderPopup: resolve(__dirname, "reminder.html"),
       },
     },
   },

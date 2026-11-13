@@ -71,22 +71,14 @@ pub struct Reminder {
     pub date: String,
     /// Local wall-clock time, `HH:MM`; `None` = all-day.
     pub time: Option<String>,
-    #[serde(default)]
     pub links: Vec<ReminderLink>,
-    #[serde(default)]
     pub details: Option<String>,
-    #[serde(default)]
     pub kind: ReminderKind,
-    #[serde(default)]
     pub status: ReminderStatus,
     /// Next ring instant (UTC ms); `None` = will not ring.
-    #[serde(default)]
     pub ring_at_ms: Option<u64>,
-    #[serde(default)]
     pub source: ReminderSource,
-    #[serde(default)]
     pub created_ms: u64,
-    #[serde(default)]
     pub updated_ms: u64,
 }
 

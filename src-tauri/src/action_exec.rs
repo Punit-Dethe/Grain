@@ -194,13 +194,13 @@ pub(crate) async fn run_agent_calls(
                 "risk": call.risk, "side_effect": call.side_effect,
             })
         );
-        if call.extension_id == crate::grain_reach::EXTENSION_ID {
+        if is_compiled(&call.extension_id) {
             match current_manifest_digest(app, call) {
                 Some(digest) if call.still_valid(&digest, now_ms()).is_ok() => reach.push(index),
                 _ => {
                     outcomes[index] = Some(failed(
                         FailureClass::Cancelled,
-                        "Reach was turned off or changed before the action could run.",
+                        "The tool was turned off or changed before the action could run.",
                     ))
                 }
             }
@@ -241,16 +241,13 @@ pub(crate) async fn run_agent_calls(
             .map(|(index, result)| (index, mcp_outcome(result, &prepared[index])))
             .collect::<Vec<_>>()
     });
-    // Reach acts on whatever window is in front, so its calls run one after
-    // another, in the order the model wrote them, alongside the MCP batches.
+    // Compiled tools (Reach, Reminders) run one after another, in the order the
+    // model wrote them, alongside the MCP batches: Reach acts on whatever
+    // window is in front.
     let reach_run = async {
         let mut done = Vec::with_capacity(reach.len());
         for index in reach {
-            let call = &prepared[index];
-            done.push((
-                index,
-                crate::grain_reach::call(app, &call.action_id, &call.arguments).await,
-            ));
+            done.push((index, compiled_call(app, &prepared[index]).await));
         }
         done
     };
@@ -308,6 +305,9 @@ fn current_manifest_digest(app: &AppHandle, prepared: &PreparedCall) -> Option<S
         return crate::grain_reach::is_enabled(app)
             .then(grain_core::reach::catalog_digest);
     }
+    if prepared.extension_id == crate::grain_reminders::EXTENSION_ID {
+        return Some(grain_core::reminders::catalog_digest());
+    }
     crate::grain_mcp::is_enabled_extension(app, &prepared.extension_id)
         .then(|| prepared.manifest_digest.clone())
 }
@@ -330,10 +330,24 @@ async fn execute_revalidated(app: &AppHandle, prepared: &PreparedCall) -> Action
     }
 }
 
+/// Agent tools compiled into Grain rather than served over MCP.
+fn is_compiled(extension_id: &str) -> bool {
+    extension_id == crate::grain_reach::EXTENSION_ID
+        || extension_id == crate::grain_reminders::EXTENSION_ID
+}
+
+async fn compiled_call(app: &AppHandle, call: &PreparedCall) -> ActionOutcome {
+    if call.extension_id == crate::grain_reminders::EXTENSION_ID {
+        crate::grain_reminders::call(app, &call.action_id, &call.arguments).await
+    } else {
+        crate::grain_reach::call(app, &call.action_id, &call.arguments).await
+    }
+}
+
 /// Execute a prepared call against its provider.
 async fn execute(app: &AppHandle, prepared: &PreparedCall) -> ActionOutcome {
-    if prepared.extension_id == crate::grain_reach::EXTENSION_ID {
-        return crate::grain_reach::call(app, &prepared.action_id, &prepared.arguments).await;
+    if is_compiled(&prepared.extension_id) {
+        return compiled_call(app, prepared).await;
     }
     if let Some(provider_id) = prepared.extension_id.strip_prefix("mcp.") {
         mcp_execute(app, provider_id, prepared).await
