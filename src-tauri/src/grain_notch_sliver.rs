@@ -34,6 +34,15 @@ pub fn set_working(app: &AppHandle, working: bool) {
     let _ = (app, working);
 }
 
+/// [GRAIN] Talk-back is reading a reply aloud: the sliver's line sweeps blue
+/// (over any working line) until the voice ends.
+pub fn set_speaking(app: &AppHandle, speaking: bool) {
+    #[cfg(windows)]
+    imp::set_speaking(app, speaking);
+    #[cfg(not(windows))]
+    let _ = (app, speaking);
+}
+
 /// Hide the sliver while the notch itself is on screen; show it again after.
 pub fn set_hidden(app: &AppHandle, hidden: bool) {
     #[cfg(windows)]
@@ -102,7 +111,20 @@ mod imp {
         [255.0, 214.0, 102.0],
     ];
 
+    /// The speaking gradient, cycled: the same sweep in blue.
+    const SPEAK: [[f64; 3]; 3] = [
+        [47.0, 123.0, 255.0],
+        [79.0, 168.0, 255.0],
+        [127.0, 211.0, 255.0],
+    ];
+
     static WORKING: AtomicBool = AtomicBool::new(false);
+    static SPEAKING: AtomicBool = AtomicBool::new(false);
+
+    /// The animated line shows: a request runs or the voice talks.
+    fn animated() -> bool {
+        WORKING.load(Ordering::SeqCst) || SPEAKING.load(Ordering::SeqCst)
+    }
     /// `agent_notch_autohide`: invisible until hovered (or working).
     static AUTOHIDE: AtomicBool = AtomicBool::new(false);
 
@@ -164,7 +186,7 @@ mod imp {
         /// How far down it is drawn: always fully unless auto-hiding, and a
         /// running request keeps it down so its line stays visible.
         fn shown(&self) -> f64 {
-            if !AUTOHIDE.load(Ordering::SeqCst) || WORKING.load(Ordering::SeqCst) {
+            if !AUTOHIDE.load(Ordering::SeqCst) || animated() {
                 1.0
             } else {
                 self.slide.value()
@@ -173,7 +195,7 @@ mod imp {
 
         /// The hover fill waits for an auto-hidden sliver to slide down.
         fn fill_delay(&self) -> Duration {
-            if AUTOHIDE.load(Ordering::SeqCst) && !WORKING.load(Ordering::SeqCst) {
+            if AUTOHIDE.load(Ordering::SeqCst) && !animated() {
                 SLIDE
             } else {
                 Duration::ZERO
@@ -326,12 +348,21 @@ mod imp {
     }
 
     pub fn set_working(app: &AppHandle, working: bool) {
-        if WORKING.swap(working, Ordering::SeqCst) == working {
-            return;
+        if WORKING.swap(working, Ordering::SeqCst) != working {
+            animate_changed(app);
         }
-        let _ = app.run_on_main_thread(move || {
-            // Auto-hiding, the finished request's line slides away with it.
-            if !working && AUTOHIDE.load(Ordering::SeqCst) {
+    }
+
+    pub fn set_speaking(app: &AppHandle, speaking: bool) {
+        if SPEAKING.swap(speaking, Ordering::SeqCst) != speaking {
+            animate_changed(app);
+        }
+    }
+
+    fn animate_changed(app: &AppHandle) {
+        let _ = app.run_on_main_thread(|| {
+            // Auto-hiding, the finished line slides away with it.
+            if !animated() && AUTOHIDE.load(Ordering::SeqCst) {
                 tuck_away();
             }
             sync_work_timer();
@@ -349,7 +380,7 @@ mod imp {
             return;
         };
         unsafe {
-            if WORKING.load(Ordering::SeqCst) && !hidden {
+            if animated() && !hidden {
                 SetTimer(Some(hwnd), WORK_TIMER_ID, 33, None);
             } else {
                 let _ = KillTimer(Some(hwnd), WORK_TIMER_ID);
@@ -467,9 +498,13 @@ mod imp {
                     zoom,
                     shown,
                     progress,
-                    WORKING
-                        .load(Ordering::SeqCst)
+                    animated()
                         .then(|| (sliver.epoch.elapsed().as_secs_f64() / WORK_PERIOD).fract()),
+                    if SPEAKING.load(Ordering::SeqCst) {
+                        &SPEAK
+                    } else {
+                        &WORK
+                    },
                 ),
             })
         })
@@ -486,17 +521,17 @@ mod imp {
         ((p + 0.5).min(hi) - (p - 0.5).max(lo)).clamp(0.0, 1.0)
     }
 
-    /// The cycled working gradient at `t` in [0, 1).
-    fn work_color(t: f64) -> [f64; 3] {
-        let scaled = t * WORK.len() as f64;
-        let index = (scaled.floor() as usize) % WORK.len();
-        let next = (index + 1) % WORK.len();
+    /// The cycled gradient `stops` at `t` in [0, 1).
+    fn work_color(stops: &[[f64; 3]; 3], t: f64) -> [f64; 3] {
+        let scaled = t * stops.len() as f64;
+        let index = (scaled.floor() as usize) % stops.len();
+        let next = (index + 1) % stops.len();
         let f = scaled.fract();
         // Smoothstep between stops: no visible seams in the sweep.
         let f = f * f * (3.0 - 2.0 * f);
         let mut color = [0.0; 3];
         for i in 0..3 {
-            color[i] = WORK[index][i] + (WORK[next][i] - WORK[index][i]) * f;
+            color[i] = stops[index][i] + (stops[next][i] - stops[index][i]) * f;
         }
         color
     }
@@ -513,6 +548,7 @@ mod imp {
         shown: f64,
         progress: Option<f64>,
         work: Option<f64>,
+        stops: &[[f64; 3]; 3],
     ) -> Vec<u32> {
         let (sw, sh) = (REST.0 * zoom, REST.1 * zoom);
         let lift = (1.0 - shown.clamp(0.0, 1.0)) * sh;
@@ -551,7 +587,7 @@ mod imp {
                     let line = span(py, bar_top, bar_bottom) * span(px, bar_left, bar_right);
                     if line > 0.0 {
                         let along = (px - bar_left) / (bar_right - bar_left);
-                        let hue = work_color((along - phase).rem_euclid(1.0));
+                        let hue = work_color(stops, (along - phase).rem_euclid(1.0));
                         for i in 0..3 {
                             color[i] += (hue[i] - color[i]) * line;
                         }

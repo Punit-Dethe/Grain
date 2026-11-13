@@ -1581,9 +1581,11 @@ fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
     let id = crate::grain_tts::speak(app, text, move |id| {
         let _ = handle.emit_to(PANEL_LABEL, "agent-speech", AgentSpeech { id, active: false });
         speech_ended(&handle, summon);
+        voice_ended(&handle);
     });
     if let Some(id) = id {
         let _ = app.emit_to(PANEL_LABEL, "agent-speech", AgentSpeech { id, active: true });
+        voice_started(app);
     }
     if compact && id.is_none() {
         // Nothing will be heard: present the reply the normal way.
@@ -1594,6 +1596,33 @@ fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
             Ordering::SeqCst,
         );
     }
+}
+
+/// [GRAIN] The voice is talking: wherever the notch is, the resting sliver
+/// sweeps blue, and Escape on it stops the voice. Escape is held globally for
+/// the speech's whole life (the notch, while open, keeps its own Escape rules).
+fn voice_started(app: &AppHandle) {
+    crate::grain_notch_sliver::set_speaking(app, true);
+    let handle = app.clone();
+    // Never mutate shortcuts inline: this may run under a shortcut callback.
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<AgentState>();
+        state.transient_shortcuts.claim(|| {
+            if crate::grain_tts::current_speech().is_some() {
+                register_one_transient_inner(&handle, close_binding());
+            }
+        });
+    });
+}
+
+/// The voice stopped. A newer speech already talking keeps the blue line and
+/// Escape; otherwise both go (Escape stays while a notch or request needs it).
+fn voice_ended(app: &AppHandle) {
+    if crate::grain_tts::current_speech().is_some() {
+        return;
+    }
+    crate::grain_notch_sliver::set_speaking(app, false);
+    unregister_transient_shortcuts_deferred(app);
 }
 
 /// Speech for a compact reply ended (finished, stopped or failed): retract the
@@ -1997,6 +2026,8 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
                 // A new instruction may already have registered Escape while
                 // its window creation is still queued on the main thread.
                 || state.waiting_for_reply.load(Ordering::SeqCst)
+                // Talk-back: Escape on the speaking sliver stops the voice.
+                || crate::grain_tts::current_speech().is_some()
             {
                 return;
             }
@@ -2059,6 +2090,10 @@ pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
     if app.get_webview_window(PANEL_LABEL).is_some() && !hand_opened(app) {
         return true;
     }
+    // Talk-back holds Escape while the voice talks.
+    if crate::grain_tts::current_speech().is_some() {
+        return true;
+    }
     app.try_state::<AgentState>().is_some_and(|state| {
         state.input_active.load(Ordering::SeqCst) || state.waiting_for_reply.load(Ordering::SeqCst)
     })
@@ -2104,6 +2139,13 @@ pub fn global_close(app: &AppHandle) {
             return;
         }
         EscapeTarget::AgentPanel => {}
+    }
+
+    // No notch on screen, only the speaking sliver: Escape silences the voice.
+    if app.get_webview_window(PANEL_LABEL).is_none() && crate::grain_tts::current_speech().is_some()
+    {
+        crate::grain_tts::stop();
+        return;
     }
 
     // Cancel immediately; the window closes once its shell has retracted.
