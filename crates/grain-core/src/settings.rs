@@ -794,6 +794,11 @@ pub struct AppSettings {
     /// OFF by default and off is free: no capture, no permission, no bytes.
     #[serde(default)]
     pub agent_screen_image: bool,
+    /// [GRAIN] Agent talk-back: read Agent chat replies aloud with the on-device
+    /// Phonon voice (`grain_tts`). OFF by default; off costs nothing — no model
+    /// is downloaded or loaded.
+    #[serde(default)]
+    pub agent_talk_back: bool,
     /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
     /// is published, through the configured AI provider. OFF by default while
     /// the feature is in development; off costs nothing.
@@ -1600,6 +1605,7 @@ pub fn get_default_settings() -> AppSettings {
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),
         agent_screen_image: false,
+        agent_talk_back: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,
         meet_auto_title: false,

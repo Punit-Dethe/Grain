@@ -250,6 +250,8 @@ const settingUpdaters: {
     commands.changeScrapThatEnabledSetting(value as boolean),
   agent_screen_image: (value) =>
     commands.changeAgentScreenImageSetting(value as boolean),
+  agent_talk_back: (value) =>
+    commands.changeAgentTalkBackSetting(value as boolean),
   meet_auto_summary: (value) =>
     commands.changeMeetAutoSummarySetting(value as boolean),
   meet_auto_transcribe: (value) =>

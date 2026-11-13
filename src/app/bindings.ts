@@ -614,6 +614,19 @@ async changeAgentScreenImageSetting(enabled: boolean) : Promise<Result<null, str
 }
 },
 /**
+ * [GRAIN] Agent talk-back: read chat replies aloud. Turning it on fetches the
+ * pinned voice in the background; turning it off stops any speech now. See
+ * `Settings::agent_talk_back`.
+ */
+async changeAgentTalkBackSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_talk_back_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
  * by default; see `Settings::meet_auto_summary`.
  */
@@ -2177,7 +2190,13 @@ mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
  * 
  * OFF by default and off is free: no capture, no permission, no bytes.
  */
-agent_screen_image?: boolean; 
+agent_screen_image?: boolean;
+/**
+ * [GRAIN] Agent talk-back: read Agent chat replies aloud with the on-device
+ * Phonon voice (`grain_tts`). OFF by default; off costs nothing — no model
+ * is downloaded or loaded.
+ */
+agent_talk_back?: boolean;
 /**
  * [GRAIN] Recall: write a summary of each meeting as soon as its transcript
  * is published, through the configured AI provider. OFF by default while

@@ -608,6 +608,23 @@ pub fn change_agent_screen_image_setting(app: AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
+/// [GRAIN] Agent talk-back: read chat replies aloud. Turning it on fetches the
+/// pinned voice in the background; turning it off stops any speech now. See
+/// `Settings::agent_talk_back`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_talk_back_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_talk_back = enabled;
+    settings::write_settings(&app, settings);
+    if enabled {
+        crate::grain_tts::ensure_installed(&app);
+    } else {
+        crate::grain_tts::stop();
+    }
+    Ok(())
+}
+
 /// [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
 /// by default; see `Settings::meet_auto_summary`.
 #[tauri::command]

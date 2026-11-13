@@ -45,6 +45,8 @@ impl CoordinatorState {
         if crate::grain_actions::dictation_start_blocked(app) {
             return false;
         }
+        // Never let the mic hear the Agent's own voice.
+        crate::grain_tts::stop();
         let action_id = crate::grain_dictation_routing::action_id_for(app, binding);
         let Some(action) = crate::actions::ACTION_MAP.get(&action_id) else {
             return false;

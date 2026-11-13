@@ -1008,7 +1008,9 @@
         "enabled": "Enable Agent",
         "enabledDescription": "Use the Agent shortcut to speak a request.",
         "screenImage": "See my screen",
-        "screenImageDescription": "Send an image of the active window to the selected AI model when you summon Agent. Grain keeps it only for the conversation."
+        "screenImageDescription": "Send an image of the active window to the selected AI model when you summon Agent. Grain keeps it only for the conversation.",
+        "talkBack": "Read replies aloud",
+        "talkBackDescription": "Agent speaks its replies with an on-device voice. The first time, Grain downloads the 65 MB voice; replies are read aloud once it finishes."
       },
       "sections": {
         "capture": {

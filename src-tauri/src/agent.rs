@@ -432,6 +432,8 @@ pub fn summon(app: &AppHandle) {
 
 /// Capture foreground context and present the Agent off the hotkey thread.
 fn summon_inner(app: &AppHandle) {
+    // Listening for a new instruction: stop reading the last reply aloud.
+    crate::grain_tts::stop();
     let app = app.clone();
     std::thread::spawn(move || {
         let state = app.state::<AgentState>();
@@ -1975,6 +1977,7 @@ pub fn global_close(app: &AppHandle) {
 /// here, not by the webview, so a wedged webview still goes away. A newer
 /// summon owns the panel by then and is left alone.
 fn close_panel_animated(app: &AppHandle, generation: u64) {
+    crate::grain_tts::stop();
     let _ = app.emit_to(PANEL_LABEL, "agent-dismiss", ());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -2425,10 +2428,15 @@ pub async fn agent_run(
         }
         state.execution.begin()?
     };
+    // A new turn silences the previous reply's talk-back.
+    crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
     let reply = run
         .wait(registration, agent_run_owned(&app, messages, context, &run))
         .await?;
+    if let Ok(reply) = &reply {
+        crate::grain_tts::speak(&app, &reply.text);
+    }
     if record {
         if let Ok(reply) = &reply {
             // A confirmation is recorded once it resolves (by the panel).

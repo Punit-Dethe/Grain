@@ -9,6 +9,7 @@ export function AgentSection() {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = getSetting("agent_enabled") ?? true;
   const screenImage = getSetting("agent_screen_image") ?? false;
+  const talkBack = getSetting("agent_talk_back") ?? false;
 
   return (
     <SettingsGroup title={t("ui2.settings.agent.group")}>
@@ -36,6 +37,16 @@ export function AgentSection() {
             checked={screenImage}
             isUpdating={isUpdating("agent_screen_image")}
             onChange={(v) => updateSetting("agent_screen_image", v)}
+          />
+
+          <ToggleSwitch
+            label={t("ui2.settings.agent.talkBack")}
+            description={t("ui2.settings.agent.talkBackDescription")}
+            descriptionMode="tooltip"
+            grouped
+            checked={talkBack}
+            isUpdating={isUpdating("agent_talk_back")}
+            onChange={(v) => updateSetting("agent_talk_back", v)}
           />
         </>
       )}
