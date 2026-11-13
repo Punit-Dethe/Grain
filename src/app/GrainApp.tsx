@@ -711,6 +711,7 @@ function NextShell() {
           <MeetPage
             meetingId={route.meeting ?? null}
             settings={route.settings === true}
+            day={route.day ?? null}
           />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />

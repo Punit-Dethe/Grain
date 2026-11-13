@@ -653,9 +653,12 @@ function useSecondTick(active: boolean): number {
 function Recordings({
   meet,
   filters,
+  focusDay,
 }: {
   meet: MeetController;
   filters: RecordingFilters;
+  /** `YYYY-MM-DD` to scroll to once its recordings are listed. */
+  focusDay: string | null;
 }) {
   const { t, i18n } = useTranslation();
   const recordingId = meet.status.recording?.session_id;
@@ -664,6 +667,24 @@ function Recordings({
     () => groupByDay(meet.meetings, new Date(), filters),
     [meet.meetings, filters],
   );
+  const focusKey = useMemo(() => {
+    if (!focusDay) return null;
+    const [y, m, d] = focusDay.split("-").map(Number);
+    return String(new Date(y, m - 1, d).getTime());
+  }, [focusDay]);
+  const focusedRef = useRef<string | null>(null);
+  // Scroll to the asked-for day once, when its group first renders.
+  useEffect(() => {
+    if (!focusKey || focusedRef.current === focusKey) return;
+    const section = document.querySelector(`.meet-day[data-day="${focusKey}"]`);
+    if (!section) return;
+    // After the workspace's own scroll-to-top for a new view.
+    const frame = requestAnimationFrame(() => {
+      focusedRef.current = focusKey;
+      section.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusKey, groups]);
   const dayFormat = useMemo(
     () =>
       new Intl.DateTimeFormat(i18n.language, {
@@ -704,7 +725,12 @@ function Recordings({
   } else {
     const processingId = meet.status.processing?.session_id;
     body = groups.map((group) => (
-      <section key={group.key} className="meet-day">
+      <section
+        key={group.key}
+        className="meet-day"
+        data-day={group.key}
+        data-focus={group.key === focusKey ? "" : undefined}
+      >
         <h2>
           {group.kind === "today"
             ? t("ui2.meet.list.today")
@@ -1827,18 +1853,27 @@ function MeetingView({
 export function MeetPage({
   meetingId,
   settings = false,
+  day = null,
 }: {
   meetingId: string | null;
   settings?: boolean;
+  /** `YYYY-MM-DD`: open the list scrolled to that day's recordings. */
+  day?: string | null;
 }) {
   return settings ? (
     <MeetSettingsPage />
   ) : (
-    <MeetWorkspace meetingId={meetingId} />
+    <MeetWorkspace meetingId={meetingId} day={day} />
   );
 }
 
-function MeetWorkspace({ meetingId }: { meetingId: string | null }) {
+function MeetWorkspace({
+  meetingId,
+  day,
+}: {
+  meetingId: string | null;
+  day: string | null;
+}) {
   const { t } = useTranslation();
   const meet = useMeetController();
   const [query, setQuery] = useState("");
@@ -1892,7 +1927,7 @@ function MeetWorkspace({ meetingId }: { meetingId: string | null }) {
               </button>
             </div>
           </header>
-          <Recordings meet={meet} filters={filters} />
+          <Recordings meet={meet} filters={filters} focusDay={day} />
         </div>
         <CaptureDock meet={meet} />
       </>

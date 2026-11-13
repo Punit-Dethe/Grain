@@ -8,9 +8,11 @@ import {
   isoDay,
   linkInfo,
   linkLabel,
+  countByDay,
   monthGrid,
   remindersByDay,
   shiftMonth,
+  weekGrid,
 } from "./reminderFormat";
 
 function reminder(
@@ -108,6 +110,24 @@ describe("reminder formatting", () => {
     expect(monthGrid("2026-02-10", 0).length).toBe(28);
     expect(shiftMonth("2026-12-31", 1)).toBe("2027-01-01");
     expect(shiftMonth("2026-01-15", -1)).toBe("2025-12-01");
+  });
+
+  it("lays out whole weeks from the one holding a day", () => {
+    const days = weekGrid("2026-11-13", 1, 2);
+    expect(days.length).toBe(14);
+    expect(days[0]).toBe("2026-11-09");
+    expect(days[13]).toBe("2026-11-22");
+    expect(weekGrid("2026-11-01", 0, 1)[0]).toBe("2026-11-01");
+  });
+
+  it("counts instants per local day", () => {
+    const counts = countByDay([
+      new Date(2026, 10, 13, 9).getTime(),
+      new Date(2026, 10, 13, 23, 59).getTime(),
+      new Date(2026, 10, 14, 0, 1).getTime(),
+    ]);
+    expect(counts.get("2026-11-13")).toBe(2);
+    expect(counts.get("2026-11-14")).toBe(1);
   });
 
   it("buckets reminders by day in due order", () => {

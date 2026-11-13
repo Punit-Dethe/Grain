@@ -191,6 +191,32 @@ export function monthGrid(iso: string, firstDay: number): string[] {
   return days;
 }
 
+/** `weeks` whole weeks, starting with the one that holds `iso`. */
+export function weekGrid(
+  iso: string,
+  firstDay: number,
+  weeks: number,
+): string[] {
+  const date = parseIsoDay(iso);
+  date.setDate(date.getDate() - ((date.getDay() - firstDay + 7) % 7));
+  const days: string[] = [];
+  for (let i = 0; i < weeks * 7; i += 1) {
+    days.push(isoDay(date));
+    date.setDate(date.getDate() + 1);
+  }
+  return days;
+}
+
+/** How many of the given instants (Unix ms) fall on each local day. */
+export function countByDay(instants: number[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const ms of instants) {
+    const day = isoDay(new Date(ms));
+    counts.set(day, (counts.get(day) ?? 0) + 1);
+  }
+  return counts;
+}
+
 /** Reminders by day, each day in due order (all-day first). */
 export function remindersByDay(reminders: Reminder[]): Map<string, Reminder[]> {
   const days = new Map<string, Reminder[]>();

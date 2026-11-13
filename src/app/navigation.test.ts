@@ -38,6 +38,15 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash("#/meet/../x")).toEqual({ page: "overview" });
   });
 
+  it("round-trips the recordings list at one day", () => {
+    const route = { page: "meet", day: "2026-11-13" } as const;
+    expect(hashForRoute(route)).toBe("#/meet/day/2026-11-13");
+    expect(routeFromHash("#/meet/day/2026-11-13")).toEqual(route);
+    expect(routeFromHash("#/meet/day/13-11-2026")).toEqual({
+      page: "overview",
+    });
+  });
+
   it("round-trips the Recall settings page without mistaking it for a recording", () => {
     const route = { page: "meet", settings: true } as const;
     expect(hashForRoute(route)).toBe("#/meet/settings");

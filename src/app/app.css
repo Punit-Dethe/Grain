@@ -5728,6 +5728,15 @@ html[data-theme="light"] .dropdown-compact-menu {
   font-weight: 600;
 }
 
+/* The day the Reminders calendar sent you to. */
+.meet-day[data-focus] {
+  scroll-margin-top: 12px;
+}
+
+.meet-day[data-focus] h2 {
+  color: var(--text-1);
+}
+
 .meet-day ul {
   margin: 0;
   padding: 0;

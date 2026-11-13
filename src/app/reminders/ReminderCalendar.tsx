@@ -8,7 +8,9 @@ import {
   type KeyboardEvent,
 } from "react";
 import { commands, type Reminder } from "@/bindings";
+import { hashForRoute } from "@/navigation";
 import {
+  countByDay,
   isMeeting,
   isoDay,
   linkInfo,
@@ -17,14 +19,20 @@ import {
   relativeDay,
   remindersByDay,
   shiftMonth,
+  weekGrid,
   weekStart,
   whenLabel,
 } from "./reminderFormat";
 
-/** Items a day cell lists before "+N more". */
-const CELL_ITEMS = 2;
-/** The day sheet's width, in CSS px (`.rem-cal-sheet` in reminders.css). */
+/** The day sheet's width, in CSS px. */
 const SHEET_WIDTH = 320;
+/** Weeks the default view shows. */
+const SPAN_WEEKS = 2;
+/** Dots a month cell draws before it stops counting. */
+const MONTH_DOTS = 3;
+const VIEW_KEY = "grain.reminders.calendarView";
+
+type View = "weeks" | "month";
 
 function Glyph({ name }: { name: string }) {
   return (
@@ -32,6 +40,37 @@ function Glyph({ name }: { name: string }) {
       <use href={`#i-${name}`} />
     </svg>
   );
+}
+
+function readView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "month" ? "month" : "weeks";
+  } catch {
+    return "weeks";
+  }
+}
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/** Recordings per day, read once per visit to the tab (counts only). */
+function useRecordedDays(): Map<string, number> {
+  const [days, setDays] = useState<Map<string, number>>(() => new Map());
+  useEffect(() => {
+    let dead = false;
+    void commands
+      .meetList()
+      .then((result) => {
+        if (dead || result.status !== "ok") return;
+        setDays(countByDay(result.data.map((m) => m.created_unix_ms)));
+      })
+      .catch(console.error);
+    return () => {
+      dead = true;
+    };
+  }, []);
+  return days;
 }
 
 interface Props {
@@ -47,11 +86,12 @@ interface Props {
   onAdd: (day: string) => void;
 }
 
-/** One day's sheet: what is on it, with its links, and a way to add more. */
+/** One day's sheet: its recordings, its reminders, and a way to add more. */
 function DaySheet({
   day,
   today,
   items,
+  recorded,
   style,
   run,
   onAdd,
@@ -60,6 +100,7 @@ function DaySheet({
   day: string;
   today: string;
   items: Reminder[];
+  recorded: number;
   style: CSSProperties;
   run: Props["run"];
   onAdd: () => void;
@@ -108,7 +149,23 @@ function DaySheet({
         </button>
       </header>
 
-      {items.length ? (
+      {recorded > 0 && (
+        <a
+          className="rem-cal-recorded"
+          href={hashForRoute({ page: "meet", day })}
+        >
+          <span className="rem-cal-recorded-icon">
+            <Glyph name="mic" />
+          </span>
+          <span className="rem-cal-recorded-text">
+            {plural(recorded, "meeting", "meetings")} on this day
+            <small>Open in Recall</small>
+          </span>
+          <Glyph name="chev-right" />
+        </a>
+      )}
+
+      {items.length > 0 && (
         <ul className="rem-cal-sheet-list">
           {items.map((reminder) => {
             const done = reminder.status === "done";
@@ -165,7 +222,9 @@ function DaySheet({
             );
           })}
         </ul>
-      ) : (
+      )}
+
+      {items.length === 0 && recorded === 0 && (
         <p className="rem-cal-sheet-empty">Nothing on this day.</p>
       )}
 
@@ -177,9 +236,14 @@ function DaySheet({
   );
 }
 
-/** A month at a glance: what is on each day; click a day for its sheet. */
+/**
+ * The calendar strip: two weeks by default (what is on each day, one line),
+ * or a compact month of dots. Click a day for its sheet.
+ */
 export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
-  const [month, setMonth] = useState(() => shiftMonth(today, 0));
+  const [view, setView] = useState<View>(readView);
+  // A day inside the span on show; the arrows move it.
+  const [anchor, setAnchor] = useState(today);
   const [open, setOpen] = useState<{
     day: string;
     style: CSSProperties;
@@ -187,11 +251,18 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
   // The one day cell in the tab order (arrow keys move it).
   const [cursor, setCursor] = useState(today);
   const gridRef = useRef<HTMLDivElement>(null);
+  const recordedDays = useRecordedDays();
 
   const firstDay = useMemo(() => weekStart(), []);
-  const days = useMemo(() => monthGrid(month, firstDay), [month, firstDay]);
+  const days = useMemo(
+    () =>
+      view === "month"
+        ? monthGrid(anchor, firstDay)
+        : weekGrid(anchor, firstDay, SPAN_WEEKS),
+    [view, anchor, firstDay],
+  );
   const byDay = useMemo(() => remindersByDay(reminders), [reminders]);
-  const monthKey = month.slice(0, 7);
+  const monthKey = anchor.slice(0, 7);
   const weekdays = useMemo(
     () =>
       days
@@ -201,15 +272,25 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
         ),
     [days],
   );
-  const title = parseIsoDay(month).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
+  const title = useMemo(() => {
+    if (view === "month")
+      return parseIsoDay(anchor).toLocaleDateString(undefined, {
+        month: "long",
+        year: "numeric",
+      });
+    const first = parseIsoDay(days[0]);
+    const last = parseIsoDay(days[days.length - 1]);
+    const month = (date: Date) =>
+      date.toLocaleDateString(undefined, { month: "long" });
+    return first.getMonth() === last.getMonth()
+      ? `${month(first)} ${first.getFullYear()}`
+      : `${month(first)} – ${month(last)} ${last.getFullYear()}`;
+  }, [view, anchor, days]);
   const tabDay = days.includes(cursor)
     ? cursor
     : days.includes(today)
       ? today
-      : `${monthKey}-01`;
+      : days[0];
 
   // An open sheet closes on a click anywhere outside it.
   useEffect(() => {
@@ -230,12 +311,30 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
         ?.focus(),
     );
 
-  const goToMonth = (next: string) => {
+  const shift = (direction: -1 | 1) => {
     setOpen(null);
-    setMonth(next);
+    if (view === "month") {
+      setAnchor(shiftMonth(anchor, direction));
+      return;
+    }
+    const date = parseIsoDay(anchor);
+    date.setDate(date.getDate() + direction * 7);
+    setAnchor(isoDay(date));
   };
 
-  /** Open `day`'s sheet beside its cell, over the calendar. */
+  const switchView = (next: View) => {
+    setOpen(null);
+    setView(next);
+    // Keep today in sight when it is in the span being left.
+    if (days.includes(today)) setAnchor(today);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // A per-viewer convenience only.
+    }
+  };
+
+  /** Open `day`'s sheet under its cell (over it near the bottom of a month). */
   const openDay = (day: string, cell: HTMLElement) => {
     if (open?.day === day) {
       setOpen(null);
@@ -243,21 +342,18 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
     }
     const grid = gridRef.current;
     if (!grid) return;
-    const index = days.indexOf(day);
-    const column = index % 7;
-    const row = Math.floor(index / 7);
+    const width = Math.min(SHEET_WIDTH, grid.clientWidth);
+    const center = cell.offsetLeft + cell.offsetWidth / 2;
+    const left = Math.min(
+      Math.max(0, center - width / 2),
+      grid.clientWidth - width,
+    );
+    const row = Math.floor(days.indexOf(day) / 7);
     const rows = days.length / 7;
-    const style: CSSProperties = {};
-    // Opens toward the room: right of a left-half cell, left of a right one;
-    // below the upper rows, above the lower ones.
-    if (column < 4) style.left = Math.max(0, cell.offsetLeft - 1);
-    else
-      style.right = Math.max(
-        0,
-        grid.clientWidth - cell.offsetLeft - cell.offsetWidth - 1,
-      );
-    if (row < rows - 2) style.top = cell.offsetTop + cell.offsetHeight + 6;
-    else style.bottom = grid.clientHeight - cell.offsetTop + 6;
+    const style: CSSProperties = { left, width };
+    if (view === "month" && row >= rows - 2)
+      style.bottom = grid.clientHeight - cell.offsetTop + 6;
+    else style.top = cell.offsetTop + cell.offsetHeight + 6;
     setCursor(day);
     setOpen({ day, style });
   };
@@ -277,40 +373,53 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
     const next = isoDay(date);
     setOpen(null);
     setCursor(next);
-    if (!days.includes(next)) setMonth(shiftMonth(next, 0));
+    if (!days.includes(next)) setAnchor(next);
     focusDay(next);
   };
 
   return (
-    <section className="rem-cal" aria-label="Calendar">
+    <section className="rem-cal" data-view={view} aria-label="Calendar">
       <header className="rem-cal-head">
         <h2>{title}</h2>
         <span className="rem-spacer" />
-        {month !== shiftMonth(today, 0) && (
+        {!days.includes(today) && (
           <button
             type="button"
             className="rem-ghost"
             onClick={() => {
-              goToMonth(shiftMonth(today, 0));
+              setOpen(null);
+              setAnchor(today);
               setCursor(today);
             }}
           >
             Today
           </button>
         )}
+        <div className="rem-cal-views" role="group" aria-label="Calendar view">
+          {(["weeks", "month"] as const).map((option) => (
+            <button
+              type="button"
+              key={option}
+              aria-pressed={view === option}
+              onClick={() => switchView(option)}
+            >
+              {option === "weeks" ? "2 weeks" : "Month"}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           className="rem-icon-button"
-          aria-label="Previous month"
-          onClick={() => goToMonth(shiftMonth(month, -1))}
+          aria-label={view === "month" ? "Previous month" : "Previous week"}
+          onClick={() => shift(-1)}
         >
           <Glyph name="chev-left" />
         </button>
         <button
           type="button"
           className="rem-icon-button"
-          aria-label="Next month"
-          onClick={() => goToMonth(shiftMonth(month, 1))}
+          aria-label={view === "month" ? "Next month" : "Next week"}
+          onClick={() => shift(1)}
         >
           <Glyph name="chev-right" />
         </button>
@@ -325,10 +434,17 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
       <div className="rem-cal-grid" ref={gridRef} onKeyDown={onGridKey}>
         {days.map((day) => {
           const items = byDay.get(day) ?? [];
-          const outside = !day.startsWith(monthKey);
-          const shown = items.slice(0, CELL_ITEMS);
-          const more = items.length - shown.length;
-          const label = parseIsoDay(day).toLocaleDateString(undefined, {
+          const recorded = recordedDays.get(day) ?? 0;
+          const outside = view === "month" && !day.startsWith(monthKey);
+          const lead = items.find((r) => r.status !== "done") ?? items[0];
+          const date = parseIsoDay(day);
+          const summary = [
+            items.length ? plural(items.length, "reminder", "reminders") : "",
+            recorded ? plural(recorded, "meeting", "meetings") : "",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          const label = date.toLocaleDateString(undefined, {
             weekday: "long",
             day: "numeric",
             month: "long",
@@ -342,24 +458,61 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
               data-outside={outside ? "" : undefined}
               data-today={day === today ? "" : undefined}
               data-past={day < today ? "" : undefined}
+              data-first={date.getDate() === 1 ? "" : undefined}
               aria-pressed={open?.day === day}
-              aria-label={`${label}${items.length ? `, ${items.length} reminder${items.length === 1 ? "" : "s"}` : ""}`}
+              aria-label={summary ? `${label}, ${summary}` : label}
+              title={summary || undefined}
               tabIndex={day === tabDay ? 0 : -1}
               onClick={(event) => openDay(day, event.currentTarget)}
             >
-              <span className="rem-cal-date">{parseIsoDay(day).getDate()}</span>
-              {shown.map((reminder) => (
-                <span
-                  key={reminder.id}
-                  className="rem-cal-item"
-                  data-status={reminder.status}
-                  data-meeting={isMeeting(reminder) ? "" : undefined}
-                >
-                  <span className="rem-cal-dot" />
-                  <span className="rem-cal-item-title">{reminder.title}</span>
+              <span className="rem-cal-day-top">
+                <span className="rem-cal-date">
+                  {view === "weeks" && date.getDate() === 1
+                    ? date.toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                      })
+                    : date.getDate()}
                 </span>
-              ))}
-              {more > 0 && <span className="rem-cal-more">+{more} more</span>}
+                {recorded > 0 && (
+                  <span className="rem-cal-recorded-mark">
+                    <Glyph name="mic" />
+                    {view === "weeks" && recorded > 1 && recorded}
+                  </span>
+                )}
+              </span>
+              {view === "weeks"
+                ? lead && (
+                    <span className="rem-cal-line">
+                      <span
+                        className="rem-cal-item"
+                        data-status={lead.status}
+                        data-meeting={isMeeting(lead) ? "" : undefined}
+                      >
+                        <span className="rem-cal-dot" />
+                        <span className="rem-cal-item-title">{lead.title}</span>
+                      </span>
+                      {items.length > 1 && (
+                        <span className="rem-cal-more">
+                          +{items.length - 1}
+                        </span>
+                      )}
+                    </span>
+                  )
+                : items.length > 0 && (
+                    <span className="rem-cal-dots">
+                      {items.slice(0, MONTH_DOTS).map((reminder) => (
+                        <span
+                          key={reminder.id}
+                          className="rem-cal-item"
+                          data-status={reminder.status}
+                          data-meeting={isMeeting(reminder) ? "" : undefined}
+                        >
+                          <span className="rem-cal-dot" />
+                        </span>
+                      ))}
+                    </span>
+                  )}
             </button>
           );
         })}
@@ -369,7 +522,8 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
             day={open.day}
             today={today}
             items={byDay.get(open.day) ?? []}
-            style={{ ...open.style, width: `min(${SHEET_WIDTH}px, 100%)` }}
+            recorded={recordedDays.get(open.day) ?? 0}
+            style={open.style}
             run={run}
             onAdd={() => {
               setOpen(null);
