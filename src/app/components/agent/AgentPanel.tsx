@@ -7,6 +7,7 @@ import {
   RotateCcw,
   X,
   Check,
+  Square,
   SquarePen,
   History as HistoryIcon,
 } from "lucide-react";
@@ -158,6 +159,9 @@ export function AgentPanel() {
   const firstTurnGenerationRef = useRef<number | null>(null);
   // A chat turn sent from an earlier open is still running on the host.
   const backgroundRef = useRef(false);
+  // The user pressed Stop during the current run: its cancelled error is
+  // shown as "Stopped", not as a failure.
+  const stoppedRef = useRef(false);
   messagesRef.current = messages;
   firstReplyRef.current = firstReply;
   hasFollowupsRef.current = hasFollowups;
@@ -181,6 +185,20 @@ export function AgentPanel() {
     reveal();
   }, [reveal]);
 
+  /** A failed run's message; a run the user stopped just says so. */
+  const runError = useCallback(
+    (message: string | null | undefined) =>
+      stoppedRef.current ? t("agent.stopped") : message || t("agent.error"),
+    [t],
+  );
+
+  /** Stop the running request (the Stop button in the composer). */
+  const stop = useCallback(() => {
+    if (!busyRef.current) return;
+    stoppedRef.current = true;
+    void commands.agentStop().catch(console.error);
+  }, []);
+
   /** Run the FIRST instruction (or a retry of it) — compact stage. */
   const runFirst = useCallback(
     async (instruction: string, record = true) => {
@@ -190,6 +208,7 @@ export function AgentPanel() {
       setMessages([{ id: "u0", role: "user", content: instruction }]);
       setBusy(true);
       setError(null);
+      stoppedRef.current = false;
       try {
         const payload: AgentMessage[] = [
           ...toPayload(historyRef.current.slice(-HISTORY_CONTEXT)),
@@ -207,15 +226,15 @@ export function AgentPanel() {
           setFirstReply(res.data);
           if (!record) remember(null, res.data);
         } else {
-          setError(res.error || t("agent.error"));
+          setError(runError(res.error));
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : t("agent.error"));
+        setError(runError(e instanceof Error ? e.message : null));
       } finally {
         setBusy(false);
       }
     },
-    [t],
+    [runError],
   );
 
   /** Run the conversation with its existing turns. */
@@ -223,6 +242,7 @@ export function AgentPanel() {
     async (history: ChatMessage[]) => {
       setBusy(true);
       setError(null);
+      stoppedRef.current = false;
       try {
         const payload: AgentMessage[] = [
           ...toPayload(historyRef.current.slice(-HISTORY_CONTEXT)),
@@ -253,15 +273,15 @@ export function AgentPanel() {
             },
           ]);
         } else {
-          setError(res.error || t("agent.error"));
+          setError(runError(res.error));
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : t("agent.error"));
+        setError(runError(e instanceof Error ? e.message : null));
       } finally {
         setBusy(false);
       }
     },
-    [t],
+    [runError],
   );
 
   const retry = useCallback(() => {
@@ -1125,16 +1145,28 @@ export function AgentPanel() {
                   }}
                   onKeyDown={onComposerKey}
                 />
-                <button
-                  type="button"
-                  className="agc-c-send"
-                  disabled={!hasDraft || busy}
-                  onClick={sendDraft}
-                  aria-label={t("agent.send")}
-                  title={t("agent.send")}
-                >
-                  <ArrowUp size={15} strokeWidth={2.25} />
-                </button>
+                {busy ? (
+                  <button
+                    type="button"
+                    className="agc-c-send agc-c-stop"
+                    onClick={stop}
+                    aria-label={t("agent.stop")}
+                    title={t("agent.stop")}
+                  >
+                    <Square size={10} fill="currentColor" strokeWidth={0} />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="agc-c-send"
+                    disabled={!hasDraft}
+                    onClick={sendDraft}
+                    aria-label={t("agent.send")}
+                    title={t("agent.send")}
+                  >
+                    <ArrowUp size={15} strokeWidth={2.25} />
+                  </button>
+                )}
               </div>
             </div>
           </div>

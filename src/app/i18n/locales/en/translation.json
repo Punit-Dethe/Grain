@@ -51,6 +51,8 @@
     "placeholderSelection": "What should I do with the selection? — summarize, make polite, convert to email…",
     "placeholderAsk": "Ask anything…",
     "send": "Send",
+    "stop": "Stop",
+    "stopped": "Stopped.",
     "speak": "SPEAK",
     "sendCue": "↵ SEND",
     "escCue": "ESC CLOSE",

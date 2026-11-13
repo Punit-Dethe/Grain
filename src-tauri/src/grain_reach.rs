@@ -852,6 +852,7 @@ mod os {
             Key::Tab => tap(enigo, None, K::Tab),
             Key::ShiftTab => tap(enigo, Some(K::Shift), K::Tab),
             Key::Escape => tap(enigo, None, K::Escape),
+            Key::Space => tap(enigo, None, K::Space),
         })
     }
 

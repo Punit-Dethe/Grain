@@ -135,6 +135,7 @@ const KEYS: &[&str] = &[
     "tab",
     "shift_tab",
     "escape",
+    "space",
 ];
 
 const MEDIA_ACTIONS: &[&str] = &[
@@ -247,8 +248,8 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "press_key",
             title: "Press a key",
-            description: "Press a key in the app the user is working in (or the app Reach just opened): enter (send / submit), ctrl_enter, shift_enter (new line in chat apps), tab / shift_tab (move between fields), escape.",
-            keywords: &["enter", "send", "submit", "press", "key", "tab", "escape"],
+            description: "Press a key in the app the user is working in (or the app Reach just opened): enter (send / submit), ctrl_enter, shift_enter (new line in chat apps), tab / shift_tab (move between fields), escape, space (play/pause the video on a YouTube or other video page; presses the focused button).",
+            keywords: &["enter", "send", "submit", "press", "key", "tab", "escape", "space", "pause video"],
             read_only: false,
             schema: json!({
                 "type": "object",
@@ -352,6 +353,7 @@ pub enum Key {
     Tab,
     ShiftTab,
     Escape,
+    Space,
 }
 
 impl Key {
@@ -363,6 +365,7 @@ impl Key {
             Key::Tab => "Tab",
             Key::ShiftTab => "Shift+Tab",
             Key::Escape => "Escape",
+            Key::Space => "Space",
         }
     }
 }
@@ -502,6 +505,7 @@ pub fn parse(action: &str, args: &Value) -> Result<Call, String> {
             "tab" => Key::Tab,
             "shift_tab" => Key::ShiftTab,
             "escape" => Key::Escape,
+            "space" => Key::Space,
             other => return Err(format!("unknown key `{other}`; use one of {KEYS:?}")),
         })),
         "media_control" => Ok(Call::Media(match required("action")?.as_str() {
@@ -1533,6 +1537,10 @@ mod tests {
         assert_eq!(
             parse("press_key", &json!({"key": "enter"})).unwrap(),
             Call::PressKey(Key::Enter)
+        );
+        assert_eq!(
+            parse("press_key", &json!({"key": "space"})).unwrap(),
+            Call::PressKey(Key::Space)
         );
         assert!(parse("press_key", &json!({"key": "alt_f4"})).is_err());
         assert_eq!(

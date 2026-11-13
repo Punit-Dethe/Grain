@@ -1454,6 +1454,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_confirm_action,
             agent::agent_notch_status,
             agent::agent_cancel_notch,
+            agent::agent_stop, // [GRAIN] Stop button in the expanded notch
             agent::agent_notch_shape,
             grain_agent_history::agent_history,
             grain_agent_history::agent_history_append,

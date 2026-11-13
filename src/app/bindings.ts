@@ -1151,6 +1151,16 @@ async agentCancelNotch(generation: number) : Promise<void> {
     await TAURI_INVOKE("agent_cancel_notch", { generation });
 },
 /**
+ * [GRAIN] The Stop button: end the running Agent request now. The model call
+ * and any waiting tool call are dropped; a tool already executing may have
+ * had effects. Its `agent_run` returns the cancelled error, and the recorded
+ * chat keeps the request without a reply. A held confirmation is discarded and
+ * talk-back stops. Returns whether a request was running.
+ */
+async agentStop() : Promise<boolean> {
+    return await TAURI_INVOKE("agent_stop");
+},
+/**
  * [GRAIN] Clip the notch window to its shell so the transparent rest of it
  * never eats clicks. `None` is the full window (the chat).
  */

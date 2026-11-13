@@ -154,6 +154,16 @@ impl AgentRunControl {
         state.pending_action.take()
     }
 
+    /// A request is in flight.
+    pub(crate) fn is_running(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .active
+            .as_ref()
+            .is_some_and(|handle| !handle.is_aborted())
+    }
+
     /// [GRAIN] Drop a pending confirmation but let a running request finish:
     /// closing the notch keeps chat work going in the background.
     pub(crate) fn discard_pending(&self) -> Option<String> {
@@ -1478,6 +1488,26 @@ pub fn agent_notch_status(app: AppHandle) -> AgentNotchStatus {
         working: reply_wait_is_current(&app, generation),
         speaking: generation != 0 && state.compact_speech.load(Ordering::SeqCst) == generation,
     }
+}
+
+/// [GRAIN] The Stop button: end the running Agent request now. The model call
+/// and any waiting tool call are dropped; a tool already executing may have
+/// had effects. Its `agent_run` returns the cancelled error, and the recorded
+/// chat keeps the request without a reply. A held confirmation is discarded and
+/// talk-back stops. Returns whether a request was running.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_stop(app: AppHandle) -> bool {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return false;
+    };
+    let running = state.execution.is_running();
+    if let Some(token) = state.execution.cancel() {
+        crate::action_exec::discard(&token);
+    }
+    crate::grain_tts::stop();
+    log::info!("[GRAIN] agent: stopped by the user (running={running})");
+    running
 }
 
 #[tauri::command]
