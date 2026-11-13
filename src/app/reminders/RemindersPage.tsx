@@ -17,6 +17,7 @@ import {
   whenLabel,
   type ReminderGroup,
 } from "./reminderFormat";
+import { ReminderCalendar } from "./ReminderCalendar";
 import "./reminders.css";
 
 function Glyph({ name }: { name: string }) {
@@ -473,6 +474,26 @@ export function RemindersPage() {
     [reminders, now],
   );
   const upcoming = reminders?.filter((r) => r.status !== "done").length ?? 0;
+  // A day picked on the calendar starts a fresh composer on that day.
+  const [seed, setSeed] = useState<{ day: string; n: number } | null>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const addOn = useCallback((day: string) => {
+    setSeed((current) => ({ day, n: (current?.n ?? 0) + 1 }));
+    requestAnimationFrame(() =>
+      composerRef.current?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      }),
+    );
+  }, []);
+  const run = useCallback(
+    (
+      call: () => Promise<
+        { status: "ok"; data: unknown } | { status: "error"; error: string }
+      >,
+    ) => void attempt(call),
+    [],
+  );
 
   return (
     <section className="page active reminders-page" data-page-panel="reminders">
@@ -481,14 +502,31 @@ export function RemindersPage() {
           <div>
             <h1>Reminders</h1>
             <p className="page-subtitle">
-              When one is due it opens in the Agent notch, with a button for
-              any link. Add one here, or ask the Agent: “remind me Tuesday at 6
-              pm about the review, here’s the Meet link”.
+              When one is due it opens in the Agent notch, with a button for any
+              link. Click a day to see what’s on it, add one below, or ask the
+              Agent: “remind me Tuesday at 6 pm about the review, here’s the
+              Meet link”.
             </p>
           </div>
         </header>
 
-        <Composer key={today} initial={emptyDraft(today)} onDone={() => {}} />
+        {reminders !== null && (
+          <ReminderCalendar
+            reminders={reminders}
+            today={today}
+            run={run}
+            onAdd={addOn}
+          />
+        )}
+
+        <div ref={composerRef} className="rem-composer-slot">
+          <Composer
+            key={`${today}:${seed?.n ?? 0}`}
+            initial={emptyDraft(seed?.day ?? today)}
+            autoFocus={seed !== null}
+            onDone={() => {}}
+          />
+        </div>
 
         {reminders === null ? null : groups.length === 0 ? (
           <div className="rem-empty">

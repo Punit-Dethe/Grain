@@ -8,6 +8,9 @@ import {
   isoDay,
   linkInfo,
   linkLabel,
+  monthGrid,
+  remindersByDay,
+  shiftMonth,
 } from "./reminderFormat";
 
 function reminder(
@@ -89,6 +92,32 @@ describe("reminder formatting", () => {
     expect(linkInfo("https://example.com/").detail).toBe("");
     expect(linkInfo("zoommtg://zoom.us/join?confno=1").kind).toBe("meeting");
     expect(linkInfo("spotify:track:1").kind).toBe("app");
+  });
+
+  it("lays out whole weeks for a month", () => {
+    // November 2026 starts on a Sunday and ends on a Monday.
+    const monday = monthGrid("2026-11-13", 1);
+    expect(monday[0]).toBe("2026-10-26");
+    expect(monday[monday.length - 1]).toBe("2026-12-06");
+    expect(monday.length).toBe(42);
+    const sunday = monthGrid("2026-11-13", 0);
+    expect(sunday[0]).toBe("2026-11-01");
+    expect(sunday[sunday.length - 1]).toBe("2026-12-05");
+    expect(sunday.length).toBe(35);
+    // February 2026 fits exactly four Sunday-first weeks.
+    expect(monthGrid("2026-02-10", 0).length).toBe(28);
+    expect(shiftMonth("2026-12-31", 1)).toBe("2027-01-01");
+    expect(shiftMonth("2026-01-15", -1)).toBe("2025-12-01");
+  });
+
+  it("buckets reminders by day in due order", () => {
+    const days = remindersByDay([
+      reminder("2026-11-13", "17:00"),
+      reminder("2026-11-14", null),
+      reminder("2026-11-13", null),
+    ]);
+    expect([...days.keys()]).toEqual(["2026-11-13", "2026-11-14"]);
+    expect(days.get("2026-11-13")?.map((r) => r.time)).toEqual([null, "17:00"]);
   });
 
   it("shows a short host for links", () => {

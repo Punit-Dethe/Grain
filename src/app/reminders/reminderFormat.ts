@@ -152,6 +152,61 @@ export function linkInfo(url: string): LinkInfo {
 const byDue = (a: Reminder, b: Reminder) =>
   a.date.localeCompare(b.date) || (a.time ?? "").localeCompare(b.time ?? "");
 
+/** The first day of the week for `locale`, as a `Date.getDay()` index
+ * (0 = Sunday). Falls back to Monday where the runtime cannot say. */
+export function weekStart(locale?: string): number {
+  try {
+    const info = new Intl.Locale(
+      locale ?? navigator.language,
+    ) as Intl.Locale & {
+      getWeekInfo?: () => { firstDay: number };
+      weekInfo?: { firstDay: number };
+    };
+    const firstDay = (info.getWeekInfo?.() ?? info.weekInfo)?.firstDay;
+    if (firstDay) return firstDay % 7;
+  } catch {
+    // Unknown locale: use the default below.
+  }
+  return 1;
+}
+
+/** `YYYY-MM-01` of the month `months` away from the month holding `iso`. */
+export function shiftMonth(iso: string, months: number): string {
+  const date = parseIsoDay(iso);
+  return isoDay(new Date(date.getFullYear(), date.getMonth() + months, 1));
+}
+
+/** The days a month view shows: whole weeks from the one holding the 1st to
+ * the one holding the last day (5 or 6 weeks, sometimes 4). */
+export function monthGrid(iso: string, firstDay: number): string[] {
+  const date = parseIsoDay(iso);
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const last = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  const lead = (first.getDay() - firstDay + 7) % 7;
+  const trail = (firstDay + 6 - last.getDay()) % 7;
+  const days: string[] = [];
+  for (let i = -lead; i < last.getDate() + trail; i += 1) {
+    days.push(isoDay(new Date(first.getFullYear(), first.getMonth(), 1 + i)));
+  }
+  return days;
+}
+
+/** Reminders by day, each day in due order (all-day first). */
+export function remindersByDay(reminders: Reminder[]): Map<string, Reminder[]> {
+  const days = new Map<string, Reminder[]>();
+  for (const reminder of [...reminders].sort(byDue)) {
+    const day = days.get(reminder.date);
+    if (day) day.push(reminder);
+    else days.set(reminder.date, [reminder]);
+  }
+  return days;
+}
+
+/** Whether any of the reminder's links is a call to join. */
+export function isMeeting(reminder: Reminder): boolean {
+  return reminder.links.some((link) => linkInfo(link.url).kind === "meeting");
+}
+
 /**
  * Ringing first, then past-but-open ("Earlier"), today, one group per later
  * day, and done last.
