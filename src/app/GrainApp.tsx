@@ -272,16 +272,16 @@ const NAV_ITEMS = [
   { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
   { page: "history", label: "History", icon: "clock", href: "#/history" },
   {
-    page: "reminders",
-    label: "Reminders",
-    icon: "bell",
-    href: "#/reminders",
-  },
-  {
     page: "tools",
     label: "Personalize",
     icon: "zap",
     href: "#/tools/dictionary",
+  },
+  {
+    page: "reminders",
+    label: "Reminders",
+    icon: "bell",
+    href: "#/reminders",
   },
   {
     page: "extensions",

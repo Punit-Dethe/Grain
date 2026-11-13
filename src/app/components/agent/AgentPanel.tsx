@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import {
   commands,
+  events,
+  type Reminder,
   type AgentChatList,
   type AgentHistoryMessage,
   type AgentNotchMode,
@@ -25,6 +27,7 @@ import {
 import { AgentMarkdown } from "../markdown/Markdown";
 import { AgentHistory } from "./AgentHistory";
 import { AgentRecall } from "./AgentRecall";
+import { AgentReminder } from "./AgentReminder";
 import { AgentVoiceFade } from "./AgentVoiceFade";
 import { AgentWorkingLabel } from "./AgentWorkingLabel";
 
@@ -127,8 +130,16 @@ export function AgentPanel() {
   // The shell first paints as the resting sliver and grows out of it.
   const [entering, setEntering] = useState(true);
   const [mode, setMode] = useState<AgentNotchMode>("chat");
-  // The chat list replaces the chat or Recall pane while it is open.
-  const [view, setView] = useState<"main" | "history">("main");
+  // The chat list or a ringing reminder replaces the chat or Recall pane
+  // while it is open.
+  const [view, setView] = useState<"main" | "history" | "reminder">("main");
+  // Ringing reminders (oldest due first). A hand-opened notch shows each one
+  // once per open; Back leaves it ringing for the next open, Done ends it.
+  const [ringing, setRinging] = useState<Reminder[]>([]);
+  const [handOpened, setHandOpened] = useState(false);
+  const remindedRef = useRef(new Set<string>());
+  // For the window key handler (Escape on a reminder counts as Done).
+  const finishReminderRef = useRef<(id: string) => void>(() => {});
   const [chatList, setChatList] = useState<AgentChatList | null>(null);
   // Earlier turns of the one running chat (this session's turns are below).
   const [history, setHistory] = useState<ChatMessage[]>([]);
@@ -463,6 +474,7 @@ export function AgentPanel() {
             setBusy(false);
           }
         }
+        setHandOpened(status.opened);
         if (status.opened && status.shown) open();
         generationRef.current = status.generation;
         setCapture({
@@ -557,13 +569,15 @@ export function AgentPanel() {
       }
       if (event.key !== "Escape") return;
       event.preventDefault();
-      // The chat list steps back to the chat first.
+      // The chat list steps back to the chat first; a reminder counts as done.
       if (view === "history") setView("main");
+      else if (view === "reminder" && ringing[0])
+        finishReminderRef.current(ringing[0].id);
       else dismiss();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [revealed, dismiss, view]);
+  }, [revealed, dismiss, view, ringing]);
 
   // Clip the window to the Recall shell so its transparent rest never eats
   // clicks. Pixels outside the clip are not refreshed while it holds: lifting
@@ -572,7 +586,7 @@ export function AgentPanel() {
   // outside it), and widens before the shell grows, never after.
   useEffect(() => {
     if (!revealed || closing) return;
-    const clip = mode === "recall" && !recallMenu && view !== "history";
+    const clip = mode === "recall" && !recallMenu && view === "main";
     if (!clip) {
       if (clipRef.current !== null) {
         clipRef.current = null;
@@ -633,6 +647,74 @@ export function AgentPanel() {
   switchModeRef.current = switchMode;
   const modeRef = useRef(mode);
   modeRef.current = mode;
+
+  // Ringing reminders: read on open and whenever the list changes.
+  useEffect(() => {
+    let dead = false;
+    const load = () =>
+      void commands
+        .remindersList()
+        .then((result) => {
+          if (dead || result.status !== "ok") return;
+          setRinging(
+            result.data
+              .filter((r) => r.status === "ringing")
+              .sort(
+                (a, b) =>
+                  a.date.localeCompare(b.date) ||
+                  (a.time ?? "").localeCompare(b.time ?? ""),
+              ),
+          );
+        })
+        .catch(console.error);
+    load();
+    let release: (() => void) | undefined;
+    void events.remindersChanged
+      .listen(load)
+      .then((stop) => {
+        if (dead) stop();
+        else release = stop;
+      })
+      .catch(console.error);
+    return () => {
+      dead = true;
+      release?.();
+    };
+  }, []);
+
+  // A hand-opened notch shows any reminder it has not shown yet (a summon's
+  // reply is never replaced). With none left, the view steps back.
+  useEffect(() => {
+    if (!revealed || closing) return;
+    if (view === "reminder" && ringing.length === 0) {
+      setView("main");
+      return;
+    }
+    if (!handOpened) return;
+    const fresh = ringing.filter((r) => !remindedRef.current.has(r.id));
+    if (!fresh.length) return;
+    fresh.forEach((r) => remindedRef.current.add(r.id));
+    if (view !== "reminder") unclipThen(() => setView("reminder"));
+  }, [revealed, closing, handOpened, ringing, view, unclipThen]);
+
+  /** Leave the reminder view; the reminder stays ringing for the next open. */
+  const leaveReminder = useCallback(() => {
+    setView("main");
+    if (modeRef.current === "chat")
+      requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+
+  /** Done: the reminder is gone; the next one shows, or the view steps back. */
+  const finishReminder = useCallback(
+    (id: string) => {
+      const rest = ringing.filter((r) => r.id !== id);
+      setRinging(rest);
+      if (!rest.length) leaveReminder();
+      void commands.remindersSetDone(id, true).catch(console.error);
+    },
+    [ringing, leaveReminder],
+  );
+  finishReminderRef.current = finishReminder;
 
   /** Show `earlier` as the chat, with no turn of this open on top of it. */
   const showChat = useCallback((earlier: ChatMessage[]) => {
@@ -889,7 +971,8 @@ export function AgentPanel() {
     void commands.agentStopSpeech().catch(console.error);
   }, []);
   const listing = revealed && view === "history";
-  const recall = revealed && mode === "recall" && !listing;
+  const recall = revealed && mode === "recall" && view === "main";
+  const reminding = revealed && view === "reminder" && ringing.length > 0;
   const canClear = !busy && (history.length > 0 || thread.length > 0);
 
   return (
@@ -982,7 +1065,7 @@ export function AgentPanel() {
             </span>
           </span>
           <span className="agent-notch-spacer" />
-          {revealed && (mode === "chat" || listing) && (
+          {revealed && ((mode === "chat" && !reminding) || listing) && (
             <button
               type="button"
               className="agent-notch-control agent-notch-history"
@@ -994,7 +1077,7 @@ export function AgentPanel() {
               <span>{t("agent.history")}</span>
             </button>
           )}
-          {revealed && (mode === "chat" || listing) && (
+          {revealed && ((mode === "chat" && !reminding) || listing) && (
             <button
               type="button"
               className="agent-notch-control agent-notch-close"
@@ -1042,6 +1125,16 @@ export function AgentPanel() {
           </div>
         )}
 
+        {reminding && (
+          <div className="agent-notch-reminder">
+            <AgentReminder
+              reminders={ringing}
+              onBack={leaveReminder}
+              onDone={finishReminder}
+            />
+          </div>
+        )}
+
         {recall && (
           <div className="agent-notch-recall">
             <AgentRecall
@@ -1056,8 +1149,8 @@ export function AgentPanel() {
         {(revealed ||
           (mode === "chat" && !busy && (!!firstReply || !!error))) && (
           <div
-            className={`agent-notch-reply${listing || mode !== "chat" ? " is-away" : ""}`}
-            aria-hidden={!revealed || listing || mode !== "chat"}
+            className={`agent-notch-reply${view !== "main" || mode !== "chat" ? " is-away" : ""}`}
+            aria-hidden={!revealed || view !== "main" || mode !== "chat"}
           >
             <div className="agc-c-scroll">
               {history.map((m) => (

@@ -3,8 +3,10 @@
 //! Store: `<app data>/reminders.json`, read on demand and written atomically;
 //! nothing is cached in memory. Firing: ONE timer task that sleeps until the
 //! earliest pending reminder and is replaced on every change; with nothing
-//! pending there is no task at all. Ringing: a small always-on-top popup
-//! window that exists only while something rings, then is destroyed.
+//! pending there is no task at all. Ringing: the Agent notch opens on its
+//! reminder view (no window of its own). If the notch cannot open right now
+//! (dictation, a summon, the Agent off) the same timer tries again a minute
+//! later.
 //!
 //! The pure half (record, validation, day/time phrases, Agent tool schemas)
 //! lives in `grain_core::reminders`.
@@ -22,28 +24,27 @@ use grain_core::reminders::{
 use grain_sdk::action::ActionRisk;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_specta::Event as _;
 
 pub(crate) use grain_core::reminders::EXTENSION_ID;
 
 const FILE: &str = "reminders.json";
-pub(crate) const POPUP_LABEL: &str = "reminder-popup";
-const POPUP_WIDTH: f64 = 360.0;
-const POPUP_MIN_HEIGHT: f64 = 96.0;
-const POPUP_MAX_HEIGHT: f64 = 560.0;
-/// Margin between the popup and the work-area corner, logical px.
-const POPUP_MARGIN: f64 = 12.0;
 /// The timer re-reads the wall clock at least this often while waiting, so a
 /// laptop sleep or a clock change cannot make a reminder ring late.
 const SLICE_MS: u64 = 5 * 60 * 1000;
+/// When the notch could not open for a ringing reminder, try again after this.
+const RETRY_MS: u64 = 60 * 1000;
 
 /// Serialises read-modify-write of the file.
 static LOCK: Mutex<()> = Mutex::new(());
 /// The single next-due timer; `None` when nothing is pending.
 static TIMER: Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = Mutex::new(None);
+/// When to try opening the notch again for a ringing reminder; `None` = no
+/// retry owed (it opened, or nothing rings).
+static RETRY_AT: Mutex<Option<u64>> = Mutex::new(None);
 
-/// Sent whenever the reminder list changes. The tab and the popup re-read.
+/// Sent whenever the reminder list changes. The tab and the notch re-read.
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct RemindersChanged;
 
@@ -198,13 +199,12 @@ fn save(
     Ok(saved)
 }
 
-/// After any change: tell the webviews, re-arm the timer, show or close the popup.
+/// After any change: tell the webviews and re-arm the timer.
 fn changed(app: &AppHandle) {
     if let Err(error) = RemindersChanged.emit(app) {
         log::warn!("[GRAIN] reminders: emit failed: {error}");
     }
     rearm(app);
-    sync_popup(app);
 }
 
 fn find_mut<'a>(list: &'a mut [Reminder], id: &str) -> Result<&'a mut Reminder, String> {
@@ -213,13 +213,26 @@ fn find_mut<'a>(list: &'a mut [Reminder], id: &str) -> Result<&'a mut Reminder, 
         .ok_or_else(|| "That reminder no longer exists.".to_string())
 }
 
+fn retry_at() -> std::sync::MutexGuard<'static, Option<u64>> {
+    RETRY_AT.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 // ── Timer ──────────────────────────────────────────────────────────────────
 
-/// Replace the timer with one for the earliest pending reminder, or none.
+/// Replace the timer with one for the earliest pending reminder (or a notch
+/// retry owed to a ringing one), or none.
 pub(crate) fn rearm(app: &AppHandle) {
-    let next = load(app)
-        .map(|list| reminders::next_ring(&list))
-        .unwrap_or_default();
+    let list = load(app).unwrap_or_default();
+    let retry = if list.iter().any(|r| r.status == ReminderStatus::Ringing) {
+        *retry_at()
+    } else {
+        retry_at().take();
+        None
+    };
+    let next = [reminders::next_ring(&list), retry]
+        .into_iter()
+        .flatten()
+        .min();
     let mut slot = TIMER.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(old) = slot.take() {
         old.abort();
@@ -242,7 +255,8 @@ pub(crate) fn rearm(app: &AppHandle) {
     }));
 }
 
-/// Ring every pending reminder that is due.
+/// Ring every pending reminder that is due, and open the notch for them (or
+/// try again, when a retry is owed).
 fn fire(app: &AppHandle) {
     let now = now_ms();
     let rang = mutate(app, |list| {
@@ -257,81 +271,45 @@ fn fire(app: &AppHandle) {
             }
         }
         Ok(rang)
+    })
+    .unwrap_or_else(|error| {
+        log::warn!("[GRAIN] reminders: could not ring: {error}");
+        0
     });
-    match rang {
-        Ok(count) => log::info!("[GRAIN] reminders: {count} ringing"),
-        Err(error) => log::warn!("[GRAIN] reminders: could not ring: {error}"),
+    let retry_due = retry_at().is_some_and(|at| at <= now);
+    if rang > 0 || retry_due {
+        log::info!("[GRAIN] reminders: {rang} newly ringing");
+        retry_at().take();
+        present(app);
     }
     changed(app);
 }
 
-/// Start-up: re-arm (missed reminders ring at once) and reopen the popup for
-/// any reminder that was still ringing when Grain closed.
-pub(crate) fn start(app: &AppHandle) {
-    rearm(app);
-    sync_popup(app);
+/// Open the Agent notch on its reminder view. If it cannot open now, owe a
+/// retry and re-arm. Window work runs on the main loop.
+fn present(app: &AppHandle) {
+    let handle = app.clone();
+    let posted = app.run_on_main_thread(move || {
+        if !crate::agent::open_notch_for_reminder(&handle) {
+            *retry_at() = Some(now_ms() + RETRY_MS);
+            rearm(&handle);
+        }
+    });
+    if let Err(error) = posted {
+        log::warn!("[GRAIN] reminders: could not reach the main loop: {error}");
+    }
 }
 
-// ── Popup ──────────────────────────────────────────────────────────────────
-
-/// Open the popup while something rings; destroy it when nothing does.
-fn sync_popup(app: &AppHandle) {
+/// Start-up: re-arm (missed reminders ring at once) and reopen the notch for
+/// any reminder still ringing when Grain closed.
+pub(crate) fn start(app: &AppHandle) {
     let ringing = load(app)
         .map(|list| list.iter().any(|r| r.status == ReminderStatus::Ringing))
         .unwrap_or(false);
-    let existing = app.get_webview_window(POPUP_LABEL);
-    match (ringing, existing) {
-        (false, Some(window)) => {
-            if let Err(error) = window.destroy() {
-                log::warn!("[GRAIN] reminders: could not close the popup: {error}");
-            }
-        }
-        (true, None) => {
-            if let Err(error) = build_popup(app) {
-                log::warn!("[GRAIN] reminders: could not open the popup: {error}");
-            }
-        }
-        _ => {}
+    if ringing {
+        present(app);
     }
-}
-
-fn build_popup(app: &AppHandle) -> tauri::Result<()> {
-    let (x, y) = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .map(|monitor| {
-            let scale = monitor.scale_factor();
-            let area = monitor.work_area();
-            (
-                (area.position.x as f64 + area.size.width as f64) / scale
-                    - POPUP_WIDTH
-                    - POPUP_MARGIN,
-                area.position.y as f64 / scale + POPUP_MARGIN,
-            )
-        })
-        .unwrap_or((40.0, 40.0));
-    let mut builder = tauri::WebviewWindowBuilder::new(
-        app,
-        POPUP_LABEL,
-        tauri::WebviewUrl::App("reminder.html".into()),
-    )
-    .title("Grain reminder")
-    .inner_size(POPUP_WIDTH, 180.0)
-    .position(x, y)
-    .resizable(false)
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .focused(false)
-    .shadow(false)
-    .background_color(tauri::window::Color(0, 0, 0, 0));
-    if let Some(data_dir) = crate::portable::data_dir() {
-        builder = builder.data_directory(data_dir.join("webview"));
-    }
-    builder.build()?;
-    Ok(())
+    rearm(app);
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────
@@ -436,30 +414,6 @@ pub async fn reminders_open_link(app: AppHandle, id: String, index: u32) -> Resu
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("Could not open the link: {e}"))
-}
-
-/// Fit the popup's height to its content (top edge stays put).
-#[tauri::command]
-#[specta::specta]
-pub async fn reminders_popup_resize(app: AppHandle, height: f64) -> Result<(), String> {
-    let Some(window) = app.get_webview_window(POPUP_LABEL) else {
-        return Ok(());
-    };
-    let height = height.clamp(POPUP_MIN_HEIGHT, POPUP_MAX_HEIGHT);
-    window
-        .set_size(tauri::LogicalSize::new(POPUP_WIDTH, height))
-        .map_err(|e| e.to_string())
-}
-
-/// Bring the main window forward on the Reminders tab.
-#[tauri::command]
-#[specta::specta]
-pub async fn reminders_show_in_app(app: AppHandle) -> Result<(), String> {
-    crate::show_main_window(&app);
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.eval("window.location.hash = '#/reminders'");
-    }
-    Ok(())
 }
 
 // ── Agent provider ─────────────────────────────────────────────────────────

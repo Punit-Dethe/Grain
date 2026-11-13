@@ -40,11 +40,16 @@ export function timeLabel(time: string, locale?: string): string {
   });
 }
 
-/** "Today", "Tomorrow", "Yesterday", or "Wed 25 Nov" (+ year when not this year). */
-export function dayLabel(iso: string, today: string, locale?: string): string {
-  if (iso === today) return "Today";
-  if (iso === addDays(today, 1)) return "Tomorrow";
-  if (iso === addDays(today, -1)) return "Yesterday";
+/** -1, 0 or 1 for yesterday, today or tomorrow; `null` for any other day. */
+export function relativeDay(iso: string, today: string): -1 | 0 | 1 | null {
+  if (iso === today) return 0;
+  if (iso === addDays(today, 1)) return 1;
+  if (iso === addDays(today, -1)) return -1;
+  return null;
+}
+
+/** "Wed 25 Nov" (+ year when not this year). */
+export function dateLabel(iso: string, today: string, locale?: string): string {
   const date = parseIsoDay(iso);
   const sameYear = iso.slice(0, 4) === today.slice(0, 4);
   return date.toLocaleDateString(locale, {
@@ -53,6 +58,14 @@ export function dayLabel(iso: string, today: string, locale?: string): string {
     month: "short",
     ...(sameYear ? {} : { year: "numeric" }),
   });
+}
+
+const RELATIVE_DAY = { [-1]: "Yesterday", 0: "Today", 1: "Tomorrow" } as const;
+
+/** "Today", "Tomorrow", "Yesterday", or "Wed 25 Nov" (the Reminders tab). */
+export function dayLabel(iso: string, today: string, locale?: string): string {
+  const near = relativeDay(iso, today);
+  return near === null ? dateLabel(iso, today, locale) : RELATIVE_DAY[near];
 }
 
 /** "6:00 PM", or "All day". */

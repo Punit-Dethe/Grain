@@ -1075,6 +1075,25 @@ pub(crate) fn open_notch(app: &AppHandle) {
     });
 }
 
+/// [GRAIN] A reminder is ringing: open the notch by hand so its reminder view
+/// shows (the panel reads ringing reminders when it opens, and on
+/// `reminders-changed` while open). False when it cannot open now — the Agent
+/// is off, dictation or a summon owns the notch — and the caller retries.
+/// Main loop only.
+pub(crate) fn open_notch_for_reminder(app: &AppHandle) -> bool {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return false;
+    };
+    if !get_settings(app).agent_enabled {
+        return false;
+    }
+    if app.get_webview_window(PANEL_LABEL).is_some() && !state.opened.load(Ordering::SeqCst) {
+        return false; // A summon owns the notch.
+    }
+    open_notch(app);
+    state.opened.load(Ordering::SeqCst) && state.open_shown.load(Ordering::SeqCst)
+}
+
 fn hand_opened(app: &AppHandle) -> bool {
     app.try_state::<AgentState>()
         .is_some_and(|state| state.opened.load(Ordering::SeqCst))

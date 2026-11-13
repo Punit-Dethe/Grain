@@ -481,9 +481,9 @@ export function RemindersPage() {
           <div>
             <h1>Reminders</h1>
             <p className="page-subtitle">
-              Grain rings at the time you set, with a button for any link. Add
-              one here, or ask the Agent: “remind me Tuesday at 6 pm about the
-              review, here’s the Meet link”.
+              When one is due it opens in the Agent notch, with a button for
+              any link. Add one here, or ask the Agent: “remind me Tuesday at 6
+              pm about the review, here’s the Meet link”.
             </p>
           </div>
         </header>

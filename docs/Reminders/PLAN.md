@@ -55,16 +55,38 @@ not a link.
   `--radius-*`), `.page`/`.page-header`/`.button` shell classes, styles in
   `src/app/reminders/reminders.css`.
 
-**Ring popup** (`reminder.html`, window label `reminder-popup`): a small
-always-on-top card at the top-right of the work area that does not steal focus.
-It lists every ringing reminder with **Open** (per link), **Snooze 10 min** and
-**Done**. When nothing is ringing the window is **destroyed**, not hidden.
+The tab sits in the sidebar directly below Personalize.
 
-Why a Grain window and not an OS toast: Grain has no notification plugin, and
-`tauri-plugin-notification` cannot attach action buttons or click callbacks on
-desktop, so an "Open the Meet link" button is impossible there. The popup
-webview shares the existing WebView2 browser process and lives only while
-something rings.
+**Ringing happens in the Agent notch** (user decision 2026-11-13: no separate
+overlay window). At the due time the notch opens by hand-open
+(`agent::open_notch_for_reminder`) on a **reminder view** that replaces the
+Chat/Recall pane:
+
+```
+┌ Recall  Chat ─────────────────────────────────────── × ┐
+│ ← Back                                         1 of 2 │
+│                                                        │
+│ (bell) 6:00 PM            (or "Missed · 5:00 PM")      │
+│ Design review                                          │
+│ note…                                                  │
+│                                                        │
+│ [ ↗ Open  meet.google.com ]                   [ ✓ Done ] │
+└────────────────────────────────────────────────────────┘
+```
+
+* **Back** → the notch returns to whatever it was on (Chat or Recall). The
+  reminder stays ringing and shows again the next time the notch opens.
+* **Done** → the reminder is finished; the next ringing one shows, or the notch
+  returns to Chat/Recall.
+* **Escape** on the reminder view counts as **Done** (for now). Escape again
+  closes the notch as usual.
+* Clicking Chat/Recall (or Tab) also steps back.
+* A summoned notch (voice → reply) is never taken over by a reminder.
+
+Why not an OS toast: Grain has no notification plugin, and
+`tauri-plugin-notification` cannot attach action buttons on desktop, so an
+"Open the Meet link" button is impossible there. The notch is the surface the
+user already looks at, and it costs no extra window.
 
 ## 3. Storage
 
@@ -119,30 +141,33 @@ All in `src-tauri/src/grain_reminders.rs`; pure logic in
 | `reminders_snooze(id, minutes)` | ringing → pending, rings again later              |
 | `reminders_clear_done()`        | remove every done reminder                        |
 | `reminders_open_link(id, index)`| opens the *stored* link (re-validated) — the webview never hands the host a URL to open |
-| `reminders_show_in_app()`       | shows the main window on `#/reminders`            |
 
-Event: `reminders-changed` (no payload). The tab and the popup re-read.
+Event: `reminders-changed` (no payload). The tab and the notch re-read.
 
 ## 5. Firing path (one timer, not an engine)
 
 ```
 save / delete / snooze / done / fire / app start
         └─► rearm(): abort the old timer task, read the file,
-                     pick min(ring_at_ms) over pending reminders
+                     pick min(ring_at_ms over pending, notch retry if owed)
                      ├─ none → no task exists at all
                      └─ some → spawn ONE task: sleep until due (in ≤ 5 min
                                slices, re-reading the wall clock, so laptop
                                sleep or a clock change cannot make it late),
                                then fire()
 fire(): every pending reminder with ring_at_ms ≤ now → status ringing,
-        ring_at_ms = null; emit reminders-changed; open/refresh the popup;
-        rearm()
+        ring_at_ms = null; if any rang (or a retry is due) → present();
+        emit reminders-changed; rearm()
+present(): on the main loop, agent::open_notch_for_reminder()
+        ├─ opened (or already open by hand) → the panel shows its reminder view
+        └─ cannot open now (Agent off, dictating, a summon owns the notch)
+           → owe a retry in 60 s and rearm()
 ```
 
-At start-up `rearm()` runs once: reminders whose time passed while Grain was
-closed ring immediately (the popup labels them "Missed"). Reminders still
-`ringing` from a previous run reopen the popup. The popup closes itself (window
-destroyed) when the last ringing reminder is snoozed, done or deleted.
+The retry is the same single timer, owed only while something rings and the
+notch could not open. At start-up, reminders whose time passed while Grain was
+closed ring at once (the view labels them "Missed"), and reminders still
+`ringing` from a previous run open the notch again.
 
 ## 6. Agent tool
 
@@ -173,14 +198,14 @@ Data model: the same record with `kind: "action"` and an `instruction` string
 Firing: the same single timer. On fire, a `notify` reminder rings as today; an
 `action` reminder instead:
 
-1. shows the popup in a "Running in 10 s — Cancel" state (a short grace
+1. opens the notch on the reminder view in a "Running in 10 s — Cancel" state (a short grace
    window; nothing runs without a visible chance to stop it);
 2. submits `instruction` to the Agent through the existing summon/submit entry
    (`agent.rs`), exactly as if typed in the notch, with the reminder's links
    appended as context; tools available are the user's enabled ones (e.g.
    Reach's `open_link` for a Meet URL);
 3. records the Agent's final reply as `last_result`, status `done` or
-   `failed`, and shows it in the popup and the tab.
+   `failed`, and shows it in the notch and the tab.
 
 Rules to settle before building: never fire an action while the user is
 dictating (queue until idle); missed actions (app closed) ask instead of

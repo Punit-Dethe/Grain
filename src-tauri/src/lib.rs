@@ -68,7 +68,7 @@ mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permi
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_reach; // [GRAIN] Reach: the Agent's first-party OS tools (links, apps, typing, keys, media)
-mod grain_reminders; // [GRAIN] Reminders tab: local store, one next-due timer, ring popup, Agent tool
+mod grain_reminders; // [GRAIN] Reminders: local store, one next-due timer, rings in the Agent notch, Agent tool
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
 
 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
@@ -1194,7 +1194,7 @@ pub fn run(cli_args: CliArgs) {
             secure_input::init(&app_handle);
 
             // [GRAIN] Reminders: arm the single next-due timer (none when
-            // nothing is pending) and reopen the popup if one was ringing.
+            // nothing is pending) and reopen the notch if one was ringing.
             grain_reminders::start(&app_handle);
 
             // [GRAIN] Update discovery is backend-owned so it still runs when
@@ -1408,8 +1408,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_reminders::reminders_snooze,
             grain_reminders::reminders_clear_done,
             grain_reminders::reminders_open_link,
-            grain_reminders::reminders_popup_resize,
-            grain_reminders::reminders_show_in_app,
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
             grain_commands::change_meet_auto_title_setting,   // [GRAIN]
             grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]

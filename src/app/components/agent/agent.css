@@ -1565,3 +1565,213 @@ html[data-window="agent-panel"] body {
     transition: opacity 120ms ease;
   }
 }
+
+/* A ringing reminder: replaces the chat or Recall pane until Back or Done. */
+.agent-notch-reminder {
+  position: absolute;
+  top: var(--notch-reply-header);
+  left: 50%;
+  width: calc(100vw - 2px);
+  height: max(0px, calc(100vh - var(--notch-reply-header) - 1px));
+  transform: translateX(-50%);
+  animation: agent-notch-fade-in 220ms ease backwards;
+}
+
+.agrm {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 2px 16px 16px;
+}
+
+.agrm-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+}
+
+.agrm-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-left: -8px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--agc-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.agrm-back:hover {
+  background: #ffffff14;
+  color: var(--agc-ink);
+}
+
+.agrm-count {
+  color: var(--agc-faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agrm-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 4px;
+  animation: agent-notch-fade-in 240ms ease backwards;
+}
+
+.agrm-when {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--agc-light);
+  font-size: 12.5px;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+
+.agrm-when[data-missed] {
+  color: var(--agc-muted);
+}
+
+.agrm-bell {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: #ffffff14;
+  color: var(--agc-ink);
+}
+
+.agrm-bell svg {
+  transform-origin: 50% 15%;
+  animation: agrm-ring 1.1s ease-in-out 2;
+}
+
+@keyframes agrm-ring {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  20% {
+    transform: rotate(14deg);
+  }
+  40% {
+    transform: rotate(-11deg);
+  }
+  60% {
+    transform: rotate(7deg);
+  }
+  80% {
+    transform: rotate(-4deg);
+  }
+}
+
+.agrm-title {
+  margin: 0;
+  color: var(--agc-ink);
+  font-size: 21px;
+  font-weight: 620;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.agrm-details {
+  margin: 0;
+  color: var(--agc-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.agrm-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agrm-open,
+.agrm-done {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    filter 140ms ease,
+    transform 200ms var(--notch-ease);
+}
+
+.agrm-open {
+  flex: 1 1 200px;
+  max-width: 100%;
+  background: var(--agc-fill);
+  color: #0a0a0e;
+}
+
+.agrm-open:hover {
+  filter: brightness(1.05);
+}
+
+.agrm-host {
+  overflow: hidden;
+  opacity: 0.6;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agrm-done {
+  flex: 0 0 auto;
+  margin-left: auto;
+  background: #ffffff14;
+  color: var(--agc-ink);
+}
+
+.agrm-done:hover {
+  background: #ffffff22;
+}
+
+.agrm-open:active,
+.agrm-done:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agrm-bell svg {
+    animation: none;
+  }
+}

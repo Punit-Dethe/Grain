@@ -726,28 +726,6 @@ async remindersOpenLink(id: string, index: number) : Promise<Result<null, string
 }
 },
 /**
- * Fit the popup's height to its content (top edge stays put).
- */
-async remindersPopupResize(height: number) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("reminders_popup_resize", { height }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Bring the main window forward on the Reminders tab.
- */
-async remindersShowInApp() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("reminders_show_in_app") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
  * by default; see `Settings::meet_auto_summary`.
  */
@@ -2804,7 +2782,7 @@ export type ReminderStatus =
  */
 "ringing" | "done"
 /**
- * Sent whenever the reminder list changes. The tab and the popup re-read.
+ * Sent whenever the reminder list changes. The tab and the notch re-read.
  */
 export type RemindersChanged = null
 /**
