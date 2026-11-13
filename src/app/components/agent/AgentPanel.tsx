@@ -486,7 +486,19 @@ export function AgentPanel() {
   useEffect(() => {
     if (!revealed) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.defaultPrevented || event.isComposing) return;
+      // Tab (or Shift+Tab) flips between Recall and Chat.
+      if (
+        event.key === "Tab" &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey
+      ) {
+        event.preventDefault();
+        switchModeRef.current(modeRef.current === "chat" ? "recall" : "chat");
+        return;
+      }
+      if (event.key !== "Escape") return;
       event.preventDefault();
       // The chat list steps back to the chat first.
       if (view === "history") setView("main");
@@ -551,9 +563,19 @@ export function AgentPanel() {
     unclipThen(() => {
       setView("main");
       if (next === mode) return;
+      // An open device menu goes with Recall.
+      setRecallMenu(false);
       setMode(next);
       void commands.agentNotchSetMode(next).catch(console.error);
+      if (next === "chat")
+        requestAnimationFrame(() => composerRef.current?.focus());
+      else (document.activeElement as HTMLElement | null)?.blur();
     });
+  // For the window key handler, which outlives renders.
+  const switchModeRef = useRef(switchMode);
+  switchModeRef.current = switchMode;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   /** Show `earlier` as the chat, with no turn of this open on top of it. */
   const showChat = useCallback((earlier: ChatMessage[]) => {
@@ -871,6 +893,7 @@ export function AgentPanel() {
                     className="agent-notch-mode"
                     aria-selected={mode === option}
                     tabIndex={revealed ? 0 : -1}
+                    title={t("agent.modeSwitchHint")}
                     onClick={() => switchMode(option)}
                   >
                     {t(
@@ -951,22 +974,70 @@ export function AgentPanel() {
           </div>
         )}
 
-        {mode === "chat" &&
-          (revealed || (!busy && (!!firstReply || !!error))) && (
-            <div
-              className={`agent-notch-reply${listing ? " is-away" : ""}`}
-              aria-hidden={!revealed || listing}
-            >
-              <div className="agc-c-scroll">
-                {history.map((m) => (
-                  <div key={m.id} className={`agc-c-turn is-${m.role}`}>
-                    {m.role === "user" ? (
-                      <div className="agc-c-user">{m.content}</div>
-                    ) : (
-                      <>
-                        <div className="agc-c-answer">
-                          <AgentMarkdown markdown={m.content} />
-                        </div>
+        {/* Stays mounted (hidden) under Recall and the chat list, so a draft
+            and the scroll position survive switching. */}
+        {(revealed ||
+          (mode === "chat" && !busy && (!!firstReply || !!error))) && (
+          <div
+            className={`agent-notch-reply${listing || mode !== "chat" ? " is-away" : ""}`}
+            aria-hidden={!revealed || listing || mode !== "chat"}
+          >
+            <div className="agc-c-scroll">
+              {history.map((m) => (
+                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                  {m.role === "user" ? (
+                    <div className="agc-c-user">{m.content}</div>
+                  ) : (
+                    <>
+                      <div className="agc-c-answer">
+                        <AgentMarkdown markdown={m.content} />
+                      </div>
+                      <div className="agc-c-tools">
+                        <button
+                          type="button"
+                          className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
+                          onClick={() => copyOne(m.id, m.content)}
+                          aria-label={t("agent.copyReply")}
+                          title={t("agent.copyReply")}
+                        >
+                          {flashedId === m.id ? (
+                            <Check size={13} />
+                          ) : (
+                            <Copy size={13} />
+                          )}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div
+                ref={currentStartRef}
+                className="agc-c-mark"
+                aria-hidden="true"
+              />
+              {quoteText && !hasFollowups && (
+                <button
+                  className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
+                  onClick={() => setQuoteOpen((v) => !v)}
+                  type="button"
+                  aria-expanded={quoteOpen}
+                >
+                  {quoteText}
+                </button>
+              )}
+
+              {thread.map((m) => (
+                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                  {m.role === "user" ? (
+                    <div className="agc-c-user">{m.content}</div>
+                  ) : (
+                    <>
+                      <div className="agc-c-answer">
+                        <AgentMarkdown markdown={m.content} />
+                      </div>
+                      {m.confirmAction && renderConfirmAction(m.confirmAction)}
+                      {m.content.trim() && (
                         <div className="agc-c-tools">
                           <button
                             type="button"
@@ -981,118 +1052,71 @@ export function AgentPanel() {
                               <Copy size={13} />
                             )}
                           </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-                <div
-                  ref={currentStartRef}
-                  className="agc-c-mark"
-                  aria-hidden="true"
-                />
-                {quoteText && !hasFollowups && (
-                  <button
-                    className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
-                    onClick={() => setQuoteOpen((v) => !v)}
-                    type="button"
-                    aria-expanded={quoteOpen}
-                  >
-                    {quoteText}
-                  </button>
-                )}
-
-                {thread.map((m) => (
-                  <div key={m.id} className={`agc-c-turn is-${m.role}`}>
-                    {m.role === "user" ? (
-                      <div className="agc-c-user">{m.content}</div>
-                    ) : (
-                      <>
-                        <div className="agc-c-answer">
-                          <AgentMarkdown markdown={m.content} />
-                        </div>
-                        {m.confirmAction &&
-                          renderConfirmAction(m.confirmAction)}
-                        {m.content.trim() && (
-                          <div className="agc-c-tools">
+                          {canRetry && m.id === "a0" && (
                             <button
                               type="button"
-                              className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                              onClick={() => copyOne(m.id, m.content)}
-                              aria-label={t("agent.copyReply")}
-                              title={t("agent.copyReply")}
+                              className="agc-c-tool"
+                              onClick={retry}
+                              aria-label={t("agent.retry")}
+                              title={t("agent.retry")}
                             >
-                              {flashedId === m.id ? (
-                                <Check size={13} />
-                              ) : (
-                                <Copy size={13} />
-                              )}
+                              <RotateCcw size={13} />
                             </button>
-                            {canRetry && m.id === "a0" && (
-                              <button
-                                type="button"
-                                className="agc-c-tool"
-                                onClick={retry}
-                                aria-label={t("agent.retry")}
-                                title={t("agent.retry")}
-                              >
-                                <RotateCcw size={13} />
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                ))}
-
-                {busy &&
-                  !thread.length &&
-                  capture?.listening &&
-                  !capture.working && (
-                    <div className="agc-c-pending" role="status">
-                      {t("agent.notchListening")}
-                    </div>
+                          )}
+                        </div>
+                      )}
+                    </>
                   )}
-                {busy && (
-                  <div className="agent-typing" aria-hidden="true">
-                    <span />
-                    <span />
-                    <span />
+                </div>
+              ))}
+
+              {busy &&
+                !thread.length &&
+                capture?.listening &&
+                !capture.working && (
+                  <div className="agc-c-pending" role="status">
+                    {t("agent.notchListening")}
                   </div>
                 )}
-                {error && <div className="agc-error">{error}</div>}
-                <div ref={endRef} />
-              </div>
-
-              <div className="agc-c-compose">
-                <div className="agc-c-field">
-                  <textarea
-                    ref={composerRef}
-                    rows={1}
-                    className="agc-c-textarea"
-                    aria-label={t("agent.placeholderAsk")}
-                    placeholder={t("agent.placeholderAsk")}
-                    onInput={(event) => {
-                      resizeComposer(event.currentTarget);
-                      setHasDraft(!!event.currentTarget.value.trim());
-                    }}
-                    onKeyDown={onComposerKey}
-                  />
-                  <button
-                    type="button"
-                    className="agc-c-send"
-                    disabled={!hasDraft || busy}
-                    onClick={sendDraft}
-                    aria-label={t("agent.send")}
-                    title={t("agent.send")}
-                  >
-                    <ArrowUp size={15} strokeWidth={2.25} />
-                  </button>
+              {busy && (
+                <div className="agent-typing" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
                 </div>
+              )}
+              {error && <div className="agc-error">{error}</div>}
+              <div ref={endRef} />
+            </div>
+
+            <div className="agc-c-compose">
+              <div className="agc-c-field">
+                <textarea
+                  ref={composerRef}
+                  rows={1}
+                  className="agc-c-textarea"
+                  aria-label={t("agent.placeholderAsk")}
+                  placeholder={t("agent.placeholderAsk")}
+                  onInput={(event) => {
+                    resizeComposer(event.currentTarget);
+                    setHasDraft(!!event.currentTarget.value.trim());
+                  }}
+                  onKeyDown={onComposerKey}
+                />
+                <button
+                  type="button"
+                  className="agc-c-send"
+                  disabled={!hasDraft || busy}
+                  onClick={sendDraft}
+                  aria-label={t("agent.send")}
+                  title={t("agent.send")}
+                >
+                  <ArrowUp size={15} strokeWidth={2.25} />
+                </button>
               </div>
             </div>
-          )}
+          </div>
+        )}
       </section>
     </div>
   );

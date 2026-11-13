@@ -19,6 +19,7 @@
     "notchClose": "Close Agent",
     "modeChat": "Chat",
     "modeRecall": "Recall",
+    "modeSwitchHint": "Press Tab to switch",
     "newChat": "New chat",
     "history": "History",
     "historyToday": "Today",
