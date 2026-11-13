@@ -2230,7 +2230,12 @@ mcp_enabled_providers?: string[];
  * support dynamic registration. Client secrets and tokens stay in the OS
  * credential vault and never enter AppSettings.
  */
-mcp_oauth_client_ids?: Partial<{ [key in string]: string }>; 
+mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
+/**
+ * [GRAIN] Connected extensions that need no account (Exa, Reach). Their
+ * Agent switch stays `mcp_enabled_providers` / `reach_enabled`.
+ */
+mcp_no_account_connected?: string[];
 /**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it

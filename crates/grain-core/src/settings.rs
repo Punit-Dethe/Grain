@@ -786,6 +786,10 @@ pub struct AppSettings {
     /// credential vault and never enter AppSettings.
     #[serde(default)]
     pub mcp_oauth_client_ids: HashMap<String, String>,
+    /// [GRAIN] Connected extensions that need no account (Exa, Reach). Their
+    /// Agent switch stays `mcp_enabled_providers` / `reach_enabled`.
+    #[serde(default)]
+    pub mcp_no_account_connected: Vec<String>,
     /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
     /// the window you were in and sends that frame with your instruction, so it
     /// can answer about what is actually on screen — a chart, a diff, an error
@@ -1615,6 +1619,7 @@ pub fn get_default_settings() -> AppSettings {
         extension_developer_mode: false,
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),
+        mcp_no_account_connected: Vec::new(),
         agent_screen_image: false,
         agent_talk_back: false,
         agent_compact_voice: true,

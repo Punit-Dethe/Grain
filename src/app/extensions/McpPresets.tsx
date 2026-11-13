@@ -6,10 +6,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AppWindow, Box } from "lucide-react";
+import { Box } from "lucide-react";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
-import { useSettings } from "@/hooks/useSettings";
 import {
   filterExtensions,
   signInCancelled,
@@ -37,6 +36,7 @@ import mondayIcon from "./icons/monday.png";
 import notionIcon from "./icons/notion.png";
 import otterIcon from "./icons/otter.png";
 import raindropIcon from "./icons/raindrop.png";
+import reachIcon from "./icons/reach.svg";
 import readwiseIcon from "./icons/readwise.png";
 import stripeIcon from "./icons/stripe.png";
 import todoistIcon from "./icons/todoist.svg";
@@ -63,38 +63,15 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["notion", { src: notionIcon }],
   ["otter", { src: otterIcon }],
   ["raindrop", { src: raindropIcon }],
+  ["reach", { src: reachIcon }],
   ["readwise", { src: readwiseIcon }],
   ["stripe", { src: stripeIcon }],
   ["todoist", { src: todoistIcon }],
   ["zapier", { src: zapierIcon }],
 ]);
 
-/**
- * Reach is Grain's own Agent tool set, not an MCP server. It is listed with
- * the no-account extensions and switched by its setting.
- */
-const REACH_ID = "reach";
-
-function reachRow(enabled: boolean): McpProviderStatus {
-  return {
-    id: REACH_ID,
-    name: "Reach",
-    description:
-      "Lets the Agent open links, apps and app pages, type into the focused field, press Enter, and control media and volume. No mouse control.",
-    endpoint: "",
-    setup_url: "",
-    requires_client_credentials: false,
-    client_id_configured: false,
-    connected: false,
-    enabled,
-    state: "no_account",
-  };
-}
-
-/** Extensions without an account are added and removed, not signed in to. */
+/** Extensions without an account (Exa, Reach) connect without a browser. */
 const noAccount = (row: McpProviderStatus) => row.state === "no_account";
-const added = (row: McpProviderStatus) =>
-  row.connected || (noAccount(row) && row.enabled);
 
 export function McpPresets({
   query,
@@ -155,6 +132,11 @@ export function McpPresets({
 
   const connect = (row: McpProviderStatus) =>
     run(row.id, async () => {
+      if (noAccount(row)) {
+        unwrapResult(await commands.mcpConnectProvider(row.id));
+        if (mounted.current) setMessage(`${row.name} connected.`);
+        return;
+      }
       pending.current = row.id;
       setSigningIn(row.id);
       setMessage("Finish signing in in your browser…");
@@ -182,37 +164,12 @@ export function McpPresets({
     }
   };
 
-  const { getSetting, updateSetting } = useSettings();
-  const reachEnabled = getSetting("reach_enabled") ?? false;
-  const listed = rows
-    ? [...rows, reachRow(reachEnabled)].sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-      )
-    : [];
-  const visible = filterExtensions(listed, query);
-  const connected = visible.filter(added);
-  const available = visible.filter((row) => !added(row));
-
-  const setEnabled = (row: McpProviderStatus, enabled: boolean) =>
-    run(row.id, async () => {
-      if (row.id === REACH_ID) {
-        await updateSetting("reach_enabled", enabled);
-        return;
-      }
-      unwrapResult(await commands.mcpSetProviderEnabled(row.id, enabled));
-    });
+  const visible = filterExtensions(rows ?? [], query);
+  const connected = visible.filter((row) => row.connected);
+  const available = visible.filter((row) => !row.connected);
 
   const signInButton = (row: McpProviderStatus) =>
-    noAccount(row) ? (
-      <button
-        className="button primary"
-        type="button"
-        disabled={busy !== null}
-        onClick={() => void setEnabled(row, true)}
-      >
-        {busy === row.id ? "Adding…" : "Add"}
-      </button>
-    ) : signingIn === row.id ? (
+    signingIn === row.id ? (
       <button
         className="button"
         type="button"
@@ -260,7 +217,7 @@ export function McpPresets({
           </>
         ) : (
           <span className="mcp-preset-icon" aria-hidden="true">
-            {row.id === REACH_ID ? <AppWindow size={17} /> : <Box size={17} />}
+            <Box size={17} />
           </span>
         )}
         <div>
@@ -309,41 +266,33 @@ export function McpPresets({
               <article key={row.id} className="mcp-preset-connected">
                 {identity(row)}
                 <div className="mcp-preset-actions">
-                  {noAccount(row) ? (
-                    <button
-                      className="button ghost"
-                      type="button"
-                      aria-label={`Remove ${row.name}`}
-                      disabled={busy !== null}
-                      onClick={() => void setEnabled(row, false)}
-                    >
-                      Remove
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        aria-label={`Disconnect ${row.name}`}
-                        disabled={busy !== null}
-                        onClick={() =>
-                          void run(row.id, async () => {
-                            unwrapResult(
-                              await commands.mcpDisconnectProvider(row.id),
-                            );
-                          })
-                        }
-                      >
-                        Disconnect
-                      </button>
-                      <Switch
-                        checked={row.enabled}
-                        disabled={busy !== null}
-                        ariaLabel={`Enable ${row.name}`}
-                        onChange={(enabled) => void setEnabled(row, enabled)}
-                      />
-                    </>
-                  )}
+                  <button
+                    className="button ghost"
+                    type="button"
+                    aria-label={`Disconnect ${row.name}`}
+                    disabled={busy !== null}
+                    onClick={() =>
+                      void run(row.id, async () => {
+                        unwrapResult(
+                          await commands.mcpDisconnectProvider(row.id),
+                        );
+                      })
+                    }
+                  >
+                    Disconnect
+                  </button>
+                  <Switch
+                    checked={row.enabled}
+                    disabled={busy !== null}
+                    ariaLabel={`Enable ${row.name}`}
+                    onChange={(enabled) =>
+                      void run(row.id, async () => {
+                        unwrapResult(
+                          await commands.mcpSetProviderEnabled(row.id, enabled),
+                        );
+                      })
+                    }
+                  />
                 </div>
               </article>
             ))}

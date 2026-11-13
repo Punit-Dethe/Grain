@@ -1419,7 +1419,11 @@ pub async fn mcp_provider_status(
         } else {
             Ok(false)
         };
-        let connected = stored.as_ref().is_ok_and(|value| *value);
+        let connected = if item.registration == Registration::Anonymous {
+            no_account_connected(&settings, item.id) || enabled.contains(item.id)
+        } else {
+            stored.as_ref().is_ok_and(|value| *value)
+        };
         // A build without a provider's registration (GitHub, Asana) cannot
         // sign in to it, so the Extensions page never offers a dead Connect.
         // A connected account stays listed so it can still be disconnected.
@@ -1459,7 +1463,91 @@ pub async fn mcp_provider_status(
             state: state.into(),
         });
     }
+    if presets_only {
+        // Reach is Grain's own Agent tool set, listed with the extensions so
+        // it connects and switches like them.
+        statuses.push(McpProviderStatus {
+            id: REACH_ID.into(),
+            name: grain_core::reach::PROVIDER_NAME.into(),
+            description: "Open links and apps, type, and control media.".into(),
+            endpoint: String::new(),
+            setup_url: String::new(),
+            requires_client_credentials: false,
+            client_id_configured: false,
+            connected: settings.reach_enabled || no_account_connected(&settings, REACH_ID),
+            enabled: settings.reach_enabled,
+            state: "no_account".into(),
+        });
+    }
     Ok(statuses)
+}
+
+/// Extensions page id of Reach, which is not a catalog row.
+const REACH_ID: &str = "reach";
+
+fn no_account_connected(settings: &crate::settings::AppSettings, id: &str) -> bool {
+    settings
+        .mcp_no_account_connected
+        .iter()
+        .any(|value| value == id)
+}
+
+/// Connect or disconnect an extension that needs no account (Exa, Reach):
+/// a saved mark, with the Agent switch turned on at connect and off at
+/// disconnect. Returns None for an extension that signs in to an account.
+async fn set_no_account_connected(
+    app: &AppHandle,
+    id: &str,
+    connected: bool,
+) -> Option<Result<(), String>> {
+    let reach = id == REACH_ID;
+    if !reach
+        && !provider(id)
+            .is_ok_and(|item| is_preset(item) && item.registration == Registration::Anonymous)
+    {
+        return None;
+    }
+    Some(update_no_account(app, id, reach, connected).await)
+}
+
+async fn update_no_account(
+    app: &AppHandle,
+    id: &str,
+    reach: bool,
+    connected: bool,
+) -> Result<(), String> {
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("application context unavailable")?;
+    let apply = |settings: &mut crate::settings::AppSettings| {
+        settings
+            .mcp_no_account_connected
+            .retain(|value| value != id);
+        if connected {
+            settings.mcp_no_account_connected.push(id.into());
+        }
+        if reach {
+            settings.reach_enabled = connected;
+            return;
+        }
+        settings.mcp_enabled_providers.retain(|value| value != id);
+        if connected {
+            settings.mcp_enabled_providers.push(id.into());
+            settings.mcp_enabled_providers.sort();
+        }
+    };
+    if reach {
+        return ctx
+            .update_settings(apply)
+            .map_err(|error| error.to_string());
+    }
+    let ticket = provider_control(id).invalidate();
+    let _operation = tokio::time::timeout(OPERATION_TIMEOUT, ticket.acquire())
+        .await
+        .map_err(|_| "MCP connect timed out")??;
+    ticket
+        .commit(|| ctx.update_settings(apply))?
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1616,6 +1704,24 @@ pub async fn mcp_set_provider_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
+    if id == REACH_ID {
+        let settings = crate::settings::get_settings(&app);
+        if enabled && !settings.reach_enabled && !no_account_connected(&settings, REACH_ID) {
+            return Err("connect Reach before enabling it".into());
+        }
+        let ctx = app
+            .try_state::<std::sync::Arc<grain_core::AppContext>>()
+            .ok_or("application context unavailable")?;
+        return ctx
+            .update_settings(|settings| {
+                // Switching off keeps Reach connected.
+                if !no_account_connected(settings, REACH_ID) {
+                    settings.mcp_no_account_connected.push(REACH_ID.into());
+                }
+                settings.reach_enabled = enabled;
+            })
+            .map_err(|error| error.to_string());
+    }
     let item = provider(&id)?;
     require_provider_access(&app, item)?;
     let ticket = provider_control(&id).invalidate();
@@ -1625,12 +1731,23 @@ pub async fn mcp_set_provider_enabled(
     if enabled && requires_account(item) && !stored_connected(&id).await? {
         return Err("connect this MCP provider before enabling it".into());
     }
+    if enabled
+        && item.registration == Registration::Anonymous
+        && !no_account_connected(&crate::settings::get_settings(&app), &id)
+    {
+        return Err("connect this extension before enabling it".into());
+    }
+    let no_account = item.registration == Registration::Anonymous;
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("application context unavailable")?;
     ticket
         .commit(|| {
             ctx.update_settings(|settings| {
+                // Switching off keeps a no-account extension connected.
+                if no_account && !no_account_connected(settings, &id) {
+                    settings.mcp_no_account_connected.push(id.clone());
+                }
                 settings
                     .mcp_enabled_providers
                     .retain(|current| current != &id);
@@ -1891,6 +2008,9 @@ pub async fn mcp_connect_provider(
     id: String,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
+    if let Some(result) = set_no_account_connected(&app, &id, true).await {
+        return result;
+    }
     let item = provider(&id)?;
     require_provider_access(&app, item)?;
     connect_flow(&app, &window, RuntimeProvider::Catalog(item)).await
@@ -2138,6 +2258,9 @@ pub async fn mcp_disconnect_provider(
     id: String,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
+    if let Some(result) = set_no_account_connected(&app, &id, false).await {
+        return result;
+    }
     let item = provider(&id)?;
     require_provider_access(&app, item)?;
     if !requires_account(item) {
@@ -3637,7 +3760,6 @@ mod tests {
         assert!(callback_failure_detail(&"x".repeat(1000)).chars().count() <= 300);
     }
 
-    #[test]
     #[test]
     fn zero_setup_providers_register_themselves_on_connect() {
         let dynamic: Vec<_> = production_catalog()
