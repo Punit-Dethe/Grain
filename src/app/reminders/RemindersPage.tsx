@@ -85,15 +85,11 @@ interface Draft {
   details: string;
 }
 
-function emptyDraft(today: string): Draft {
-  return {
-    id: null,
-    title: "",
-    date: today,
-    time: "",
-    links: [""],
-    details: "",
-  };
+/** Links a reminder can carry (matches the backend's limit). */
+const MAX_LINKS = 5;
+
+function emptyDraft(day: string): Draft {
+  return { id: null, title: "", date: day, time: "", links: [], details: "" };
 }
 
 function draftFrom(reminder: Reminder): Draft {
@@ -102,9 +98,15 @@ function draftFrom(reminder: Reminder): Draft {
     title: reminder.title,
     date: reminder.date,
     time: reminder.time ?? "",
-    links: reminder.links.length ? reminder.links.map((l) => l.url) : [""],
+    links: reminder.links.map((l) => l.url),
     details: reminder.details ?? "",
   };
+}
+
+/** The next whole hour from now, as `HH:MM` (a time to start from). */
+function nextHour(): string {
+  const hour = (new Date().getHours() + 1) % 24;
+  return `${String(hour).padStart(2, "0")}:00`;
 }
 
 function Composer({
@@ -116,15 +118,24 @@ function Composer({
   initial: Draft;
   autoFocus?: boolean;
   onDone: () => void;
+  /** Editing: leave without saving. A new reminder collapses instead. */
   onCancel?: () => void;
 }) {
+  const editing = initial.id !== null;
   const [draft, setDraft] = useState(initial);
   const [saving, setSaving] = useState(false);
-  const [expanded, setExpanded] = useState(
-    initial.id !== null || initial.details !== "",
-  );
+  const [expanded, setExpanded] = useState(editing);
+  const [noteOpen, setNoteOpen] = useState(initial.details !== "");
+  const formRef = useRef<HTMLFormElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
-  const editing = initial.id !== null;
+  const linksRef = useRef<HTMLDivElement>(null);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const today = isoDay(new Date());
+  const tomorrow = (() => {
+    const date = new Date();
+    date.setDate(date.getDate() + 1);
+    return isoDay(date);
+  })();
 
   useEffect(() => {
     if (autoFocus) titleRef.current?.focus();
@@ -138,6 +149,26 @@ function Composer({
       ...current,
       links: current.links.map((link, i) => (i === index ? value : link)),
     }));
+
+  const addLink = () => {
+    set("links", [...draft.links, ""]);
+    requestAnimationFrame(() =>
+      linksRef.current
+        ?.querySelector<HTMLInputElement>(".rem-link-row:last-child input")
+        ?.focus(),
+    );
+  };
+
+  const openNote = () => {
+    setNoteOpen(true);
+    requestAnimationFrame(() => noteRef.current?.focus());
+  };
+
+  /** Fold a new reminder back to its one line; what was typed is kept. */
+  const collapse = () => {
+    setExpanded(false);
+    (document.activeElement as HTMLElement | null)?.blur();
+  };
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -155,36 +186,65 @@ function Composer({
     );
     setSaving(false);
     if (!saved) return;
-    if (editing) {
-      onDone();
-    } else {
+    if (!editing) {
       // Keep the day and time: several reminders for one day are common.
       setDraft((current) => ({
         ...current,
         title: "",
-        links: [""],
+        links: [],
         details: "",
       }));
+      setNoteOpen(false);
       titleRef.current?.focus();
-      onDone();
     }
+    onDone();
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Escape" && onCancel) {
-      event.preventDefault();
-      onCancel();
-    }
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    if (onCancel) onCancel();
+    else collapse();
   };
+
+  /** Cancel a new reminder: clear it and fold it up. */
+  const discard = () => {
+    setDraft(emptyDraft(initial.date));
+    setNoteOpen(false);
+    collapse();
+  };
+
+  // Clicking away from an untouched new reminder folds it back up. Checked a
+  // frame later: a click on a label inside the card blurs before it focuses.
+  const onBlur = () => {
+    if (editing) return;
+    const untouched =
+      !draft.title.trim() &&
+      !draft.details.trim() &&
+      draft.links.every((link) => !link.trim());
+    if (!untouched) return;
+    requestAnimationFrame(() => {
+      if (!formRef.current?.contains(document.activeElement))
+        setExpanded(false);
+    });
+  };
+
+  const timed = draft.time !== "";
 
   return (
     <form
-      className={`rem-composer${editing ? " is-editing" : ""}`}
+      ref={formRef}
+      className="rem-composer"
+      data-open={expanded ? "" : undefined}
+      data-editing={editing ? "" : undefined}
       onSubmit={submit}
       onKeyDown={onKeyDown}
+      onBlur={onBlur}
     >
       <div className="rem-composer-title">
-        <Glyph name={editing ? "pencil" : "plus"} />
+        <span className="rem-composer-mark" aria-hidden="true">
+          <Glyph name={editing ? "pencil" : "plus"} />
+        </span>
         <input
           ref={titleRef}
           value={draft.title}
@@ -194,56 +254,105 @@ function Composer({
           placeholder="Remind me about…"
           aria-label="What to be reminded about"
         />
+        {expanded && !editing && (
+          <button
+            type="button"
+            className="rem-composer-fold"
+            aria-label="Collapse"
+            title="Collapse (Esc)"
+            onClick={collapse}
+          >
+            <Glyph name="chev-up" />
+          </button>
+        )}
       </div>
+
       {expanded && (
         <div className="rem-composer-body">
-          <div className="rem-fields">
-            <label className="rem-field">
-              <span>Day</span>
-              <input
-                type="date"
-                value={draft.date}
-                required
-                onChange={(e) => set("date", e.target.value)}
-              />
-            </label>
-            <label className="rem-field">
-              <span>Time</span>
-              <input
-                type="time"
-                value={draft.time}
-                onChange={(e) => set("time", e.target.value)}
-              />
-              {draft.time ? (
+          <div className="rem-when-row">
+            <div className="rem-seg" role="group" aria-label="Day">
+              <button
+                type="button"
+                aria-pressed={draft.date === today}
+                onClick={() => set("date", today)}
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                aria-pressed={draft.date === tomorrow}
+                onClick={() => set("date", tomorrow)}
+              >
+                Tomorrow
+              </button>
+              <label
+                className="rem-seg-date"
+                data-on={
+                  draft.date !== today && draft.date !== tomorrow
+                    ? ""
+                    : undefined
+                }
+              >
+                <Glyph name="calendar" />
+                <input
+                  type="date"
+                  value={draft.date}
+                  required
+                  aria-label="Day"
+                  onChange={(e) =>
+                    e.target.value && set("date", e.target.value)
+                  }
+                />
+              </label>
+            </div>
+
+            {timed ? (
+              <label className="rem-time" data-on="">
+                <Glyph name="clock" />
+                <input
+                  type="time"
+                  value={draft.time}
+                  aria-label="Time"
+                  onChange={(e) => set("time", e.target.value)}
+                />
                 <button
                   type="button"
-                  className="rem-field-clear"
-                  onClick={() => set("time", "")}
+                  className="rem-time-clear"
                   aria-label="Make it all-day"
-                  title="Make it all-day"
+                  title="All day"
+                  onClick={() => set("time", "")}
                 >
-                  ×
+                  <Glyph name="close" />
                 </button>
-              ) : (
-                <em>All day</em>
-              )}
-            </label>
+              </label>
+            ) : (
+              <button
+                type="button"
+                className="rem-time"
+                onClick={() => set("time", nextHour())}
+              >
+                <Glyph name="clock" />
+                All day
+                <span className="rem-time-hint">Add time</span>
+              </button>
+            )}
           </div>
-          <div className="rem-link-fields">
-            {draft.links.map((link, index) => (
-              <label className="rem-field rem-field-link" key={index}>
-                <Glyph name="link" />
-                <input
-                  value={link}
-                  onChange={(e) => setLink(index, e.target.value)}
-                  placeholder="Link to open (e.g. https://meet.google.com/…)"
-                  aria-label={`Link ${index + 1}`}
-                  inputMode="url"
-                />
-                {draft.links.length > 1 && (
+
+          {draft.links.length > 0 && (
+            <div className="rem-link-rows" ref={linksRef}>
+              {draft.links.map((link, index) => (
+                <label className="rem-link-row" key={index}>
+                  <Glyph name="link" />
+                  <input
+                    value={link}
+                    onChange={(e) => setLink(index, e.target.value)}
+                    placeholder="Paste a link: Meet, Zoom, a doc…"
+                    aria-label={`Link ${index + 1}`}
+                    inputMode="url"
+                  />
                   <button
                     type="button"
-                    className="rem-field-clear"
+                    className="rem-link-remove"
                     aria-label="Remove link"
                     onClick={() =>
                       set(
@@ -252,44 +361,54 @@ function Composer({
                       )
                     }
                   >
-                    ×
+                    <Glyph name="close" />
                   </button>
-                )}
-              </label>
-            ))}
-          </div>
-          <textarea
-            className="rem-details"
-            value={draft.details}
-            rows={draft.details ? 2 : 1}
-            maxLength={2000}
-            onChange={(e) => set("details", e.target.value)}
-            placeholder="Note (optional)"
-            aria-label="Note"
-          />
-          <div className="rem-composer-actions">
-            {draft.links.length < 5 && (
-              <button
-                type="button"
-                className="rem-ghost"
-                onClick={() => set("links", [...draft.links, ""])}
-              >
-                <Glyph name="plus" />
-                Add link
+                </label>
+              ))}
+            </div>
+          )}
+
+          {noteOpen && (
+            <textarea
+              ref={noteRef}
+              className="rem-note"
+              value={draft.details}
+              rows={2}
+              maxLength={2000}
+              onChange={(e) => set("details", e.target.value)}
+              placeholder="Add a note"
+              aria-label="Note"
+            />
+          )}
+
+          <div className="rem-composer-foot">
+            {draft.links.length < MAX_LINKS && (
+              <button type="button" className="rem-ghost" onClick={addLink}>
+                <Glyph name="link" />
+                {draft.links.length ? "Another link" : "Link"}
+              </button>
+            )}
+            {!noteOpen && (
+              <button type="button" className="rem-ghost" onClick={openNote}>
+                <Glyph name="note" />
+                Note
               </button>
             )}
             <span className="rem-spacer" />
-            {onCancel && (
-              <button type="button" className="button" onClick={onCancel}>
-                Cancel
-              </button>
-            )}
+            <button
+              type="button"
+              className="rem-ghost"
+              onClick={onCancel ?? discard}
+            >
+              Cancel
+            </button>
             <button
               type="submit"
-              className="button primary"
+              className="rem-save"
               disabled={!draft.title.trim() || saving}
             >
               {editing ? "Save" : "Add reminder"}
+              <kbd aria-hidden="true">↵</kbd>
             </button>
           </div>
         </div>
@@ -501,12 +620,6 @@ export function RemindersPage() {
         <header className="page-header">
           <div>
             <h1>Reminders</h1>
-            <p className="page-subtitle">
-              When one is due it opens in the Agent notch, with a button for any
-              link. Click a day to see what’s on it, add one below, or ask the
-              Agent: “remind me Tuesday at 6 pm about the review, here’s the
-              Meet link”.
-            </p>
           </div>
         </header>
 

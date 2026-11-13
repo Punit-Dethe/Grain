@@ -261,6 +261,16 @@ function IconSprite() {
         <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z" />
         <path d="M10 20.5a2 2 0 0 0 4 0" />
       </symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24">
+        <rect x="4" y="5.5" width="16" height="14.5" rx="2.5" />
+        <path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" />
+      </symbol>
+      <symbol id="i-note" viewBox="0 0 24 24">
+        <path d="M5 6.5h14M5 11.5h14M5 16.5h9" />
+      </symbol>
+      <symbol id="i-chev-up" viewBox="0 0 24 24">
+        <path d="m6 14.5 6-6 6 6" />
+      </symbol>
       <symbol id="i-moon" viewBox="0 0 24 24">
         <path d="M20 15.2A8.4 8.4 0 0 1 8.8 4 8.4 8.4 0 1 0 20 15.2Z" />
       </symbol>
