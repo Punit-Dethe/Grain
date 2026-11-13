@@ -385,19 +385,6 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
       <header className="rem-cal-head">
         <h2>{title}</h2>
         <span className="rem-spacer" />
-        {!days.includes(today) && (
-          <button
-            type="button"
-            className="rem-ghost"
-            onClick={() => {
-              setOpen(null);
-              setAnchor(today);
-              setCursor(today);
-            }}
-          >
-            Today
-          </button>
-        )}
         <div className="rem-cal-views" role="group" aria-label="Calendar view">
           {(["weeks", "month"] as const).map((option) => (
             <button
@@ -410,29 +397,44 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className="rem-icon-button"
-          aria-label={view === "month" ? "Previous month" : "Previous week"}
-          onClick={() => shift(-1)}
-        >
-          <Glyph name="chev-left" />
-        </button>
-        <button
-          type="button"
-          className="rem-icon-button"
-          aria-label={view === "month" ? "Next month" : "Next week"}
-          onClick={() => shift(1)}
-        >
-          <Glyph name="chev-right" />
-        </button>
+        <div className="rem-cal-nav">
+          <button
+            type="button"
+            aria-label={view === "month" ? "Previous month" : "Previous week"}
+            onClick={() => shift(-1)}
+          >
+            <Glyph name="chev-left" />
+          </button>
+          <button
+            type="button"
+            className="rem-cal-nav-today"
+            disabled={days.includes(today)}
+            onClick={() => {
+              setOpen(null);
+              setAnchor(today);
+              setCursor(today);
+            }}
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            aria-label={view === "month" ? "Next month" : "Next week"}
+            onClick={() => shift(1)}
+          >
+            <Glyph name="chev-right" />
+          </button>
+        </div>
       </header>
 
-      <div className="rem-cal-weekdays" aria-hidden="true">
-        {weekdays.map((weekday) => (
-          <span key={weekday}>{weekday}</span>
-        ))}
-      </div>
+      {/* Two weeks name each day in its own tile. */}
+      {view === "month" && (
+        <div className="rem-cal-weekdays" aria-hidden="true">
+          {weekdays.map((weekday) => (
+            <span key={weekday}>{weekday}</span>
+          ))}
+        </div>
+      )}
 
       <div className="rem-cal-grid" ref={gridRef} onKeyDown={onGridKey}>
         {days.map((day) => {
@@ -468,14 +470,20 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
               onClick={(event) => openDay(day, event.currentTarget)}
             >
               <span className="rem-cal-day-top">
-                <span className="rem-cal-date">
-                  {view === "weeks" && date.getDate() === 1
-                    ? date.toLocaleDateString(undefined, {
-                        day: "numeric",
-                        month: "short",
-                      })
-                    : date.getDate()}
-                </span>
+                {view === "weeks" && (
+                  <span className="rem-cal-wd">
+                    {day === today
+                      ? "Today"
+                      : date.toLocaleDateString(undefined, {
+                          weekday: "short",
+                        })}
+                    {date.getDate() === 1 &&
+                      ` · ${date.toLocaleDateString(undefined, { month: "short" })}`}
+                  </span>
+                )}
+                {view === "month" && (
+                  <span className="rem-cal-date">{date.getDate()}</span>
+                )}
                 {recorded > 0 && (
                   <span className="rem-cal-recorded-mark">
                     <Glyph name="mic" />
@@ -483,6 +491,9 @@ export function ReminderCalendar({ reminders, today, run, onAdd }: Props) {
                   </span>
                 )}
               </span>
+              {view === "weeks" && (
+                <span className="rem-cal-date">{date.getDate()}</span>
+              )}
               {view === "weeks"
                 ? items.length > 0 && (
                     <span className="rem-cal-agenda">

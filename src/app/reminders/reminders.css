@@ -720,88 +720,99 @@ button.rem-time:hover {
 }
 
 /* ── Calendar ─────────────────────────────────────────────────────────── */
-/* A short strip: two weeks with one line per day, or a month of dots. */
+/* Two weeks of day tiles (each a short agenda), or a compact month of dots.
+   No frame of its own: the tiles carry the surface. */
 
 .rem-cal {
-  margin-bottom: 20px;
-  padding: 12px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--rem-card);
+  margin-bottom: 24px;
 }
 
 .rem-cal-head {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin: 0 0 10px 4px;
+  gap: 8px;
+  margin: 0 0 12px 2px;
 }
 
 .rem-cal-head h2 {
   color: var(--text-1);
-  font-size: 15px;
-  font-weight: 620;
-  letter-spacing: -0.01em;
+  font-size: 17px;
+  font-weight: 640;
+  letter-spacing: -0.015em;
   white-space: nowrap;
 }
 
-.rem-cal-head .rem-ghost {
-  height: 28px;
-  font-size: 12px;
-}
-
-.rem-cal-views {
+/* View switch and the ‹ Today › nav share one quiet pill shape. */
+.rem-cal-views,
+.rem-cal-nav {
   display: inline-flex;
+  align-items: center;
   gap: 2px;
-  margin: 0 4px;
-  padding: 2px;
-  border-radius: 9px;
+  padding: 3px;
+  border-radius: 11px;
   background: var(--accent-soft);
 }
 
-.rem-cal-views button {
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 7px;
+.rem-cal-views button,
+.rem-cal-nav button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 550;
   white-space: nowrap;
   cursor: pointer;
   transition:
     background 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.rem-cal-views button:hover {
+.rem-cal-nav button:not(.rem-cal-nav-today) {
+  padding: 0;
+}
+
+.rem-cal-views button:hover,
+.rem-cal-nav button:hover:not(:disabled) {
   color: var(--text-1);
+}
+
+.rem-cal-nav button:not(.rem-cal-nav-today):hover {
+  background: var(--accent-soft);
 }
 
 .rem-cal-views button[aria-pressed="true"] {
   color: var(--text-1);
-  background: var(--accent-soft-hover);
+  background: var(--rem-raise);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.rem-cal-nav-today:disabled {
+  color: var(--text-4);
+  cursor: default;
 }
 
 .rem-cal-weekdays,
 .rem-cal-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 2px;
+  gap: 6px;
 }
 
 .rem-cal-weekdays {
-  padding-bottom: 2px;
+  padding-bottom: 4px;
 }
 
 .rem-cal-weekdays span {
-  padding-left: 7px;
   color: var(--text-4);
   font-size: 11px;
   font-weight: 600;
-}
-
-.rem-cal[data-view="month"] .rem-cal-weekdays span {
-  padding-left: 0;
   text-align: center;
 }
 
@@ -813,28 +824,20 @@ button.rem-time:hover {
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: 52px;
   flex-direction: column;
   align-items: stretch;
-  gap: 3px;
-  padding: 4px 5px 5px;
   border-radius: var(--radius-sm);
   color: var(--text-2);
   text-align: left;
   cursor: pointer;
   transition:
     background 0.15s ease,
-    box-shadow 0.15s ease,
+    border-color 0.15s ease,
     opacity 0.15s ease;
 }
 
 .rem-cal-day:hover {
   background: var(--accent-soft);
-}
-
-.rem-cal-day[aria-pressed="true"] {
-  background: var(--accent-soft-hover);
-  box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
 .rem-cal-day:focus-visible {
@@ -860,25 +863,8 @@ button.rem-time:hover {
 }
 
 .rem-cal-date {
-  display: grid;
-  place-items: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.rem-cal-day[data-past] .rem-cal-date {
-  color: var(--text-4);
-}
-
-.rem-cal-day[data-today] .rem-cal-date {
-  color: var(--accent-ink);
-  background: var(--accent);
 }
 
 /* Meetings recorded that day: a small mic (with a count past one). */
@@ -898,21 +884,6 @@ button.rem-time:hover {
   height: 11px;
 }
 
-.rem-cal-item {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  height: 18px;
-  padding: 0 6px 0 5px;
-  border-radius: 5px;
-  color: var(--text-2);
-  background: var(--accent-soft);
-  font-size: 11px;
-  font-weight: 550;
-}
-
 .rem-cal-dot {
   flex: none;
   width: 5px;
@@ -921,122 +892,77 @@ button.rem-time:hover {
   background: var(--text-3);
 }
 
-/* A call to join reads as a small square instead of a round dot. */
-.rem-cal-item[data-meeting] .rem-cal-dot {
-  border-radius: 1.5px;
-}
-
-.rem-cal-item[data-status="ringing"] {
-  color: var(--text-1);
-  background: color-mix(in srgb, var(--rem-ring) 20%, transparent);
-}
-
-.rem-cal-item[data-status="ringing"] .rem-cal-dot {
-  background: var(--rem-ring);
-}
-
-.rem-cal-item[data-status="done"] {
-  color: var(--text-4);
-  background: transparent;
-}
-
-.rem-cal-item[data-status="done"] .rem-cal-dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--text-4);
-}
-
 .rem-cal-more {
   flex: none;
   color: var(--text-4);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-/* Two weeks: a ruled grid of tall days, each a short agenda. Timed entries
-   read "• 6 PM Title"; all-day ones sit in a soft bar on top. */
-.rem-cal[data-view="weeks"] .rem-cal-weekdays {
-  padding-bottom: 6px;
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-weekdays span {
-  padding-left: 10px;
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-grid {
-  gap: 0;
-  border: 1px solid var(--hairline);
-  border-radius: 11px;
-}
-
+/* Two weeks: a tile per day. The weekday sits small above a large date,
+   then the day's agenda: "• 6 PM Title", all-day items in a soft bar. */
 .rem-cal[data-view="weeks"] .rem-cal-day {
-  min-height: 116px;
-  gap: 7px;
-  padding: 8px 8px 10px;
-  border-radius: 0;
-  box-shadow:
-    inset -1px 0 var(--hairline-soft),
-    inset 0 -1px var(--hairline-soft);
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day:nth-child(7n) {
-  box-shadow: inset 0 -1px var(--hairline-soft);
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day:nth-child(n + 8) {
-  box-shadow: inset -1px 0 var(--hairline-soft);
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day:nth-child(14) {
-  box-shadow: none;
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day:nth-child(1) {
-  border-top-left-radius: 10px;
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day:nth-child(7) {
-  border-top-right-radius: 10px;
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day:nth-child(8) {
-  border-bottom-left-radius: 10px;
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day:nth-child(14) {
-  border-bottom-right-radius: 10px;
-}
-
-.rem-cal[data-view="weeks"] .rem-cal-day[data-today] {
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  min-height: 128px;
+  gap: 2px;
+  padding: 10px 10px 11px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 14px;
+  background: var(--rem-card);
 }
 
 .rem-cal[data-view="weeks"] .rem-cal-day:hover {
-  background: var(--accent-soft);
+  background: var(--rem-card-hover);
+}
+
+.rem-cal[data-view="weeks"] .rem-cal-day[data-past] {
+  background: color-mix(in srgb, var(--rem-card) 45%, transparent);
+}
+
+.rem-cal[data-view="weeks"] .rem-cal-day[data-today] {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--rem-card));
 }
 
 .rem-cal[data-view="weeks"] .rem-cal-day[aria-pressed="true"] {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1.5px
-    color-mix(in srgb, var(--text-1) 24%, transparent);
+  border-color: color-mix(in srgb, var(--text-1) 34%, transparent);
+}
+
+.rem-cal-wd {
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-cal-day[data-today] .rem-cal-wd {
+  color: var(--text-1);
 }
 
 .rem-cal[data-view="weeks"] .rem-cal-date {
-  min-width: 26px;
-  height: 26px;
-  padding: 0 7px;
-  font-size: 13.5px;
+  margin-bottom: 8px;
+  color: var(--text-1);
+  font-size: 22px;
+  font-weight: 620;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.rem-cal[data-view="weeks"] .rem-cal-day[data-past] .rem-cal-date {
+  color: var(--text-4);
 }
 
 .rem-cal[data-view="weeks"] .rem-cal-day[data-past] .rem-cal-agenda {
-  opacity: 0.7;
+  opacity: 0.65;
 }
 
 .rem-cal-agenda {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .rem-cal-entry {
@@ -1105,25 +1031,51 @@ button.rem-time:hover {
 
 .rem-cal-agenda .rem-cal-more {
   padding-left: 2px;
-  font-size: 11px;
 }
 
 /* Month: a compact grid, the date centred over a row of dots. */
-.rem-cal[data-view="month"] .rem-cal-day {
-  min-height: 40px;
-  align-items: center;
+.rem-cal[data-view="month"] .rem-cal-grid {
   gap: 2px;
-  padding: 3px 2px 4px;
+}
+
+.rem-cal[data-view="month"] .rem-cal-day {
+  min-height: 46px;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 2px 6px;
+}
+
+.rem-cal[data-view="month"] .rem-cal-day[aria-pressed="true"] {
+  background: var(--accent-soft-hover);
 }
 
 .rem-cal[data-view="month"] .rem-cal-day-top {
   justify-content: center;
 }
 
+.rem-cal[data-view="month"] .rem-cal-date {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rem-cal[data-view="month"] .rem-cal-day[data-past] .rem-cal-date {
+  color: var(--text-4);
+}
+
+.rem-cal[data-view="month"] .rem-cal-day[data-today] .rem-cal-date {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
 .rem-cal[data-view="month"] .rem-cal-recorded-mark {
   position: absolute;
-  top: 5px;
-  right: 6px;
+  top: 6px;
+  right: 7px;
 }
 
 .rem-cal[data-view="month"] .rem-cal-recorded-mark .icon {
@@ -1138,11 +1090,21 @@ button.rem-time:hover {
   height: 5px;
 }
 
-.rem-cal-dots .rem-cal-item {
-  flex: none;
-  height: auto;
-  padding: 0;
-  background: none;
+.rem-cal-item {
+  display: flex;
+}
+
+.rem-cal-item[data-meeting] .rem-cal-dot {
+  border-radius: 1.5px;
+}
+
+.rem-cal-item[data-status="ringing"] .rem-cal-dot {
+  background: var(--rem-ring);
+}
+
+.rem-cal-item[data-status="done"] .rem-cal-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--text-4);
 }
 
 /* A day's sheet, floating over the calendar under its cell. */
@@ -1377,9 +1339,19 @@ button.rem-time:hover {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .rem-cal-head {
+    flex-wrap: wrap;
+  }
+  .rem-cal-weekdays,
+  .rem-cal-grid {
+    gap: 3px;
+  }
   .rem-cal[data-view="weeks"] .rem-cal-day {
-    min-height: 76px;
-    padding: 6px 5px;
+    min-height: 84px;
+    padding: 7px 6px;
+  }
+  .rem-cal[data-view="weeks"] .rem-cal-date {
+    font-size: 17px;
   }
   .rem-cal-entry-time,
   .rem-cal-agenda .rem-cal-more {

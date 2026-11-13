@@ -5,8 +5,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type FocusEvent,
   type FormEvent,
   type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { toast } from "sonner";
 import { commands, events, type Reminder } from "@/bindings";
@@ -214,19 +216,34 @@ function Composer({
     collapse();
   };
 
-  // Clicking away from an untouched new reminder folds it back up. Checked a
-  // frame later: a click on a label inside the card blurs before it focuses.
-  const onBlur = () => {
-    if (editing) return;
-    const untouched =
-      !draft.title.trim() &&
-      !draft.details.trim() &&
-      draft.links.every((link) => !link.trim());
-    if (!untouched) return;
-    requestAnimationFrame(() => {
-      if (!formRef.current?.contains(document.activeElement))
-        setExpanded(false);
-    });
+  const untouched =
+    !draft.title.trim() &&
+    !draft.details.trim() &&
+    draft.links.every((link) => !link.trim());
+
+  // A press outside an untouched new reminder folds it back up; a press
+  // anywhere inside the card never does.
+  useEffect(() => {
+    if (editing || !expanded || !untouched) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!formRef.current?.contains(event.target as Node)) setExpanded(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
+  }, [editing, expanded, untouched]);
+
+  // Tabbing out of it does too.
+  const onBlur = (event: FocusEvent<HTMLFormElement>) => {
+    const next = event.relatedTarget as Node | null;
+    if (!editing && untouched && next && !formRef.current?.contains(next))
+      setExpanded(false);
+  };
+
+  // A press on the card's empty space keeps the caret where it was.
+  const onPointerDown = (event: ReactPointerEvent<HTMLFormElement>) => {
+    const target = event.target as Element;
+    if (!target.closest("input, textarea, button, label, a, select"))
+      event.preventDefault();
   };
 
   const timed = draft.time !== "";
@@ -240,6 +257,7 @@ function Composer({
       onSubmit={submit}
       onKeyDown={onKeyDown}
       onBlur={onBlur}
+      onPointerDown={onPointerDown}
     >
       <div className="rem-composer-title">
         <span className="rem-composer-mark" aria-hidden="true">
