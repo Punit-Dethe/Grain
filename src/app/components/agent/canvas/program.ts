@@ -8,3 +8,8 @@ export function canvasProgram(reply: string): string | null {
   const start = text.search(/^root\s*=/m);
   return start < 0 ? null : text.slice(start).trim();
 }
+
+/** A reply without its leading voice line (`SAY: …`, spoken by the host). */
+export function withoutSpeech(reply: string): string {
+  return reply.replace(/^\s*say:[^\n]*(\n|$)/i, "").trim();
+}

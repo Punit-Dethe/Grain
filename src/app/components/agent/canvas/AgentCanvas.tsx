@@ -10,7 +10,7 @@ import { ArrowUp, Square } from "lucide-react";
 import { commands, type AgentConfirm } from "@/bindings";
 import { AgentMarkdown } from "../../markdown/Markdown";
 import { canvasLibrary } from "./library";
-import { canvasProgram } from "./program";
+import { canvasProgram, withoutSpeech } from "./program";
 
 /** The Canvas shell's bounds, in CSS px. The window is NOTCH_REPLY in
  * agent.rs: keep these (plus the clip slack) inside it. */
@@ -124,6 +124,8 @@ export function AgentCanvas({
   }, []);
 
   const program = reply ? canvasProgram(reply) : null;
+  // A reply restored from memory still carries its voice line: never shown.
+  const text = reply ? withoutSpeech(reply) : "";
 
   const onAction = (event: ActionEvent) => {
     if (busy) return;
@@ -159,7 +161,7 @@ export function AgentCanvas({
             program ? (
               <CanvasBoundary
                 key={program}
-                fallback={<AgentMarkdown markdown={reply} />}
+                fallback={<AgentMarkdown markdown={text} />}
               >
                 <Renderer
                   response={program}
@@ -170,7 +172,7 @@ export function AgentCanvas({
               </CanvasBoundary>
             ) : (
               <div className="gui-markdown">
-                <AgentMarkdown markdown={reply} />
+                <AgentMarkdown markdown={text} />
               </div>
             )
           ) : busy ? null : (

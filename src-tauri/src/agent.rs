@@ -1588,7 +1588,7 @@ pub fn agent_stop_speech() {
 /// `agent_compact_voice` on, keeps the notch compact (`agent_present_reply`
 /// then shows the speaking bar instead of growing). Must run before the reply
 /// is returned to the renderer, which is what triggers that presentation.
-fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
+pub(crate) fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
     let state = app.state::<AgentState>();
     let summon = state.summon_gen.load(Ordering::SeqCst);
     let compact = crate::settings::get_settings(app).agent_compact_voice
@@ -2676,12 +2676,17 @@ pub async fn agent_run(
 /// [GRAIN] Canvas (generative UI, experiment — docs/Generative UI/PLAN.md):
 /// how the model answers in the Canvas view. `spec` is the component
 /// vocabulary the notch renders (generated from its OpenUI library).
-const CANVAS_RULE: &str = "CANVAS MODE: this reply is rendered as an interactive UI in a small panel at the top of the screen, not as chat text. Reply with ONLY OpenUI Lang code that follows the component reference below: no prose before or after it, no markdown, no code fences. Use tools first whenever the answer needs live or external data, then build the UI from their results; never invent live data. Keep it compact and glanceable (the panel is at most about 620x540 px): lead with the answer, then the few details that matter. Offer 1-3 follow-up buttons that send the next request when useful. Earlier assistant turns in this conversation are the UIs you produced; a follow-up may refine or replace them.";
+const CANVAS_RULE: &str = "CANVAS MODE: this reply is rendered as an interactive UI in a small panel at the top of the screen, not as chat text. Reply with OpenUI Lang code that follows the component reference below, preceded only by the voice line described at the end: no other prose, no markdown, no code fences. Use tools first whenever the answer needs live or external data, then build the UI from their results; never invent live data. Keep it compact and glanceable (the panel is at most about 620x540 px): lead with the answer, then the few details that matter. Offer 1-3 follow-up buttons that send the next request when useful. Earlier assistant turns in this conversation are the UIs you produced; a follow-up may refine or replace them.";
+
+/// [GRAIN] The spoken half of a Canvas reply: one short line said aloud with
+/// the UI (talk-back), split off by `grain_agent_canvas::split_speech`. Last in
+/// the prompt so it wins over the component reference's "root first" rule.
+const CANVAS_SPEECH_RULE: &str = "VOICE LINE: start your reply with exactly one line `SAY: ` followed by what will be spoken aloud while the UI shows. Then put the OpenUI Lang program on the next line (this SAY line is the only thing allowed before `root =`). The spoken line gives the answer straight away in one or two short, warm, conversational sentences, like a friend telling you: \"It's 14 degrees with light rain until 3, then it clears up nicely.\" Never describe the UI or say you opened, showed or made something; no lists, numbers-dumps, URLs, symbols or markdown; nothing the listener does not need.";
 
 /// [GRAIN] One Canvas turn. Same providers, tools, screen attachment and
-/// cancellation as a chat turn; never spoken (the reply is UI code) and never
-/// recorded in the chat history (the canvas keeps its own, see
-/// `grain_agent_canvas`).
+/// cancellation as a chat turn. Never recorded in the chat history and never
+/// spoken whole: `grain_agent_canvas` keeps its own memory and speaks only the
+/// reply's voice line.
 pub(crate) async fn run_canvas_turn(
     app: &AppHandle,
     messages: Vec<AgentMessage>,
@@ -2709,7 +2714,13 @@ pub(crate) async fn run_canvas_turn(
             let _ = crate::action_exec::resume(app, &token, false).await;
         }
         let mut full = build_messages(&messages, context.as_deref());
-        full.insert(1, ("system".to_string(), format!("{CANVAS_RULE}\n\n{spec}")));
+        full.insert(
+            1,
+            (
+                "system".to_string(),
+                format!("{CANVAS_RULE}\n\n{spec}\n\n{CANVAS_SPEECH_RULE}"),
+            ),
+        );
         let image = screen_attachment(app);
         run_with_tools(app, full, image.as_ref(), &run).await
     })

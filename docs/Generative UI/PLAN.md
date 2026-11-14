@@ -57,12 +57,23 @@ Live window resizes are off the table (WebView2 re-present blink; tauri#3990 fre
 
 Windows-only clip (as today). On macOS/Linux the transparent window area is not clipped — acceptable for the experiment.
 
-## Components (v1)
+## Components
 
-Kept small and notch-styled (monochrome tokens from `agent.css`): `Canvas` (root), `Stack`, `Row`, `Heading`, `Text`, `Stat`, `Badge`, `List`/`ListItem`, `Table`, `KeyValue`, `Progress`, `Divider`, `Image`, `Button`, `ButtonRow`, `Input`, `Select`. No maps: real map tiles need a map library and network tiles; a place list with "Open in Maps" links (`open_url`) covers the example for now.
+`Canvas` (root), `Stack`, `Card`, `Heading`, `Text`, `Markdown`, `Badge`, `Icon`, `Image`, `Stat`, `Progress`, `Divider`, `Details`/`Pair`, `Table`, `Steps`, `List`/`ListItem`, `Buttons`/`Button`, `Form`/`Input`/`Select`. No maps: real map tiles need a map library and network tiles; a place list with "Open in Maps" links (`open_url`) covers the example for now.
+
+### Colour (2026-11-15, user: "too dark and monotone")
+
+v1 used only the notch's monochrome tokens and no component had a colour option, so every reply came out grey. Now an optional `tone` (blue, sky, teal, green, amber, orange, red, pink, purple, indigo, slate) on `Canvas`, `Card`, `Heading`, `Icon`, `Stat`, `Badge`, `Progress` and primary `Button`. The `Canvas` tone washes the whole shell in a soft glow from the top (via `:has()` in `canvas.css`); `Stat` trends are green up / red down. A prompt rule maps subjects to tones (weather, money, places, warnings, food) and caps it at one main tone plus two.
+
+### Images
+
+`Image(src, alt?, caption?, shape?)` and a `ListItem` thumbnail. https only, `no-referrer`, and a broken URL hides itself. The prompt allows only image URLs that came back from tool results (the web extension), never invented ones. Loading a remote image tells that host the user's IP — inherent to showing web images.
+
+### Voice line
+
+Each reply starts with one `SAY: …` line: one or two short, warm sentences that give the answer ("It's 14 degrees with light rain until 3, then it clears up."), never a description of the UI. The host splits it off (`split_speech`), speaks it through the normal talk-back (so the "Agent talk-back" setting governs it), and returns only the UI. The memory keeps both so the model keeps the pattern. A summon's Canvas reply opens the notch and speaks (never the compact speaking bar).
 
 ## Open questions for the user
 
 1. Name in the tab strip: "Canvas" (working name).
-2. Should Canvas replies be spoken (talk-back)? Off for now — reading UI code aloud is wrong; a spoken summary would need a second field.
-3. Map component: worth adding a real map library later?
+2. Map component: worth adding a real map library later?

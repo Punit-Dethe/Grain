@@ -451,3 +451,191 @@
     transition: none;
   }
 }
+
+/* ── Colour ───────────────────────────────────────────────────────────────
+   The model picks a tone per reply (TONES in library.tsx). `--t` is the
+   accent; components with a tone class tint themselves from it. */
+.tone-blue {
+  --t: #5b9cff;
+}
+.tone-sky {
+  --t: #56c2f5;
+}
+.tone-teal {
+  --t: #3dd6c1;
+}
+.tone-green {
+  --t: #4ade80;
+}
+.tone-amber {
+  --t: #fbbf24;
+}
+.tone-orange {
+  --t: #fb923c;
+}
+.tone-red {
+  --t: #f87171;
+}
+.tone-pink {
+  --t: #f472b6;
+}
+.tone-purple {
+  --t: #a78bfa;
+}
+.tone-indigo {
+  --t: #818cf8;
+}
+.tone-slate {
+  --t: #94a3b8;
+}
+
+/* The Canvas tone washes the whole shell (header included) in a soft glow
+   from the top edge, so the mood reaches past the content box. */
+.agent-notch:has(.gui-canvas.tone-blue) {
+  --wash: #5b9cff;
+}
+.agent-notch:has(.gui-canvas.tone-sky) {
+  --wash: #56c2f5;
+}
+.agent-notch:has(.gui-canvas.tone-teal) {
+  --wash: #3dd6c1;
+}
+.agent-notch:has(.gui-canvas.tone-green) {
+  --wash: #4ade80;
+}
+.agent-notch:has(.gui-canvas.tone-amber) {
+  --wash: #fbbf24;
+}
+.agent-notch:has(.gui-canvas.tone-orange) {
+  --wash: #fb923c;
+}
+.agent-notch:has(.gui-canvas.tone-red) {
+  --wash: #f87171;
+}
+.agent-notch:has(.gui-canvas.tone-pink) {
+  --wash: #f472b6;
+}
+.agent-notch:has(.gui-canvas.tone-purple) {
+  --wash: #a78bfa;
+}
+.agent-notch:has(.gui-canvas.tone-indigo) {
+  --wash: #818cf8;
+}
+.agent-notch:has(.gui-canvas.tone-slate) {
+  --wash: #94a3b8;
+}
+
+.agent-notch.is-reply:has(.gui-canvas[class*="tone-"]) {
+  background:
+    radial-gradient(
+      140% 85% at 50% 0%,
+      color-mix(in srgb, var(--wash) 24%, transparent),
+      color-mix(in srgb, var(--wash) 7%, transparent) 55%,
+      transparent 85%
+    ),
+    var(--agc-bg);
+}
+
+.gui-icon[class*="tone-"],
+.gui-heading[class*="tone-"] {
+  color: var(--t);
+}
+
+.gui-card[class*="tone-"] {
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--t) 30%, transparent),
+    color-mix(in srgb, var(--t) 9%, transparent)
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t) 34%, transparent);
+}
+
+.gui-badge[class*="tone-"] {
+  background: color-mix(in srgb, var(--t) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t) 40%, transparent);
+  color: color-mix(in srgb, var(--t) 70%, #fff);
+}
+
+.gui-stat[class*="tone-"] .gui-stat-value {
+  color: var(--t);
+}
+
+.gui-stat-detail.is-up {
+  color: #4ade80;
+}
+
+.gui-stat-detail.is-down {
+  color: #f87171;
+}
+
+.gui-progress[class*="tone-"] .gui-progress-fill {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--t) 70%, #fff),
+    var(--t)
+  );
+}
+
+.gui-button.is-primary[class*="tone-"] {
+  background: var(--t);
+  color: #0a0a0e;
+}
+
+/* ── Images ───────────────────────────────────────────────────────────── */
+.gui-image {
+  margin: 0;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--agc-raise);
+  box-shadow: inset 0 0 0 1px var(--notch-line);
+}
+
+.gui-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.gui-image.is-ready img {
+  opacity: 1;
+}
+
+.gui-image.is-square {
+  max-width: 260px;
+}
+
+.gui-image.is-square img {
+  aspect-ratio: 1;
+}
+
+.gui-image.is-tall {
+  max-width: 220px;
+}
+
+.gui-image.is-tall img {
+  aspect-ratio: 3 / 4;
+}
+
+.gui-image figcaption {
+  padding: 6px 10px 7px;
+  color: var(--agc-muted);
+  font-size: 11.5px;
+}
+
+.gui-stack.is-row > .gui-image {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.gui-item-thumb {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--agc-raise);
+}

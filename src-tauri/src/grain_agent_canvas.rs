@@ -50,6 +50,21 @@ fn append(dir: &Path, turn: [(&str, &str); 2], at_unix_ms: u64) -> Result<(), St
     history::write(&path, &canvas)
 }
 
+/// Split a reply into its voice line (`SAY: …`, first line) and the UI
+/// program after it. A reply without one is all UI.
+pub(crate) fn split_speech(reply: &str) -> (Option<&str>, &str) {
+    let text = reply.trim_start();
+    let (first, rest) = text.split_once('\n').unwrap_or((text, ""));
+    let first = first.trim();
+    match first.get(..4) {
+        Some(tag) if tag.eq_ignore_ascii_case("say:") => {
+            let speech = first[4..].trim().trim_matches('"').trim();
+            ((!speech.is_empty()).then_some(speech), rest.trim())
+        }
+        _ => (None, reply.trim()),
+    }
+}
+
 /// The canvas conversation (the last UI is its last assistant message).
 #[tauri::command]
 #[specta::specta]
@@ -104,13 +119,22 @@ pub async fn agent_run_canvas(
         role: "user".into(),
         content: request.clone(),
     });
-    let reply =
+    let mut reply =
         crate::agent::run_canvas_turn(&app, messages, context, generation, &spec).await?;
-    if reply.confirm_action.is_none() && !reply.text.trim().is_empty() {
+    // The voice line is said (talk-back, when on), never shown; the UI is shown,
+    // never said. The memory keeps both, so the model keeps the pattern.
+    let full = reply.text.clone();
+    let (speech, ui) = split_speech(&full);
+    if let Some(speech) = speech {
+        // Not a compact spoken reply: the UI is the point, the notch opens.
+        crate::agent::speak_reply(&app, speech, None);
+    }
+    reply.text = ui.to_owned();
+    if reply.confirm_action.is_none() && !full.trim().is_empty() {
         let saved = history::dir(&app).and_then(|dir| {
             append(
                 &dir,
-                [("user", &request), ("assistant", &reply.text)],
+                [("user", &request), ("assistant", &full)],
                 history::now_ms(),
             )
         });
@@ -124,6 +148,29 @@ pub async fn agent_run_canvas(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_voice_line_is_split_from_the_ui() {
+        let reply = "SAY: It's 14 degrees and drizzly.\nroot = Canvas([])";
+        assert_eq!(
+            split_speech(reply),
+            (Some("It's 14 degrees and drizzly."), "root = Canvas([])")
+        );
+        assert_eq!(
+            split_speech("  say: \"Sunny all day.\"\r\nroot = Canvas([])"),
+            (Some("Sunny all day."), "root = Canvas([])")
+        );
+        assert_eq!(
+            split_speech("root = Canvas([])"),
+            (None, "root = Canvas([])")
+        );
+        assert_eq!(
+            split_speech("SAY:\nroot = Canvas([])"),
+            (None, "root = Canvas([])")
+        );
+        // Multi-byte text right at the tag boundary must not panic.
+        assert_eq!(split_speech("Sé"), (None, "Sé"));
+    }
 
     #[test]
     fn append_keeps_the_newest_turns() {
