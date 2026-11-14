@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createParser } from "@openuidev/react-lang";
 import { CANVAS_EXAMPLES, canvasLibrary, canvasSpec } from "./library";
-import { canvasProgram, withoutSpeech } from "./program";
+import { canvasProgram, viewSummary, withoutSpeech } from "./program";
 
 const parse = (text: string) =>
   createParser(canvasLibrary.toJSONSchema(), canvasLibrary.root).parse(text);
@@ -52,6 +52,42 @@ describe("canvas library", () => {
     );
     expect(result.meta.errors).toEqual([]);
     expect(result.root?.typeName).toBe("Canvas");
+  });
+
+  it("parses a place with an icon instead of a photo", () => {
+    const result = parse(
+      [
+        'root = Canvas([Places("Cafés", "2 open", [a, b])])',
+        'a = Place("Blue Tokai", "Coffee · quiet", "1 km", "Open", "good", null, null, "star")',
+        'b = Place("Third Wave", "Coffee", "2 km")',
+      ].join("\n"),
+    );
+    expect(result.meta.errors).toEqual([]);
+  });
+
+  it("tells the model the space a view must fit", () => {
+    const spec = canvasSpec();
+    expect(spec).toContain("never scrolls");
+    expect(spec).toContain("Places 5 rows");
+  });
+
+  it("names a view for its card in the chat", () => {
+    expect(viewSummary(CANVAS_EXAMPLES[0])).toEqual({
+      kind: "weather",
+      title: "Pune",
+    });
+    expect(viewSummary(CANVAS_EXAMPLES[1])).toEqual({
+      kind: "places",
+      title: "Ski areas near you",
+    });
+    expect(viewSummary('root = Canvas([Heading("Say \\"hi\\"")])')).toEqual({
+      kind: "view",
+      title: 'Say "hi"',
+    });
+    expect(viewSummary("root = Canvas([])")).toEqual({
+      kind: "view",
+      title: null,
+    });
   });
 
   it("keeps decoration out of the model's hands", () => {

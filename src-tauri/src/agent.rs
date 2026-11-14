@@ -43,11 +43,11 @@ const AGENT_BINDING: &str = "agent";
 const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-/// The reply window, in CSS px: room for the largest shell (the Canvas max,
-/// `CANVAS_MAX` in AgentPanel.tsx, plus the clip slack in `set_notch_region`).
-/// The panel clips the window to its shell — the chat stays 600x360 — so the
-/// transparent rest never eats clicks (Windows).
-const NOTCH_REPLY: (f64, f64) = (660.0, 560.0);
+/// The reply window, in CSS px: room for the largest shell (a generated
+/// view's max, `CANVAS_MAX` in AgentCanvas.tsx, plus the clip slack in
+/// `set_notch_region`). The panel clips the window to its shell — the chat
+/// stays 600x360 — so the transparent rest never eats clicks (Windows).
+const NOTCH_REPLY: (f64, f64) = (760.0, 620.0);
 /// The compact shell, in CSS px (`.agent-notch` in agent.css).
 const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
 /// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.
@@ -388,6 +388,9 @@ pub struct AgentMessage {
     /// `"user"` or `"assistant"` (anything else is treated as `"user"`).
     pub role: String,
     pub content: String,
+    /// [GRAIN] The generated view an assistant turn carried (OpenUI Lang).
+    #[serde(default)]
+    pub ui: Option<String>,
 }
 
 /// The panel's per-turn reply, optionally carrying a host-held action confirmation.
@@ -395,6 +398,9 @@ pub struct AgentMessage {
 pub struct AgentReply {
     pub text: String,
     pub confirm_action: Option<AgentConfirm>,
+    /// [GRAIN] A generated view shown with the text (OpenUI Lang program,
+    /// see `grain_agent_canvas`).
+    pub ui: Option<String>,
 }
 
 /// [GRAIN] One material argument of a pending action, for the confirmation panel.
@@ -426,6 +432,7 @@ impl AgentReply {
         Self {
             text,
             confirm_action: None,
+            ui: None,
         }
     }
 }
@@ -1588,7 +1595,7 @@ pub fn agent_stop_speech() {
 /// `agent_compact_voice` on, keeps the notch compact (`agent_present_reply`
 /// then shows the speaking bar instead of growing). Must run before the reply
 /// is returned to the renderer, which is what triggers that presentation.
-pub(crate) fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
+fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
     let state = app.state::<AgentState>();
     let summon = state.summon_gen.load(Ordering::SeqCst);
     let compact = crate::settings::get_settings(app).agent_compact_voice
@@ -2554,14 +2561,17 @@ mod agent_routing_tests {
             AgentMessage {
                 role: "user".into(),
                 content: "rewrite it".into(),
+                ui: None,
             },
             AgentMessage {
                 role: "assistant".into(),
                 content: "first reply".into(),
+                ui: None,
             },
             AgentMessage {
                 role: "system".into(),
                 content: "follow-up".into(),
+                ui: None,
             },
         ];
         let full = build_messages(&messages, Some("  explicitly selected subject  "));
@@ -2633,7 +2643,16 @@ pub async fn agent_run(
     // [GRAIN] A notch chat turn: the host records it in the running chat (the
     // request now, the reply when it lands), so it survives the notch closing.
     record: bool,
+    // [GRAIN] The notch's generated-view vocabulary (OpenUI Lang component
+    // reference): with it, the reply may carry a view (`grain_agent_canvas`).
+    ui_spec: Option<String>,
 ) -> Result<AgentReply, String> {
+    if ui_spec
+        .as_ref()
+        .is_some_and(|spec| spec.len() > crate::grain_agent_canvas::MAX_SPEC_BYTES)
+    {
+        return Err("The view component reference is too large".into());
+    }
     let state = app
         .try_state::<AgentState>()
         .ok_or("Agent state unavailable")?;
@@ -2649,11 +2668,22 @@ pub async fn agent_run(
     // A new turn silences the previous reply's talk-back.
     crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
-    let reply = run
-        .wait(registration, agent_run_owned(&app, messages, context, &run))
+    let mut reply = run
+        .wait(
+            registration,
+            agent_run_owned(&app, messages, context, ui_spec.as_deref(), &run),
+        )
         .await?;
-    if let Ok(reply) = &reply {
-        speak_reply(&app, &reply.text, generation);
+    if let Ok(reply) = &mut reply {
+        if ui_spec.is_some() && reply.confirm_action.is_none() {
+            let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);
+            reply.text = text;
+            reply.ui = ui;
+        }
+        // A reply with a view always opens the notch to show it: never the
+        // compact spoken presentation, even with `agent_compact_voice`.
+        let first_turn = if reply.ui.is_some() { None } else { generation };
+        speak_reply(&app, &reply.text, first_turn);
     }
     if record {
         if let Ok(reply) = &reply {
@@ -2665,66 +2695,13 @@ pub async fn agent_run(
                     vec![AgentMessage {
                         role: "assistant".into(),
                         content: reply.text.clone(),
+                        ui: reply.ui.clone(),
                     }],
                 );
             }
         }
     }
     reply
-}
-
-/// [GRAIN] Canvas (generative UI, experiment — docs/Generative UI/PLAN.md):
-/// how the model answers in the Canvas view. `spec` is the component
-/// vocabulary the notch renders (generated from its OpenUI library).
-const CANVAS_RULE: &str = "CANVAS MODE: this reply is rendered as an interactive UI in a small panel at the top of the screen, not as chat text. Reply with OpenUI Lang code that follows the component reference below, preceded only by the voice line described at the end: no other prose, no markdown, no code fences. Use tools first whenever the answer needs live or external data, then build the UI from their results; never invent live data. Keep it compact and glanceable (the panel is at most about 620x540 px): lead with the answer, then the few details that matter. Offer 1-3 follow-up buttons that send the next request when useful. Earlier assistant turns in this conversation are the UIs you produced; a follow-up may refine or replace them.";
-
-/// [GRAIN] The spoken half of a Canvas reply: one short line said aloud with
-/// the UI (talk-back), split off by `grain_agent_canvas::split_speech`. Last in
-/// the prompt so it wins over the component reference's "root first" rule.
-const CANVAS_SPEECH_RULE: &str = "VOICE LINE: start your reply with exactly one line `SAY: ` followed by what will be spoken aloud while the UI shows. Then put the OpenUI Lang program on the next line (this SAY line is the only thing allowed before `root =`). The spoken line gives the answer straight away in one or two short, warm, conversational sentences, like a friend telling you: \"It's 14 degrees with light rain until 3, then it clears up nicely.\" Never describe the UI or say you opened, showed or made something; no lists, numbers-dumps, URLs, symbols or markdown; nothing the listener does not need.";
-
-/// [GRAIN] One Canvas turn. Same providers, tools, screen attachment and
-/// cancellation as a chat turn. Never recorded in the chat history and never
-/// spoken whole: `grain_agent_canvas` keeps its own memory and speaks only the
-/// reply's voice line.
-pub(crate) async fn run_canvas_turn(
-    app: &AppHandle,
-    messages: Vec<AgentMessage>,
-    context: Option<String>,
-    generation: Option<u64>,
-    spec: &str,
-) -> Result<AgentReply, String> {
-    let state = app
-        .try_state::<AgentState>()
-        .ok_or("Agent state unavailable")?;
-    let (run, registration) = {
-        let _pending = state.pending_instruction.lock().unwrap();
-        if generation.is_some_and(|generation| !reply_wait_is_current(app, generation)) {
-            return Err(RUN_CANCELLED.into());
-        }
-        state.execution.begin()?
-    };
-    crate::grain_tts::stop();
-    run.wait(registration, async {
-        // A new request drops a confirmation still waiting from an earlier turn.
-        if let Some(token) = active_pending_action(app) {
-            if !take_pending_action(&run, &token) {
-                return Err(RUN_CANCELLED.into());
-            }
-            let _ = crate::action_exec::resume(app, &token, false).await;
-        }
-        let mut full = build_messages(&messages, context.as_deref());
-        full.insert(
-            1,
-            (
-                "system".to_string(),
-                format!("{CANVAS_RULE}\n\n{spec}\n\n{CANVAS_SPEECH_RULE}"),
-            ),
-        );
-        let image = screen_attachment(app);
-        run_with_tools(app, full, image.as_ref(), &run).await
-    })
-    .await?
 }
 
 /// [GRAIN] A recorded chat request in flight. Records the request on start;
@@ -2771,6 +2748,7 @@ async fn agent_run_owned(
     app: &AppHandle,
     messages: Vec<AgentMessage>,
     context: Option<String>,
+    ui_spec: Option<&str>,
     run: &AgentRun<'_>,
 ) -> Result<AgentReply, String> {
     // [GRAIN] A risky action from a prior turn is waiting on the user. The interim
@@ -2803,7 +2781,21 @@ async fn agent_run_owned(
             }
         }
     }
-    let full = build_messages(&messages, context.as_deref());
+    let mut full = build_messages(&messages, context.as_deref());
+    if let Some(spec) = ui_spec {
+        use crate::grain_agent_canvas::{UI_FORMAT_RULE, UI_RULE};
+        full.insert(
+            1,
+            (
+                "system".to_string(),
+                format!("{UI_RULE}
+
+{spec}
+
+{UI_FORMAT_RULE}"),
+            ),
+        );
+    }
     let image = screen_attachment(app);
     run_with_tools(app, full, image.as_ref(), run).await
 }
@@ -3881,6 +3873,7 @@ mod tool_continuation_tests {
             Ok(AgentReply {
                 text: "Approve second operation".into(),
                 confirm_action: Some(confirm),
+                ui: None,
             }),
         )
         .unwrap();
@@ -4112,6 +4105,7 @@ async fn drive_tool_turn_with<'a>(
             return Ok(AgentReply {
                 text,
                 confirm_action: Some(confirm),
+                ui: None,
             });
         }
         if let Some(final_reply) = same_round_reply.filter(|_| all_succeeded) {
@@ -4210,13 +4204,29 @@ fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(Stri
         ));
     }
 
-    for m in messages {
+    // [GRAIN] Only the latest generated view is sent back (views are long);
+    // a follow-up can refine it.
+    let latest_ui = messages
+        .iter()
+        .rposition(|m| m.role == "assistant" && m.ui.is_some());
+    for (index, m) in messages.iter().enumerate() {
         let role = if m.role == "assistant" {
             "assistant"
         } else {
             "user"
         };
-        full.push((role.to_string(), m.content.clone()));
+        let content = match m.ui.as_deref() {
+            Some(ui) if Some(index) == latest_ui => {
+                let ui: String = ui
+                    .chars()
+                    .take(crate::grain_agent_canvas::MAX_UI_CHARS)
+                    .collect();
+                format!("{}
+{ui}", m.content)
+            }
+            _ => m.content.clone(),
+        };
+        full.push((role.to_string(), content));
     }
     full
 }

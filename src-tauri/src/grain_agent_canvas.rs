@@ -1,148 +1,65 @@
-//! [GRAIN] Canvas: the Agent notch's generative-UI view (experiment, see
-//! `docs/Generative UI/PLAN.md`). The model answers in OpenUI Lang and the
-//! notch renders it with its own component library.
-//!
-//! The host keeps the canvas conversation in `agent/canvas.json` — the user's
-//! requests and the UI programs the model produced — so a follow-up can refine
-//! the last UI and a reopened notch shows it again. Read on demand; nothing is
-//! held in memory.
+//! [GRAIN] Generative UI in the Agent chat (experiment, see
+//! `docs/Generative UI/PLAN.md`). A chat reply may carry an interactive view:
+//! the model writes its short spoken/chat answer, then an OpenUI Lang program
+//! the notch renders with its own component library. The host splits the two
+//! here; the chat keeps both (`AgentHistoryMessage::ui`).
 
-use serde::{Deserialize, Serialize};
-use specta::Type;
-use std::path::Path;
-use std::sync::Mutex;
-use tauri::AppHandle;
-
-use crate::agent::{AgentMessage, AgentReply};
-use crate::grain_agent_history::{self as history, AgentHistoryMessage};
-
-const FILE: &str = "canvas.json";
-/// Kept turns (requests + UIs), oldest dropped first. UI programs are long,
-/// so the model sees only the recent ones.
-const MAX_MESSAGES: usize = 12;
-/// A stored request or UI program is cut to this many characters.
-const MAX_CHARS: usize = 40_000;
 /// The component reference the notch sends; anything larger is refused.
-const MAX_SPEC_BYTES: usize = 96 * 1024;
+pub(crate) const MAX_SPEC_BYTES: usize = 96 * 1024;
 
-static LOCK: Mutex<()> = Mutex::new(());
+/// How the model answers when the chat can show a view. `spec` (the
+/// component reference) follows it, then [`UI_FORMAT_RULE`].
+pub(crate) const UI_RULE: &str = "GENERATIVE UI: a reply in this chat can carry an interactive view, drawn in a small panel at the top of the screen. Prefer a view in most replies: whenever the answer has something worth seeing (weather, places, travel, prices, numbers, comparisons, lists, steps, options). Skip it only for pure conversation, a short fact one sentence fully covers, a rewrite or transformation of selected text, or a question back to the user. Use tools first whenever the answer needs live or external data, then build the view from their results; never invent live data. The view never scrolls: it must fit the space and the limits given in the component reference; show the top items and offer a follow-up button for the rest instead of going long. Earlier assistant turns may include the view you showed; a follow-up may refine or replace it.";
 
-/// The canvas conversation, oldest first. The last assistant message is the
-/// UI on screen.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
-pub struct AgentCanvas {
-    pub messages: Vec<AgentHistoryMessage>,
+/// Last in the prompt, so it wins over the component reference's own
+/// "start with root" rule.
+pub(crate) const UI_FORMAT_RULE: &str = "REPLY FORMAT WITH A VIEW: first your chat reply, which is shown in the chat and read aloud: one or two short, warm, conversational sentences that give the answer straight away, like a friend telling you (\"It's 14 degrees with light rain until 3, then it clears up nicely.\"). Never describe the view or say you opened, showed or made something; no lists, URLs, symbols or markdown in it. Then, on a new line, the OpenUI Lang program starting with `root = Canvas(`: no code fences and nothing after it. WITHOUT A VIEW: reply normally and write no program.";
+
+/// The latest view a model sees again with its reply is cut to this size.
+pub(crate) const MAX_UI_CHARS: usize = 40_000;
+
+/// Whether `line` opens an OpenUI Lang program (`root = …`).
+fn opens_program(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix("root")
+        .is_some_and(|rest| rest.trim_start().starts_with('='))
 }
 
-fn append(dir: &Path, turn: [(&str, &str); 2], at_unix_ms: u64) -> Result<(), String> {
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let path = dir.join(FILE);
-    let mut canvas: AgentCanvas = history::read(&path);
-    canvas
-        .messages
-        .extend(turn.into_iter().map(|(role, content)| AgentHistoryMessage {
-            role: role.into(),
-            content: content.trim().chars().take(MAX_CHARS).collect(),
-            at_unix_ms,
-        }));
-    let excess = canvas.messages.len().saturating_sub(MAX_MESSAGES);
-    canvas.messages.drain(..excess);
-    history::write(&path, &canvas)
-}
-
-/// Split a reply into its voice line (`SAY: …`, first line) and the UI
-/// program after it. A reply without one is all UI.
-pub(crate) fn split_speech(reply: &str) -> (Option<&str>, &str) {
-    let text = reply.trim_start();
-    let (first, rest) = text.split_once('\n').unwrap_or((text, ""));
-    let first = first.trim();
-    match first.get(..4) {
-        Some(tag) if tag.eq_ignore_ascii_case("say:") => {
-            let speech = first[4..].trim().trim_matches('"').trim();
-            ((!speech.is_empty()).then_some(speech), rest.trim())
+/// Split a reply into its chat text and the view program after it (`None`
+/// when there is none). Tolerates a code fence around the program and a
+/// leftover `SAY:` tag on the text.
+pub(crate) fn split_ui(reply: &str) -> (String, Option<String>) {
+    let mut offset = 0;
+    let mut start = None;
+    for line in reply.split_inclusive('\n') {
+        if opens_program(line) {
+            start = Some(offset);
+            break;
         }
-        _ => (None, reply.trim()),
+        offset += line.len();
     }
-}
-
-/// The canvas conversation (the last UI is its last assistant message).
-#[tauri::command]
-#[specta::specta]
-pub fn agent_canvas(app: AppHandle) -> AgentCanvas {
-    let Ok(dir) = history::dir(&app) else {
-        return AgentCanvas::default();
+    let Some(start) = start else {
+        return (reply.trim().to_owned(), None);
     };
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    history::read(&dir.join(FILE))
-}
-
-/// Start the canvas over.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_canvas_clear(app: AppHandle) -> Result<(), String> {
-    let dir = history::dir(&app)?;
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    match std::fs::remove_file(dir.join(FILE)) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
-        _ => Ok(()),
-    }
-}
-
-/// Ask for a UI. `spec` is the notch's component reference (OpenUI Lang
-/// prompt generated from its library). The request and the UI are recorded
-/// once the reply lands; a reply still awaiting approval is not.
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_run_canvas(
-    app: AppHandle,
-    request: String,
-    spec: String,
-    context: Option<String>,
-    generation: Option<u64>,
-) -> Result<AgentReply, String> {
-    let request = request.trim().to_owned();
-    if request.is_empty() {
-        return Err("Nothing to ask".into());
-    }
-    if spec.len() > MAX_SPEC_BYTES {
-        return Err("The canvas component reference is too large".into());
-    }
-    let mut messages: Vec<AgentMessage> = agent_canvas(app.clone())
-        .messages
-        .into_iter()
-        .map(|message| AgentMessage {
-            role: message.role,
-            content: message.content,
-        })
-        .collect();
-    messages.push(AgentMessage {
-        role: "user".into(),
-        content: request.clone(),
-    });
-    let mut reply =
-        crate::agent::run_canvas_turn(&app, messages, context, generation, &spec).await?;
-    // The voice line is said (talk-back, when on), never shown; the UI is shown,
-    // never said. The memory keeps both, so the model keeps the pattern.
-    let full = reply.text.clone();
-    let (speech, ui) = split_speech(&full);
-    if let Some(speech) = speech {
-        // Not a compact spoken reply: the UI is the point, the notch opens.
-        crate::agent::speak_reply(&app, speech, None);
-    }
-    reply.text = ui.to_owned();
-    if reply.confirm_action.is_none() && !full.trim().is_empty() {
-        let saved = history::dir(&app).and_then(|dir| {
-            append(
-                &dir,
-                [("user", &request), ("assistant", &full)],
-                history::now_ms(),
-            )
-        });
-        if let Err(error) = saved {
-            log::warn!("[GRAIN] agent: could not record the canvas: {error}");
+    let mut text = reply[..start].trim_end();
+    // An opening fence right above the program.
+    if let Some((before, last)) = text.rsplit_once('\n').or(Some(("", text))) {
+        if last.trim_start().starts_with("```") {
+            text = before.trim_end();
         }
     }
-    Ok(reply)
+    let text = text.trim();
+    let text = match text.get(..4) {
+        Some(tag) if tag.eq_ignore_ascii_case("say:") => text[4..].trim(),
+        _ => text,
+    };
+    let text = text.trim_matches('"').trim().to_owned();
+    let mut program = &reply[start..];
+    if let Some(end) = program.find("\n```") {
+        program = &program[..end];
+    }
+    let program = program.trim();
+    (text, (!program.is_empty()).then(|| program.to_owned()))
 }
 
 #[cfg(test)]
@@ -150,41 +67,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_voice_line_is_split_from_the_ui() {
-        let reply = "SAY: It's 14 degrees and drizzly.\nroot = Canvas([])";
+    fn a_reply_splits_into_text_and_view() {
         assert_eq!(
-            split_speech(reply),
-            (Some("It's 14 degrees and drizzly."), "root = Canvas([])")
+            split_ui("It's 14 degrees and drizzly.\nroot = Canvas([])"),
+            (
+                "It's 14 degrees and drizzly.".to_owned(),
+                Some("root = Canvas([])".to_owned())
+            )
         );
         assert_eq!(
-            split_speech("  say: \"Sunny all day.\"\r\nroot = Canvas([])"),
-            (Some("Sunny all day."), "root = Canvas([])")
+            split_ui("SAY: \"Sunny all day.\"\r\n```openui\r\nroot = Canvas([])\r\n```\r\n"),
+            (
+                "Sunny all day.".to_owned(),
+                Some("root = Canvas([])".to_owned())
+            )
         );
         assert_eq!(
-            split_speech("root = Canvas([])"),
-            (None, "root = Canvas([])")
+            split_ui("root=Canvas([])"),
+            (String::new(), Some("root=Canvas([])".to_owned()))
         );
-        assert_eq!(
-            split_speech("SAY:\nroot = Canvas([])"),
-            (None, "root = Canvas([])")
-        );
-        // Multi-byte text right at the tag boundary must not panic.
-        assert_eq!(split_speech("Sé"), (None, "Sé"));
     }
 
     #[test]
-    fn append_keeps_the_newest_turns() {
-        let dir = std::env::temp_dir().join(format!("grain-canvas-{}", uuid::Uuid::new_v4()));
-        for i in 0..10 {
-            let ask = format!("ask {i}");
-            let ui = format!("root = Canvas([])  // {i}");
-            append(&dir, [("user", &ask), ("assistant", &ui)], i).unwrap();
-        }
-        let canvas: AgentCanvas = history::read(&dir.join(FILE));
-        assert_eq!(canvas.messages.len(), MAX_MESSAGES);
-        assert_eq!(canvas.messages[0].content, "ask 4");
-        assert_eq!(canvas.messages.last().unwrap().role, "assistant");
-        assert!(canvas.messages.last().unwrap().content.ends_with("// 9"));
-        let _ = std::fs::remove_dir_all(dir);
+    fn a_plain_reply_has_no_view() {
+        assert_eq!(
+            split_ui("  Just a sentence about rooted trees.  "),
+            ("Just a sentence about rooted trees.".to_owned(), None)
+        );
+        // Multi-byte text right at the tag boundary must not panic.
+        assert_eq!(split_ui("Sé"), ("Sé".to_owned(), None));
     }
 }

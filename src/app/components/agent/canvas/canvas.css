@@ -1,8 +1,10 @@
-/* Canvas: the Agent answers with a generated UI (experiment, see
-   docs/Generative UI/PLAN.md). Laid out at its settled size and clipped by
-   the shell as it grows, like Recall. AgentCanvas measures `.gui-content` and
-   `.gui-foot` to size the shell (CANVAS_MIN/MAX and PAD_X there). Tokens come
-   from `.agent-panel-root` in agent.css. */
+/* Generated views in the Agent chat (experiment, see
+   docs/Generative UI/PLAN.md): the card in the chat and the full view it
+   opens. The view is laid out at its settled size and clipped by the shell as
+   it grows, like Recall. AgentCanvas measures `.gui-content` and `.gui-foot`
+   to size the shell (CANVAS_MIN/MAX and PAD_X there). It never scrolls: a
+   view taller than the bounds is scaled down to fit. Tokens come from
+   `.agent-panel-root` in agent.css. */
 .agent-notch-canvas-pane {
   position: absolute;
   top: var(--notch-reply-header);
@@ -38,24 +40,26 @@
 .gui-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 0 16px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--agc-dim) transparent;
+}
+
+.gui-fit {
+  overflow: hidden;
 }
 
 /* Natural width, capped: independent of the shell, so measuring it never
-   feeds back into itself. 328 / 588 = CANVAS_MIN / CANVAS_MAX width minus
+   feeds back into itself. 328 / 688 = CANVAS_MIN / CANVAS_MAX width minus
    2 * PAD_X. */
 .gui-content {
   box-sizing: border-box;
   width: max-content;
   min-width: 328px;
-  max-width: 588px;
+  max-width: 688px;
   padding: 6px 0 12px;
   font-size: 12.5px;
   line-height: 1.45;
+  transform-origin: top left;
   transition: opacity 200ms ease;
 }
 
@@ -86,7 +90,7 @@
   --g-good: #7fcf9a;
   --g-warn: #e8c37a;
   --g-bad: #ef8a80;
-  --g-view: 408px;
+  --g-view: 440px;
   color: var(--g-ink);
   font-feature-settings: "tnum" 1;
 }
@@ -274,7 +278,7 @@
   text-align: left;
 }
 
-/* Separators start at the text, past the photo (iOS inset lists). */
+/* Separators start at the text, past the thumbnail (iOS inset lists). */
 .gui-place + .gui-place::before {
   content: "";
   position: absolute;
@@ -285,8 +289,11 @@
   background: var(--g-line);
 }
 
-.gui-place:has(.gui-place-photo:not(.is-small)) + .gui-place::before,
-.gui-place + .gui-place:has(.gui-place-photo:not(.is-small))::before {
+.gui-place + .gui-place:has(.gui-thumb.is-small)::before {
+  left: 46px;
+}
+
+.gui-place + .gui-place:has(.gui-thumb:not(.is-small))::before {
   left: 58px;
 }
 
@@ -308,7 +315,8 @@
   );
 }
 
-.gui-place-photo {
+.gui-thumb {
+  box-sizing: border-box;
   flex-shrink: 0;
   width: 46px;
   height: 46px;
@@ -317,10 +325,26 @@
   background: var(--g-raise);
 }
 
-.gui-place-photo.is-small {
+.gui-thumb.is-small {
   width: 34px;
   height: 34px;
   border-radius: 8px;
+}
+
+/* No photo (or a broken one): a quiet tile with the row's icon. */
+.gui-thumb.is-empty {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.03)
+  );
+  box-shadow: inset 0 0 0 1px var(--g-line);
+}
+
+.gui-thumb.is-empty .gui-icon:not([class*="hue-"]) {
+  color: var(--g-3);
 }
 
 .gui-place-main {
@@ -714,6 +738,26 @@
   aspect-ratio: 1;
 }
 
+.gui-image.is-empty {
+  box-shadow: inset 0 0 0 1px var(--g-line);
+}
+
+.gui-image-empty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  color: var(--g-3);
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0.02)
+  );
+}
+
+.gui-image.is-square .gui-image-empty {
+  aspect-ratio: 1;
+}
+
 .gui-image figcaption {
   padding: 7px 12px 8px;
   color: var(--g-2);
@@ -794,15 +838,73 @@
   background: rgba(255, 255, 255, 0.09);
 }
 
-.gui-empty {
+/* ── The view's card in the chat ─────────────────────────────────────── */
+.agc-ui-card {
+  box-sizing: border-box;
   display: flex;
+  align-items: center;
+  gap: 11px;
+  width: min(100%, 320px);
+  height: 52px;
+  margin-top: 6px;
+  padding: 0 12px 0 9px;
+  border: 0;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.agc-ui-card:hover,
+.agc-ui-card:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.agc-ui-card-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(245, 245, 247, 0.75);
+}
+
+.agc-ui-card-text {
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 0 2px;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agc-ui-card-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agc-ui-card-kind {
+  color: rgba(245, 245, 247, 0.48);
+  font-size: 11.5px;
+}
+
+.agc-ui-card-go {
+  flex-shrink: 0;
+  color: rgba(245, 245, 247, 0.36);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .gui-content,
+  .agc-ui-card,
   .gui-place,
   .gui-pill,
   .gui-input,

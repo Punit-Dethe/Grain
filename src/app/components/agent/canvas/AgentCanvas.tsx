@@ -1,24 +1,31 @@
-// The Canvas view: the Agent answers with a generated UI instead of chat text
-// (experiment, see docs/Generative UI/PLAN.md). Only the latest UI shows; the
-// conversation behind it is host-held (grain_agent_canvas.rs).
+// A generated view, opened full in the notch from its card in the chat
+// (experiment, see docs/Generative UI/PLAN.md). The shell fits the view, within
+// bounds; a view never scrolls: one taller than the bounds is scaled to fit.
 import "./devtoolsOff";
 import "./canvas.css";
-import { Component, useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  Component,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Renderer, type ActionEvent } from "@openuidev/react-lang";
 import { ArrowUp, Square } from "lucide-react";
-import { commands, type AgentConfirm } from "@/bindings";
+import { commands } from "@/bindings";
 import { AgentMarkdown } from "../../markdown/Markdown";
 import { canvasLibrary } from "./library";
 import { canvasProgram, withoutSpeech } from "./program";
 
-/** The Canvas shell's bounds, in CSS px. The window is NOTCH_REPLY in
- * agent.rs: keep these (plus the clip slack) inside it. */
+/** The view shell's bounds, in CSS px. The window is NOTCH_REPLY in
+ * agent.rs: keep these (plus the clip slack) inside it. `.gui-content`'s
+ * max-width in canvas.css is CANVAS_MAX.w - 2 * PAD_X. */
 export const CANVAS_MIN = { w: 360, h: 150 };
-export const CANVAS_MAX = { w: 620, h: 540 };
+export const CANVAS_MAX = { w: 720, h: 600 };
 /** The shell header (`--notch-reply-header` in agent.css). */
 const HEADER = 34;
-/** Horizontal padding of the canvas body (`.gui-body` in agent.css). */
+/** Horizontal padding of the view body (`.gui-body` in canvas.css). */
 const PAD_X = 16;
 
 const clamp = (value: number, min: number, max: number) =>
@@ -58,33 +65,27 @@ function nextRequest(event: ActionEvent): string | null {
 }
 
 interface Props {
-  /** The latest reply (OpenUI Lang, or plain text from a model that ignored
-   * the format); `null` before the first one. */
-  reply: string | null;
+  /** The view (OpenUI Lang, or plain text from a model that broke format). */
+  ui: string;
   busy: boolean;
-  error: string | null;
-  confirm: AgentConfirm | null;
   composerRef: React.RefObject<HTMLTextAreaElement>;
   hasDraft: boolean;
   onDraft: (hasDraft: boolean) => void;
+  /** A follow-up: typed, or sent by a button in the view. */
   onAsk: (request: string) => void;
   onStop: () => void;
-  onResolve: (pending: AgentConfirm, approve: boolean) => void;
-  /** The shell size this content needs, already clamped to the bounds. */
+  /** The shell size this view needs, already clamped to the bounds. */
   onSize: (size: { w: number; h: number }) => void;
 }
 
 export function AgentCanvas({
-  reply,
+  ui,
   busy,
-  error,
-  confirm,
   composerRef,
   hasDraft,
   onDraft,
   onAsk,
   onStop,
-  onResolve,
   onSize,
 }: Props) {
   const { t } = useTranslation();
@@ -92,28 +93,32 @@ export function AgentCanvas({
   const footRef = useRef<HTMLDivElement>(null);
   const onSizeRef = useRef(onSize);
   onSizeRef.current = onSize;
+  // Natural size and the scale that fits it under the max height.
+  const [fit, setFit] = useState({ w: 0, h: 0, scale: 1 });
 
   // The content lays out at its own natural width (capped), independent of
-  // the shell, so measuring it never feeds back into itself.
+  // the shell; a transform does not change its layout size, so measuring it
+  // never feeds back into itself.
   useLayoutEffect(() => {
     const content = contentRef.current;
     const foot = footRef.current;
     if (!content || !foot) return;
     let last = "";
     const measure = () => {
-      const w = clamp(
-        content.offsetWidth + PAD_X * 2,
-        CANVAS_MIN.w,
-        CANVAS_MAX.w,
-      );
+      const naturalW = content.offsetWidth;
+      const naturalH = content.offsetHeight;
+      const room = CANVAS_MAX.h - HEADER - foot.offsetHeight;
+      const scale = naturalH > room ? room / naturalH : 1;
+      const w = clamp(naturalW * scale + PAD_X * 2, CANVAS_MIN.w, CANVAS_MAX.w);
       const h = clamp(
-        HEADER + content.offsetHeight + foot.offsetHeight,
+        HEADER + naturalH * scale + foot.offsetHeight,
         CANVAS_MIN.h,
         CANVAS_MAX.h,
       );
-      const key = `${w}x${h}`;
+      const key = `${naturalW}x${naturalH}x${w}x${h}`;
       if (key === last) return;
       last = key;
+      setFit({ w: naturalW, h: naturalH, scale });
       onSizeRef.current({ w, h });
     };
     const observer = new ResizeObserver(measure);
@@ -123,9 +128,8 @@ export function AgentCanvas({
     return () => observer.disconnect();
   }, []);
 
-  const program = reply ? canvasProgram(reply) : null;
-  // A reply restored from memory still carries its voice line: never shown.
-  const text = reply ? withoutSpeech(reply) : "";
+  const program = canvasProgram(ui);
+  const text = withoutSpeech(ui);
 
   const onAction = (event: ActionEvent) => {
     if (busy) return;
@@ -143,22 +147,33 @@ export function AgentCanvas({
 
   const send = () => {
     const input = composerRef.current;
-    const text = input?.value.trim();
-    if (!input || !text || busy) return;
+    const value = input?.value.trim();
+    if (!input || !value || busy) return;
     input.value = "";
+    input.style.height = "auto";
     onDraft(false);
-    onAsk(text);
+    onAsk(value);
   };
+
+  const scaled = fit.scale < 1;
 
   return (
     <div className="agent-notch-canvas">
       <div className="gui-body">
         <div
-          ref={contentRef}
-          className={`gui-content${busy && reply ? " is-stale" : ""}`}
+          className="gui-fit"
+          style={
+            scaled
+              ? { width: fit.w * fit.scale, height: fit.h * fit.scale }
+              : undefined
+          }
         >
-          {reply ? (
-            program ? (
+          <div
+            ref={contentRef}
+            className={`gui-content${busy ? " is-stale" : ""}`}
+            style={scaled ? { transform: `scale(${fit.scale})` } : undefined}
+          >
+            {program ? (
               <CanvasBoundary
                 key={program}
                 fallback={<AgentMarkdown markdown={text} />}
@@ -166,7 +181,7 @@ export function AgentCanvas({
                 <Renderer
                   response={program}
                   library={canvasLibrary}
-                  isStreaming={busy}
+                  isStreaming={false}
                   onAction={onAction}
                 />
               </CanvasBoundary>
@@ -174,58 +189,20 @@ export function AgentCanvas({
               <div className="gui-markdown">
                 <AgentMarkdown markdown={text} />
               </div>
-            )
-          ) : busy ? null : (
-            <div className="gui-empty">
-              <span className="gui-heading is-s">{t("agent.canvasEmpty")}</span>
-              <span className="gui-text is-faint">
-                {t("agent.canvasEmptyHint")}
-              </span>
-            </div>
-          )}
-          {busy && !reply && (
-            <div className="agent-typing" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-          )}
-          {error && <div className="agc-error">{error}</div>}
+            )}
+          </div>
         </div>
       </div>
 
       <div ref={footRef} className="gui-foot">
-        {confirm && (
-          <div className="agc-evidence agc-confirm-action">
-            <span className="agc-confirm-q">{confirm.summary}</span>
-            <div className="agc-confirm-actions">
-              <button
-                type="button"
-                className="agc-action-btn"
-                disabled={busy}
-                onClick={() => onResolve(confirm, true)}
-              >
-                {t("agent.confirm")}
-              </button>
-              <button
-                type="button"
-                className="agc-cancel-btn"
-                disabled={busy}
-                onClick={() => onResolve(confirm, false)}
-              >
-                {t("tray.cancel")}
-              </button>
-            </div>
-          </div>
-        )}
         <div className="agc-c-compose">
           <div className="agc-c-field">
             <textarea
               ref={composerRef}
               rows={1}
               className="agc-c-textarea"
-              aria-label={t("agent.canvasPlaceholder")}
-              placeholder={t("agent.canvasPlaceholder")}
+              aria-label={t("agent.placeholderAsk")}
+              placeholder={t("agent.placeholderAsk")}
               onInput={(event) => {
                 const input = event.currentTarget;
                 input.style.height = "auto";

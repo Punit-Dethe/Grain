@@ -37,6 +37,7 @@ import {
   CloudSun,
   DollarSign,
   Home,
+  Image as ImageIcon,
   Info,
   Link,
   Mail,
@@ -89,6 +90,7 @@ const ICONS = {
   phone: Phone,
   mail: Mail,
   link: Link,
+  image: ImageIcon,
   dollar: DollarSign,
   users: Users,
   "arrow-right": ArrowRight,
@@ -105,6 +107,18 @@ const ICON_TONE: Partial<Record<IconName, string>> = {
   storm: "purple",
   snow: "ice",
   moon: "moon",
+};
+
+/** The most rows or items a block shows, so a view never needs to scroll
+ * (also stated in the prompt). */
+const LIMITS = {
+  places: 5,
+  list: 5,
+  rows: 6,
+  columns: 5,
+  steps: 6,
+  pairs: 6,
+  buttons: 3,
 };
 
 /** Meaning-only colour the model may pick: status and the odd icon. */
@@ -142,28 +156,33 @@ function Glyph({
   );
 }
 
-/** A remote image that hides itself when it cannot load. */
-function Photo({
+/** A row's thumbnail: the photo, or (missing or broken) an icon tile of the
+ * same size, so rows never shift. */
+function Thumb({
   src,
-  className,
-  alt = "",
+  icon: fallback,
+  small = false,
 }: {
   src: unknown;
-  className: string;
-  alt?: string;
+  icon: IconName;
+  small?: boolean;
 }) {
   const [broken, setBroken] = useState(false);
   const url = broken ? null : safeImage(src);
-  if (!url) return null;
-  return (
+  const className = `gui-thumb${small ? " is-small" : ""}`;
+  return url ? (
     <img
       className={className}
       src={url}
-      alt={alt}
+      alt=""
       referrerPolicy="no-referrer"
       decoding="async"
       onError={() => setBroken(true)}
     />
+  ) : (
+    <span className={`${className} is-empty`} aria-hidden>
+      <Glyph name={fallback} size={small ? 15 : 19} />
+    </span>
   );
 }
 
@@ -292,7 +311,7 @@ const Weather = defineComponent({
 const Place = defineComponent({
   name: "Place",
   description:
-    'One row of Places: name, detail ("42 runs · 30 cm fresh"), meta (right, "38 km"), status (under meta, "Open"), statusTone (good | warn | bad | muted), image (real https photo URL from a tool result), action (when tapped).',
+    'One row of Places: name, detail ("42 runs · 30 cm fresh"), meta (right, "38 km"), status (under meta, "Open"), statusTone (good | warn | bad | muted), image (real https photo URL from a tool result), action (when tapped), icon (shown in the thumbnail when there is no photo; default map-pin).',
   props: z.object({
     name: z.string(),
     detail: z.string().optional(),
@@ -301,12 +320,13 @@ const Place = defineComponent({
     statusTone: status,
     image: z.string().optional(),
     action: action().optional(),
+    icon: icon.optional(),
   }),
   component: ({ props }) => {
     const run = useRun(props.name, props.action);
     const body = (
       <>
-        <Photo src={props.image} className="gui-place-photo" />
+        <Thumb src={props.image} icon={props.icon ?? "map-pin"} />
         <span className="gui-place-main">
           <span className="gui-place-name">{props.name}</span>
           {props.detail && (
@@ -337,8 +357,7 @@ const Place = defineComponent({
 
 const Places = defineComponent({
   name: "Places",
-  description:
-    'A titled list of places, venues, shops or results with optional photos. title ("Ski areas near you"), note (right of the title, "3 open today"), places: Place rows.',
+  description: `A titled list of places, venues, shops or results with photos. title ("Ski areas near you"), note (right of the title, "3 open today"), places: up to ${LIMITS.places} Place rows.`,
   props: z.object({
     title: z.string(),
     note: z.string().optional(),
@@ -350,7 +369,9 @@ const Places = defineComponent({
         <span className="gui-view-title">{props.title}</span>
         {props.note && <span className="gui-t3">{props.note}</span>}
       </div>
-      <div className="gui-rows">{renderNode(props.places)}</div>
+      <div className="gui-rows">
+        {renderNode(props.places.slice(0, LIMITS.places))}
+      </div>
     </div>
   ),
 });
@@ -634,17 +655,18 @@ const Divider = defineComponent({
 
 const Details = defineComponent({
   name: "Details",
-  description: "A compact list of label/value facts.",
+  description: `A compact list of up to ${LIMITS.pairs} label/value facts.`,
   props: z.object({ pairs: z.array(Pair.ref) }),
   component: ({ props, renderNode }) => (
-    <div className="gui-details">{renderNode(props.pairs)}</div>
+    <div className="gui-details">
+      {renderNode(props.pairs.slice(0, LIMITS.pairs))}
+    </div>
   ),
 });
 
 const Table = defineComponent({
   name: "Table",
-  description:
-    "A small table for comparisons. rows are arrays of cells in column order. Few columns, short cells.",
+  description: `A small table for comparisons: up to ${LIMITS.columns} columns and ${LIMITS.rows} rows. rows are arrays of cells in column order; short cells.`,
   props: z.object({
     columns: z.array(z.string()),
     rows: z.array(z.array(z.union([z.string(), z.number()]))),
@@ -654,15 +676,15 @@ const Table = defineComponent({
       <table className="gui-table">
         <thead>
           <tr>
-            {props.columns.map((column, i) => (
+            {props.columns.slice(0, LIMITS.columns).map((column, i) => (
               <th key={i}>{column}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {props.rows.map((row, r) => (
+          {props.rows.slice(0, LIMITS.rows).map((row, r) => (
             <tr key={r}>
-              {row.map((cell, c) => (
+              {row.slice(0, LIMITS.columns).map((cell, c) => (
                 <td key={c}>{String(cell)}</td>
               ))}
             </tr>
@@ -675,11 +697,11 @@ const Table = defineComponent({
 
 const Steps = defineComponent({
   name: "Steps",
-  description: "A numbered sequence of short steps.",
+  description: `A numbered sequence of up to ${LIMITS.steps} short steps.`,
   props: z.object({ items: z.array(z.string()) }),
   component: ({ props }) => (
     <ol className="gui-steps">
-      {props.items.map((item, i) => (
+      {props.items.slice(0, LIMITS.steps).map((item, i) => (
         <li key={i}>
           <span className="gui-step-n">{i + 1}</span>
           <span>{item}</span>
@@ -705,9 +727,8 @@ const ListItem = defineComponent({
     const run = useRun(props.title, props.action);
     const body = (
       <>
-        <Photo src={props.image} className="gui-place-photo is-small" />
-        {props.icon && !safeImage(props.image) && (
-          <Glyph name={props.icon} size={17} />
+        {(props.image || props.icon) && (
+          <Thumb src={props.image} icon={props.icon ?? "image"} small />
         )}
         <span className="gui-place-main">
           <span className="gui-place-name">{props.title}</span>
@@ -730,17 +751,19 @@ const ListItem = defineComponent({
 
 const List = defineComponent({
   name: "List",
-  description: "Rows of ListItem, divided by hairlines.",
+  description: `Up to ${LIMITS.list} rows of ListItem, divided by hairlines.`,
   props: z.object({ items: z.array(ListItem.ref) }),
   component: ({ props, renderNode }) => (
-    <div className="gui-rows">{renderNode(props.items)}</div>
+    <div className="gui-rows">
+      {renderNode(props.items.slice(0, LIMITS.list))}
+    </div>
   ),
 });
 
 const Image = defineComponent({
   name: "Image",
   description:
-    "A photo. src must be a real https image URL from a tool result (never invented). shape: wide (default) | square. caption optional. A broken image hides itself.",
+    "A photo. src must be a real https image URL from a tool result (never invented). shape: wide (default) | square. caption optional. A broken image shows a quiet placeholder.",
   props: z.object({
     src: z.string(),
     alt: z.string().optional(),
@@ -752,7 +775,15 @@ const Image = defineComponent({
       "loading",
     );
     const url = safeImage(props.src);
-    if (!url || state === "broken") return null;
+    if (!url || state === "broken")
+      return (
+        <figure className={`gui-image is-${props.shape ?? "wide"} is-empty`}>
+          <span className="gui-image-empty" aria-hidden>
+            <ImageIcon size={22} strokeWidth={1.5} />
+          </span>
+          {props.caption && <figcaption>{props.caption}</figcaption>}
+        </figure>
+      );
     return (
       <figure className={`gui-image is-${props.shape ?? "wide"} is-${state}`}>
         <img
@@ -789,10 +820,12 @@ const Button = defineComponent({
 
 const Buttons = defineComponent({
   name: "Buttons",
-  description: "A row of 1-3 Buttons (follow-ups), always last.",
+  description: `A row of 1-${LIMITS.buttons} Buttons (follow-ups), always last.`,
   props: z.object({ buttons: z.array(Button.ref) }),
   component: ({ props, renderNode }) => (
-    <div className="gui-pills">{renderNode(props.buttons)}</div>
+    <div className="gui-pills">
+      {renderNode(props.buttons.slice(0, LIMITS.buttons))}
+    </div>
   ),
 });
 
@@ -964,17 +997,18 @@ trip = Journey("AI 864 · Air India", "BOM", "14:20", "DEL", "16:35", "On time",
 
 let spec: string | null = null;
 
-/** The component reference sent with each Canvas request (built once). */
+/** The component reference sent with each chat request (built once). */
 export function canvasSpec(): string {
   spec ??= canvasLibrary.prompt({
     preamble:
-      "You answer the user by filling a small, calm, premium view in OpenUI Lang for Grain's Agent notch. It should feel like one of Apple's own apps: quiet, precise, nothing extra.",
+      "A view is a small, calm, premium panel written in OpenUI Lang for Grain's Agent notch. It should feel like one of Apple's own apps: quiet, precise, nothing extra.",
     additionalRules: [
       "The root statement is always `root = Canvas([...])`.",
       "Use a designed view whenever it fits: Weather for weather, Places for places, venues, shops or any list of results with photos, Journey for flights, trains, buses and drives, Hero for one big number or short answer. Add at most a Buttons row after it. Use the building blocks only when no view fits.",
+      `The view area is about 440 px wide (a Table may use up to 680) and 480 px tall, and it never scrolls: one designed view, or a few small blocks, plus at most one Buttons row. Limits: Places ${LIMITS.places} rows, Weather 6 hours, List ${LIMITS.list} rows, Table ${LIMITS.rows} rows x ${LIMITS.columns} columns, Steps ${LIMITS.steps}, Details ${LIMITS.pairs} pairs, Journey 3 facts. Need more? Show the top ones and add a follow-up button such as "Show more".`,
       "Keep words few: titles of 2-5 words, details as short fragments joined with ' · ', no sentences where a fragment will do. Never repeat what the view already shows.",
       "Colour is not yours to decorate with: weather icons colour themselves; use status tones (good, warn, bad) only for real status such as Open, Closed, On time, Delayed.",
-      "Use photos (Place/ListItem image, Image) only with image URLs that appeared in tool results in this conversation; search the web for one when it clearly helps. Never invent or guess an image URL — leave the image out instead. The example image URL is a placeholder: never copy it.",
+      "Use photos (Place/ListItem image, Image) only with image URLs that appeared in tool results in this conversation; search the web for one when it clearly helps. Never invent or guess an image URL — leave the image out instead (a place without a photo shows its icon in a tile). The example image URL is a placeholder: never copy it.",
       "Use @OpenUrl only for real, well-known URLs or search URLs; never invent links.",
       "Follow-up buttons send a complete, standalone request with @ToAssistant. Offer 1-3 at most, or none.",
     ],

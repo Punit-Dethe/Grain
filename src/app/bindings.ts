@@ -1203,9 +1203,9 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
  * fallback pool (enabled providers in saved order). The
  * Explicitly selected text is supplied as the subject of the instruction.
  */
-async agentRun(messages: AgentMessage[], context: string | null, generation: number | null, record: boolean) : Promise<Result<AgentReply, string>> {
+async agentRun(messages: AgentMessage[], context: string | null, generation: number | null, record: boolean, uiSpec: string | null) : Promise<Result<AgentReply, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context, generation, record }) };
+    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context, generation, record, uiSpec }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1311,36 +1311,6 @@ async agentHistoryDelete(id: string) : Promise<Result<null, string>> {
 async agentNotchSetMode(mode: AgentNotchMode) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("agent_notch_set_mode", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * The canvas conversation (the last UI is its last assistant message).
- */
-async agentCanvas() : Promise<AgentCanvas> {
-    return await TAURI_INVOKE("agent_canvas");
-},
-/**
- * Start the canvas over.
- */
-async agentCanvasClear() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_canvas_clear") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Ask for a UI. `spec` is the notch's component reference (OpenUI Lang
- * prompt generated from its library). The request and the UI are recorded
- * once the reply lands; a reply still awaiting approval is not.
- */
-async agentRunCanvas(request: string, spec: string, context: string | null, generation: number | null) : Promise<Result<AgentReply, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_run_canvas", { request, spec, context, generation }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2128,11 +2098,6 @@ updateDownloadProgress: "update-download-progress"
  */
 export type Activity = { slot: number; start_ns: number; end_ns: number }
 /**
- * The canvas conversation, oldest first. The last assistant message is the
- * UI on screen.
- */
-export type AgentCanvas = { messages: AgentHistoryMessage[] }
-/**
  * Every chat (newest first) and the one the notch continues.
  */
 export type AgentChatList = { current: string | null; chats: AgentChatSummary[] }
@@ -2153,7 +2118,11 @@ export type AgentHistoryMessage = {
 /**
  * `"user"` or `"assistant"`.
  */
-role: string; content: string; at_unix_ms: number }
+role: string; content: string; at_unix_ms: number; 
+/**
+ * The generated view an assistant reply carried (OpenUI Lang).
+ */
+ui?: string | null }
 /**
  * Consume the first instruction (the panel calls this on mount).
  */
@@ -2165,16 +2134,20 @@ export type AgentMessage = {
 /**
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
-role: string; content: string }
+role: string; content: string; 
+/**
+ * [GRAIN] The generated view an assistant turn carried (OpenUI Lang).
+ */
+ui?: string | null }
 /**
  * What the notch opens with: its mode and the chat it continues.
  */
 export type AgentNotchMemory = { mode: AgentNotchMode; chat: string | null; messages: AgentHistoryMessage[] }
-export type AgentNotchMode = "chat" | "recall" | 
+export type AgentNotchMode = "recall" | 
 /**
- * Generative UI (experiment, see `grain_agent_canvas`).
+ * Also what an unknown stored mode reads as (serde wants it last).
  */
-"canvas"
+"chat"
 /**
  * The shell size the hand-opened notch is animating to, in CSS px.
  */
@@ -2203,7 +2176,12 @@ voice: number | null }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */
-export type AgentReply = { text: string; confirm_action: AgentConfirm | null }
+export type AgentReply = { text: string; confirm_action: AgentConfirm | null; 
+/**
+ * [GRAIN] A generated view shown with the text (OpenUI Lang program,
+ * see `grain_agent_canvas`).
+ */
+ui: string | null }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to

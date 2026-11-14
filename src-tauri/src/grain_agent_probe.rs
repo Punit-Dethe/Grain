@@ -82,10 +82,12 @@ async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
                 vec![crate::agent::AgentMessage {
                     role: "user".into(),
                     content: prompt,
+                    ui: None,
                 }],
                 None,
                 None,
                 false,
+                None,
             )
             .await?;
             json!({"reply":reply})

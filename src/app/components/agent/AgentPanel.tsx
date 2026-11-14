@@ -4,6 +4,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowUp,
   ChevronLeft,
+  ChevronRight,
+  CloudSun,
+  Gauge,
+  LayoutGrid,
+  MapPin,
+  Plane,
   Copy,
   RotateCcw,
   X,
@@ -28,6 +34,7 @@ import {
 import { AgentMarkdown } from "../markdown/Markdown";
 import { AgentCanvas, CANVAS_MIN } from "./canvas/AgentCanvas";
 import { canvasSpec } from "./canvas/library";
+import { viewSummary, type ViewKind } from "./canvas/program";
 import { AgentHistory } from "./AgentHistory";
 import { AgentRecall } from "./AgentRecall";
 import { AgentReminder, REMINDER_WIDTH } from "./AgentReminder";
@@ -41,7 +48,18 @@ interface ChatMessage {
   content: string;
   // A host-held extension/MCP call. Only the token displayed here can resume it.
   confirmAction?: AgentConfirm | null;
+  // A generated view the reply carries (OpenUI Lang): a card in the chat that
+  // opens it full in the notch.
+  ui?: string | null;
 }
+
+const VIEW_ICON: Record<ViewKind, typeof MapPin> = {
+  weather: CloudSun,
+  places: MapPin,
+  journey: Plane,
+  hero: Gauge,
+  view: LayoutGrid,
+};
 
 const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 function resizeComposer(input: HTMLTextAreaElement) {
@@ -80,27 +98,27 @@ const HISTORY_CONTEXT = 12;
 /** The Recall shell width, in CSS px (`.agent-notch.is-fit` in agent.css). */
 const RECALL_WIDTH = 380;
 /** The chat (and chat list) shell, in CSS px. The window is larger (room for
- * the Canvas max, NOTCH_REPLY in agent.rs) and clipped to the shell. */
+ * a generated view's max, NOTCH_REPLY in agent.rs) and clipped to the shell. */
 const CHAT_SIZE = { w: 600, h: 360 };
 /** Tab (Shift+Tab) walks the views in this order. */
-const MODES: AgentNotchMode[] = ["recall", "chat", "canvas"];
+const MODES: AgentNotchMode[] = ["recall", "chat"];
 const MODE_LABEL = {
   recall: "agent.modeRecall",
   chat: "agent.modeChat",
-  canvas: "agent.modeCanvas",
 } as const;
 /** Hover time that opens a listening or working notch (FILL in
  * grain_notch_sliver.rs). */
 const HOVER_OPEN_MS = 650;
 
 const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
-  messages.map((m) => ({ role: m.role, content: m.content }));
+  messages.map((m) => ({ role: m.role, content: m.content, ui: m.ui ?? null }));
 
 const toChat = (messages: AgentHistoryMessage[]): ChatMessage[] =>
   messages.map((message, index) => ({
     id: `h${index}`,
     role: message.role === "assistant" ? "assistant" : "user",
     content: message.content,
+    ui: message.ui ?? null,
   }));
 
 /** Store what was said in a finished turn; a reply still awaiting approval
@@ -108,8 +126,8 @@ const toChat = (messages: AgentHistoryMessage[]): ChatMessage[] =>
 function remember(user: string | null, reply: AgentReply | null) {
   const turn: AgentMessage[] = [];
   if (user?.trim()) turn.push({ role: "user", content: user });
-  if (reply?.text.trim() && !reply.confirm_action)
-    turn.push({ role: "assistant", content: reply.text });
+  if ((reply?.text.trim() || reply?.ui) && !reply.confirm_action)
+    turn.push({ role: "assistant", content: reply.text, ui: reply.ui });
   if (turn.length) void commands.agentHistoryAppend(turn).catch(console.error);
 }
 
@@ -163,19 +181,20 @@ export function AgentPanel() {
   const [reminderHeight, setReminderHeight] = useState(220);
   // A Recall device menu floats below the shell; lift the click clip for it.
   const [recallMenu, setRecallMenu] = useState(false);
-  // Canvas (generative UI): the latest reply on screen, a confirmation it is
-  // waiting on, its own error, and the shell size its content asks for.
-  const [canvasReply, setCanvasReply] = useState<string | null>(null);
-  const [canvasConfirm, setCanvasConfirm] = useState<AgentConfirm | null>(null);
-  const [canvasError, setCanvasError] = useState<string | null>(null);
+  // The generated view open full over the chat (a new reply's view opens on
+  // its own; a card in the chat reopens an older one), the shell size it asks
+  // for, and its composer's draft.
+  const [shownUi, setShownUi] = useState<string | null>(null);
+  const shownUiRef = useRef<string | null>(null);
+  shownUiRef.current = shownUi;
+  // Open a view (or, with none, go back to the chat); set once `unclipThen`
+  // exists, read by the runs defined before it.
+  const presentUiRef = useRef<(ui: string | null | undefined) => void>(
+    () => {},
+  );
   const [canvasSize, setCanvasSize] = useState(CANVAS_MIN);
   const [canvasDraft, setCanvasDraft] = useState(false);
-  // Canvas turns finished this open (a summon's reveal waits for the first).
-  const [canvasTurns, setCanvasTurns] = useState(0);
   const canvasComposerRef = useRef<HTMLTextAreaElement>(null);
-  // The view a summon's first instruction runs in (the remembered mode when
-  // that is Canvas). A ref: it is read in the same tick it is set.
-  const summonModeRef = useRef<AgentNotchMode>("chat");
   const currentStartRef = useRef<HTMLDivElement>(null);
   // The fitted shell (Recall or a reminder) the window is clipped to: `null`
   // unclipped, `undefined` not yet known (the host may still hold the compact
@@ -265,9 +284,13 @@ export function AgentPanel() {
           // The host records the turn itself, so it survives a close mid-run.
           // A retry asks again: only its new reply is stored.
           record,
+          canvasSpec(),
         );
         if (res.status === "ok") {
           setFirstReply(res.data);
+          // Its view opens with it (before the reveal, so the shell grows
+          // straight to the view's size).
+          presentUiRef.current(res.data.ui);
           if (!record) remember(null, res.data);
         } else {
           setError(runError(res.error));
@@ -297,9 +320,12 @@ export function AgentPanel() {
           contextRef.current,
           null,
           true,
+          canvasSpec(),
         );
         if (res.status === "ok") {
           const reply = res.data;
+          // A view opens; a reply without one shows in the chat.
+          presentUiRef.current(reply.ui);
           setMessages((prev) => [
             // Any new turn after a pending action either resolved or cancelled
             // that host token. Keep historical text, but never leave a stale
@@ -314,77 +340,21 @@ export function AgentPanel() {
               role: "assistant",
               content: reply.text,
               confirmAction: reply.confirm_action,
+              ui: reply.ui,
             },
           ]);
         } else {
+          presentUiRef.current(null);
           setError(runError(res.error));
         }
       } catch (e) {
+        presentUiRef.current(null);
         setError(runError(e instanceof Error ? e.message : null));
       } finally {
         setBusy(false);
       }
     },
     [runError],
-  );
-
-  /** Ask for a Canvas UI. A summon's first instruction passes its generation,
-   * so a Stop meanwhile cannot reopen the notch; later asks wait their turn. */
-  const runCanvas = useCallback(
-    async (request: string, generation: number | null = null) => {
-      if (generation === null && busyRef.current) return;
-      busyRef.current = true;
-      setBusy(true);
-      setCanvasError(null);
-      stoppedRef.current = false;
-      try {
-        const res = await commands.agentRunCanvas(
-          request,
-          canvasSpec(),
-          contextRef.current,
-          generation,
-        );
-        if (res.status === "ok") {
-          setCanvasReply(res.data.text);
-          setCanvasConfirm(res.data.confirm_action ?? null);
-        } else {
-          setCanvasError(runError(res.error));
-        }
-      } catch (e) {
-        setCanvasError(runError(e instanceof Error ? e.message : null));
-      } finally {
-        setCanvasTurns((turns) => turns + 1);
-        setBusy(false);
-      }
-    },
-    [runError],
-  );
-
-  /** Approve or decline a confirmation a Canvas turn is waiting on. The
-   * receipt replaces the UI (it is text). */
-  const resolveCanvasAction = useCallback(
-    async (pending: AgentConfirm, approve: boolean) => {
-      if (busyRef.current) return;
-      setBusy(true);
-      setCanvasError(null);
-      try {
-        const response = await commands.agentConfirmAction(
-          pending.token,
-          approve,
-        );
-        if (response.status !== "ok")
-          throw new Error(response.error || t("agent.error"));
-        setCanvasReply(response.data.text);
-        setCanvasConfirm(response.data.confirm_action ?? null);
-      } catch (reason) {
-        setCanvasError(
-          reason instanceof Error ? reason.message : t("agent.error"),
-        );
-      } finally {
-        setBusy(false);
-      }
-    },
-    [t],
   );
 
   const retry = useCallback(() => {
@@ -414,26 +384,16 @@ export function AgentPanel() {
       firstTurnGenerationRef.current = instruction.generation;
       if (instruction.is_error) {
         firstRunStartedRef.current = true;
-        if (summonModeRef.current === "canvas") {
-          setCanvasError(instruction.text);
-          setCanvasTurns((turns) => turns + 1);
-        } else setError(instruction.text);
+        setError(instruction.text);
         setBusy(false);
         return;
       }
       firstRunStartedRef.current = true;
       contextRef.current = await commands.agentGetContext().catch(() => null);
-      if (summonModeRef.current === "canvas") {
-        await runCanvas(
-          instruction.text.trim(),
-          revealedRef.current ? null : instruction.generation,
-        );
-        return;
-      }
       instructionRef.current = instruction.text.trim();
       await runFirst(instructionRef.current);
     }
-  }, [runFirst, runCanvas]);
+  }, [runFirst]);
 
   useEffect(() => {
     let dead = false;
@@ -531,7 +491,7 @@ export function AgentPanel() {
         .listen<string>("agent-panel-dictation", ({ payload }) => {
           const dictated = payload.trim();
           if (!dictated || !revealedRef.current) return;
-          const canvas = modeRef.current === "canvas";
+          const canvas = modeRef.current === "chat" && !!shownUiRef.current;
           const input = canvas
             ? canvasComposerRef.current
             : composerRef.current;
@@ -560,25 +520,10 @@ export function AgentPanel() {
           setBusy(status.chat_busy);
         }
         // The chat continues: load it before the first turn is sent.
-        const [memory, canvas] = await Promise.all([
-          loadHistory(),
-          commands.agentCanvas().catch(() => null),
-        ]);
+        const memory = await loadHistory();
         if (dead) return;
-        // The last UI the canvas showed comes back with it.
-        const lastUi = canvas?.messages
-          .filter((message) => message.role === "assistant")
-          .pop();
-        if (lastUi) setCanvasReply(lastUi.content);
-        if (memory) {
-          // A hand-opened notch keeps its mode. A summon is a chat, unless the
-          // notch was left on Canvas: then it asks for a UI.
-          if (status.opened) setMode(memory.mode ?? "chat");
-          else if (memory.mode === "canvas") {
-            summonModeRef.current = "canvas";
-            setMode("canvas");
-          }
-        }
+        // A hand-opened notch keeps its mode; a summon is a chat.
+        if (memory && status.opened) setMode(memory.mode ?? "chat");
         if (backgroundRef.current) {
           // The turn may have ended before this window was listening.
           const now = await commands.agentNotchStatus().catch(() => null);
@@ -622,12 +567,12 @@ export function AgentPanel() {
       !busy &&
       generation !== null &&
       presentedRef.current !== generation &&
-      (firstReply || error || canvasTurns > 0)
+      (firstReply || error)
     ) {
       presentedRef.current = generation;
       void commands.agentPresentReply(generation).catch(console.error);
     }
-  }, [busy, error, firstReply, canvasTurns]);
+  }, [busy, error, firstReply]);
 
   // Hovering the notch while it listens or works fills a bar, as the resting
   // sliver does; when it is full (or on a click) the chat opens early.
@@ -672,8 +617,8 @@ export function AgentPanel() {
     if (!revealed) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
-      // Tab (or Shift+Tab) walks Recall, Chat and Canvas; on a reminder it
-      // moves between its controls.
+      // Tab (or Shift+Tab) walks Recall and Chat; on a reminder it moves
+      // between its controls.
       if (
         event.key === "Tab" &&
         view !== "reminder" &&
@@ -689,8 +634,15 @@ export function AgentPanel() {
       }
       if (event.key !== "Escape") return;
       event.preventDefault();
-      // The chat list steps back to the chat first; a reminder counts as done.
+      // The chat list and an open view step back to the chat first; a
+      // reminder counts as done.
       if (view === "history") setView("main");
+      else if (
+        view === "main" &&
+        modeRef.current === "chat" &&
+        shownUiRef.current
+      )
+        presentUiRef.current(null);
       else if (view === "reminder" && ringing[0])
         finishReminderRef.current(ringing[0].id);
       else dismiss();
@@ -706,14 +658,17 @@ export function AgentPanel() {
   // has SETTLED (painted transparent outside it), and widens before the shell
   // grows, never after.
   const reminderShown = view === "reminder" && ringing.length > 0;
-  // The shell every view settles to: Recall, a reminder and Canvas fit their
-  // content; the chat and the chat list keep a fixed size. The window is
-  // larger than all but the Canvas max, so it is clipped to the shell.
+  // A generated view open over the chat.
+  const uiShown =
+    mode === "chat" && view === "main" && !reminderShown && !!shownUi;
+  // The shell every view settles to: Recall, a reminder and a generated view
+  // fit their content; the chat and the chat list keep a fixed size. The
+  // window is larger than all but a view's max, so it is clipped to the shell.
   const shell = reminderShown
     ? { w: REMINDER_WIDTH, h: reminderHeight }
     : view === "main" && mode === "recall"
       ? { w: RECALL_WIDTH, h: recallHeight }
-      : view === "main" && mode === "canvas"
+      : uiShown
         ? canvasSize
         : CHAT_SIZE;
   const shellW = shell.w;
@@ -771,6 +726,31 @@ export function AgentPanel() {
       .finally(() => requestAnimationFrame(change));
   }, []);
 
+  /** Focus the chat's composer, or the open view's. */
+  const focusChat = useCallback(
+    () =>
+      requestAnimationFrame(() =>
+        (shownUiRef.current
+          ? canvasComposerRef.current
+          : composerRef.current
+        )?.focus(),
+      ),
+    [],
+  );
+
+  presentUiRef.current = (ui) => {
+    const next = ui ?? null;
+    if (next === shownUiRef.current) return;
+    shownUiRef.current = next;
+    const change = () => {
+      setShownUi(next);
+      if (revealedRef.current) focusChat();
+    };
+    // Before the reveal nothing is clipped yet: the shell grows to the view.
+    if (revealedRef.current) unclipThen(change);
+    else change();
+  };
+
   const switchMode = (next: AgentNotchMode) =>
     unclipThen(() => {
       setView("main");
@@ -779,10 +759,7 @@ export function AgentPanel() {
       setRecallMenu(false);
       setMode(next);
       void commands.agentNotchSetMode(next).catch(console.error);
-      if (next === "chat")
-        requestAnimationFrame(() => composerRef.current?.focus());
-      else if (next === "canvas")
-        requestAnimationFrame(() => canvasComposerRef.current?.focus());
+      if (next === "chat") focusChat();
       else (document.activeElement as HTMLElement | null)?.blur();
     });
   // For the window key handler, which outlives renders.
@@ -846,12 +823,9 @@ export function AgentPanel() {
       // The chat pane is larger than the fitted reminder: unclip first.
       unclipThen(() => {
         setView("main");
-        if (modeRef.current === "chat")
-          requestAnimationFrame(() => composerRef.current?.focus());
-        else if (modeRef.current === "canvas")
-          requestAnimationFrame(() => canvasComposerRef.current?.focus());
+        if (modeRef.current === "chat") focusChat();
       }),
-    [unclipThen],
+    [unclipThen, focusChat],
   );
 
   /** Take `id` off the notch; the next one shows, or the view steps back. */
@@ -887,6 +861,8 @@ export function AgentPanel() {
   /** Show `earlier` as the chat, with no turn of this open on top of it. */
   const showChat = useCallback((earlier: ChatMessage[]) => {
     instructionRef.current = "";
+    shownUiRef.current = null;
+    setShownUi(null);
     setHistory(earlier);
     setMessages([]);
     setFirstReply(null);
@@ -970,12 +946,13 @@ export function AgentPanel() {
           });
         }
         const reply = firstReplyRef.current;
-        if (reply?.text) {
+        if (reply?.text || reply?.ui) {
           seed.push({
             id: rid(),
             role: "assistant",
             content: reply.text,
             confirmAction: reply.confirm_action,
+            ui: reply.ui,
           });
         }
         base = seed;
@@ -1037,7 +1014,7 @@ export function AgentPanel() {
     if (!revealed) return;
     const focusComposer = () => {
       if (document.hasFocus() && document.activeElement === document.body) {
-        if (modeRef.current === "canvas") canvasComposerRef.current?.focus();
+        if (shownUiRef.current) canvasComposerRef.current?.focus();
         else composerRef.current?.focus();
       }
     };
@@ -1116,13 +1093,14 @@ export function AgentPanel() {
     ? messages
     : [
         ...messages,
-        ...(!busy && firstReply?.text
+        ...(!busy && (firstReply?.text || firstReply?.ui)
           ? [
               {
                 id: "a0",
                 role: "assistant" as const,
                 content: firstReply.text,
                 confirmAction: firstReply.confirm_action,
+                ui: firstReply.ui,
               },
             ]
           : []),
@@ -1142,23 +1120,37 @@ export function AgentPanel() {
   const listing = revealed && view === "history";
   const recall = revealed && mode === "recall" && view === "main";
   const reminding = revealed && reminderShown;
-  // Canvas is mounted only while it shows (the renderer and its UI go with
-  // it). A summon's reply is mounted before the reveal, as the chat's is.
-  const canvasShown = mode === "canvas" && view === "main" && !reminderShown;
-  const canvasMounted =
-    canvasShown && (revealed || (!busy && (!!canvasReply || !!canvasError)));
-  // Recall, a reminder and Canvas settle into a shell fitted to their content.
-  const fitted = recall || reminding || (revealed && canvasShown);
+  // An open view is mounted only while it shows (the renderer goes with it).
+  // A summon's view is mounted before the reveal, as the chat's reply is.
+  const uiMounted = uiShown && (revealed || !busy);
+  // Recall, a reminder and a view settle into a shell fitted to their content.
+  const fitted = recall || reminding || (revealed && uiShown);
   const canClear = !busy && (history.length > 0 || thread.length > 0);
 
-  /** Start the canvas over: the next ask has no earlier UI behind it. */
-  const newCanvas = () => {
-    if (busyRef.current) return;
-    void commands.agentCanvasClear().catch(console.error);
-    setCanvasReply(null);
-    setCanvasConfirm(null);
-    setCanvasError(null);
-    requestAnimationFrame(() => canvasComposerRef.current?.focus());
+  /** A reply's view, as a card that opens it full. */
+  const renderViewCard = (ui: string) => {
+    const { kind, title } = viewSummary(ui);
+    const Icon = VIEW_ICON[kind];
+    return (
+      <button
+        type="button"
+        className="agc-ui-card"
+        onClick={() => presentUiRef.current(ui)}
+      >
+        <span className="agc-ui-card-icon" aria-hidden>
+          <Icon size={17} strokeWidth={1.8} />
+        </span>
+        <span className="agc-ui-card-text">
+          <span className="agc-ui-card-title">
+            {title ?? t("agent.viewOpen")}
+          </span>
+          <span className="agc-ui-card-kind">
+            {t(`agent.viewKind.${kind}`)}
+          </span>
+        </span>
+        <ChevronRight className="agc-ui-card-go" size={16} aria-hidden />
+      </button>
+    );
   };
 
   return (
@@ -1241,6 +1233,17 @@ export function AgentPanel() {
                   <ChevronLeft size={14} strokeWidth={2.2} />
                   <span>{t(MODE_LABEL[mode])}</span>
                 </button>
+              ) : uiShown && revealed ? (
+                // Back from the open view to the chat it belongs to.
+                <button
+                  type="button"
+                  className="agent-notch-back"
+                  aria-label={t("agent.viewBack")}
+                  onClick={() => presentUiRef.current(null)}
+                >
+                  <ChevronLeft size={14} strokeWidth={2.2} />
+                  <span>{t("agent.modeChat")}</span>
+                </button>
               ) : (
                 <span
                   className="agent-notch-modes"
@@ -1271,42 +1274,32 @@ export function AgentPanel() {
               {t("agent.reminderCount", { index: 1, count: ringing.length })}
             </span>
           )}
-          {revealed && ((mode === "chat" && !reminding) || listing) && (
-            <button
-              type="button"
-              className="agent-notch-control agent-notch-history"
-              aria-pressed={listing}
-              title={t("agent.history")}
-              onClick={toggleHistory}
-            >
-              <HistoryIcon size={13} />
-              <span>{t("agent.history")}</span>
-            </button>
-          )}
-          {revealed && ((mode === "chat" && !reminding) || listing) && (
-            <button
-              type="button"
-              className="agent-notch-control agent-notch-close"
-              title={t("agent.newChat")}
-              aria-label={t("agent.newChat")}
-              disabled={!canClear}
-              onClick={newChat}
-            >
-              <SquarePen size={13} />
-            </button>
-          )}
-          {revealed && canvasShown && (
-            <button
-              type="button"
-              className="agent-notch-control agent-notch-close"
-              title={t("agent.canvasNew")}
-              aria-label={t("agent.canvasNew")}
-              disabled={busy || (!canvasReply && !canvasError)}
-              onClick={newCanvas}
-            >
-              <SquarePen size={13} />
-            </button>
-          )}
+          {revealed &&
+            ((mode === "chat" && !reminding && !uiShown) || listing) && (
+              <button
+                type="button"
+                className="agent-notch-control agent-notch-history"
+                aria-pressed={listing}
+                title={t("agent.history")}
+                onClick={toggleHistory}
+              >
+                <HistoryIcon size={13} />
+                <span>{t("agent.history")}</span>
+              </button>
+            )}
+          {revealed &&
+            ((mode === "chat" && !reminding && !uiShown) || listing) && (
+              <button
+                type="button"
+                className="agent-notch-control agent-notch-close"
+                title={t("agent.newChat")}
+                aria-label={t("agent.newChat")}
+                disabled={!canClear}
+                onClick={newChat}
+              >
+                <SquarePen size={13} />
+              </button>
+            )}
           <button
             type="button"
             className="agent-notch-control agent-notch-close"
@@ -1364,33 +1357,30 @@ export function AgentPanel() {
           </div>
         )}
 
-        {canvasMounted && (
+        {uiMounted && shownUi && (
           <div className="agent-notch-canvas-pane" aria-hidden={!revealed}>
             <AgentCanvas
-              reply={canvasReply}
+              ui={shownUi}
               busy={busy}
-              error={canvasError}
-              confirm={canvasConfirm}
               composerRef={canvasComposerRef}
               hasDraft={canvasDraft}
               onDraft={setCanvasDraft}
-              onAsk={(request) => void runCanvas(request)}
+              onAsk={(request) => void runFollowup(request)}
               onStop={stop}
-              onResolve={(pending, approve) =>
-                void resolveCanvasAction(pending, approve)
-              }
               onSize={setCanvasSize}
             />
           </div>
         )}
 
-        {/* Stays mounted (hidden) under Recall and the chat list, so a draft
-            and the scroll position survive switching. */}
+        {/* Stays mounted (hidden) under Recall, the chat list and an open
+            view, so a draft and the scroll position survive switching. */}
         {(revealed ||
           (mode === "chat" && !busy && (!!firstReply || !!error))) && (
           <div
-            className={`agent-notch-reply${view !== "main" || mode !== "chat" ? " is-away" : ""}`}
-            aria-hidden={!revealed || view !== "main" || mode !== "chat"}
+            className={`agent-notch-reply${view !== "main" || mode !== "chat" || uiShown ? " is-away" : ""}`}
+            aria-hidden={
+              !revealed || view !== "main" || mode !== "chat" || uiShown
+            }
           >
             <div className="agc-c-scroll">
               {history.map((m) => (
@@ -1402,9 +1392,12 @@ export function AgentPanel() {
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
                     <>
-                      <div className="agc-c-answer">
-                        <AgentMarkdown markdown={m.content} />
-                      </div>
+                      {m.content.trim() && (
+                        <div className="agc-c-answer">
+                          <AgentMarkdown markdown={m.content} />
+                        </div>
+                      )}
+                      {m.ui && renderViewCard(m.ui)}
                       <div className="agc-c-tools">
                         {speakingId === m.id && (
                           <button
@@ -1460,9 +1453,12 @@ export function AgentPanel() {
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
                     <>
-                      <div className="agc-c-answer">
-                        <AgentMarkdown markdown={m.content} />
-                      </div>
+                      {m.content.trim() && (
+                        <div className="agc-c-answer">
+                          <AgentMarkdown markdown={m.content} />
+                        </div>
+                      )}
+                      {m.ui && renderViewCard(m.ui)}
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
                       {m.content.trim() && (
                         <div className="agc-c-tools">
