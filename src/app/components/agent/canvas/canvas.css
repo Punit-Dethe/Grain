@@ -49,13 +49,13 @@
 }
 
 /* Natural width, capped: independent of the shell, so measuring it never
-   feeds back into itself. 328 / 688 = CANVAS_MIN / CANVAS_MAX width minus
-   2 * PAD_X. */
+   feeds back into itself. 325 / 685 = CANVAS_MIN / CANVAS_MAX width minus
+   2 * PAD_X, FRAME.w and SUBPIXEL (AgentCanvas.tsx). */
 .gui-content {
   box-sizing: border-box;
   width: max-content;
-  min-width: 328px;
-  max-width: 688px;
+  min-width: 325px;
+  max-width: 685px;
   padding: 6px 0 12px;
   font-size: 12.5px;
   line-height: 1.45;

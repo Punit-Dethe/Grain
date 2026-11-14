@@ -19,13 +19,19 @@ import { canvasProgram, withoutSpeech } from "./program";
 
 /** The view shell's bounds, in CSS px. The window is NOTCH_REPLY in
  * agent.rs: keep these (plus the clip slack) inside it. `.gui-content`'s
- * max-width in canvas.css is CANVAS_MAX.w - 2 * PAD_X. */
+ * max-width in canvas.css is CANVAS_MAX.w - 2 * PAD_X - FRAME.w - SUBPIXEL. */
 export const CANVAS_MIN = { w: 360, h: 150 };
 export const CANVAS_MAX = { w: 720, h: 600 };
 /** The shell header (`--notch-reply-header` in agent.css). */
 const HEADER = 34;
 /** Horizontal padding of the view body (`.gui-body` in canvas.css). */
 const PAD_X = 16;
+/** What the pane gives up to the shell's border (`.agent-notch-canvas-pane`:
+ * width - 2px, height - header - 1px). Missing it cut the right edge off. */
+const FRAME = { w: 2, h: 1 };
+/** offsetWidth/Height round to whole px; a view a fraction wider than its
+ * rounded size must still fit. */
+const SUBPIXEL = 1;
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, Math.ceil(value)));
@@ -104,13 +110,17 @@ export function AgentCanvas({
     if (!content || !foot) return;
     let last = "";
     const measure = () => {
-      const naturalW = content.offsetWidth;
-      const naturalH = content.offsetHeight;
-      const room = CANVAS_MAX.h - HEADER - foot.offsetHeight;
+      const naturalW = content.offsetWidth + SUBPIXEL;
+      const naturalH = content.offsetHeight + SUBPIXEL;
+      const room = CANVAS_MAX.h - HEADER - FRAME.h - foot.offsetHeight;
       const scale = naturalH > room ? room / naturalH : 1;
-      const w = clamp(naturalW * scale + PAD_X * 2, CANVAS_MIN.w, CANVAS_MAX.w);
+      const w = clamp(
+        naturalW * scale + PAD_X * 2 + FRAME.w,
+        CANVAS_MIN.w,
+        CANVAS_MAX.w,
+      );
       const h = clamp(
-        HEADER + naturalH * scale + foot.offsetHeight,
+        HEADER + FRAME.h + naturalH * scale + foot.offsetHeight,
         CANVAS_MIN.h,
         CANVAS_MAX.h,
       );
