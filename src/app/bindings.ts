@@ -1317,6 +1317,36 @@ async agentNotchSetMode(mode: AgentNotchMode) : Promise<Result<null, string>> {
 }
 },
 /**
+ * The canvas conversation (the last UI is its last assistant message).
+ */
+async agentCanvas() : Promise<AgentCanvas> {
+    return await TAURI_INVOKE("agent_canvas");
+},
+/**
+ * Start the canvas over.
+ */
+async agentCanvasClear() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_canvas_clear") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ask for a UI. `spec` is the notch's component reference (OpenUI Lang
+ * prompt generated from its library). The request and the UI are recorded
+ * once the reply lands; a reply still awaiting approval is not.
+ */
+async agentRunCanvas(request: string, spec: string, context: string | null, generation: number | null) : Promise<Result<AgentReply, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_run_canvas", { request, spec, context, generation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Open a link from an Agent reply in the default browser.
  */
 async agentOpenLink(url: string) : Promise<Result<null, string>> {
@@ -2098,6 +2128,11 @@ updateDownloadProgress: "update-download-progress"
  */
 export type Activity = { slot: number; start_ns: number; end_ns: number }
 /**
+ * The canvas conversation, oldest first. The last assistant message is the
+ * UI on screen.
+ */
+export type AgentCanvas = { messages: AgentHistoryMessage[] }
+/**
  * Every chat (newest first) and the one the notch continues.
  */
 export type AgentChatList = { current: string | null; chats: AgentChatSummary[] }
@@ -2135,7 +2170,11 @@ role: string; content: string }
  * What the notch opens with: its mode and the chat it continues.
  */
 export type AgentNotchMemory = { mode: AgentNotchMode; chat: string | null; messages: AgentHistoryMessage[] }
-export type AgentNotchMode = "chat" | "recall"
+export type AgentNotchMode = "chat" | "recall" | 
+/**
+ * Generative UI (experiment, see `grain_agent_canvas`).
+ */
+"canvas"
 /**
  * The shell size the hand-opened notch is animating to, in CSS px.
  */
@@ -2307,12 +2346,12 @@ mcp_enabled_providers?: string[];
  * support dynamic registration. Client secrets and tokens stay in the OS
  * credential vault and never enter AppSettings.
  */
-mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
+mcp_oauth_client_ids?: Partial<{ [key in string]: string }>; 
 /**
  * [GRAIN] Connected extensions that need no account (Exa, Reach). Their
  * Agent switch stays `mcp_enabled_providers` / `reach_enabled`.
  */
-mcp_no_account_connected?: string[];
+mcp_no_account_connected?: string[]; 
 /**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it

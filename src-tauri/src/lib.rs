@@ -61,6 +61,7 @@ mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
+mod grain_agent_canvas; // [GRAIN] the Agent notch's generative-UI view (experiment)
 mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
 mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the host
 mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebView)
@@ -1476,6 +1477,9 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_agent_history::agent_history_open,
             grain_agent_history::agent_history_delete,
             grain_agent_history::agent_notch_set_mode,
+            grain_agent_canvas::agent_canvas,
+            grain_agent_canvas::agent_canvas_clear,
+            grain_agent_canvas::agent_run_canvas,
             grain_agent_link::agent_open_link,
             commands::cancel_operation,
             commands::is_portable,

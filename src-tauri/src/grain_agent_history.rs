@@ -35,6 +35,8 @@ pub enum AgentNotchMode {
     #[default]
     Chat,
     Recall,
+    /// Generative UI (experiment, see `grain_agent_canvas`).
+    Canvas,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -88,7 +90,7 @@ pub struct AgentNotchMemory {
     pub messages: Vec<AgentHistoryMessage>,
 }
 
-fn dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::portable::app_data_dir(app)
         .map_err(|e| e.to_string())?
         .join("agent"))
@@ -103,14 +105,14 @@ fn chat_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(CHATS).join(format!("{id}.json"))
 }
 
-fn read<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
+pub(crate) fn read<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> T {
     std::fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
 }
 
-fn write<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+pub(crate) fn write<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -121,7 +123,7 @@ fn write<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
         .map_err(|e| format!("Could not save the Agent history: {e}"))
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)

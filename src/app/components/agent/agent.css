@@ -26,6 +26,10 @@ html[data-window="agent-panel"] body {
   /* NOTCH_CLOSE in agent.rs and `dismiss` in AgentPanel wait for this. */
   --notch-close: 300ms;
   --notch-reply-header: 34px;
+  /* The chat shell (CHAT_SIZE in AgentPanel.tsx). The window is larger (room
+     for the Canvas max) and clipped to the shell. */
+  --chat-w: 600px;
+  --chat-h: 360px;
   /* The resting sliver (BASE in grain_notch_sliver.rs). */
   --notch-sliver: #030305;
   /* The hairline edge, drawn inside the shell so it takes no layout space:
@@ -82,8 +86,8 @@ html[data-window="agent-panel"] body {
 }
 
 .agent-notch.is-reply {
-  width: 100vw;
-  height: 100vh;
+  width: min(var(--fit-w, var(--chat-w)), 100vw);
+  height: min(var(--fit-h, var(--chat-h)), 100vh);
   border-radius: 0 0 22px 22px;
 }
 
@@ -222,6 +226,7 @@ html[data-window="agent-panel"] body {
 .agent-notch.is-closing .agent-notch-header > *,
 .agent-notch.is-closing .agent-notch-reply,
 .agent-notch.is-closing .agent-notch-recall,
+.agent-notch.is-closing .agent-notch-canvas-pane,
 .agent-notch.is-closing .agent-notch-reminder {
   opacity: 0;
   animation: none;
@@ -451,8 +456,11 @@ html[data-window="agent-panel"] body {
   position: absolute;
   top: var(--notch-reply-header);
   left: 50%;
-  width: calc(100vw - 2px);
-  height: max(0px, calc(100vh - var(--notch-reply-header) - 1px));
+  width: calc(min(var(--chat-w), 100vw) - 2px);
+  height: max(
+    0px,
+    calc(min(var(--chat-h), 100vh) - var(--notch-reply-header) - 1px)
+  );
   transform: translateX(-50%);
   display: flex;
   min-height: 0;
@@ -1148,6 +1156,7 @@ html[data-window="agent-panel"] body {
   .agent-notch.is-closing .agent-notch-reply,
   .agent-notch-header > *,
   .agent-notch-recall,
+  .agent-notch-canvas-pane,
   .agent-notch-mode,
   .agr-menu,
   .agr-menu-trigger > svg,
@@ -1349,8 +1358,11 @@ html[data-window="agent-panel"] body {
   position: absolute;
   top: var(--notch-reply-header);
   left: 50%;
-  width: calc(100vw - 2px);
-  height: max(0px, calc(100vh - var(--notch-reply-header) - 1px));
+  width: calc(min(var(--chat-w), 100vw) - 2px);
+  height: max(
+    0px,
+    calc(min(var(--chat-h), 100vh) - var(--notch-reply-header) - 1px)
+  );
   transform: translateX(-50%);
   animation: agent-notch-fade-in 200ms ease backwards;
 }

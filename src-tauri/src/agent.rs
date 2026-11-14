@@ -43,7 +43,11 @@ const AGENT_BINDING: &str = "agent";
 const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-const NOTCH_REPLY: (f64, f64) = (600.0, 360.0);
+/// The reply window, in CSS px: room for the largest shell (the Canvas max,
+/// `CANVAS_MAX` in AgentPanel.tsx, plus the clip slack in `set_notch_region`).
+/// The panel clips the window to its shell — the chat stays 600x360 — so the
+/// transparent rest never eats clicks (Windows).
+const NOTCH_REPLY: (f64, f64) = (660.0, 560.0);
 /// The compact shell, in CSS px (`.agent-notch` in agent.css).
 const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
 /// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.
@@ -2667,6 +2671,49 @@ pub async fn agent_run(
         }
     }
     reply
+}
+
+/// [GRAIN] Canvas (generative UI, experiment — docs/Generative UI/PLAN.md):
+/// how the model answers in the Canvas view. `spec` is the component
+/// vocabulary the notch renders (generated from its OpenUI library).
+const CANVAS_RULE: &str = "CANVAS MODE: this reply is rendered as an interactive UI in a small panel at the top of the screen, not as chat text. Reply with ONLY OpenUI Lang code that follows the component reference below: no prose before or after it, no markdown, no code fences. Use tools first whenever the answer needs live or external data, then build the UI from their results; never invent live data. Keep it compact and glanceable (the panel is at most about 620x540 px): lead with the answer, then the few details that matter. Offer 1-3 follow-up buttons that send the next request when useful. Earlier assistant turns in this conversation are the UIs you produced; a follow-up may refine or replace them.";
+
+/// [GRAIN] One Canvas turn. Same providers, tools, screen attachment and
+/// cancellation as a chat turn; never spoken (the reply is UI code) and never
+/// recorded in the chat history (the canvas keeps its own, see
+/// `grain_agent_canvas`).
+pub(crate) async fn run_canvas_turn(
+    app: &AppHandle,
+    messages: Vec<AgentMessage>,
+    context: Option<String>,
+    generation: Option<u64>,
+    spec: &str,
+) -> Result<AgentReply, String> {
+    let state = app
+        .try_state::<AgentState>()
+        .ok_or("Agent state unavailable")?;
+    let (run, registration) = {
+        let _pending = state.pending_instruction.lock().unwrap();
+        if generation.is_some_and(|generation| !reply_wait_is_current(app, generation)) {
+            return Err(RUN_CANCELLED.into());
+        }
+        state.execution.begin()?
+    };
+    crate::grain_tts::stop();
+    run.wait(registration, async {
+        // A new request drops a confirmation still waiting from an earlier turn.
+        if let Some(token) = active_pending_action(app) {
+            if !take_pending_action(&run, &token) {
+                return Err(RUN_CANCELLED.into());
+            }
+            let _ = crate::action_exec::resume(app, &token, false).await;
+        }
+        let mut full = build_messages(&messages, context.as_deref());
+        full.insert(1, ("system".to_string(), format!("{CANVAS_RULE}\n\n{spec}")));
+        let image = screen_attachment(app);
+        run_with_tools(app, full, image.as_ref(), &run).await
+    })
+    .await?
 }
 
 /// [GRAIN] A recorded chat request in flight. Records the request on start;

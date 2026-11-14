@@ -1,0 +1,453 @@
+/* Canvas: the Agent answers with a generated UI (experiment, see
+   docs/Generative UI/PLAN.md). Laid out at its settled size and clipped by
+   the shell as it grows, like Recall. AgentCanvas measures `.gui-content` and
+   `.gui-foot` to size the shell (CANVAS_MIN/MAX and PAD_X there). Tokens come
+   from `.agent-panel-root` in agent.css. */
+.agent-notch-canvas-pane {
+  position: absolute;
+  top: var(--notch-reply-header);
+  left: 50%;
+  width: calc(min(var(--fit-w), 100vw) - 2px);
+  height: max(
+    0px,
+    calc(min(var(--fit-h), 100vh) - var(--notch-reply-header) - 1px)
+  );
+  transform: translateX(-50%);
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s linear 340ms;
+}
+
+.is-reply .agent-notch-canvas-pane {
+  visibility: visible;
+  opacity: 1;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s;
+}
+
+.agent-notch-canvas {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.gui-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 16px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--agc-dim) transparent;
+}
+
+/* Natural width, capped: independent of the shell, so measuring it never
+   feeds back into itself. 328 / 588 = CANVAS_MIN / CANVAS_MAX width minus
+   2 * PAD_X. */
+.gui-content {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 328px;
+  max-width: 588px;
+  padding: 6px 0 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  transition: opacity 200ms ease;
+}
+
+.gui-content.is-stale {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.gui-foot {
+  flex: 0 0 auto;
+}
+
+.gui-foot .agc-confirm-action {
+  margin: 0 12px 6px;
+}
+
+.gui-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gui-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gui-stack.is-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.gui-stack.gap-s {
+  gap: 6px;
+}
+
+.gui-stack.gap-m {
+  gap: 10px;
+}
+
+.gui-stack.gap-l {
+  gap: 16px;
+}
+
+.gui-stack.align-start {
+  align-items: flex-start;
+}
+
+.gui-stack.align-center {
+  align-items: center;
+}
+
+.gui-stack.align-end {
+  align-items: flex-end;
+}
+
+.gui-card {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--agc-raise);
+  box-shadow: inset 0 0 0 1px var(--notch-line);
+}
+
+.gui-heading {
+  color: var(--agc-ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.gui-heading.is-l {
+  font-size: 34px;
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.gui-heading.is-s {
+  color: var(--agc-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.gui-text {
+  margin: 0;
+  color: var(--agc-ink);
+}
+
+.gui-text.is-muted {
+  color: var(--agc-muted);
+}
+
+.gui-text.is-faint,
+.gui-faint {
+  color: var(--agc-faint);
+}
+
+.gui-markdown {
+  color: var(--agc-ink);
+}
+
+.gui-icon {
+  flex-shrink: 0;
+  color: var(--agc-light);
+}
+
+.gui-badge {
+  align-self: flex-start;
+  display: inline-flex;
+  padding: 1px 8px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--notch-line);
+  color: var(--agc-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gui-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.gui-stat-label {
+  color: var(--agc-faint);
+  font-size: 11px;
+}
+
+.gui-stat-value {
+  color: var(--agc-ink);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.gui-stat-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--agc-muted);
+  font-size: 11.5px;
+}
+
+.gui-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.gui-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gui-progress-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--agc-raise);
+}
+
+.gui-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--agc-fill);
+}
+
+.gui-divider {
+  width: 100%;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--notch-line);
+}
+
+.gui-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gui-pair {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.gui-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.gui-table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.gui-table th {
+  padding: 0 14px 5px 0;
+  color: var(--agc-faint);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.gui-table td {
+  padding: 5px 14px 5px 0;
+  border-top: 1px solid var(--notch-line);
+  color: var(--agc-ink);
+}
+
+.gui-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gui-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.gui-step-n {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--agc-raise);
+  color: var(--agc-muted);
+  font-size: 10.5px;
+}
+
+.gui-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 -8px;
+}
+
+.gui-item {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.gui-item.is-action {
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.gui-item.is-action:hover:not(:disabled),
+.gui-item.is-action:focus-visible {
+  background: var(--agc-raise);
+  outline: none;
+}
+
+.gui-item-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gui-item-title {
+  color: var(--agc-ink);
+  font-size: 13px;
+}
+
+.gui-item-sub {
+  color: var(--agc-muted);
+  font-size: 11.5px;
+}
+
+.gui-item-meta {
+  flex-shrink: 0;
+  color: var(--agc-faint);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.gui-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gui-button {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--notch-line);
+  color: var(--agc-ink);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.gui-button:hover:not(:disabled),
+.gui-button:focus-visible {
+  background: var(--agc-raise);
+  outline: none;
+}
+
+.gui-button.is-primary {
+  background: var(--agc-fill);
+  box-shadow: none;
+  color: var(--agc-bg);
+  font-weight: 500;
+}
+
+.gui-button:disabled,
+.gui-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.gui-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.gui-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--agc-raise);
+  box-shadow: inset 0 0 0 1px var(--notch-line);
+  color: var(--agc-ink);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.gui-input:focus {
+  box-shadow: inset 0 0 0 1px var(--agc-dim);
+}
+
+.gui-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-content,
+  .gui-item,
+  .gui-button {
+    transition: none;
+  }
+}
