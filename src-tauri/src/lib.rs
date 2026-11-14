@@ -1401,6 +1401,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
             grain_commands::change_agent_compact_voice_setting, // [GRAIN]
+            grain_commands::change_agent_dynamic_ui_setting, // [GRAIN]
+            grain_commands::change_agent_polished_ui_setting, // [GRAIN]
             grain_reach::change_reach_enabled_setting, // [GRAIN] Reach on/off
             grain_reminders::reminders_list, // [GRAIN] Reminders
             grain_reminders::reminders_save,

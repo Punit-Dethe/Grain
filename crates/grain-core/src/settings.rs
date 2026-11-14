@@ -809,6 +809,17 @@ pub struct AppSettings {
     /// talk-back.
     #[serde(default = "default_true")]
     pub agent_compact_voice: bool,
+    /// [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
+    /// interactive view (`grain_agent_canvas`). ON by default; off sends no
+    /// view vocabulary to the model (fewer tokens) and replies are plain chat.
+    /// Read per turn, so it applies mid-chat from the next reply.
+    #[serde(default = "default_true")]
+    pub agent_dynamic_ui: bool,
+    /// [GRAIN] Polished UI: with Dynamic UI on, also tell the model to design
+    /// every view properly instead of the bare minimum. ON by default; costs a
+    /// few more prompt tokens per turn.
+    #[serde(default = "default_true")]
+    pub agent_polished_ui: bool,
     /// [GRAIN] Reach: the Agent's first-party OS tools (open links, apps and
     /// app pages, type into the focused field, press Enter, media, settings).
     /// OFF by default; off removes Reach from the Agent's tool directory.
@@ -1623,6 +1634,8 @@ pub fn get_default_settings() -> AppSettings {
         agent_screen_image: false,
         agent_talk_back: false,
         agent_compact_voice: true,
+        agent_dynamic_ui: true,
+        agent_polished_ui: true,
         reach_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,

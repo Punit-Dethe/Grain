@@ -15,6 +15,17 @@ pub(crate) const UI_RULE: &str = "GENERATIVE UI: a reply in this chat can carry 
 /// "start with root" rule.
 pub(crate) const UI_FORMAT_RULE: &str = "REPLY FORMAT WITH A VIEW: first your chat reply, which is shown in the chat and read aloud: one or two short, warm, conversational sentences that give the answer straight away, like a friend telling you (\"It's 14 degrees with light rain until 3, then it clears up nicely.\"). Never describe the view or say you opened, showed or made something; no lists, URLs, symbols or markdown in it. Then, on a new line, the OpenUI Lang program starting with `root = Canvas(`: no code fences and nothing after it. WITHOUT A VIEW: reply normally and write no program.";
 
+/// With Polished UI on (`Settings::agent_polished_ui`): design every view
+/// instead of dumping the answer into the plainest blocks.
+pub(crate) const UI_POLISH_RULE: &str = "POLISHED UI: every view must look designed, never dumped. Before writing it, pick the richest structure that fits the content: a designed view first; otherwise compose a small layout, never a bare list of lines. Lead with the single most important thing, large (a Hero, or a Heading with a short grey label above it). Give each item its attributes: a ranking or chart becomes List rows with the rank as meta, the title, a subtitle (artist, author, place), and a matching icon or a real thumbnail; options to choose between become Cards side by side or a Table; key numbers become a row of 2-3 Stats; facts become a Details card; a how-to becomes Steps plus a Details card of what you need. Use Badge only for real status, icons that match the meaning, and Divider to separate sections. Hierarchy comes from size, weight and the grey levels, not from colour. A simple request still gets a well-composed view, just a smaller one. Never a plain numbered Text or Markdown list when the items have any attributes.";
+
+/// The system message for a turn that may carry a view: what a view is and
+/// when to use one, the component reference, polish (when on), the format.
+pub(crate) fn ui_prompt(spec: &str, polished: bool) -> String {
+    let polish = if polished { UI_POLISH_RULE } else { "" };
+    format!("{UI_RULE}\n\n{spec}\n\n{polish}\n\n{UI_FORMAT_RULE}")
+}
+
 /// The latest view a model sees again with its reply is cut to this size.
 pub(crate) const MAX_UI_CHARS: usize = 40_000;
 
@@ -86,6 +97,14 @@ mod tests {
             split_ui("root=Canvas([])"),
             (String::new(), Some("root=Canvas([])".to_owned()))
         );
+    }
+
+    #[test]
+    fn polish_is_only_asked_for_when_on() {
+        assert!(ui_prompt("SPEC", true).contains(UI_POLISH_RULE));
+        let plain = ui_prompt("SPEC", false);
+        assert!(!plain.contains("POLISHED UI"));
+        assert!(plain.contains("SPEC") && plain.ends_with(UI_FORMAT_RULE));
     }
 
     #[test]

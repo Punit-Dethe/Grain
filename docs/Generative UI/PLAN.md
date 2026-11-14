@@ -46,6 +46,7 @@ chat bubble: text + view card  →  AgentCanvas (full view, fitted shell)
 - **A new view opens on its own** (first reply or follow-up). "‹ Chat" (or Escape) goes back; the card reopens it. A follow-up without a view returns to the chat.
 - **Interactions**: view buttons send the next chat message; `open_url` goes through the host link opener; forms send their field values along. The open view has its own composer for typed follow-ups.
 - **Fallback**: a reply with no `root =` line is a normal chat reply.
+- **Settings** (Agent section, beside talk-back): **Dynamic UI** (`agent_dynamic_ui`, on) and **Polished UI** (`agent_polished_ui`, on, adds `UI_POLISH_RULE`). Both are read per turn by `agent_run`, so switching mid-chat applies from the next reply; with views off, earlier views are not sent back either.
 - **Speech mode**: a reply with a view always opens the notch, even with `agent_compact_voice` on (the text is still spoken).
 - **Lifetime**: the renderer is mounted only while a view is open.
 

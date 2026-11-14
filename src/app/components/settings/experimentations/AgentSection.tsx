@@ -11,6 +11,8 @@ export function AgentSection() {
   const screenImage = getSetting("agent_screen_image") ?? false;
   const talkBack = getSetting("agent_talk_back") ?? false;
   const compactVoice = getSetting("agent_compact_voice") ?? true;
+  const dynamicUi = getSetting("agent_dynamic_ui") ?? true;
+  const polishedUi = getSetting("agent_polished_ui") ?? true;
 
   return (
     <SettingsGroup title={t("ui2.settings.agent.group")}>
@@ -59,6 +61,28 @@ export function AgentSection() {
               checked={compactVoice}
               isUpdating={isUpdating("agent_compact_voice")}
               onChange={(v) => updateSetting("agent_compact_voice", v)}
+            />
+          )}
+
+          <ToggleSwitch
+            label={t("ui2.settings.agent.dynamicUi")}
+            description={t("ui2.settings.agent.dynamicUiDescription")}
+            descriptionMode="tooltip"
+            grouped
+            checked={dynamicUi}
+            isUpdating={isUpdating("agent_dynamic_ui")}
+            onChange={(v) => updateSetting("agent_dynamic_ui", v)}
+          />
+
+          {dynamicUi && (
+            <ToggleSwitch
+              label={t("ui2.settings.agent.polishedUi")}
+              description={t("ui2.settings.agent.polishedUiDescription")}
+              descriptionMode="tooltip"
+              grouped
+              checked={polishedUi}
+              isUpdating={isUpdating("agent_polished_ui")}
+              onChange={(v) => updateSetting("agent_polished_ui", v)}
             />
           )}
         </>

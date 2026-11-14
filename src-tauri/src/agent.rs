@@ -2653,6 +2653,19 @@ pub async fn agent_run(
     {
         return Err("The view component reference is too large".into());
     }
+    // [GRAIN] Read per turn, so switching views (or their polish) on or off
+    // mid-chat applies from the next reply.
+    let ui_prompt = {
+        let settings = crate::settings::get_settings(&app);
+        ui_spec.filter(|_| settings.agent_dynamic_ui).map(|spec| {
+            crate::grain_agent_canvas::ui_prompt(&spec, settings.agent_polished_ui)
+        })
+    };
+    let mut messages = messages;
+    if ui_prompt.is_none() {
+        // Views off: earlier views are not sent back either.
+        messages.iter_mut().for_each(|message| message.ui = None);
+    }
     let state = app
         .try_state::<AgentState>()
         .ok_or("Agent state unavailable")?;
@@ -2671,11 +2684,11 @@ pub async fn agent_run(
     let mut reply = run
         .wait(
             registration,
-            agent_run_owned(&app, messages, context, ui_spec.as_deref(), &run),
+            agent_run_owned(&app, messages, context, ui_prompt.as_deref(), &run),
         )
         .await?;
     if let Ok(reply) = &mut reply {
-        if ui_spec.is_some() && reply.confirm_action.is_none() {
+        if ui_prompt.is_some() && reply.confirm_action.is_none() {
             let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);
             reply.text = text;
             reply.ui = ui;
@@ -2748,7 +2761,8 @@ async fn agent_run_owned(
     app: &AppHandle,
     messages: Vec<AgentMessage>,
     context: Option<String>,
-    ui_spec: Option<&str>,
+    // [GRAIN] The generated-view instructions (`grain_agent_canvas::ui_prompt`).
+    ui_prompt: Option<&str>,
     run: &AgentRun<'_>,
 ) -> Result<AgentReply, String> {
     // [GRAIN] A risky action from a prior turn is waiting on the user. The interim
@@ -2782,19 +2796,8 @@ async fn agent_run_owned(
         }
     }
     let mut full = build_messages(&messages, context.as_deref());
-    if let Some(spec) = ui_spec {
-        use crate::grain_agent_canvas::{UI_FORMAT_RULE, UI_RULE};
-        full.insert(
-            1,
-            (
-                "system".to_string(),
-                format!("{UI_RULE}
-
-{spec}
-
-{UI_FORMAT_RULE}"),
-            ),
-        );
+    if let Some(prompt) = ui_prompt {
+        full.insert(1, ("system".to_string(), prompt.to_owned()));
     }
     let image = screen_attachment(app);
     run_with_tools(app, full, image.as_ref(), run).await
@@ -4221,8 +4224,7 @@ fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(Stri
                     .chars()
                     .take(crate::grain_agent_canvas::MAX_UI_CHARS)
                     .collect();
-                format!("{}
-{ui}", m.content)
+                format!("{}\n{ui}", m.content)
             }
             _ => m.content.clone(),
         };

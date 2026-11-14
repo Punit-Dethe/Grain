@@ -639,6 +639,30 @@ async changeAgentCompactVoiceSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
+ * [GRAIN] Dynamic UI: Agent replies may carry an interactive view. See
+ * `Settings::agent_dynamic_ui`.
+ */
+async changeAgentDynamicUiSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_dynamic_ui_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Polished UI: ask the model to design every view properly. See
+ * `Settings::agent_polished_ui`.
+ */
+async changeAgentPolishedUiSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_polished_ui_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Turn Reach on or off (Extensions page). Off removes its tools from
  * the Agent on the next model round; a running call finishes.
  */
@@ -2352,6 +2376,19 @@ agent_talk_back?: boolean;
  * talk-back.
  */
 agent_compact_voice?: boolean; 
+/**
+ * [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
+ * interactive view (`grain_agent_canvas`). ON by default; off sends no
+ * view vocabulary to the model (fewer tokens) and replies are plain chat.
+ * Read per turn, so it applies mid-chat from the next reply.
+ */
+agent_dynamic_ui?: boolean; 
+/**
+ * [GRAIN] Polished UI: with Dynamic UI on, also tell the model to design
+ * every view properly instead of the bare minimum. ON by default; costs a
+ * few more prompt tokens per turn.
+ */
+agent_polished_ui?: boolean; 
 /**
  * [GRAIN] Reach: the Agent's first-party OS tools (open links, apps and
  * app pages, type into the focused field, press Enter, media, settings).

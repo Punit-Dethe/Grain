@@ -636,6 +636,28 @@ pub fn change_agent_compact_voice_setting(app: AppHandle, enabled: bool) -> Resu
     Ok(())
 }
 
+/// [GRAIN] Dynamic UI: Agent replies may carry an interactive view. See
+/// `Settings::agent_dynamic_ui`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_dynamic_ui_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_dynamic_ui = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Polished UI: ask the model to design every view properly. See
+/// `Settings::agent_polished_ui`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_polished_ui_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_polished_ui = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
 /// by default; see `Settings::meet_auto_summary`.
 #[tauri::command]
