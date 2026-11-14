@@ -24,9 +24,10 @@ export type ToolSectionId = (typeof TOOL_SECTION_IDS)[number];
 export type AppRoute =
   | { page: "overview" }
   | { page: "history" }
-  | { page: "meet"; meeting?: string; settings?: boolean }
+  | { page: "meet"; meeting?: string; settings?: boolean; day?: string }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
+  | { page: "reminders" }
   | { page: "extensions" };
 
 const settingsSections = new Set<string>(SETTINGS_SECTION_IDS);
@@ -36,8 +37,12 @@ export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
 
   if (path === "/history") return { page: "history" };
+  if (path === "/reminders") return { page: "reminders" };
   if (path === "/meet") return { page: "meet" };
   if (path === "/meet/settings") return { page: "meet", settings: true };
+  // The recordings list, scrolled to one day (from the Reminders calendar).
+  const dayMatch = path.match(/^\/meet\/day\/(\d{4}-\d{2}-\d{2})$/);
+  if (dayMatch) return { page: "meet", day: dayMatch[1] };
   const meetingMatch = path.match(/^\/meet\/([A-Za-z0-9-]+)$/);
   if (meetingMatch) return { page: "meet", meeting: meetingMatch[1] };
   // Legacy destination from the brief period About was its own tab.
@@ -75,6 +80,7 @@ export function hashForRoute(route: AppRoute): string {
   if (route.page === "tools") return `#/tools/${route.section}`;
   if (route.page === "meet" && route.settings) return "#/meet/settings";
   if (route.page === "meet" && route.meeting) return `#/meet/${route.meeting}`;
+  if (route.page === "meet" && route.day) return `#/meet/day/${route.day}`;
   return `#/${route.page}`;
 }
 

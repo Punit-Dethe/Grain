@@ -1,0 +1,1351 @@
+/* Reminders tab. UI 2.0 tokens only (--bg-*, --text-*, --hairline, --radius-*);
+   light/dark come from the shell's variables. */
+
+.reminders-page {
+  --rem-card: var(--bg-2);
+  --rem-card-hover: color-mix(in srgb, var(--bg-2) 70%, var(--bg-3));
+  --rem-ring: var(--peach);
+  --rem-sheet: var(--bg-3);
+  /* A control raised out of a soft well (the picked day). */
+  --rem-raise: var(--bg-4);
+}
+
+.grain-root[data-theme="light"] .reminders-page {
+  --rem-card: var(--bg-0);
+  --rem-card-hover: #fffffe;
+  --rem-sheet: var(--bg-0);
+  --rem-raise: var(--bg-0);
+}
+
+.reminders-wrap {
+  width: min(760px, 100%);
+}
+
+/* ── Composer ─────────────────────────────────────────────────────────── */
+/* One line until it is used; open, it shows when, links and a note, all
+   indented under the title so the card reads as one sentence. */
+
+.rem-composer {
+  margin-bottom: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--rem-card);
+}
+
+/* Typing shows no ring, border or glow: the caret is the focus. Overrides
+   the shell's focus ring for text fields on this page only. */
+.grain-root .reminders-page :is(input, textarea):focus,
+.grain-root .reminders-page :is(input, textarea):focus-visible {
+  outline: none;
+  box-shadow: none !important;
+}
+
+.rem-row-editing .rem-composer {
+  margin: 4px 0;
+}
+
+.rem-composer-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px 0 13px;
+}
+
+.rem-composer-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--text-3);
+  background: var(--accent-soft);
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.rem-composer[data-open] .rem-composer-mark {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.rem-composer-title input {
+  flex: 1;
+  min-width: 0;
+  height: 56px;
+  border: 0;
+  outline: none;
+  color: var(--text-1);
+  background: transparent;
+  font: inherit;
+  font-size: 15.5px;
+  font-weight: 540;
+  letter-spacing: -0.01em;
+}
+
+.rem-composer-title input::placeholder {
+  color: var(--text-4);
+  font-weight: 450;
+}
+
+.rem-composer-fold {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-4);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.rem-composer-fold:hover {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+.rem-composer-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px 12px 53px;
+  animation: rem-reveal 0.22s var(--ease-out);
+}
+
+@keyframes rem-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+/* When: Today | Tomorrow | a date, then the time (or all day). */
+.rem-when-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rem-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--accent-soft);
+}
+
+.rem-seg > button,
+.rem-seg-date {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.rem-seg > button:hover,
+.rem-seg-date:hover {
+  color: var(--text-1);
+}
+
+.rem-seg > button[aria-pressed="true"],
+.rem-seg-date[data-on] {
+  color: var(--text-1);
+  background: var(--rem-raise);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.rem-time {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 13px 0 11px;
+  border-radius: 11px;
+  color: var(--text-3);
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+button.rem-time:hover {
+  color: var(--text-1);
+  background: var(--accent-soft-hover);
+}
+
+.rem-time[data-on] {
+  padding-right: 5px;
+  color: var(--text-1);
+}
+
+.rem-time-hint {
+  color: var(--text-4);
+  font-weight: 500;
+}
+
+.rem-time-hint::before {
+  content: "·";
+  margin-right: 6px;
+}
+
+/* The date and time fields: the whole field opens its picker. */
+.rem-seg-date input,
+.rem-time input {
+  position: relative;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.rem-seg-date input::-webkit-calendar-picker-indicator,
+.rem-time input::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.rem-time-clear,
+.rem-link-remove {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--text-4);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.rem-time-clear .icon,
+.rem-link-remove .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.rem-time-clear:hover,
+.rem-link-remove:hover {
+  color: var(--text-1);
+  background: var(--accent-soft-hover);
+}
+
+/* Links and the note: quiet wells that light up while typed in. */
+.rem-link-rows {
+  display: grid;
+  gap: 6px;
+}
+
+.rem-link-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 36px;
+  padding: 0 6px 0 11px;
+  border-radius: 10px;
+  color: var(--text-4);
+  background: var(--accent-soft);
+}
+
+.rem-link-row input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  color: var(--text-1);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+}
+
+.rem-link-row input::placeholder,
+.rem-note::placeholder {
+  color: var(--text-4);
+}
+
+.rem-note {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 62px;
+  padding: 9px 11px;
+  border: 0;
+  border-radius: 10px;
+  outline: none;
+  resize: vertical;
+  color: var(--text-1);
+  background: var(--accent-soft);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rem-composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.rem-spacer {
+  flex: 1;
+}
+
+.rem-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.rem-ghost:hover {
+  color: var(--text-1);
+  background: var(--accent-soft);
+}
+
+.rem-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  height: 32px;
+  margin-left: 4px;
+  padding: 0 7px 0 14px;
+  border-radius: 9px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: 12.5px;
+  font-weight: 620;
+  cursor: pointer;
+  transition:
+    filter 0.15s ease,
+    opacity 0.15s ease,
+    transform 0.2s var(--ease-out);
+}
+
+.rem-save:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.rem-save:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.rem-save:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rem-save kbd {
+  display: grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent-ink) 13%, transparent);
+  font: inherit;
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .rem-composer-body {
+    padding-left: 14px;
+  }
+}
+
+/* ── Groups ───────────────────────────────────────────────────────────── */
+
+.rem-group + .rem-group {
+  margin-top: 26px;
+}
+
+.rem-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin: 0 4px 6px;
+}
+
+.rem-group-head h2 {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rem-group[data-tone="ringing"] .rem-group-head h2 {
+  color: var(--rem-ring);
+}
+
+.rem-group[data-tone="earlier"] .rem-group-head h2,
+.rem-group[data-tone="done"] .rem-group-head h2 {
+  color: var(--text-4);
+}
+
+.rem-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.rem-group-toggle::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid var(--text-4);
+  border-bottom: 1.5px solid var(--text-4);
+  transform: rotate(-45deg);
+  transition: transform 0.2s var(--ease-out);
+}
+
+.rem-group-toggle[aria-expanded="true"]::after {
+  transform: rotate(45deg) translate(-2px, -1px);
+}
+
+.rem-count {
+  color: var(--text-4);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-clear {
+  margin-left: auto;
+  height: 26px;
+  font-size: 12px;
+}
+
+.rem-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ── Rows ─────────────────────────────────────────────────────────────── */
+
+.rem-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 54px;
+  padding: 9px 12px 9px 14px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+
+.rem-row:hover {
+  background: var(--rem-card);
+}
+
+.rem-row[data-status="ringing"] {
+  background: color-mix(in srgb, var(--rem-ring) 11%, var(--rem-card));
+}
+
+.rem-check {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid color-mix(in srgb, var(--text-4) 70%, transparent);
+  border-radius: 50%;
+  color: var(--accent-ink);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.2s var(--ease-out);
+}
+
+.rem-check:hover {
+  border-color: var(--text-1);
+}
+
+.rem-check:active {
+  transform: scale(0.9);
+}
+
+.rem-check .icon {
+  width: 13px;
+  height: 13px;
+  stroke-width: 2.6;
+}
+
+.rem-row[data-status="done"] .rem-check {
+  border-color: var(--text-3);
+  background: var(--text-3);
+}
+
+.rem-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.rem-title {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 540;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-row[data-status="done"] .rem-title {
+  color: var(--text-4);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-4) 60%, transparent);
+}
+
+.rem-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 2px;
+  color: var(--text-4);
+  font-size: 12px;
+}
+
+.rem-when {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-row[data-status="ringing"] .rem-when {
+  color: var(--rem-ring);
+}
+
+.rem-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: var(--text-3);
+  background: var(--accent-soft);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.rem-detail-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-row-end {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rem-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 8px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    filter 0.15s ease,
+    transform 0.2s var(--ease-out);
+}
+
+.rem-open span {
+  overflow: hidden;
+  opacity: 0.62;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.rem-open:hover {
+  filter: brightness(1.06);
+}
+
+.rem-open:active {
+  transform: scale(0.97);
+}
+
+.rem-row[data-status="done"] .rem-open {
+  color: var(--text-2);
+  background: var(--accent-soft);
+}
+
+.rem-row-tools {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.rem-row:hover .rem-row-tools,
+.rem-row:focus-within .rem-row-tools {
+  opacity: 1;
+}
+
+.rem-icon-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--text-4);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.rem-icon-button:hover {
+  color: var(--text-1);
+  background: var(--accent-soft-hover);
+}
+
+.rem-icon-button.danger:hover {
+  color: var(--danger);
+}
+
+/* ── Empty states ─────────────────────────────────────────────────────── */
+
+.rem-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 56px 20px;
+  text-align: center;
+}
+
+.rem-empty-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 8px;
+  border-radius: 14px;
+  color: var(--text-3);
+  background: var(--rem-card);
+}
+
+.rem-empty-mark .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.rem-empty p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.rem-empty span {
+  color: var(--text-4);
+  font-size: 12.5px;
+}
+
+.rem-caught-up {
+  margin: 0 4px 22px;
+  color: var(--text-4);
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .rem-row {
+    flex-wrap: wrap;
+  }
+  .rem-row-end {
+    width: 100%;
+    padding-left: 33px;
+  }
+  .rem-row-tools {
+    opacity: 1;
+    margin-left: auto;
+  }
+}
+
+/* ── Calendar ─────────────────────────────────────────────────────────── */
+/* Two weeks of day tiles (each a short agenda), or a compact month of dots.
+   No frame of its own: the tiles carry the surface. */
+
+.rem-cal {
+  margin-bottom: 24px;
+}
+
+.rem-cal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px 2px;
+}
+
+.rem-cal-head h2 {
+  color: var(--text-1);
+  font-size: 17px;
+  font-weight: 640;
+  letter-spacing: -0.015em;
+  white-space: nowrap;
+}
+
+/* View switch and the ‹ Today › nav share one quiet pill shape. */
+.rem-cal-views,
+.rem-cal-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--accent-soft);
+}
+
+.rem-cal-views button,
+.rem-cal-nav button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.rem-cal-nav button:not(.rem-cal-nav-today) {
+  padding: 0;
+}
+
+.rem-cal-views button:hover,
+.rem-cal-nav button:hover:not(:disabled) {
+  color: var(--text-1);
+}
+
+.rem-cal-nav button:not(.rem-cal-nav-today):hover {
+  background: var(--accent-soft);
+}
+
+.rem-cal-views button[aria-pressed="true"] {
+  color: var(--text-1);
+  background: var(--rem-raise);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.16),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.rem-cal-nav-today:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.rem-cal-weekdays,
+.rem-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.rem-cal-weekdays {
+  padding-bottom: 4px;
+}
+
+.rem-cal-weekdays span {
+  color: var(--text-4);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.rem-cal-grid {
+  position: relative;
+}
+
+.rem-cal-day {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.rem-cal-day:hover {
+  background: var(--accent-soft);
+}
+
+.rem-cal-day:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+}
+
+.rem-cal-day[data-outside] {
+  opacity: 0.4;
+}
+
+.rem-cal-day[data-outside]:hover,
+.rem-cal-day[data-outside][aria-pressed="true"] {
+  opacity: 0.8;
+}
+
+.rem-cal-day-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rem-cal-date {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Meetings recorded that day: a small mic (with a count past one). */
+.rem-cal-recorded-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-cal-recorded-mark .icon {
+  width: 11px;
+  height: 11px;
+}
+
+.rem-cal-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.rem-cal-more {
+  flex: none;
+  color: var(--text-4);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Day tiles (both views). In two weeks the weekday sits small above a
+   large date, then the day's agenda: "• 6 PM Title", all-day items in a
+   soft bar. */
+.rem-cal-day {
+  min-height: 128px;
+  gap: 2px;
+  padding: 10px 10px 11px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 14px;
+  background: var(--rem-card);
+}
+
+.rem-cal-day:hover {
+  background: var(--rem-card-hover);
+}
+
+.rem-cal-day[data-past] {
+  background: color-mix(in srgb, var(--rem-card) 45%, transparent);
+}
+
+.rem-cal-day[data-past]:hover {
+  background: var(--rem-card-hover);
+}
+
+.rem-cal-day[data-today] {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--rem-card));
+}
+
+.rem-cal-day[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--text-1) 34%, transparent);
+}
+
+.rem-cal-wd {
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-cal-day[data-today] .rem-cal-wd {
+  color: var(--text-1);
+}
+
+.rem-cal[data-view="weeks"] .rem-cal-date {
+  margin-bottom: 8px;
+  color: var(--text-1);
+  font-size: 22px;
+  font-weight: 620;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.rem-cal-day[data-past] .rem-cal-date {
+  color: var(--text-4);
+}
+
+.rem-cal-day[data-past] .rem-cal-agenda {
+  opacity: 0.65;
+}
+
+.rem-cal-agenda {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rem-cal-entry {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-1);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.rem-cal-entry-time {
+  flex: none;
+  color: var(--text-4);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.rem-cal-entry-title {
+  overflow: hidden;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-cal-entry[data-allday] {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--accent-soft-hover);
+}
+
+.rem-cal-entry[data-meeting] .rem-cal-dot {
+  border-radius: 1.5px;
+}
+
+.rem-cal-entry[data-status="ringing"] .rem-cal-dot {
+  background: var(--rem-ring);
+}
+
+.rem-cal-entry[data-status="ringing"] .rem-cal-entry-time {
+  color: var(--rem-ring);
+}
+
+.rem-cal-entry[data-status="ringing"][data-allday] {
+  background: color-mix(in srgb, var(--rem-ring) 22%, transparent);
+}
+
+.rem-cal-entry[data-status="done"] {
+  color: var(--text-4);
+}
+
+.rem-cal-entry[data-status="done"][data-allday] {
+  background: var(--accent-soft);
+}
+
+.rem-cal-entry[data-status="done"] .rem-cal-entry-title {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-4) 60%, transparent);
+}
+
+.rem-cal-entry[data-status="done"] .rem-cal-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--text-4);
+}
+
+.rem-cal-agenda .rem-cal-more {
+  padding-left: 2px;
+}
+
+/* Month: the same tiles, smaller, under a weekday row. The date sits top
+   left (today in a filled pill), then up to two entries. */
+.rem-cal[data-view="month"] .rem-cal-weekdays span {
+  padding-left: 10px;
+  text-align: left;
+}
+
+.rem-cal[data-view="month"] .rem-cal-day {
+  min-height: 98px;
+  gap: 6px;
+  padding: 7px 8px 8px;
+  border-radius: 12px;
+}
+
+.rem-cal[data-view="month"] .rem-cal-date {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  margin-left: -3px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.rem-cal[data-view="month"] .rem-cal-day[data-past] .rem-cal-date {
+  color: var(--text-4);
+}
+
+.rem-cal[data-view="month"] .rem-cal-day[data-today] .rem-cal-date {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+/* Days of the next or last month: ghost tiles. */
+.rem-cal[data-view="month"] .rem-cal-day[data-outside] {
+  background: transparent;
+}
+
+.rem-cal[data-view="month"] .rem-cal-agenda {
+  gap: 4px;
+}
+
+.rem-cal[data-view="month"] .rem-cal-entry {
+  font-size: 11px;
+}
+
+/* A day's sheet, floating over the calendar under its cell. */
+.rem-cal-sheet {
+  position: absolute;
+  z-index: 5;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--rem-sheet);
+  box-shadow: var(--shadow-float);
+  animation: rem-reveal 0.2s var(--ease-out);
+}
+
+.rem-cal-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px 6px;
+}
+
+.rem-cal-sheet-head h3 {
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.rem-cal-sheet-close {
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+}
+
+/* Meetings recorded that day: one row into Recall at that date. */
+.rem-cal-recorded {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding: 7px 8px 7px 7px;
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  background: var(--accent-soft);
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.rem-cal-recorded:hover {
+  background: var(--accent-soft-hover);
+}
+
+.rem-cal-recorded:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+}
+
+.rem-cal-recorded-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-2);
+  background: var(--accent-soft-hover);
+}
+
+.rem-cal-recorded-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.rem-cal-recorded-text small {
+  color: var(--text-4);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.rem-cal-recorded > .icon {
+  flex: none;
+  color: var(--text-4);
+}
+
+.rem-cal-sheet-list {
+  display: grid;
+  gap: 2px;
+  max-height: 264px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.rem-cal-sheet-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s ease;
+}
+
+.rem-cal-sheet-item:hover {
+  background: var(--accent-soft);
+}
+
+.rem-cal-sheet-item .rem-check {
+  margin-top: 1px;
+}
+
+.rem-cal-sheet-item[data-status="done"] .rem-check {
+  border-color: var(--text-3);
+  background: var(--text-3);
+}
+
+.rem-cal-sheet-text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rem-cal-sheet-title {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 560;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.rem-cal-sheet-item[data-status="done"] .rem-cal-sheet-title {
+  color: var(--text-4);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-4) 60%, transparent);
+}
+
+.rem-cal-sheet-when {
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rem-cal-sheet-item[data-status="ringing"] .rem-cal-sheet-when {
+  color: var(--rem-ring);
+}
+
+.rem-cal-sheet-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.rem-cal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 25px;
+  padding: 0 9px 0 7px;
+  overflow: hidden;
+  border-radius: 7px;
+  color: var(--text-1);
+  background: var(--accent-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.2s var(--ease-out);
+}
+
+.rem-cal-link .icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.rem-cal-link:hover {
+  background: var(--accent-soft-hover);
+}
+
+.rem-cal-link:active {
+  transform: scale(0.97);
+}
+
+.rem-cal-sheet-empty {
+  margin: 4px 6px 10px;
+  color: var(--text-4);
+  font-size: 13px;
+}
+
+.rem-cal-sheet-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.rem-cal-sheet-add:hover {
+  color: var(--text-1);
+  background: var(--accent-soft-hover);
+}
+
+@media (max-width: 640px) {
+  .rem-cal-head h2 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .rem-cal-head {
+    flex-wrap: wrap;
+  }
+  .rem-cal-weekdays,
+  .rem-cal-grid {
+    gap: 3px;
+  }
+  .rem-cal[data-view="weeks"] .rem-cal-day {
+    min-height: 84px;
+    padding: 7px 6px;
+  }
+  .rem-cal[data-view="weeks"] .rem-cal-date {
+    font-size: 17px;
+  }
+  .rem-cal-entry-time,
+  .rem-cal-agenda .rem-cal-more {
+    display: none;
+  }
+  .rem-cal[data-view="month"] .rem-cal-day {
+    min-height: 60px;
+    padding: 5px 4px;
+  }
+  .rem-cal[data-view="month"] .rem-cal-entry-title {
+    display: none;
+  }
+  .rem-cal[data-view="month"] .rem-cal-entry[data-allday] {
+    height: 4px;
+    padding: 0;
+  }
+}

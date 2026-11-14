@@ -651,6 +651,81 @@ async changeReachEnabledSetting(enabled: boolean) : Promise<Result<null, string>
 }
 },
 /**
+ * Every reminder, in no particular order (the tab groups and sorts).
+ */
+async remindersList() : Promise<Result<Reminder[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reminders_list") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Create (no `id`) or edit a reminder.
+ */
+async remindersSave(input: ReminderInput) : Promise<Result<Reminder, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reminders_save", { input }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async remindersDelete(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reminders_delete", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mark done, or bring a done reminder back (it rings again if still ahead).
+ */
+async remindersSetDone(id: string, done: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reminders_set_done", { id, done }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Ring again in `minutes`.
+ */
+async remindersSnooze(id: string, minutes: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reminders_snooze", { id, minutes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove every done reminder.
+ */
+async remindersClearDone() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reminders_clear_done") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open one of a reminder's stored links. The webview names the reminder and
+ * the link's position; it never hands the host a URL to open.
+ */
+async remindersOpenLink(id: string, index: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reminders_open_link", { id, index }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
  * by default; see `Settings::meet_auto_summary`.
  */
@@ -1973,6 +2048,7 @@ modelVerificationStarted: ModelVerificationStarted,
 pasteError: PasteError,
 recordingError: RecordingError,
 recordingReady: RecordingReady,
+remindersChanged: RemindersChanged,
 showOverlay: ShowOverlay,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
@@ -2001,6 +2077,7 @@ modelVerificationStarted: "model-verification-started",
 pasteError: "paste-error",
 recordingError: "recording-error",
 recordingReady: "recording-ready",
+remindersChanged: "reminders-changed",
 showOverlay: "show-overlay",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
@@ -2672,6 +2749,47 @@ export type RecordingError = { error_type: string; detail: string | null }
 export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type RecordingStatus = { session_id: string; elapsed_ms: number; sources: SourceStatus[]; error: string | null }
+export type Reminder = { id: string; title: string; 
+/**
+ * Local calendar date, `YYYY-MM-DD`.
+ */
+date: string; 
+/**
+ * Local wall-clock time, `HH:MM`; `None` = all-day.
+ */
+time: string | null; links: ReminderLink[]; details: string | null; kind: ReminderKind; status: ReminderStatus; 
+/**
+ * Next ring instant (UTC ms); `None` = will not ring.
+ */
+ring_at_ms: number | null; source: ReminderSource; created_ms: number; updated_ms: number }
+/**
+ * What the tab (or the Agent) submits to create or edit a reminder.
+ */
+export type ReminderInput = { 
+/**
+ * `None` creates a new reminder.
+ */
+id: string | null; title: string; date: string; time: string | null; links?: string[]; details?: string | null }
+/**
+ * What happens at the due time. Only `Notify` exists today; "scheduled
+ * actions" (an instruction sent to the Agent) will be a second kind.
+ */
+export type ReminderKind = "notify"
+export type ReminderLink = { url: string }
+export type ReminderSource = "user" | "agent"
+export type ReminderStatus = 
+/**
+ * Waiting for `ring_at_ms` (or not ringing at all when that is `None`).
+ */
+"pending" | 
+/**
+ * Rang and still on screen.
+ */
+"ringing" | "done"
+/**
+ * Sent whenever the reminder list changes. The tab and the notch re-read.
+ */
+export type RemindersChanged = null
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
  * resolved against the OS. Lives in the SDK because it crosses the wire inside

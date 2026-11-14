@@ -91,10 +91,11 @@ html[data-window="agent-panel"] body {
   opacity: 0.75;
 }
 
-/* Recall needs less room than the chat: the same shell settles smaller. */
-.agent-notch.is-reply.is-recall {
-  width: min(var(--recall-w), 100vw);
-  height: min(var(--recall-h), 100vh);
+/* Recall and a ringing reminder need less room than the chat: the same
+   shell settles to their size. */
+.agent-notch.is-reply.is-fit {
+  width: min(var(--fit-w), 100vw);
+  height: min(var(--fit-h), 100vh);
   border-radius: 0 0 18px 18px;
 }
 
@@ -203,7 +204,7 @@ html[data-window="agent-panel"] body {
    retracts into the resting sliver, which the native sliver then replaces.
    Outranks every open size (chat, compact and Recall alike). */
 .agent-notch.is-closing,
-.agent-notch.is-reply.is-recall.is-closing {
+.agent-notch.is-reply.is-fit.is-closing {
   width: min(120px, 100vw);
   height: min(6px, 100vh);
   background: var(--notch-sliver);
@@ -220,7 +221,8 @@ html[data-window="agent-panel"] body {
 
 .agent-notch.is-closing .agent-notch-header > *,
 .agent-notch.is-closing .agent-notch-reply,
-.agent-notch.is-closing .agent-notch-recall {
+.agent-notch.is-closing .agent-notch-recall,
+.agent-notch.is-closing .agent-notch-reminder {
   opacity: 0;
   animation: none;
   transition: opacity 110ms ease;
@@ -1563,5 +1565,369 @@ html[data-window="agent-panel"] body {
 @media (prefers-reduced-motion: reduce) {
   .agent-notch-fill {
     transition: opacity 120ms ease;
+  }
+}
+
+/* A ringing reminder: replaces the chat or Recall pane until Back, Snooze or
+   Done. The shell fits it (`.is-fit`); AgentReminder reports its height. */
+.agent-notch-reminder {
+  position: absolute;
+  top: var(--notch-reply-header);
+  left: 50%;
+  width: calc(var(--fit-w) - 2px);
+  max-width: calc(100vw - 2px);
+  transform: translateX(-50%);
+  animation: agent-notch-fade-in 240ms ease 120ms backwards;
+}
+
+/* Header, while a reminder is up: Back to the mode it came from, and the
+   count when more than one is ringing. */
+.agent-notch-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  padding: 0 11px 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff0a;
+  color: var(--agc-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 200ms var(--notch-ease);
+}
+
+.agent-notch-back:hover {
+  background: #ffffff16;
+  color: var(--agc-ink);
+}
+
+.agent-notch-count {
+  margin-right: 2px;
+  color: var(--agc-faint);
+  font-size: 11.5px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agrm {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: max(0px, calc(100vh - var(--notch-reply-header) - 1px));
+  padding: 4px 16px 14px;
+}
+
+.agrm-head {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  padding-inline: 2px;
+}
+
+.agrm-title {
+  margin: 0;
+  color: var(--agc-ink);
+  font-size: 18px;
+  font-weight: 620;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.agrm-when {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--agc-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.agrm-time {
+  color: var(--agc-light);
+  font-weight: 580;
+}
+
+.agrm-bell {
+  display: inline-grid;
+  place-items: center;
+  color: var(--agc-light);
+}
+
+/* The one motion moment: the bell rings twice as the reminder arrives. */
+.agrm-bell svg {
+  transform-origin: 50% 15%;
+  animation: agrm-ring 1.1s ease-in-out 260ms 2 backwards;
+}
+
+@keyframes agrm-ring {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  20% {
+    transform: rotate(14deg);
+  }
+  40% {
+    transform: rotate(-11deg);
+  }
+  60% {
+    transform: rotate(7deg);
+  }
+  80% {
+    transform: rotate(-4deg);
+  }
+}
+
+.agrm-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--agc-dim);
+}
+
+.agrm-missed {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #ffffff10;
+  color: var(--agc-light);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.agrm-details {
+  margin: 2px 0 0;
+  color: var(--agc-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* Links: one raised group; each row names the place and how to get there.
+   It scrolls when a long list would outgrow the window. */
+.agrm-links {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff24 transparent;
+  list-style: none;
+  border-radius: 14px;
+  background: #ffffff07;
+  box-shadow: inset 0 0 0 1px #ffffff0d;
+}
+
+.agrm-link {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--agc-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.agrm-link:hover {
+  background: #ffffff0a;
+}
+
+.agrm-link-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #ffffff10;
+  color: var(--agc-light);
+}
+
+.agrm-link-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agrm-link-name,
+.agrm-link-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agrm-link-name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.agrm-link-detail {
+  color: var(--agc-faint);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.agrm-link-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 26px;
+  padding: 0 9px 0 11px;
+  border-radius: 999px;
+  background: #ffffff12;
+  color: var(--agc-ink);
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    background-color 140ms ease,
+    filter 140ms ease,
+    transform 200ms var(--notch-ease);
+}
+
+.agrm-link:hover .agrm-link-go {
+  background: #ffffff1f;
+}
+
+/* The first link is the likely next step: the one light fill. */
+.agrm-link[data-primary] .agrm-link-go {
+  background: var(--agc-fill);
+  color: var(--agc-bg);
+}
+
+.agrm-link[data-primary]:hover .agrm-link-go {
+  filter: brightness(1.06);
+}
+
+.agrm-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-inline: 2px;
+}
+
+.agrm-snooze {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agrm-snooze-label {
+  margin-right: 4px;
+  color: var(--agc-faint);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.agrm-chip {
+  min-width: 38px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff0b;
+  color: var(--agc-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 200ms var(--notch-ease);
+}
+
+.agrm-chip:hover {
+  background: #ffffff1a;
+  color: var(--agc-ink);
+}
+
+.agrm-done {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 15px 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff14;
+  color: var(--agc-ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    filter 140ms ease,
+    transform 200ms var(--notch-ease);
+}
+
+.agrm-done:hover {
+  background: #ffffff22;
+}
+
+/* Without a link, Done is the next step and takes the light fill. */
+.agrm-done[data-primary] {
+  background: var(--agc-fill);
+  color: var(--agc-bg);
+}
+
+.agrm-done[data-primary]:hover {
+  filter: brightness(1.06);
+}
+
+.agrm-link:active .agrm-link-go,
+.agrm-chip:active,
+.agrm-done:active,
+.agent-notch-back:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agrm-bell svg {
+    animation: none;
   }
 }

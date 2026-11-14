@@ -12,6 +12,13 @@ describe("UI 2.0 hash navigation", () => {
       section: "capture",
     });
   });
+  it("round-trips the Reminders tab with the full rail", () => {
+    const route = { page: "reminders" } as const;
+    expect(hashForRoute(route)).toBe("#/reminders");
+    expect(routeFromHash("#/reminders")).toEqual(route);
+    expect(routeUsesCompactGlobalRail(route)).toBe(false);
+  });
+
   it("falls back to overview for the removed Notes route", () => {
     expect(routeFromHash("#/notes")).toEqual({ page: "overview" });
   });
@@ -29,6 +36,15 @@ describe("UI 2.0 hash navigation", () => {
     expect(hashForRoute(route)).toBe("#/meet/5032d7a6-e1ab");
     expect(routeFromHash("#/meet/5032d7a6-e1ab")).toEqual(route);
     expect(routeFromHash("#/meet/../x")).toEqual({ page: "overview" });
+  });
+
+  it("round-trips the recordings list at one day", () => {
+    const route = { page: "meet", day: "2026-11-13" } as const;
+    expect(hashForRoute(route)).toBe("#/meet/day/2026-11-13");
+    expect(routeFromHash("#/meet/day/2026-11-13")).toEqual(route);
+    expect(routeFromHash("#/meet/day/13-11-2026")).toEqual({
+      page: "overview",
+    });
   });
 
   it("round-trips the Recall settings page without mistaking it for a recording", () => {

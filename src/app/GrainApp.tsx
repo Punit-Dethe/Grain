@@ -30,6 +30,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { MeetPage } from "./pages/MeetPage";
 import { ExtensionsPage } from "./pages/ExtensionsPage";
+import { RemindersPage } from "./reminders/RemindersPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
   useHistoryController,
@@ -133,6 +134,7 @@ type IconName =
   | "star"
   | "refresh"
   | "trash"
+  | "bell"
   | "mic";
 
 function Icon({ name, small = false }: { name: IconName; small?: boolean }) {
@@ -244,6 +246,31 @@ function IconSprite() {
         <circle cx="12" cy="12" r="3.5" />
         <path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4" />
       </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14" />
+      </symbol>
+      <symbol id="i-pencil" viewBox="0 0 24 24">
+        <path d="M4 20h4L19 9l-4-4L4 16z" />
+        <path d="m13.5 6.5 4 4" />
+      </symbol>
+      <symbol id="i-link" viewBox="0 0 24 24">
+        <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+        <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+      </symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24">
+        <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z" />
+        <path d="M10 20.5a2 2 0 0 0 4 0" />
+      </symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24">
+        <rect x="4" y="5.5" width="16" height="14.5" rx="2.5" />
+        <path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" />
+      </symbol>
+      <symbol id="i-note" viewBox="0 0 24 24">
+        <path d="M5 6.5h14M5 11.5h14M5 16.5h9" />
+      </symbol>
+      <symbol id="i-chev-up" viewBox="0 0 24 24">
+        <path d="m6 14.5 6-6 6 6" />
+      </symbol>
       <symbol id="i-moon" viewBox="0 0 24 24">
         <path d="M20 15.2A8.4 8.4 0 0 1 8.8 4 8.4 8.4 0 1 0 20 15.2Z" />
       </symbol>
@@ -259,6 +286,12 @@ const NAV_ITEMS = [
     label: "Personalize",
     icon: "zap",
     href: "#/tools/dictionary",
+  },
+  {
+    page: "reminders",
+    label: "Reminders",
+    icon: "bell",
+    href: "#/reminders",
   },
   {
     page: "extensions",
@@ -688,11 +721,14 @@ function NextShell() {
           <MeetPage
             meetingId={route.meeting ?? null}
             settings={route.settings === true}
+            day={route.day ?? null}
           />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
         ) : route.page === "tools" ? (
           <ToolsPage section={route.section} />
+        ) : route.page === "reminders" ? (
+          <RemindersPage />
         ) : route.page === "extensions" ? (
           <ExtensionsPage />
         ) : (

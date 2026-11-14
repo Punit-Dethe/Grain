@@ -65,3 +65,6 @@ pub use settings::{AppSettings, PostProcessProvider, SecretMap};
 // tool schemas, argument parsing, the link policy and every URL Reach builds.
 // The desktop crate owns the OS adapters.
 pub mod reach;
+// [GRAIN] Reminders (docs/Reminders/PLAN.md). Pure: the record, validation,
+// calendar arithmetic, day/time phrases and the Agent tool schemas.
+pub mod reminders;

@@ -68,6 +68,7 @@ mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permi
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_reach; // [GRAIN] Reach: the Agent's first-party OS tools (links, apps, typing, keys, media)
+mod grain_reminders; // [GRAIN] Reminders: local store, one next-due timer, rings in the Agent notch, Agent tool
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
 
 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
@@ -1192,6 +1193,10 @@ pub fn run(cli_args: CliArgs) {
             // the note above, and grain_overlay owns the overlay path.
             secure_input::init(&app_handle);
 
+            // [GRAIN] Reminders: arm the single next-due timer (none when
+            // nothing is pending) and reopen the notch if one was ringing.
+            grain_reminders::start(&app_handle);
+
             // [GRAIN] Update discovery is backend-owned so it still runs when
             // start-hidden skips the WebView, or after close destroyed it to
             // release WebView2 RAM. This is one delayed task, not a resident
@@ -1396,6 +1401,13 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
             grain_commands::change_agent_compact_voice_setting, // [GRAIN]
             grain_reach::change_reach_enabled_setting, // [GRAIN] Reach on/off
+            grain_reminders::reminders_list, // [GRAIN] Reminders
+            grain_reminders::reminders_save,
+            grain_reminders::reminders_delete,
+            grain_reminders::reminders_set_done,
+            grain_reminders::reminders_snooze,
+            grain_reminders::reminders_clear_done,
+            grain_reminders::reminders_open_link,
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
             grain_commands::change_meet_auto_title_setting,   // [GRAIN]
             grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]
@@ -1581,6 +1593,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_theme::ThemeChanged,
             grain_meet::commands::MeetStatusChanged, // [GRAIN]
             grain_meet::commands::MeetDiarizerProgress, // [GRAIN]
+            grain_reminders::RemindersChanged, // [GRAIN]
         ])
 }
 
