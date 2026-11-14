@@ -72,12 +72,409 @@
   margin: 0 12px 6px;
 }
 
+/* ── Look ─────────────────────────────────────────────────────────────────
+   Calm and premium: near-black, three greys of ink, hairlines, quiet pills.
+   Colour only carries meaning (weather glyphs, status, trends). */
+.agent-notch-canvas {
+  --g-ink: #f5f5f7;
+  --g-2: rgba(245, 245, 247, 0.56);
+  --g-3: rgba(245, 245, 247, 0.36);
+  --g-line: rgba(255, 255, 255, 0.07);
+  --g-raise: rgba(255, 255, 255, 0.05);
+  --g-pill: rgba(255, 255, 255, 0.08);
+  --g-pill-hover: rgba(255, 255, 255, 0.13);
+  --g-good: #7fcf9a;
+  --g-warn: #e8c37a;
+  --g-bad: #ef8a80;
+  --g-view: 408px;
+  color: var(--g-ink);
+  font-feature-settings: "tnum" 1;
+}
+
+.gui-t2 {
+  color: var(--g-2);
+}
+
+.gui-t3 {
+  color: var(--g-3);
+}
+
 .gui-canvas {
   display: flex;
   flex-direction: column;
+  gap: 14px;
+}
+
+.gui-hairline {
+  width: 100%;
+  height: 1px;
+  flex-shrink: 0;
+  background: var(--g-line);
+}
+
+.gui-icon {
+  flex-shrink: 0;
+  color: var(--g-2);
+}
+
+.gui-icon.hue-amber {
+  color: #f0c674;
+}
+.gui-icon.hue-blue {
+  color: #8fb8e8;
+}
+.gui-icon.hue-purple {
+  color: #b9a6ec;
+}
+.gui-icon.hue-ice {
+  color: #c9dcef;
+}
+.gui-icon.hue-moon {
+  color: #c8cbe0;
+}
+.gui-icon.hue-green {
+  color: var(--g-good);
+}
+.gui-icon.hue-red {
+  color: var(--g-bad);
+}
+
+.gui-status {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.gui-status.is-good {
+  color: var(--g-good);
+}
+.gui-status.is-warn {
+  color: var(--g-warn);
+}
+.gui-status.is-bad {
+  color: var(--g-bad);
+}
+.gui-status.is-muted {
+  color: var(--g-3);
+}
+
+/* ── Designed views ──────────────────────────────────────────────────── */
+.gui-view {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: var(--g-view);
+  max-width: 100%;
+}
+
+.gui-view-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gui-view-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.gui-wx-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+}
+
+.gui-wx-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gui-wx-temp {
+  font-size: 64px;
+  font-weight: 300;
+  line-height: 0.95;
+  letter-spacing: -0.045em;
+}
+
+.gui-wx-cond {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.gui-wx-hl {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.gui-wx-glyph {
+  margin-top: 6px;
+}
+
+.gui-wx-line {
+  display: block;
+  width: 100%;
+  height: 30px;
+  overflow: visible;
+}
+
+.gui-wx-line path {
+  fill: none;
+  stroke: rgba(245, 245, 247, 0.32);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.gui-wx-hours {
+  display: grid;
+  margin-top: -4px;
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.gui-wx-hours > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.gui-wx-hours > div > :first-child {
+  font-size: 11.5px;
+}
+
+.gui-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.gui-place {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+/* Separators start at the text, past the photo (iOS inset lists). */
+.gui-place + .gui-place::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--g-line);
+}
+
+.gui-place:has(.gui-place-photo:not(.is-small)) + .gui-place::before,
+.gui-place + .gui-place:has(.gui-place-photo:not(.is-small))::before {
+  left: 58px;
+}
+
+.gui-place.is-action {
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background-color 140ms ease;
+}
+
+.gui-place.is-action:hover:not(:disabled),
+.gui-place.is-action:focus-visible {
+  outline: none;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--g-raise) 12%,
+    var(--g-raise) 88%,
+    transparent
+  );
+}
+
+.gui-place-photo {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--g-raise);
+}
+
+.gui-place-photo.is-small {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.gui-place-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.gui-place-name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-place-detail {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-place-side {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--g-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gui-place-side .gui-status {
+  font-size: 11.5px;
+}
+
+.gui-journey {
+  gap: 14px;
+}
+
+.gui-journey-route {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.gui-journey-code {
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.gui-journey-time {
+  margin-top: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gui-journey-end {
+  text-align: right;
+}
+
+.gui-journey-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 1px;
+  margin-bottom: 18px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.gui-journey-done {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(245, 245, 247, 0.6);
+}
+
+.gui-journey-mode {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--agc-bg);
+  transform: translate(-50%, -50%);
+}
+
+.gui-journey-mode.is-plane .gui-icon {
+  transform: rotate(45deg);
+}
+
+.gui-journey-mode .gui-icon {
+  color: var(--g-ink);
+}
+
+.gui-facts {
+  display: grid;
   gap: 12px;
 }
 
+.gui-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+}
+
+.gui-fact-value {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.gui-hero-label {
+  font-size: 12px;
+}
+
+.gui-hero-value {
+  font-size: 48px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.gui-hero-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.gui-hero-line.is-up {
+  color: var(--g-good);
+}
+
+.gui-hero-line.is-down {
+  color: var(--g-bad);
+}
+
+.gui-hero-detail {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+/* ── Building blocks ─────────────────────────────────────────────────── */
 .gui-stack {
   display: flex;
   flex-direction: column;
@@ -98,7 +495,7 @@
 }
 
 .gui-stack.gap-l {
-  gap: 16px;
+  gap: 18px;
 }
 
 .gui-stack.align-start {
@@ -120,101 +517,87 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 10px 12px;
-  border-radius: 12px;
-  background: var(--agc-raise);
-  box-shadow: inset 0 0 0 1px var(--notch-line);
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--g-raise);
 }
 
 .gui-heading {
-  color: var(--agc-ink);
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
   line-height: 1.25;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 .gui-heading.is-l {
-  font-size: 34px;
-  font-weight: 500;
-  line-height: 1.05;
-  letter-spacing: -0.03em;
+  font-size: 44px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.04em;
 }
 
 .gui-heading.is-s {
-  color: var(--agc-faint);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: var(--g-3);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
 .gui-text {
   margin: 0;
-  color: var(--agc-ink);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .gui-text.is-muted {
-  color: var(--agc-muted);
+  color: var(--g-2);
 }
 
-.gui-text.is-faint,
-.gui-faint {
-  color: var(--agc-faint);
+.gui-text.is-faint {
+  color: var(--g-3);
 }
 
 .gui-markdown {
-  color: var(--agc-ink);
-}
-
-.gui-icon {
-  flex-shrink: 0;
-  color: var(--agc-light);
-}
-
-.gui-badge {
-  align-self: flex-start;
-  display: inline-flex;
-  padding: 1px 8px;
-  border-radius: 999px;
-  box-shadow: inset 0 0 0 1px var(--notch-line);
-  color: var(--agc-muted);
-  font-size: 11px;
-  white-space: nowrap;
+  max-width: var(--g-view);
+  font-size: 13px;
 }
 
 .gui-stat {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   min-width: 0;
-}
-
-.gui-stat-label {
-  color: var(--agc-faint);
-  font-size: 11px;
+  font-size: 11.5px;
 }
 
 .gui-stat-value {
-  color: var(--agc-ink);
   font-size: 22px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.025em;
 }
 
 .gui-stat-detail {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: var(--agc-muted);
-  font-size: 11.5px;
+  color: var(--g-2);
+}
+
+.gui-stat-detail.is-up {
+  color: var(--g-good);
+}
+
+.gui-stat-detail.is-down {
+  color: var(--g-bad);
 }
 
 .gui-progress {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
+  font-size: 12.5px;
 }
 
 .gui-progress-head {
@@ -224,36 +607,33 @@
 }
 
 .gui-progress-track {
-  height: 4px;
+  height: 3px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--agc-raise);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .gui-progress-fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--agc-fill);
-}
-
-.gui-divider {
-  width: 100%;
-  height: 1px;
-  margin: 0;
-  border: 0;
-  background: var(--notch-line);
+  background: rgba(245, 245, 247, 0.75);
 }
 
 .gui-details {
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
 .gui-pair {
   display: flex;
   justify-content: space-between;
   gap: 24px;
+  padding: 7px 0;
+  font-size: 13px;
+}
+
+.gui-pair + .gui-pair {
+  border-top: 1px solid var(--g-line);
 }
 
 .gui-table-wrap {
@@ -263,145 +643,119 @@
 
 .gui-table {
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 12.5px;
 }
 
 .gui-table th {
-  padding: 0 14px 5px 0;
-  color: var(--agc-faint);
-  font-size: 11px;
+  padding: 0 16px 6px 0;
+  color: var(--g-3);
+  font-size: 11.5px;
   font-weight: 500;
   text-align: left;
   white-space: nowrap;
 }
 
 .gui-table td {
-  padding: 5px 14px 5px 0;
-  border-top: 1px solid var(--notch-line);
-  color: var(--agc-ink);
+  padding: 7px 16px 7px 0;
+  border-top: 1px solid var(--g-line);
 }
 
 .gui-steps {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   padding: 0;
+  font-size: 13px;
   list-style: none;
 }
 
 .gui-steps li {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 10px;
 }
 
 .gui-step-n {
   flex-shrink: 0;
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--agc-raise);
-  color: var(--agc-muted);
-  font-size: 10.5px;
+  width: 14px;
+  color: var(--g-3);
+  font-size: 12px;
+  text-align: right;
 }
 
-.gui-list {
-  display: flex;
-  flex-direction: column;
-  margin: 0 -8px;
+.gui-image {
+  margin: 0;
+  width: var(--g-view);
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--g-raise);
 }
 
-.gui-item {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.gui-image img {
+  display: block;
   width: 100%;
-  padding: 7px 8px;
-  border: 0;
-  border-radius: 10px;
-  background: none;
-  color: inherit;
-  font: inherit;
-  text-align: left;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 240ms ease;
 }
 
-.gui-item.is-action {
-  cursor: pointer;
-  transition: background-color 120ms ease;
+.gui-image.is-ready img {
+  opacity: 1;
 }
 
-.gui-item.is-action:hover:not(:disabled),
-.gui-item.is-action:focus-visible {
-  background: var(--agc-raise);
-  outline: none;
+.gui-image.is-square {
+  width: 200px;
 }
 
-.gui-item-main {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
+.gui-image.is-square img {
+  aspect-ratio: 1;
+}
+
+.gui-image figcaption {
+  padding: 7px 12px 8px;
+  color: var(--g-2);
+  font-size: 12px;
+}
+
+.gui-stack.is-row > .gui-image {
+  flex: 1 1 0;
   min-width: 0;
 }
 
-.gui-item-title {
-  color: var(--agc-ink);
-  font-size: 13px;
-}
-
-.gui-item-sub {
-  color: var(--agc-muted);
-  font-size: 11.5px;
-}
-
-.gui-item-meta {
-  flex-shrink: 0;
-  color: var(--agc-faint);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-
-.gui-buttons {
+.gui-pills {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.gui-button {
-  height: 26px;
-  padding: 0 12px;
+.gui-pill {
+  height: 28px;
+  padding: 0 13px;
   border: 0;
   border-radius: 999px;
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--notch-line);
-  color: var(--agc-ink);
+  background: var(--g-pill);
+  color: var(--g-ink);
   font: inherit;
   font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   transition:
-    background-color 120ms ease,
-    opacity 120ms ease;
+    background-color 140ms ease,
+    opacity 140ms ease;
 }
 
-.gui-button:hover:not(:disabled),
-.gui-button:focus-visible {
-  background: var(--agc-raise);
+.gui-pill:hover:not(:disabled),
+.gui-pill:focus-visible {
   outline: none;
+  background: var(--g-pill-hover);
 }
 
-.gui-button.is-primary {
-  background: var(--agc-fill);
-  box-shadow: none;
-  color: var(--agc-bg);
-  font-weight: 500;
-}
-
-.gui-button:disabled,
-.gui-item:disabled {
+.gui-pill:disabled,
+.gui-place:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -410,31 +764,34 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: var(--g-view);
+  max-width: 100%;
 }
 
 .gui-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11.5px;
+  gap: 5px;
+  font-size: 12px;
 }
 
 .gui-input {
   box-sizing: border-box;
   width: 100%;
-  padding: 6px 9px;
+  height: 32px;
+  padding: 0 11px;
   border: 0;
-  border-radius: 8px;
-  background: var(--agc-raise);
-  box-shadow: inset 0 0 0 1px var(--notch-line);
-  color: var(--agc-ink);
+  border-radius: 9px;
+  background: var(--g-raise);
+  color: var(--g-ink);
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   outline: none;
+  transition: background-color 140ms ease;
 }
 
 .gui-input:focus {
-  box-shadow: inset 0 0 0 1px var(--agc-dim);
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .gui-empty {
@@ -446,196 +803,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .gui-content,
-  .gui-item,
-  .gui-button {
+  .gui-place,
+  .gui-pill,
+  .gui-input,
+  .gui-image img {
     transition: none;
   }
-}
-
-/* ── Colour ───────────────────────────────────────────────────────────────
-   The model picks a tone per reply (TONES in library.tsx). `--t` is the
-   accent; components with a tone class tint themselves from it. */
-.tone-blue {
-  --t: #5b9cff;
-}
-.tone-sky {
-  --t: #56c2f5;
-}
-.tone-teal {
-  --t: #3dd6c1;
-}
-.tone-green {
-  --t: #4ade80;
-}
-.tone-amber {
-  --t: #fbbf24;
-}
-.tone-orange {
-  --t: #fb923c;
-}
-.tone-red {
-  --t: #f87171;
-}
-.tone-pink {
-  --t: #f472b6;
-}
-.tone-purple {
-  --t: #a78bfa;
-}
-.tone-indigo {
-  --t: #818cf8;
-}
-.tone-slate {
-  --t: #94a3b8;
-}
-
-/* The Canvas tone washes the whole shell (header included) in a soft glow
-   from the top edge, so the mood reaches past the content box. */
-.agent-notch:has(.gui-canvas.tone-blue) {
-  --wash: #5b9cff;
-}
-.agent-notch:has(.gui-canvas.tone-sky) {
-  --wash: #56c2f5;
-}
-.agent-notch:has(.gui-canvas.tone-teal) {
-  --wash: #3dd6c1;
-}
-.agent-notch:has(.gui-canvas.tone-green) {
-  --wash: #4ade80;
-}
-.agent-notch:has(.gui-canvas.tone-amber) {
-  --wash: #fbbf24;
-}
-.agent-notch:has(.gui-canvas.tone-orange) {
-  --wash: #fb923c;
-}
-.agent-notch:has(.gui-canvas.tone-red) {
-  --wash: #f87171;
-}
-.agent-notch:has(.gui-canvas.tone-pink) {
-  --wash: #f472b6;
-}
-.agent-notch:has(.gui-canvas.tone-purple) {
-  --wash: #a78bfa;
-}
-.agent-notch:has(.gui-canvas.tone-indigo) {
-  --wash: #818cf8;
-}
-.agent-notch:has(.gui-canvas.tone-slate) {
-  --wash: #94a3b8;
-}
-
-.agent-notch.is-reply:has(.gui-canvas[class*="tone-"]) {
-  background:
-    radial-gradient(
-      140% 85% at 50% 0%,
-      color-mix(in srgb, var(--wash) 24%, transparent),
-      color-mix(in srgb, var(--wash) 7%, transparent) 55%,
-      transparent 85%
-    ),
-    var(--agc-bg);
-}
-
-.gui-icon[class*="tone-"],
-.gui-heading[class*="tone-"] {
-  color: var(--t);
-}
-
-.gui-card[class*="tone-"] {
-  background: linear-gradient(
-    155deg,
-    color-mix(in srgb, var(--t) 30%, transparent),
-    color-mix(in srgb, var(--t) 9%, transparent)
-  );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t) 34%, transparent);
-}
-
-.gui-badge[class*="tone-"] {
-  background: color-mix(in srgb, var(--t) 18%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t) 40%, transparent);
-  color: color-mix(in srgb, var(--t) 70%, #fff);
-}
-
-.gui-stat[class*="tone-"] .gui-stat-value {
-  color: var(--t);
-}
-
-.gui-stat-detail.is-up {
-  color: #4ade80;
-}
-
-.gui-stat-detail.is-down {
-  color: #f87171;
-}
-
-.gui-progress[class*="tone-"] .gui-progress-fill {
-  background: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--t) 70%, #fff),
-    var(--t)
-  );
-}
-
-.gui-button.is-primary[class*="tone-"] {
-  background: var(--t);
-  color: #0a0a0e;
-}
-
-/* ── Images ───────────────────────────────────────────────────────────── */
-.gui-image {
-  margin: 0;
-  width: 100%;
-  overflow: hidden;
-  border-radius: 12px;
-  background: var(--agc-raise);
-  box-shadow: inset 0 0 0 1px var(--notch-line);
-}
-
-.gui-image img {
-  display: block;
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  opacity: 0;
-  transition: opacity 220ms ease;
-}
-
-.gui-image.is-ready img {
-  opacity: 1;
-}
-
-.gui-image.is-square {
-  max-width: 260px;
-}
-
-.gui-image.is-square img {
-  aspect-ratio: 1;
-}
-
-.gui-image.is-tall {
-  max-width: 220px;
-}
-
-.gui-image.is-tall img {
-  aspect-ratio: 3 / 4;
-}
-
-.gui-image figcaption {
-  padding: 6px 10px 7px;
-  color: var(--agc-muted);
-  font-size: 11.5px;
-}
-
-.gui-stack.is-row > .gui-image {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.gui-item-thumb {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  object-fit: cover;
-  background: var(--agc-raise);
 }

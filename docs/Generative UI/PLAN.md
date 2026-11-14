@@ -59,11 +59,11 @@ Windows-only clip (as today). On macOS/Linux the transparent window area is not 
 
 ## Components
 
-`Canvas` (root), `Stack`, `Card`, `Heading`, `Text`, `Markdown`, `Badge`, `Icon`, `Image`, `Stat`, `Progress`, `Divider`, `Details`/`Pair`, `Table`, `Steps`, `List`/`ListItem`, `Buttons`/`Button`, `Form`/`Input`/`Select`. No maps: real map tiles need a map library and network tiles; a place list with "Open in Maps" links (`open_url`) covers the example for now.
+Designed views carry the look; the model only fills in data: `Weather` (+ `Hour` columns, temperature curve), `Places` (+ `Place` rows with photo thumbnails and status), `Journey` (flight/train/bus/drive with progress and facts), `Hero` (one big number). Building blocks for anything else: `Canvas` (root), `Stack`, `Card`, `Heading`, `Text`, `Markdown`, `Badge`, `Icon`, `Image`, `Stat`, `Progress`, `Divider`, `Details`/`Pair`, `Table`, `Steps`, `List`/`ListItem`, `Buttons`/`Button`, `Form`/`Input`/`Select`. No maps: real map tiles need a map library and network tiles; a place list with "Open in Maps" links (`open_url`) covers the example for now.
 
-### Colour (2026-11-15, user: "too dark and monotone")
+### Look (2026-11-15, user picked "Calm Apple-style" from chat mockups)
 
-v1 used only the notch's monochrome tokens and no component had a colour option, so every reply came out grey. Now an optional `tone` (blue, sky, teal, green, amber, orange, red, pink, purple, indigo, slate) on `Canvas`, `Card`, `Heading`, `Icon`, `Stat`, `Badge`, `Progress` and primary `Button`. The `Canvas` tone washes the whole shell in a soft glow from the top (via `:has()` in `canvas.css`); `Stat` trends are green up / red down. A prompt rule maps subjects to tones (weather, money, places, warnings, food) and caps it at one main tone plus two.
+v1 was monochrome and bleak; v2 let the model pick loud tones per reply (shell wash, gradient cards) and read as "AI-generated". v3 is calm: near-black, three greys of ink, hairlines, quiet pills, large light numerals. Colour only carries meaning and is mostly chosen by the components, not the model: weather glyphs colour themselves, status tones (good/warn/bad/muted) for real status, trend green/red. Views are a fixed 408 px wide so replies look consistent.
 
 ### Images
 
