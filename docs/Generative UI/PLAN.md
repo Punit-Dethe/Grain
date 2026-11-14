@@ -21,7 +21,7 @@ Privacy checks done before installing:
 
 - `lang-core` has a **postinstall** script that sends install telemetry to PostHog. Bun does not run dependency lifecycle scripts (not in `trustedDependencies`), so it never runs.
 - Runtime telemetry (system-prompt generation, parser parse) is **opt-in** (`OPENUI_RUNTIME_TELEMETRY_ENABLED`) and in a browser there is no `process.env` to opt in with. Off.
-- In dev builds `react-lang` auto-mounts its devtools widget into the page. `canvas/devtoolsOff.ts` sets the library's own opt-out flag before the library is imported.
+- In dev builds `react-lang` auto-mounts its devtools inspector widget into the page (it floated over the notch). `vite.config.ts` aliases `@openuidev/devtools` to `canvas/devtoolsStub.ts`, which renders nothing.
 
 ## Shape
 

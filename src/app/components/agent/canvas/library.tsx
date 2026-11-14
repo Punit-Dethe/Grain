@@ -7,7 +7,6 @@
 // (Weather, Places, Journey, Hero) carry the design; the model only fills in
 // their data. Colour is never decoration: it comes from meaning (weather,
 // status, trends), mostly chosen here rather than by the model.
-import "./devtoolsOff";
 import {
   action,
   createLibrary,

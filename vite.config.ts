@@ -14,6 +14,11 @@ export default defineConfig({
     alias: {
       "@": resolve(__dirname, "./src/app"),
       "@/bindings": resolve(__dirname, "./src/app/bindings.ts"),
+      // OpenUI's dev-only inspector widget would float over the Agent notch.
+      "@openuidev/devtools": resolve(
+        __dirname,
+        "./src/app/components/agent/canvas/devtoolsStub.ts",
+      ),
     },
   },
 

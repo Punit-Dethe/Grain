@@ -1,7 +1,6 @@
 // A generated view, opened full in the notch from its card in the chat
 // (experiment, see docs/Generative UI/PLAN.md). The shell fits the view, within
 // bounds; a view never scrolls: one taller than the bounds is scaled to fit.
-import "./devtoolsOff";
 import "./canvas.css";
 import {
   Component,
