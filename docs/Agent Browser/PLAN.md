@@ -24,9 +24,12 @@ mapping from Agent tools to CLI commands.
 - **Minimum version 0.43.0**, the contract verified on 2026-11-15:
   `{success,data,error}` JSON envelope, `--` ending options for `fill`, `tN`
   tab ids. Older releases (e.g. 0.31) type a literal `--`.
-- **Headless, own session, ephemeral profile.** Every call passes
-  `--session grain`, never the machine-wide default session. No profile or
-  saved auth: the Agent's browser never sees the user's own cookies.
+- **Own session, own persistent profile.** Every call passes `--session grain`,
+  never the machine-wide default session, and `--profile <app data>/agent-browser/profile`
+  (always an absolute folder, never a Chrome profile name, so the user's real
+  Chrome sign-ins are never reused). Sign-ins made there persist; Disconnect
+  deletes the folder, switching off keeps it.
+- **Background by default, visible on demand (2026-11-15).** See "Display".
 - **No per-call confirmations**, matching the current Agent policy (enabling a
   tool extension authorises its calls). Read-only tools are classed `Safe`,
   the rest `Confirm`, so a future confirmation policy has the data.
@@ -46,7 +49,8 @@ mapping from Agent tools to CLI commands.
 
 `open`, `snapshot`, `read`, `click`, `fill`, `press`, `select`, `check`,
 `scroll`, `navigate` (back/forward/reload), `wait`, `tabs`
-(list/new/switch/close), `close`. Each maps to one `agent-browser` subcommand.
+(list/new/switch/close), `show`, `hide`, `close`. Each maps to one
+`agent-browser` subcommand (`show`/`hide` run `get url` under the new display).
 
 Deliberately not exposed: `eval` (arbitrary JavaScript), `upload`, cookies,
 storage, `state`, `auth`, network routing, `--cdp`/attach to the user's
@@ -75,11 +79,29 @@ browser, screenshots. Add one only with a reason and a test.
   would never reach end-of-file, so stdout goes to a per-call temp file and
   Grain waits on the CLI process, not the pipe.
 
+## Display
+
+The Agent decides. `show` (reason `sign_in`, `user_action` or `view`) brings
+the window up at the current page; `hide` sends it back. The tool replies tell
+the Agent what to do next: for a sign-in, ask the user to sign in (never ask
+for or type passwords or codes), end the turn, wait for "done", then `hide`.
+
+- Grain passes `--headed true|false` on every launching call. A change makes
+  agent-browser relaunch on the same profile and reopen the page (verified on
+  0.43.0: cookies and URL survive both directions), so a sign-in done while
+  visible keeps working in the background.
+- While visible, each call first runs `get cdp-url` (never launches). "Browser
+  not launched" means the user closed the window: Grain switches to the
+  background, continues, and tells the Agent so. The window never pops back up
+  uninvited.
+- Each run starts in the background; `hide`, `close`, switch-off and exit
+  reset it. agent-browser does not idle-close a visible browser, but it is on
+  screen, so the user can close it, and Grain closes it on switch-off and exit.
+
 ## Follow-ups (not built)
 
-1. Optional "show the browser window" (`--headed`); headed browsers are not
-   idle-closed upstream, so it needs its own close rule.
-2. Optional persistent profile for sites the user wants the Agent signed in to.
-3. Optional Grain-managed install (pinned npm platform package + integrity
+1. A "Sign out of all sites" button that deletes the profile without
+   disconnecting.
+2. Optional Grain-managed install (pinned npm platform package + integrity
    hash) for a one-click Connect.
-4. Screenshots into the Agent's vision path.
+3. Screenshots into the Agent's vision path.

@@ -15,6 +15,15 @@
 //!   closes the session when the extension is switched off and when Grain
 //!   exits, so the browser never lingers.
 //!
+//! Background and visible: Grain remembers which display the Agent asked for
+//! (`show` / `hide`) and passes `--headed` explicitly on every launching call,
+//! with one persistent profile in Grain's app data folder. A change relaunches
+//! the browser on that profile, so sign-ins survive the switch. While visible,
+//! each call first asks (without launching) whether the browser still runs; if
+//! the user closed the window, Grain goes back to the background instead of
+//! popping it up again. Disconnecting the extension deletes the profile and
+//! with it every sign-in.
+//!
 //! Process boundary: the binary is run directly (never through a shell or the
 //! npm `.cmd` shim), every argument is a separate argv entry, and no console
 //! window opens. The first command starts the daemon, which inherits the CLI's
@@ -28,10 +37,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use grain_core::agent_browser::{self as core, Call, ReplyError};
+use grain_core::agent_browser::{self as core, Call, Display, ReplyError};
 use grain_core::capability_index::ExtensionDirectoryEntry;
 use grain_core::execution::{ActionOutcome, FailureClass, SuccessData};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager as _};
 
 pub(crate) use grain_core::agent_browser::EXTENSION_ID;
 
@@ -52,6 +61,31 @@ static USED: AtomicBool = AtomicBool::new(false);
 /// calls in order; this also orders calls from overlapping turns.
 static GATE: Mutex<()> = Mutex::new(());
 static OUTPUT_SEQ: AtomicU64 = AtomicU64::new(0);
+/// Whether the Agent asked for the browser on screen. Every run starts in the
+/// background; `hide`, `close`, switch-off and a user-closed window reset it.
+static VISIBLE: AtomicBool = AtomicBool::new(false);
+
+fn display() -> Display {
+    if VISIBLE.load(Ordering::SeqCst) {
+        Display::Visible
+    } else {
+        Display::Background
+    }
+}
+
+/// The persistent profile: Grain's own folder, never the user's Chrome
+/// profile. Holds the sites the user signed in to through `show`.
+fn profile_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("Could not find Grain's data folder: {error}"))?
+        .join("agent-browser")
+        .join("profile");
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create the browser profile folder: {error}"))?;
+    Ok(dir)
+}
 
 #[derive(Clone, Debug)]
 struct Install {
@@ -99,18 +133,50 @@ fn close_session(timeout: Duration) {
 }
 
 fn close_locked(timeout: Duration, _gate: std::sync::MutexGuard<'_, ()>) {
+    VISIBLE.store(false, Ordering::SeqCst);
     if !USED.swap(false, Ordering::SeqCst) {
         return;
     }
-    let Some(install) = cached_install() else {
-        return;
-    };
-    let mut args: Vec<&str> = core::global_args().to_vec();
-    args.push("close");
+    if let Some(install) = cached_install() {
+        send_close(&install, timeout);
+    }
+}
+
+fn send_close(install: &Install, timeout: Duration) {
+    let mut args = core::session_args();
+    args.push("close".into());
     match run_captured(&install.path, &args, timeout) {
         Ok(_) => log::info!("[GRAIN] agent-browser: closed the session"),
         Err(error) => log::warn!("[GRAIN] agent-browser: close failed: {error}"),
     }
+}
+
+/// Disconnect: close the browser, then delete its profile and every sign-in
+/// in it. Runs off the caller's thread; the profile is only deleted once the
+/// browser has let go of it.
+pub(crate) fn disconnect_in_background(app: &AppHandle) {
+    let profile = app
+        .path()
+        .app_data_dir()
+        .map(|dir| dir.join("agent-browser"));
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = GATE.lock().unwrap_or_else(|e| e.into_inner());
+        VISIBLE.store(false, Ordering::SeqCst);
+        USED.store(false, Ordering::SeqCst);
+        // A browser from an earlier run may still hold the profile.
+        if let Ok(install) = resolve() {
+            send_close(&install, SHORT_TIMEOUT);
+        }
+        if let Ok(dir) = profile {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => log::info!("[GRAIN] agent-browser: deleted the browser profile"),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    log::warn!("[GRAIN] agent-browser: could not delete the profile: {error}")
+                }
+            }
+        }
+    });
 }
 
 /// Find and verify `agent-browser`, for the Extensions page's Connect.
@@ -178,8 +244,12 @@ pub(crate) async fn call(
     // Arguments can be private text; log the shape only.
     log::info!("[GRAIN] agent-browser: {}", parsed.describe_for_log());
     let read_only = parsed.read_only();
+    let profile = match profile_dir(app) {
+        Ok(profile) => profile,
+        Err(message) => return failed(FailureClass::Internal, &message),
+    };
     let task = parsed.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || run_call(&task))
+    let result = tauri::async_runtime::spawn_blocking(move || run_call(&task, &profile))
         .await
         .unwrap_or_else(|error| {
             Err(Failure::internal(format!(
@@ -230,12 +300,31 @@ fn failed(class: FailureClass, message: &str) -> ActionOutcome {
 }
 
 /// Blocking: one CLI process for one call.
-fn run_call(call: &Call) -> Result<String, Failure> {
+fn run_call(call: &Call, profile: &Path) -> Result<String, Failure> {
     let _gate = GATE.lock().unwrap_or_else(|e| e.into_inner());
     let install = resolve().map_err(|message| Failure::new(FailureClass::NotFound, message))?;
-    let command = call.argv();
-    let mut args: Vec<&str> = core::global_args().to_vec();
-    args.extend(command.iter().map(String::as_str));
+    let profile = profile
+        .to_str()
+        .ok_or_else(|| Failure::internal("Grain's data folder path is not valid Unicode."))?;
+    let before = display();
+    // The user closing the visible window means "put it away": continue in
+    // the background rather than relaunching a window they just closed.
+    let mut user_closed = false;
+    if before == Display::Visible
+        && call.display_change().is_none()
+        && !browser_still_running(&install)
+    {
+        VISIBLE.store(false, Ordering::SeqCst);
+        user_closed = true;
+        log::info!("[GRAIN] agent-browser: the user closed the window; back to the background");
+    }
+    let target = call.display_change().unwrap_or_else(display);
+    let mut args = match call {
+        // Closing never launches, so it carries no launch flags.
+        Call::Close => core::session_args(),
+        _ => core::launch_args(target, profile),
+    };
+    args.extend(call.argv());
     // From here a browser may exist, even if this call fails or times out.
     USED.store(true, Ordering::SeqCst);
     let (status, stdout) = run_captured(
@@ -246,10 +335,15 @@ fn run_call(call: &Call) -> Result<String, Failure> {
     .map_err(|message| Failure::new(FailureClass::Internal, message))?;
     match core::render(call, &stdout) {
         Ok(body) => {
+            VISIBLE.store(target == Display::Visible, Ordering::SeqCst);
             if matches!(call, Call::Close) {
                 USED.store(false, Ordering::SeqCst);
             }
-            Ok(body)
+            Ok(if user_closed {
+                format!("{body}\n{}", core::USER_CLOSED_WINDOW)
+            } else {
+                body
+            })
         }
         Err(ReplyError::Command(message)) => Err(Failure::new(classify(&message), message)),
         Err(ReplyError::Malformed) => Err(Failure::internal(format!(
@@ -260,6 +354,16 @@ fn run_call(call: &Call) -> Result<String, Failure> {
             core::format_version(core::MIN_VERSION)
         ))),
     }
+}
+
+/// Whether Grain's browser still runs, asked without launching one.
+fn browser_still_running(install: &Install) -> bool {
+    let mut args = core::session_args();
+    args.extend(core::liveness_argv().map(String::from));
+    run_captured(&install.path, &args, SHORT_TIMEOUT)
+        .map(|(_, stdout)| core::browser_running(&stdout))
+        // Unsure: keep the user's chosen display.
+        .unwrap_or(true)
 }
 
 fn classify(message: &str) -> FailureClass {
@@ -393,9 +497,9 @@ fn search_dirs() -> Vec<PathBuf> {
 /// Run `path args…` and return its exit status and stdout. Waits on the
 /// process (bounded by `timeout`, then killed), never on the stdout pipe: the
 /// daemon the first command starts inherits stdout and keeps it open.
-fn run_captured(
+fn run_captured<S: AsRef<std::ffi::OsStr>>(
     path: &Path,
-    args: &[&str],
+    args: &[S],
     timeout: Duration,
 ) -> Result<(ExitStatus, String), String> {
     let output_path = std::env::temp_dir().join(format!(
@@ -565,9 +669,13 @@ mod tests {
     #[test]
     #[ignore = "needs agent-browser installed and network access"]
     fn live_session_opens_reads_and_closes_a_page() {
+        let profile =
+            std::env::temp_dir().join(format!("grain-agent-browser-live-{}", std::process::id()));
+        std::fs::create_dir_all(&profile).expect("profile dir");
         let step = |action: &str, args: serde_json::Value| {
             let call = core::parse(action, &args).expect("valid call");
-            run_call(&call).unwrap_or_else(|failure| panic!("{action}: {}", failure.message))
+            run_call(&call, &profile)
+                .unwrap_or_else(|failure| panic!("{action}: {}", failure.message))
         };
         let install = resolve().expect("agent-browser installed");
         println!(
@@ -586,9 +694,12 @@ mod tests {
             &serde_json::json!({"url": "file:///C:/Windows/win.ini"}),
         );
         assert!(refused.is_err());
-        let stale = run_call(&core::parse("click", &serde_json::json!({"ref": "@e999"})).unwrap())
-            .err()
-            .expect("unknown ref fails");
+        let stale = run_call(
+            &core::parse("click", &serde_json::json!({"ref": "@e999"})).unwrap(),
+            &profile,
+        )
+        .err()
+        .expect("unknown ref fails");
         assert!(
             stale.message.contains("take a new snapshot"),
             "{}",
@@ -596,5 +707,51 @@ mod tests {
         );
         assert_eq!(step("close", serde_json::json!({})), "Closed the browser.");
         assert!(!USED.load(Ordering::SeqCst));
+        let _ = std::fs::remove_dir_all(&profile);
+    }
+
+    /// Opens a real browser window on screen briefly. Run with
+    /// `cargo test --lib live_display -- --ignored`.
+    #[test]
+    #[ignore = "needs agent-browser, network access and a desktop"]
+    fn live_display_switches_keep_the_page_and_respect_a_closed_window() {
+        let profile = std::env::temp_dir().join(format!(
+            "grain-agent-browser-display-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&profile).expect("profile dir");
+        let step = |action: &str, args: serde_json::Value| {
+            let call = core::parse(action, &args).expect("valid call");
+            run_call(&call, &profile)
+                .unwrap_or_else(|failure| panic!("{action}: {}", failure.message))
+        };
+        step("open", serde_json::json!({"url": "https://example.com"}));
+        assert_eq!(display(), Display::Background);
+
+        let shown = step("show", serde_json::json!({"reason": "view"}));
+        assert!(
+            shown.contains("on the user's screen at https://example.com/"),
+            "{shown}"
+        );
+        assert_eq!(display(), Display::Visible);
+        // Working while visible keeps it visible and on the same page.
+        let text = step("read", serde_json::json!({}));
+        assert!(text.contains("documentation"), "{text}");
+        assert_eq!(display(), Display::Visible);
+
+        let hidden = step("hide", serde_json::json!({}));
+        assert!(hidden.contains("https://example.com/"), "{hidden}");
+        assert_eq!(display(), Display::Background);
+
+        // The user closes the window: the next call stays in the background.
+        step("show", serde_json::json!({"reason": "sign_in"}));
+        assert_eq!(display(), Display::Visible);
+        send_close(&resolve().expect("installed"), SHORT_TIMEOUT);
+        let after = step("tabs", serde_json::json!({"action": "list"}));
+        assert!(after.ends_with(core::USER_CLOSED_WINDOW), "{after}");
+        assert_eq!(display(), Display::Background);
+
+        step("close", serde_json::json!({}));
+        let _ = std::fs::remove_dir_all(&profile);
     }
 }

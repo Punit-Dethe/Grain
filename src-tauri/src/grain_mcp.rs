@@ -1518,7 +1518,9 @@ async fn set_no_account_connected(
     }
     let result = update_no_account(app, id, browser, connected).await;
     if browser && !connected {
-        crate::grain_agent_browser::close_in_background();
+        // Disconnect forgets everything: the browser closes and its profile,
+        // with every sign-in, is deleted. Switching off keeps sign-ins.
+        crate::grain_agent_browser::disconnect_in_background(app);
     }
     Some(result)
 }

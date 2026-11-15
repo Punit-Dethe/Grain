@@ -26,6 +26,13 @@
 //!   session another agent may be using.
 //! - Page content is untrusted. Text read from a page reaches the model marked
 //!   as such.
+//!
+//! Background and visible: the browser normally runs headless. The Agent calls
+//! `show` when the user must act in the page (sign in, a verification step, a
+//! final confirmation) or asks to see it, and `hide` when that is done. A
+//! change of `--headed` makes `agent-browser` relaunch the browser on the same
+//! persistent profile and reopen the page, so sign-ins made while visible stay
+//! signed in afterwards in the background.
 
 use serde_json::{json, Map, Value};
 
@@ -34,7 +41,7 @@ pub const EXTENSION_ID: &str = "grain.agent_browser";
 /// Name the model and the Extensions page show.
 pub const PROVIDER_NAME: &str = "Agent Browser";
 /// Directory description the model reads when deciding whether to use it.
-pub const DESCRIPTION: &str = "Browse the web in Grain's own background browser: open pages, read them, click links and buttons, fill and submit forms, switch tabs. Take a snapshot first, then act on its @e refs.";
+pub const DESCRIPTION: &str = "Browse the web in Grain's own browser: open, read, click, fill forms, switch tabs. Runs in the background; show it when the user must sign in or confirm something, or asks to see the page. Sign-ins are remembered.";
 
 /// Grain's `agent-browser` session name. Isolates Grain's browser from any
 /// other agent on the machine using the default session.
@@ -51,7 +58,9 @@ pub const INSTALL_HINT: &str =
     "Install it with `npm install -g agent-browser`, then run `agent-browser install`.";
 
 /// Bump when the tool set or a policy here changes meaning.
-const POLICY_VERSION: u32 = 1;
+const POLICY_VERSION: u32 = 2;
+/// Longest note `show` passes on for the user.
+const MAX_SHOW_MESSAGE_CHARS: usize = 200;
 /// Longest text one `fill` sends.
 const MAX_FILL_CHARS: usize = 10_000;
 /// Longest select value, selector or other short field.
@@ -288,9 +297,37 @@ pub fn tools() -> Vec<Tool> {
             }),
         },
         Tool {
+            name: "show",
+            title: "Show the browser to the user",
+            description: "Bring the browser window up on the user's screen at the current page. Use only when the user must act in the page: reason=sign_in (a login wall), user_action (a CAPTCHA, verification code, payment or final confirmation the user should make), or view (the user asks to see the page). Never type passwords, codes or card details yourself. message: one short line on what the user should do.",
+            keywords: &["sign in", "log in", "login", "show page", "let me see", "captcha", "verify", "confirm", "pay"],
+            read_only: false,
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "enum": ["sign_in", "user_action", "view"]},
+                    "message": {"type": "string", "description": "What the user should do, e.g. Sign in to your Amazon account."}
+                },
+                "required": ["reason"],
+                "additionalProperties": false
+            }),
+        },
+        Tool {
+            name: "hide",
+            title: "Move the browser to the background",
+            description: "Hide the browser window again and keep working in the background on the same page. Call it once the user has signed in or finished what show asked for. Sign-ins stay signed in.",
+            keywords: &["hide browser", "background", "done signing in", "close window"],
+            read_only: false,
+            schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        },
+        Tool {
             name: "close",
             title: "Close the browser",
-            description: "Close the Agent's browser and every tab when the browsing task is finished. It also closes by itself after 10 idle minutes.",
+            description: "Close the Agent's browser and every tab when the browsing task is finished. It also closes by itself after 10 idle minutes in the background.",
             keywords: &["close browser", "done browsing", "quit"],
             read_only: false,
             schema: json!({
@@ -369,6 +406,21 @@ pub enum TabAction {
     Close(Option<String>),
 }
 
+/// Why the Agent shows the browser; decides what it is told to do next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShowReason {
+    SignIn,
+    UserAction,
+    View,
+}
+
+/// Whether the browser runs in the background or in a window on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Display {
+    Background,
+    Visible,
+}
+
 /// One validated call, ready to become an argv.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
@@ -387,6 +439,8 @@ pub enum Call {
     Navigate(Nav),
     Wait(WaitFor),
     Tabs(TabAction),
+    Show(ShowReason, Option<String>),
+    Hide,
     Close,
 }
 
@@ -559,6 +613,28 @@ pub fn parse(action: &str, args: &Value) -> Result<Call, String> {
                 }
             }))
         }
+        "show" => Ok(Call::Show(
+            match required(args, "reason")? {
+                "sign_in" => ShowReason::SignIn,
+                "user_action" => ShowReason::UserAction,
+                "view" => ShowReason::View,
+                other => {
+                    return Err(format!(
+                        "`{}` is not sign_in, user_action or view",
+                        clip(other, 40)
+                    ))
+                }
+            },
+            match text(args, "message").map(str::trim) {
+                None | Some("") => None,
+                Some(message) => Some(bounded(
+                    &message.replace(['\n', '\t'], " "),
+                    MAX_SHOW_MESSAGE_CHARS,
+                    "the message",
+                )?),
+            },
+        )),
+        "hide" => Ok(Call::Hide),
         "close" => Ok(Call::Close),
         other => Err(format!("the Agent Browser has no action `{other}`")),
     }
@@ -605,7 +681,19 @@ impl Call {
             Call::Tabs(TabAction::Switch(tab)) => words(&["tab", tab]),
             Call::Tabs(TabAction::Close(None)) => words(&["tab", "close"]),
             Call::Tabs(TabAction::Close(Some(tab))) => words(&["tab", "close", tab]),
+            // A cheap command under the new display: the change of `--headed`
+            // relaunches the browser and reopens the page; this reads its URL.
+            Call::Show(..) | Call::Hide => words(&["get", "url"]),
             Call::Close => words(&["close"]),
+        }
+    }
+
+    /// The display this call asks for, if it changes it.
+    pub fn display_change(&self) -> Option<Display> {
+        match self {
+            Call::Show(..) => Some(Display::Visible),
+            Call::Hide | Call::Close => Some(Display::Background),
+            _ => None,
         }
     }
 
@@ -618,10 +706,10 @@ impl Call {
     }
 
     /// Seconds the CLI may take before Grain stops waiting. The first `open`
-    /// also starts the daemon and the browser.
+    /// also starts the daemon and the browser; show/hide relaunch it.
     pub fn timeout_secs(&self) -> u64 {
         match self {
-            Call::Open(_) | Call::Tabs(TabAction::New(Some(_))) => 60,
+            Call::Open(_) | Call::Tabs(TabAction::New(Some(_))) | Call::Show(..) | Call::Hide => 60,
             _ => 40,
         }
     }
@@ -640,15 +728,56 @@ impl Call {
                 format!("fill {} chars={}", target.as_str(), text.chars().count())
             }
             Call::Select(target, _) => format!("select {}", target.as_str()),
+            Call::Show(reason, _) => format!("show {reason:?}"),
+            Call::Hide => "hide".to_string(),
             _ => self.argv().join(" "),
         }
     }
 }
 
-/// Global flags every call carries, before the subcommand.
-pub fn global_args() -> [&'static str; 3] {
-    ["--session", SESSION, "--json"]
+/// Flags that address Grain's session without launching anything: `close`
+/// and the liveness check.
+pub fn session_args() -> Vec<String> {
+    ["--session", SESSION, "--json"].map(String::from).to_vec()
 }
+
+/// Flags for a command that may launch the browser. `--headed` is always
+/// explicit, so a change of display relaunches the browser on the same
+/// `profile` (an absolute directory owned by Grain, never a Chrome profile
+/// name: a name would reuse the user's own Chrome sign-ins).
+pub fn launch_args(display: Display, profile: &str) -> Vec<String> {
+    let mut args = session_args();
+    args.extend(
+        [
+            "--headed",
+            match display {
+                Display::Visible => "true",
+                Display::Background => "false",
+            },
+            "--profile",
+            profile,
+        ]
+        .map(String::from),
+    );
+    args
+}
+
+/// Asks whether Grain's browser is running, without launching one (a closed
+/// browser answers "Browser not launched").
+pub fn liveness_argv() -> [&'static str; 2] {
+    ["get", "cdp-url"]
+}
+
+/// Whether a [`liveness_argv`] reply says the browser is running.
+pub fn browser_running(stdout: &str) -> bool {
+    parse_envelope(stdout)
+        .and_then(|envelope| envelope.get("success").and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+/// Appended to a reply when the user closed the visible window themselves.
+pub const USER_CLOSED_WINDOW: &str =
+    "(The user closed the browser window, so it now runs in the background.)";
 
 // ── Replies ────────────────────────────────────────────────────────────────
 
@@ -769,6 +898,27 @@ pub fn render(call: &Call, stdout: &str) -> Result<String, ReplyError> {
             format!("Switched to tab {tab}. Take a new snapshot.")
         }
         Call::Tabs(TabAction::Close(_)) => "Closed the tab.".to_string(),
+        Call::Show(reason, message) => {
+            let at = if field("url").is_empty() || field("url") == "about:blank" {
+                "(no page open yet; open one now so the user sees it)".to_string()
+            } else {
+                format!("at {}", clip(field("url"), 300))
+            };
+            let ask = message
+                .as_deref()
+                .map(|m| format!(" Suggested words: \"{m}\"."))
+                .unwrap_or_default();
+            let next = match reason {
+                ShowReason::SignIn => "Ask the user to sign in there. Never ask for or type their password or codes. End your turn and wait until they say they are done, then call hide: the sign-in is remembered, so later visits work in the background.",
+                ShowReason::UserAction => "Tell the user in one sentence exactly what to do there. End your turn and wait until they say they are done, then take a snapshot to check and call hide.",
+                ShowReason::View => "Tell the user the page is in front of them. Leave it visible while they look; call hide when the task moves on.",
+            };
+            format!("The browser window is now on the user's screen {at}.{ask} {next}")
+        }
+        Call::Hide => format!(
+            "The browser is back in the background on {}. Sites the user signed in to stay signed in.",
+            page()
+        ),
         Call::Close => "Closed the browser.".to_string(),
     })
 }
@@ -952,7 +1102,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_closed_object_schema_and_a_parse_arm() {
         let tools = tools();
-        assert_eq!(tools.len(), 13);
+        assert_eq!(tools.len(), 15);
         for tool in &tools {
             assert_eq!(tool.schema["type"], "object", "{}", tool.name);
             assert_eq!(tool.schema["additionalProperties"], false, "{}", tool.name);
@@ -982,6 +1132,7 @@ mod tests {
                 "scroll" => json!({"direction": "down"}),
                 "navigate" => json!({"action": "back"}),
                 "tabs" => json!({"action": "new"}),
+                "show" => json!({"reason": "view"}),
                 _ => json!({}),
             };
             let call = parse(tool.name, &sample).unwrap_or_else(|e| panic!("{}: {e}", tool.name));
@@ -1037,6 +1188,79 @@ mod tests {
         );
         assert_eq!(argv("tabs", json!({"action": "close"})), ["tab", "close"]);
         assert_eq!(argv("close", json!({})), ["close"]);
+        assert_eq!(argv("show", json!({"reason": "sign_in"})), ["get", "url"]);
+        assert_eq!(argv("hide", json!({})), ["get", "url"]);
+    }
+
+    #[test]
+    fn display_is_explicit_on_every_launching_call_and_profile_is_a_path_slot() {
+        let profile = "C:\\Users\\me\\AppData\\Roaming\\com.grain.app\\agent-browser\\profile";
+        assert_eq!(
+            launch_args(Display::Background, profile),
+            [
+                "--session",
+                "grain",
+                "--json",
+                "--headed",
+                "false",
+                "--profile",
+                profile
+            ]
+        );
+        assert_eq!(launch_args(Display::Visible, profile)[4], "true");
+        assert_eq!(session_args(), ["--session", "grain", "--json"]);
+        let show = |args: Value| parse("show", &args).unwrap();
+        assert_eq!(
+            show(json!({"reason": "sign_in"})).display_change(),
+            Some(Display::Visible)
+        );
+        assert_eq!(Call::Hide.display_change(), Some(Display::Background));
+        assert_eq!(Call::Close.display_change(), Some(Display::Background));
+        assert_eq!(Call::Read(None).display_change(), None);
+        assert!(parse("show", &json!({"reason": "always"})).is_err());
+        assert!(parse("show", &json!({})).is_err());
+        assert!(parse(
+            "show",
+            &json!({"reason": "view", "message": "x".repeat(MAX_SHOW_MESSAGE_CHARS + 1)})
+        )
+        .is_err());
+        assert_eq!(
+            show(json!({"reason": "view", "message": " line one\nline two "})),
+            Call::Show(ShowReason::View, Some("line one line two".into()))
+        );
+    }
+
+    #[test]
+    fn liveness_reads_the_envelope_and_never_launches() {
+        assert_eq!(liveness_argv(), ["get", "cdp-url"]);
+        assert!(browser_running(
+            r#"{"success":true,"data":{"cdpUrl":"ws://127.0.0.1:1/devtools"},"error":null}"#
+        ));
+        assert!(!browser_running(
+            r#"{"success":false,"data":null,"error":"Browser not launched"}"#
+        ));
+        assert!(!browser_running(""));
+    }
+
+    #[test]
+    fn show_and_hide_tell_the_agent_what_to_do_next() {
+        let reply =
+            r#"{"success":true,"data":{"url":"https://www.amazon.com/ap/signin"},"error":null}"#;
+        let sign_in = Call::Show(ShowReason::SignIn, Some("Sign in to Amazon".into()));
+        let text = render(&sign_in, reply).unwrap();
+        assert!(text.contains("at https://www.amazon.com/ap/signin"));
+        assert!(text.contains("Sign in to Amazon"));
+        assert!(text.contains("Never ask for or type their password"));
+        assert!(text.contains("call hide"));
+        let view = render(&Call::Show(ShowReason::View, None), reply).unwrap();
+        assert!(view.contains("Leave it visible"));
+        let blank = r#"{"success":true,"data":{"url":"about:blank"},"error":null}"#;
+        assert!(render(&Call::Show(ShowReason::View, None), blank)
+            .unwrap()
+            .contains("no page open yet"));
+        let hidden = render(&Call::Hide, reply).unwrap();
+        assert!(hidden.starts_with("The browser is back in the background"));
+        assert!(hidden.contains("stay signed in"));
     }
 
     #[test]
