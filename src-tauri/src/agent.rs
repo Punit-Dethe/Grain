@@ -897,19 +897,32 @@ fn has_region(hwnd: windows::Win32::Foundation::HWND) -> bool {
     }
 }
 
-/// [GRAIN] A window region (`set_notch_region`) turns DWM's frame off for the
-/// window, and user32 then paints a classic title bar ("Grain Assist") across
-/// its top on activation changes — even with decorations off. It showed in the
-/// clip slack beside the shell. Skip all non-client painting: the notch has no
-/// frame to draw. Removed again when the window is destroyed. Subclassing only
-/// works on the window's own (main) thread, so it hops there.
+/// [GRAIN] The notch must never show a Windows frame. tao keeps the caption
+/// styles (WS_CAPTION, WS_THICKFRAME, system menu and boxes) on undecorated
+/// windows and only hides them by sizing the client over the frame; once a
+/// window region (`set_notch_region`) turns DWM's frame off, user32 draws the
+/// classic one ("Grain Assist", minimise/maximise/close) — over the slack, or
+/// the whole window whenever its non-client size is recomputed.
+///
+/// So the frame is removed at its source: the caption styles are stripped now
+/// and on every later style change (tao re-applies its styles, e.g. on a
+/// focusable change), the non-client area is always zero, and nothing
+/// non-client is ever painted. Removed again when the window is destroyed.
+/// Subclassing only works on the window's own (main) thread, so it hops there.
 #[cfg(windows)]
 fn suppress_classic_frame(window: &tauri::WebviewWindow, hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
-    use windows::Win32::UI::WindowsAndMessaging::{WM_NCACTIVATE, WM_NCDESTROY, WM_NCPAINT};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, STYLESTRUCT,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_NCACTIVATE,
+        WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT, WM_STYLECHANGING, WS_CAPTION, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    };
 
     const ID: usize = 0x4e4f_5443; // "NOTC"
+    const FRAME: u32 =
+        WS_CAPTION.0 | WS_THICKFRAME.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0;
 
     unsafe extern "system" fn frameless(
         hwnd: HWND,
@@ -920,6 +933,14 @@ fn suppress_classic_frame(window: &tauri::WebviewWindow, hwnd: windows::Win32::F
         _data: usize,
     ) -> LRESULT {
         match message {
+            // No frame may come back, whoever sets the styles.
+            WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 => {
+                let change = &mut *(lparam.0 as *mut STYLESTRUCT);
+                change.styleNew &= !FRAME;
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            }
+            // The client is the whole window: no non-client area at all.
+            WM_NCCALCSIZE if wparam.0 != 0 => LRESULT(0),
             WM_NCPAINT => LRESULT(0),
             // lParam -1: handle activation without repainting the caption.
             WM_NCACTIVATE => DefSubclassProc(hwnd, message, wparam, LPARAM(-1)),
@@ -934,7 +955,25 @@ fn suppress_classic_frame(window: &tauri::WebviewWindow, hwnd: windows::Win32::F
     // HWND is not Send; its value is.
     let raw = hwnd.0 as isize;
     let _ = window.run_on_main_thread(move || unsafe {
-        let _ = SetWindowSubclass(HWND(raw as *mut _), Some(frameless), ID, 0);
+        let hwnd = HWND(raw as *mut _);
+        if !SetWindowSubclass(hwnd, Some(frameless), ID, 0).as_bool() {
+            log::warn!("[GRAIN] agent: could not subclass the notch window");
+            return;
+        }
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if style as u32 & FRAME != 0 {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, (style as u32 & !FRAME) as isize);
+        }
+        // Recompute the (now empty) frame right away.
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
     });
 }
 
