@@ -14,6 +14,7 @@ import {
   signInCancelled,
   unwrapResult,
 } from "./extensionRuntime";
+import agentBrowserIcon from "./icons/agent-browser.svg";
 import airtableIcon from "./icons/airtable.png";
 import asanaIcon from "./icons/asana.svg";
 import calcomIcon from "./icons/calcom.png";
@@ -36,7 +37,6 @@ import mondayIcon from "./icons/monday.png";
 import notionIcon from "./icons/notion.png";
 import otterIcon from "./icons/otter.png";
 import raindropIcon from "./icons/raindrop.png";
-import reachIcon from "./icons/reach.svg";
 import readwiseIcon from "./icons/readwise.png";
 import stripeIcon from "./icons/stripe.png";
 import todoistIcon from "./icons/todoist.svg";
@@ -44,6 +44,7 @@ import zapierIcon from "./icons/zapier.svg";
 import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
+  ["agent-browser", { src: agentBrowserIcon }],
   ["airtable", { src: airtableIcon }],
   ["asana", { src: asanaIcon }],
   ["atlassian", { src: atlassianIcon, darkSrc: atlassianDarkIcon }],
@@ -63,14 +64,13 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["notion", { src: notionIcon }],
   ["otter", { src: otterIcon }],
   ["raindrop", { src: raindropIcon }],
-  ["reach", { src: reachIcon }],
   ["readwise", { src: readwiseIcon }],
   ["stripe", { src: stripeIcon }],
   ["todoist", { src: todoistIcon }],
   ["zapier", { src: zapierIcon }],
 ]);
 
-/** Extensions without an account (Exa, Reach) connect without a browser. */
+/** Extensions without an account (Exa, Agent Browser) connect without a sign-in. */
 const noAccount = (row: McpProviderStatus) => row.state === "no_account";
 
 export function McpPresets({

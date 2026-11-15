@@ -16,12 +16,11 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::{Datelike, TimeZone, Timelike};
-use grain_core::capability_index::{ActionInput, ExtensionDirectoryEntry};
+use grain_core::capability_index::ExtensionDirectoryEntry;
 use grain_core::execution::{ActionOutcome, FailureClass, SuccessData};
 use grain_core::reminders::{
     self, Call, Date, Reminder, ReminderInput, ReminderSource, ReminderStatus, Validated,
 };
-use grain_sdk::action::ActionRisk;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::AppHandle;
@@ -410,7 +409,7 @@ pub async fn reminders_open_link(app: AppHandle, id: String, index: u32) -> Resu
         .and_then(|r| r.links.into_iter().nth(index as usize))
         .ok_or("That link no longer exists.")?
         .url;
-    let url = grain_core::reach::validate_link(&url)?;
+    let url = grain_core::links::validate_link(&url)?;
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|e| format!("Could not open the link: {e}"))
@@ -430,41 +429,23 @@ pub(crate) fn directory() -> ExtensionDirectoryEntry {
 }
 
 /// The compiled tool set and its digest. No I/O.
-pub(crate) fn catalog() -> (String, Vec<crate::grain_reach::CatalogTool>) {
+pub(crate) fn catalog() -> (String, Vec<crate::grain_compiled_tools::CatalogTool>) {
     let tools = reminders::tools()
         .into_iter()
-        .map(|tool| crate::grain_reach::CatalogTool {
-            action: ActionInput {
-                extension_id: EXTENSION_ID.to_string(),
-                action_id: tool.name.to_string(),
-                canonical_id: format!("{EXTENSION_ID}:{}", tool.name),
-                provider_name: reminders::PROVIDER_NAME.to_string(),
-                title: tool.title.to_string(),
-                aliases: vec![reminders::PROVIDER_NAME.to_string(), tool.name.to_string()],
-                namespaces: Vec::new(),
-                tags: tool.keywords.iter().map(|k| k.to_string()).collect(),
-                examples: Vec::new(),
-                phrases: grain_core::capability_agent::tool_search_phrases(tool.name),
-                params: Vec::new(),
-                when_to_use: String::new(),
-                when_not_to_use: String::new(),
-                description: format!(
-                    "{} {}",
-                    tool.description,
-                    grain_core::capability_agent::schema_search_text(&tool.schema)
-                ),
-                provider_context: vec![reminders::DESCRIPTION.to_string()],
-                risk: if tool.read_only {
-                    ActionRisk::Safe
-                } else {
-                    ActionRisk::Confirm
+        .map(|tool| {
+            crate::grain_compiled_tools::catalog_tool(
+                EXTENSION_ID,
+                reminders::PROVIDER_NAME,
+                reminders::DESCRIPTION,
+                crate::grain_compiled_tools::ToolDef {
+                    name: tool.name,
+                    title: tool.title,
+                    description: tool.description,
+                    keywords: tool.keywords,
+                    read_only: tool.read_only,
+                    schema: tool.schema,
                 },
-                enabled: true,
-                platform_ok: true,
-                quarantined: false,
-            },
-            description: tool.description.to_string(),
-            parameters: tool.schema,
+            )
         })
         .collect();
     (reminders::catalog_digest(), tools)

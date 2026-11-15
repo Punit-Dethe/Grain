@@ -185,7 +185,7 @@ pub(crate) async fn run_agent_calls(
 ) -> Vec<ActionOutcome> {
     let mut outcomes: Vec<Option<ActionOutcome>> = prepared.iter().map(|_| None).collect();
     let mut mcp: std::collections::BTreeMap<String, Vec<usize>> = Default::default();
-    let mut reach = Vec::new();
+    let mut compiled = Vec::new();
     for (index, call) in prepared.iter().enumerate() {
         log::info!(
             "[GRAIN] agent-tool-trace {}",
@@ -196,7 +196,7 @@ pub(crate) async fn run_agent_calls(
         );
         if is_compiled(&call.extension_id) {
             match current_manifest_digest(app, call) {
-                Some(digest) if call.still_valid(&digest, now_ms()).is_ok() => reach.push(index),
+                Some(digest) if call.still_valid(&digest, now_ms()).is_ok() => compiled.push(index),
                 _ => {
                     outcomes[index] = Some(failed(
                         FailureClass::Cancelled,
@@ -241,19 +241,19 @@ pub(crate) async fn run_agent_calls(
             .map(|(index, result)| (index, mcp_outcome(result, &prepared[index])))
             .collect::<Vec<_>>()
     });
-    // Compiled tools (Reach, Reminders) run one after another, in the order the
-    // model wrote them, alongside the MCP batches: Reach acts on whatever
-    // window is in front.
-    let reach_run = async {
-        let mut done = Vec::with_capacity(reach.len());
-        for index in reach {
+    // Compiled tools (Agent Browser, Reminders) run one after another, in the
+    // order the model wrote them, alongside the MCP batches: browser steps
+    // (open, then snapshot, then click) act on one shared page.
+    let compiled_run = async {
+        let mut done = Vec::with_capacity(compiled.len());
+        for index in compiled {
             done.push((index, compiled_call(app, &prepared[index]).await));
         }
         done
     };
-    let (mcp_done, reach_done) =
-        futures_util::future::join(futures_util::future::join_all(mcp_groups), reach_run).await;
-    for (index, outcome) in mcp_done.into_iter().flatten().chain(reach_done) {
+    let (mcp_done, compiled_done) =
+        futures_util::future::join(futures_util::future::join_all(mcp_groups), compiled_run).await;
+    for (index, outcome) in mcp_done.into_iter().flatten().chain(compiled_done) {
         outcomes[index] = Some(outcome);
     }
     outcomes
@@ -300,13 +300,8 @@ pub async fn resume(app: &AppHandle, token: &str, approve: bool) -> ActionOutcom
 /// Check that the MCP connection is still enabled. The transport verifies the
 /// loaded tool digest again before dispatch on the same short-lived service.
 fn current_manifest_digest(app: &AppHandle, prepared: &PreparedCall) -> Option<String> {
-    if prepared.extension_id == crate::grain_reach::EXTENSION_ID {
-        // Compiled in: the digest only changes with a new build.
-        return crate::grain_reach::is_enabled(app)
-            .then(grain_core::reach::catalog_digest);
-    }
-    if prepared.extension_id == crate::grain_reminders::EXTENSION_ID {
-        return Some(grain_core::reminders::catalog_digest());
+    if is_compiled(&prepared.extension_id) {
+        return crate::grain_compiled_tools::current_digest(app, &prepared.extension_id);
     }
     crate::grain_mcp::is_enabled_extension(app, &prepared.extension_id)
         .then(|| prepared.manifest_digest.clone())
@@ -332,16 +327,12 @@ async fn execute_revalidated(app: &AppHandle, prepared: &PreparedCall) -> Action
 
 /// Agent tools compiled into Grain rather than served over MCP.
 fn is_compiled(extension_id: &str) -> bool {
-    extension_id == crate::grain_reach::EXTENSION_ID
-        || extension_id == crate::grain_reminders::EXTENSION_ID
+    crate::grain_compiled_tools::is_compiled(extension_id)
 }
 
 async fn compiled_call(app: &AppHandle, call: &PreparedCall) -> ActionOutcome {
-    if call.extension_id == crate::grain_reminders::EXTENSION_ID {
-        crate::grain_reminders::call(app, &call.action_id, &call.arguments).await
-    } else {
-        crate::grain_reach::call(app, &call.action_id, &call.arguments).await
-    }
+    crate::grain_compiled_tools::call(app, &call.extension_id, &call.action_id, &call.arguments)
+        .await
 }
 
 /// Execute a prepared call against its provider.

@@ -639,12 +639,12 @@ async changeAgentCompactVoiceSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
- * [GRAIN] Turn Reach on or off (Extensions page). Off removes its tools from
- * the Agent on the next model round; a running call finishes.
+ * [GRAIN] Turn the Agent Browser on or off. Off removes its tools from the
+ * Agent on the next model round and closes its browser.
  */
-async changeReachEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+async changeAgentBrowserEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_reach_enabled_setting", { enabled }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_browser_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2309,8 +2309,8 @@ mcp_enabled_providers?: string[];
  */
 mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
 /**
- * [GRAIN] Connected extensions that need no account (Exa, Reach). Their
- * Agent switch stays `mcp_enabled_providers` / `reach_enabled`.
+ * [GRAIN] Connected extensions that need no account (Exa, Agent Browser).
+ * Their Agent switch stays `mcp_enabled_providers` / `agent_browser_enabled`.
  */
 mcp_no_account_connected?: string[];
 /**
@@ -2336,11 +2336,11 @@ agent_talk_back?: boolean;
  */
 agent_compact_voice?: boolean; 
 /**
- * [GRAIN] Reach: the Agent's first-party OS tools (open links, apps and
- * app pages, type into the focused field, press Enter, media, settings).
- * OFF by default; off removes Reach from the Agent's tool directory.
+ * [GRAIN] Agent Browser: the Agent's web browser through Vercel Labs'
+ * `agent-browser` CLI (open, read, click and fill pages). OFF by default;
+ * off removes it from the Agent's tool directory and closes its browser.
  */
-reach_enabled?: boolean; 
+agent_browser_enabled?: boolean; 
 /**
  * [GRAIN] Recall: write a summary of each meeting as soon as its transcript
  * is published, through the configured AI provider. OFF by default while

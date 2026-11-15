@@ -786,8 +786,8 @@ pub struct AppSettings {
     /// credential vault and never enter AppSettings.
     #[serde(default)]
     pub mcp_oauth_client_ids: HashMap<String, String>,
-    /// [GRAIN] Connected extensions that need no account (Exa, Reach). Their
-    /// Agent switch stays `mcp_enabled_providers` / `reach_enabled`.
+    /// [GRAIN] Connected extensions that need no account (Exa, Agent Browser).
+    /// Their Agent switch stays `mcp_enabled_providers` / `agent_browser_enabled`.
     #[serde(default)]
     pub mcp_no_account_connected: Vec<String>,
     /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
@@ -809,11 +809,11 @@ pub struct AppSettings {
     /// talk-back.
     #[serde(default = "default_true")]
     pub agent_compact_voice: bool,
-    /// [GRAIN] Reach: the Agent's first-party OS tools (open links, apps and
-    /// app pages, type into the focused field, press Enter, media, settings).
-    /// OFF by default; off removes Reach from the Agent's tool directory.
+    /// [GRAIN] Agent Browser: the Agent's web browser through Vercel Labs'
+    /// `agent-browser` CLI (open, read, click and fill pages). OFF by default;
+    /// off removes it from the Agent's tool directory and closes its browser.
     #[serde(default)]
-    pub reach_enabled: bool,
+    pub agent_browser_enabled: bool,
     /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
     /// is published, through the configured AI provider. OFF by default while
     /// the feature is in development; off costs nothing.
@@ -1623,7 +1623,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_screen_image: false,
         agent_talk_back: false,
         agent_compact_voice: true,
-        reach_enabled: false,
+        agent_browser_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,
         meet_auto_title: false,

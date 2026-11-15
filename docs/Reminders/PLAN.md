@@ -17,7 +17,7 @@ A reminder has four primitives:
 | `title` | yes      | The topic. ≤ 200 chars.                                     |
 | `date`  | yes      | Local calendar date, `YYYY-MM-DD`.                          |
 | `time`  | no       | Local wall-clock `HH:MM` (24 h). Absent = all-day.          |
-| `links` | no       | ≤ 5 links, each checked by Reach's link policy. Shown as "Open". |
+| `links` | no       | ≤ 5 links, each checked by Grain's link policy (`links.rs`). Shown as "Open". |
 
 Plus optional `details` (≤ 2 000 chars) for anything the Agent captured that is
 not a link.
@@ -171,7 +171,7 @@ closed ring at once (the view labels them "Missed"), and reminders still
 
 ## 6. Agent tool
 
-Provider `grain.reminders` ("Reminders"), compiled in beside Reach and MCP
+Provider `grain.reminders` ("Reminders"), compiled in beside the Agent Browser and MCP
 (same hooks: `capability.rs` directory/catalog/enabled, `action_exec.rs`
 dispatch). Always on: it only writes Grain's own local file. The directory
 description carries today's date, because the Agent prompt has none.
@@ -181,7 +181,7 @@ description carries today's date, because the Agent prompt has none.
   `tomorrow` or a weekday name (next occurrence). `time` accepts `18:00`,
   `6pm`, `6:30 pm`. The result echoes the resolved day and time so the model
   can confirm it to the user. Links are captured now, only from the
-  arguments, and checked by `reach::validate_link`.
+  arguments, and checked by `links::validate_link`.
 * `list_reminders { date? }` — read-only: upcoming reminders (or one day),
   with today's date in the reply.
 
@@ -203,7 +203,7 @@ Firing: the same single timer. On fire, a `notify` reminder rings as today; an
 2. submits `instruction` to the Agent through the existing summon/submit entry
    (`agent.rs`), exactly as if typed in the notch, with the reminder's links
    appended as context; tools available are the user's enabled ones (e.g.
-   Reach's `open_link` for a Meet URL);
+   the Agent Browser's `open` for a web page);
 3. records the Agent's final reply as `last_result`, status `done` or
    `failed`, and shows it in the notch and the tab.
 

@@ -67,7 +67,8 @@ mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebVi
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-mod grain_reach; // [GRAIN] Reach: the Agent's first-party OS tools (links, apps, typing, keys, media)
+mod grain_agent_browser; // [GRAIN] Agent Browser: the Agent's web browser via the agent-browser CLI, one process per call
+mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Agent Browser, Reminders)
 mod grain_reminders; // [GRAIN] Reminders: local store, one next-due timer, rings in the Agent notch, Agent tool
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
 
@@ -1307,6 +1308,11 @@ pub fn run(cli_args: CliArgs) {
         if let tauri::RunEvent::Reopen { .. } = &event {
             show_main_window(app);
         }
+        // [GRAIN] Close the Agent Browser's session so its browser never
+        // outlives Grain (bounded; its idle timeout covers a hard kill).
+        if let tauri::RunEvent::Exit = &event {
+            grain_agent_browser::close_at_exit();
+        }
         // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
         // process alive in the tray so dictation/rolling/pill keep working —
         // unless launched with --no-tray, where closing is meant to quit. The
@@ -1400,7 +1406,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
             grain_commands::change_agent_compact_voice_setting, // [GRAIN]
-            grain_reach::change_reach_enabled_setting, // [GRAIN] Reach on/off
+            grain_agent_browser::change_agent_browser_enabled_setting, // [GRAIN] Agent Browser on/off
             grain_reminders::reminders_list, // [GRAIN] Reminders
             grain_reminders::reminders_save,
             grain_reminders::reminders_delete,

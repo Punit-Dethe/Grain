@@ -107,7 +107,7 @@ pub struct Validated {
     pub details: Option<String>,
 }
 
-/// Check and normalise an input. Links go through Reach's link policy.
+/// Check and normalise an input. Links go through Grain's link policy.
 pub fn validate(input: &ReminderInput) -> Result<Validated, String> {
     let title = clean_line(&input.title);
     if title.is_empty() {
@@ -129,7 +129,7 @@ pub fn validate(input: &ReminderInput) -> Result<Validated, String> {
         if raw.trim().is_empty() {
             continue;
         }
-        let url = crate::reach::validate_link(raw)?;
+        let url = crate::links::validate_link(raw)?;
         if !links.iter().any(|link| link.url == url) {
             links.push(ReminderLink { url });
         }

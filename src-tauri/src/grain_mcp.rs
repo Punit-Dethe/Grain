@@ -1464,26 +1464,28 @@ pub async fn mcp_provider_status(
         });
     }
     if presets_only {
-        // Reach is Grain's own Agent tool set, listed with the extensions so
-        // it connects and switches like them.
+        // The Agent Browser is compiled into Grain (it runs the user's
+        // agent-browser CLI), listed with the extensions so it connects and
+        // switches like them.
         statuses.push(McpProviderStatus {
-            id: REACH_ID.into(),
-            name: grain_core::reach::PROVIDER_NAME.into(),
-            description: "Open links and apps, type, and control media.".into(),
+            id: AGENT_BROWSER_ID.into(),
+            name: grain_core::agent_browser::PROVIDER_NAME.into(),
+            description: "Let the Agent browse the web in its own background browser. Uses agent-browser by Vercel Labs.".into(),
             endpoint: String::new(),
-            setup_url: String::new(),
+            setup_url: "https://agent-browser.dev".into(),
             requires_client_credentials: false,
             client_id_configured: false,
-            connected: settings.reach_enabled || no_account_connected(&settings, REACH_ID),
-            enabled: settings.reach_enabled,
+            connected: settings.agent_browser_enabled
+                || no_account_connected(&settings, AGENT_BROWSER_ID),
+            enabled: settings.agent_browser_enabled,
             state: "no_account".into(),
         });
     }
     Ok(statuses)
 }
 
-/// Extensions page id of Reach, which is not a catalog row.
-const REACH_ID: &str = "reach";
+/// Extensions page id of the Agent Browser, which is not a catalog row.
+const AGENT_BROWSER_ID: &str = "agent-browser";
 
 fn no_account_connected(settings: &crate::settings::AppSettings, id: &str) -> bool {
     settings
@@ -1492,28 +1494,39 @@ fn no_account_connected(settings: &crate::settings::AppSettings, id: &str) -> bo
         .any(|value| value == id)
 }
 
-/// Connect or disconnect an extension that needs no account (Exa, Reach):
-/// a saved mark, with the Agent switch turned on at connect and off at
-/// disconnect. Returns None for an extension that signs in to an account.
+/// Connect or disconnect an extension that needs no account (Exa, Agent
+/// Browser): a saved mark, with the Agent switch turned on at connect and off
+/// at disconnect. Returns None for an extension that signs in to an account.
 async fn set_no_account_connected(
     app: &AppHandle,
     id: &str,
     connected: bool,
 ) -> Option<Result<(), String>> {
-    let reach = id == REACH_ID;
-    if !reach
+    let browser = id == AGENT_BROWSER_ID;
+    if !browser
         && !provider(id)
             .is_ok_and(|item| is_preset(item) && item.registration == Registration::Anonymous)
     {
         return None;
     }
-    Some(update_no_account(app, id, reach, connected).await)
+    if browser && connected {
+        // Connect only once the CLI is installed and new enough; the error
+        // says how to install or update it.
+        if let Err(error) = crate::grain_agent_browser::check_installed().await {
+            return Some(Err(error));
+        }
+    }
+    let result = update_no_account(app, id, browser, connected).await;
+    if browser && !connected {
+        crate::grain_agent_browser::close_in_background();
+    }
+    Some(result)
 }
 
 async fn update_no_account(
     app: &AppHandle,
     id: &str,
-    reach: bool,
+    browser: bool,
     connected: bool,
 ) -> Result<(), String> {
     let ctx = app
@@ -1526,8 +1539,8 @@ async fn update_no_account(
         if connected {
             settings.mcp_no_account_connected.push(id.into());
         }
-        if reach {
-            settings.reach_enabled = connected;
+        if browser {
+            settings.agent_browser_enabled = connected;
             return;
         }
         settings.mcp_enabled_providers.retain(|value| value != id);
@@ -1536,7 +1549,7 @@ async fn update_no_account(
             settings.mcp_enabled_providers.sort();
         }
     };
-    if reach {
+    if browser {
         return ctx
             .update_settings(apply)
             .map_err(|error| error.to_string());
@@ -1704,23 +1717,35 @@ pub async fn mcp_set_provider_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    if id == REACH_ID {
+    if id == AGENT_BROWSER_ID {
         let settings = crate::settings::get_settings(&app);
-        if enabled && !settings.reach_enabled && !no_account_connected(&settings, REACH_ID) {
-            return Err("connect Reach before enabling it".into());
+        if enabled
+            && !settings.agent_browser_enabled
+            && !no_account_connected(&settings, AGENT_BROWSER_ID)
+        {
+            return Err("connect the Agent Browser before enabling it".into());
+        }
+        if enabled {
+            // It may have been uninstalled since it was connected.
+            crate::grain_agent_browser::check_installed().await?;
         }
         let ctx = app
             .try_state::<std::sync::Arc<grain_core::AppContext>>()
             .ok_or("application context unavailable")?;
-        return ctx
-            .update_settings(|settings| {
-                // Switching off keeps Reach connected.
-                if !no_account_connected(settings, REACH_ID) {
-                    settings.mcp_no_account_connected.push(REACH_ID.into());
-                }
-                settings.reach_enabled = enabled;
-            })
-            .map_err(|error| error.to_string());
+        ctx.update_settings(|settings| {
+            // Switching off keeps it connected.
+            if !no_account_connected(settings, AGENT_BROWSER_ID) {
+                settings
+                    .mcp_no_account_connected
+                    .push(AGENT_BROWSER_ID.into());
+            }
+            settings.agent_browser_enabled = enabled;
+        })
+        .map_err(|error| error.to_string())?;
+        if !enabled {
+            crate::grain_agent_browser::close_in_background();
+        }
+        return Ok(());
     }
     let item = provider(&id)?;
     require_provider_access(&app, item)?;
