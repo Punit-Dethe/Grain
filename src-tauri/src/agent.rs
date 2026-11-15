@@ -904,10 +904,7 @@ fn has_region(hwnd: windows::Win32::Foundation::HWND) -> bool {
 /// frame to draw. Removed again when the window is destroyed. Subclassing only
 /// works on the window's own (main) thread, so it hops there.
 #[cfg(windows)]
-fn suppress_classic_frame(
-    window: &tauri::WebviewWindow,
-    hwnd: windows::Win32::Foundation::HWND,
-) {
+fn suppress_classic_frame(window: &tauri::WebviewWindow, hwnd: windows::Win32::Foundation::HWND) {
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::{WM_NCACTIVATE, WM_NCDESTROY, WM_NCPAINT};
@@ -2702,9 +2699,9 @@ pub async fn agent_run(
     // mid-chat applies from the next reply.
     let ui_prompt = {
         let settings = crate::settings::get_settings(&app);
-        ui_spec.filter(|_| settings.agent_dynamic_ui).map(|spec| {
-            crate::grain_agent_canvas::ui_prompt(&spec, settings.agent_polished_ui)
-        })
+        ui_spec
+            .filter(|_| settings.agent_dynamic_ui)
+            .map(|spec| crate::grain_agent_canvas::ui_prompt(&spec, settings.agent_polished_ui))
     };
     let mut messages = messages;
     if ui_prompt.is_none() {
@@ -2726,12 +2723,19 @@ pub async fn agent_run(
     // A new turn silences the previous reply's talk-back.
     crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
+    // A short spoken "Got it" while it works (skipped when the reply is quick).
+    let ack = if record {
+        crate::grain_tts::acknowledge(&app)
+    } else {
+        None
+    };
     let mut reply = run
         .wait(
             registration,
             agent_run_owned(&app, messages, context, ui_prompt.as_deref(), &run),
         )
         .await?;
+    drop(ack);
     if let Ok(reply) = &mut reply {
         if ui_prompt.is_some() && reply.confirm_action.is_none() {
             let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);
