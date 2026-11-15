@@ -109,12 +109,12 @@
   gap: 14px;
 }
 
-/* Wide: a short landscape panel. It always takes the full wide width, so the
-   views inside re-arrange across it (see WideLayout in library.tsx). 660 stays
-   inside `.gui-content`'s max-width. */
+/* Wide: a short landscape panel, up to 660 px. Like any view it is only as
+   wide as its content (the shell fits it); the designed views re-arrange
+   across the room (see WideLayout in library.tsx). 660 stays inside
+   `.gui-content`'s max-width. */
 .gui-canvas.is-wide {
   --g-view: 660px;
-  width: var(--g-view);
 }
 
 .gui-canvas.is-wide .gui-stack.is-row {
