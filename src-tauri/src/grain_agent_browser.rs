@@ -293,12 +293,20 @@ fn resolve() -> Result<Install, String> {
     if let Some(install) = cached_install() {
         return Ok(install);
     }
+    let dirs = search_dirs();
+    // What the user's own `agent-browser` command runs comes first.
+    let mut candidates = shim_candidates(&dirs);
+    candidates.extend(core::binary_candidates(&dirs, cfg!(windows)));
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|path| seen.insert(path.clone()));
     let mut too_old: Option<(u32, u32, u32)> = None;
-    for candidate in core::binary_candidates(&search_dirs(), cfg!(windows)) {
+    let mut broken: Option<PathBuf> = None;
+    for candidate in candidates {
         if !candidate.is_file() {
             continue;
         }
         let Some(version) = probe_version(&candidate) else {
+            broken.get_or_insert(candidate);
             continue;
         };
         if !core::version_supported(version) {
@@ -317,19 +325,43 @@ fn resolve() -> Result<Install, String> {
         *INSTALL.lock().unwrap_or_else(|e| e.into_inner()) = Some(install.clone());
         return Ok(install);
     }
-    Err(match too_old {
-        Some(version) => format!(
+    Err(match (too_old, broken) {
+        (Some(version), _) => format!(
             "agent-browser {} is installed, but Grain needs {} or newer. Update it with `agent-browser upgrade` or `npm install -g agent-browser@latest`.",
             core::format_version(version),
             core::format_version(core::MIN_VERSION)
         ),
-        None => format!("agent-browser is not installed. {}", core::INSTALL_HINT),
+        (None, Some(path)) => format!(
+            "agent-browser was found at {} but did not report its version. Reinstall it with `npm install -g agent-browser@latest`, then run `agent-browser install`.",
+            path.display()
+        ),
+        (None, None) => format!("agent-browser is not installed. {}", core::INSTALL_HINT),
     })
 }
 
 fn probe_version(path: &Path) -> Option<(u32, u32, u32)> {
     let (_, stdout) = run_captured(path, &["--version"], SHORT_TIMEOUT).ok()?;
     core::parse_version(&stdout)
+}
+
+/// Native binaries named by npm `.cmd` shims on the search path (Windows).
+fn shim_candidates(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    dirs.iter()
+        .filter_map(|dir| {
+            let shim = dir.join("agent-browser.cmd");
+            // A shim is a few hundred bytes; never read more than a little.
+            let mut text = String::new();
+            std::fs::File::open(&shim)
+                .ok()?
+                .take(4096)
+                .read_to_string(&mut text)
+                .ok()?;
+            core::shim_target(&text).map(|target| dir.join(target))
+        })
+        .collect()
 }
 
 /// `PATH`, then the install directories a GUI app's `PATH` often lacks.
@@ -510,6 +542,21 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.starts_with("Could not start agent-browser"));
+    }
+
+    /// Prints what install discovery finds on this machine. Run with
+    /// `cargo test --lib live_install -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads this machine's agent-browser install"]
+    fn live_install_discovery_reports_what_it_found() {
+        match resolve() {
+            Ok(install) => println!(
+                "found {} at {}",
+                core::format_version(install.version),
+                install.path.display()
+            ),
+            Err(message) => println!("not usable: {message}"),
+        }
     }
 
     /// Drives the real CLI through the real process path. Needs network and an

@@ -894,8 +894,14 @@ pub fn binary_candidates(dirs: &[std::path::PathBuf], windows: bool) -> Vec<std:
         out.push(dir.join(exe));
         if windows {
             // npm global installs: the platform package (0.40+) and the
-            // bundled binary of older releases.
+            // binary bundled in `bin/` by older releases.
             let modules = dir.join("node_modules");
+            for bundled in [
+                "agent-browser-win32-x64.exe",
+                "agent-browser-win32-arm64.exe",
+            ] {
+                out.push(modules.join("agent-browser").join("bin").join(bundled));
+            }
             for platform in ["cli-win32-x64-msvc", "cli-win32-arm64-msvc"] {
                 out.push(
                     modules
@@ -919,6 +925,24 @@ pub fn binary_candidates(dirs: &[std::path::PathBuf], windows: bool) -> Vec<std:
     let mut seen = std::collections::HashSet::new();
     out.retain(|path| seen.insert(path.clone()));
     out
+}
+
+/// The native binary an npm `.cmd` shim launches, relative to the shim's
+/// folder (`"%~dp0node_modules\…\agent-browser….exe" %*`). agent-browser's
+/// postinstall rewrites the shim to point straight at its binary, so this
+/// follows whatever layout the installed release uses. Only a relative `.exe`
+/// path inside the folder is accepted; the shim itself is never run.
+pub fn shim_target(cmd_text: &str) -> Option<String> {
+    let start = cmd_text.find("%~dp0")? + "%~dp0".len();
+    let rest = &cmd_text[start..];
+    let end = rest.find('"')?;
+    let target = rest[..end].trim();
+    let safe = target.to_ascii_lowercase().ends_with(".exe")
+        && !target.contains("..")
+        && !target.contains('%')
+        && !target.contains(':')
+        && !target.starts_with(['\\', '/']);
+    safe.then(|| target.to_string())
 }
 
 #[cfg(test)]
@@ -1129,6 +1153,14 @@ mod tests {
                 .join("bin")
                 .join("agent-browser.exe")
         ));
+        // The layout 0.31 and other pre-0.40 releases install.
+        assert!(windows.contains(
+            &std::path::Path::new("npm")
+                .join("node_modules")
+                .join("agent-browser")
+                .join("bin")
+                .join("agent-browser-win32-x64.exe")
+        ));
         assert!(windows
             .iter()
             .all(|path| path.extension().is_some_and(|e| e == "exe")));
@@ -1140,5 +1172,20 @@ mod tests {
                 std::path::Path::new("npm").join("agent-browser")
             ]
         );
+    }
+
+    #[test]
+    fn npm_shims_point_at_the_native_binary_and_nothing_else() {
+        let shim = "@ECHO off\r\n\"%~dp0node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe\" %*\r\n";
+        assert_eq!(
+            shim_target(shim).as_deref(),
+            Some("node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe")
+        );
+        // A node launcher, an escape from the folder or an absolute path is ignored.
+        assert_eq!(shim_target("\"%~dp0\\node.exe\" \"%~dp0\\x.js\" %*"), None);
+        assert_eq!(shim_target("\"%~dp0..\\evil\\agent-browser.exe\" %*"), None);
+        assert_eq!(shim_target("\"%~dp0C:\\x\\agent-browser.exe\" %*"), None);
+        assert_eq!(shim_target("\"%~dp0node_modules\\x\\run.js\" %*"), None);
+        assert_eq!(shim_target("echo hi"), None);
     }
 }
