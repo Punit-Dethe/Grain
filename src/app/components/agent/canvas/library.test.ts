@@ -69,6 +69,16 @@ describe("canvas library", () => {
     const spec = canvasSpec();
     expect(spec).toContain("never scrolls");
     expect(spec).toContain("Places 5 rows");
+    expect(spec).toContain('"wide": a short landscape panel');
+  });
+
+  it("parses the wide layout and rejects an unknown one", () => {
+    const wide = parse('root = Canvas([Heading("Hi")], "wide")');
+    expect(wide.meta.errors).toEqual([]);
+    expect(wide.root?.props.layout).toBe("wide");
+    const tall = parse('root = Canvas([Heading("Hi")])');
+    expect(tall.meta.errors).toEqual([]);
+    expect(parse('root = Canvas([], "huge")').meta.errors).not.toEqual([]);
   });
 
   it("names a view for its card in the chat", () => {

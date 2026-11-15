@@ -53,7 +53,7 @@ import {
   Wind,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { AgentMarkdown } from "../../markdown/Markdown";
 
 /** Only https images; anything else (or a broken link) renders nothing. */
@@ -119,6 +119,12 @@ const LIMITS = {
   pairs: 6,
   buttons: 3,
 };
+
+/** What a wide (landscape) Canvas fits instead (also in the prompt). */
+const WIDE_LIMITS = { places: 6, hours: 8 };
+
+/** Whether the view is the wide (landscape) layout: views re-arrange for it. */
+const WideLayout = createContext(false);
 
 /** Meaning-only colour the model may pick: status and the odd icon. */
 const STATUS = ["good", "warn", "bad", "muted"] as const;
@@ -238,8 +244,7 @@ function TempLine({ temps }: { temps: number[] }) {
 
 const Weather = defineComponent({
   name: "Weather",
-  description:
-    'Current weather. place ("Pune"), temp ("24°"), condition (short, "Light rain until 3 pm"), icon, high/low ("29°"), hours: up to 6 Hour columns starting with "Now", updated (optional, "Updated now").',
+  description: `Current weather. place ("Pune"), temp ("24°"), condition (short, "Light rain until 3 pm"), icon, high/low ("29°"), hours: up to 6 Hour columns starting with "Now" (${WIDE_LIMITS.hours} in a wide Canvas, beside the current conditions), updated (optional, "Updated now").`,
   props: z.object({
     place: z.string(),
     temp: z.string(),
@@ -251,31 +256,34 @@ const Weather = defineComponent({
     updated: z.string().optional(),
   }),
   component: ({ props }) => {
+    const wide = useContext(WideLayout);
     const hours = ((props.hours ?? []) as unknown[])
       .map((node) => (node as { props?: Record<string, string> })?.props)
       .filter((hour): hour is Record<string, string> => !!hour?.time)
-      .slice(0, 6);
+      .slice(0, wide ? WIDE_LIMITS.hours : 6);
     return (
       <div className="gui-view gui-wx">
-        <div className="gui-wx-top gui-t3">
-          <span>{props.place}</span>
-          {props.updated && <span>{props.updated}</span>}
-        </div>
-        <div className="gui-wx-hero">
-          <div>
-            <div className="gui-wx-temp">{props.temp}</div>
-            <div className="gui-wx-cond">{props.condition}</div>
-            {(props.high || props.low) && (
-              <div className="gui-t2 gui-wx-hl">
-                {props.high && <span>H {props.high}</span>}
-                {props.low && <span>L {props.low}</span>}
-              </div>
-            )}
+        <div className="gui-wx-now">
+          <div className="gui-wx-top gui-t3">
+            <span>{props.place}</span>
+            {props.updated && <span>{props.updated}</span>}
           </div>
-          <Glyph name={props.icon} size={40} className="gui-wx-glyph" />
+          <div className="gui-wx-hero">
+            <div>
+              <div className="gui-wx-temp">{props.temp}</div>
+              <div className="gui-wx-cond">{props.condition}</div>
+              {(props.high || props.low) && (
+                <div className="gui-t2 gui-wx-hl">
+                  {props.high && <span>H {props.high}</span>}
+                  {props.low && <span>L {props.low}</span>}
+                </div>
+              )}
+            </div>
+            <Glyph name={props.icon} size={40} className="gui-wx-glyph" />
+          </div>
         </div>
         {hours.length > 0 && (
-          <>
+          <div className="gui-wx-later">
             <div className="gui-hairline" />
             <TempLine temps={hours.map((h) => parseFloat(h.temp))} />
             <div
@@ -300,7 +308,7 @@ const Weather = defineComponent({
                 </div>
               ))}
             </div>
-          </>
+          </div>
         )}
       </div>
     );
@@ -356,23 +364,28 @@ const Place = defineComponent({
 
 const Places = defineComponent({
   name: "Places",
-  description: `A titled list of places, venues, shops or results with photos. title ("Ski areas near you"), note (right of the title, "3 open today"), places: up to ${LIMITS.places} Place rows.`,
+  description: `A titled list of places, venues, shops or results with photos. title ("Ski areas near you"), note (right of the title, "3 open today"), places: up to ${LIMITS.places} Place rows (${WIDE_LIMITS.places}, in two columns, in a wide Canvas).`,
   props: z.object({
     title: z.string(),
     note: z.string().optional(),
     places: z.array(Place.ref),
   }),
-  component: ({ props, renderNode }) => (
-    <div className="gui-view gui-places">
-      <div className="gui-view-head">
-        <span className="gui-view-title">{props.title}</span>
-        {props.note && <span className="gui-t3">{props.note}</span>}
+  component: function PlacesView({ props, renderNode }) {
+    const wide = useContext(WideLayout);
+    return (
+      <div className="gui-view gui-places">
+        <div className="gui-view-head">
+          <span className="gui-view-title">{props.title}</span>
+          {props.note && <span className="gui-t3">{props.note}</span>}
+        </div>
+        <div className="gui-rows">
+          {renderNode(
+            props.places.slice(0, wide ? WIDE_LIMITS.places : LIMITS.places),
+          )}
+        </div>
       </div>
-      <div className="gui-rows">
-        {renderNode(props.places.slice(0, LIMITS.places))}
-      </div>
-    </div>
-  ),
+    );
+  },
 });
 
 const Pair = defineComponent({
@@ -938,11 +951,22 @@ const Stack = defineComponent({
 
 const Canvas = defineComponent({
   name: "Canvas",
-  description: "The root of every reply. children are laid out top to bottom.",
-  props: z.object({ children: z.array(z.any()) }),
-  component: ({ props, renderNode }) => (
-    <div className="gui-canvas">{renderNode(props.children)}</div>
-  ),
+  description:
+    'The root of every reply. children are laid out top to bottom. layout: "tall" (default) or "wide", a short landscape panel (see the rules).',
+  props: z.object({
+    children: z.array(z.any()),
+    layout: z.enum(["tall", "wide"]).optional(),
+  }),
+  component: ({ props, renderNode }) => {
+    const wide = props.layout === "wide";
+    return (
+      <WideLayout.Provider value={wide}>
+        <div className={`gui-canvas${wide ? " is-wide" : ""}`}>
+          {renderNode(props.children)}
+        </div>
+      </WideLayout.Provider>
+    );
+  },
 });
 
 export const canvasLibrary = createLibrary({
@@ -992,6 +1016,11 @@ s2 = Place("Cold Hollow", "9 runs · night skiing", "71 km", "Opens 4 pm", "mute
 more = Buttons([Button("Compare lift prices", @ToAssistant("Compare lift ticket prices for Snowpeak and Cold Hollow"))])`,
   `root = Canvas([trip])
 trip = Journey("AI 864 · Air India", "BOM", "14:20", "DEL", "16:35", "On time", "good", 62, "T2", "T3", [Pair("Lands in", "48 min"), Pair("Gate", "42B"), Pair("Belt", "7")])`,
+  `root = Canvas([top, more], "wide")
+top = Stack([price, stats], "row", "l", "center")
+price = Hero("ACME · Nasdaq", "$182.40", "Up 2.1% today", "At close, 4:00 pm", "up")
+stats = Stack([Stat("Open", "$178.60"), Stat("Day range", "$177.90–183.20"), Stat("Volume", "21.2M")], "row", "l")
+more = Buttons([Button("Five-year chart", @ToAssistant("Show ACME's five-year price chart"))])`,
 ];
 
 let spec: string | null = null;
@@ -1004,7 +1033,7 @@ export function canvasSpec(): string {
     additionalRules: [
       "The root statement is always `root = Canvas([...])`.",
       "Use a designed view whenever it fits: Weather for weather, Places for places, venues, shops or any list of results with photos, Journey for flights, trains, buses and drives, Hero for one big number or short answer. Add at most a Buttons row after it. Use the building blocks only when no view fits.",
-      `The view area is about 440 px wide (a Table may use up to 680) and 480 px tall, and it never scrolls: one designed view, or a few small blocks, plus at most one Buttons row. Limits: Places ${LIMITS.places} rows, Weather 6 hours, List ${LIMITS.list} rows, Table ${LIMITS.rows} rows x ${LIMITS.columns} columns, Steps ${LIMITS.steps}, Details ${LIMITS.pairs} pairs, Journey 3 facts. Need more? Show the top ones and add a follow-up button such as "Show more".`,
+      `The view never scrolls. Pick its shape with Canvas's layout. "tall" (default): about 440 px wide (a Table may use up to 680) and 480 px tall, for lists and anything read top to bottom. "wide": a short landscape panel about 660 px wide and 300 px tall, for content that reads across: hourly or daily strips, timelines, routes, side-by-side comparisons, a big number with its stats beside it, dashboards of 3-4 Stats, or two columns of places. In a wide Canvas put blocks side by side with Stack(..., "row") and keep it to about two rows; Places shows ${WIDE_LIMITS.places} in two columns, Weather ${WIDE_LIMITS.hours} hours beside the current conditions. Either way: one designed view, or a few small blocks, plus at most one Buttons row. Limits (tall): Places ${LIMITS.places} rows, Weather 6 hours, List ${LIMITS.list} rows, Table ${LIMITS.rows} rows x ${LIMITS.columns} columns, Steps ${LIMITS.steps}, Details ${LIMITS.pairs} pairs, Journey 3 facts. Need more? Show the top ones and add a follow-up button such as "Show more".`,
       "Keep words few: titles of 2-5 words, details as short fragments joined with ' · ', no sentences where a fragment will do. Never repeat what the view already shows.",
       "Colour is not yours to decorate with: weather icons colour themselves; use status tones (good, warn, bad) only for real status such as Open, Closed, On time, Delayed.",
       "Use photos (Place/ListItem image, Image) only with image URLs that appeared in tool results in this conversation; search the web for one when it clearly helps. Never invent or guess an image URL — leave the image out instead (a place without a photo shows its icon in a tile). The example image URL is a placeholder: never copy it.",

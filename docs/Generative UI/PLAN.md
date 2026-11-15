@@ -59,6 +59,8 @@ Live window resizes are off the table (WebView2 re-present blink; tauri#3990 fre
 - **A view** measures its content and asks for `clamp(360, w, 720) × clamp(150, h, 600)`. Designed views are 440 px wide.
 - **No scrolling, ever** (user): the prompt states the space (~440×480, tables up to 680 wide) and per-block limits (Places 5, List 5, Table 6×5, Steps 6, Details 6, Buttons 3), components cap themselves at those limits, and a view still taller than the max is scaled down to fit.
 - Clip rules unchanged: widen before growing, tighten only after the shell has settled.
+- **Two shapes** (user, 2026-11-15): `Canvas(children, "wide")` is a short landscape panel (660 px wide, ~300 tall) for content that reads across: Weather puts the hours beside the current conditions (up to 8), Places goes two columns (up to 6), a row Stack spreads its views evenly. `tall` (default) stays 440 px.
+- **Text never sets the width**: headings, text, lists, details, steps and pills cap at the view width, so one long sentence wraps instead of stretching the view to the max.
 
 Windows-only clip (as today).
 

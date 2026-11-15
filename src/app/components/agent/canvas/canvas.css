@@ -109,6 +109,56 @@
   gap: 14px;
 }
 
+/* Wide: a short landscape panel. It always takes the full wide width, so the
+   views inside re-arrange across it (see WideLayout in library.tsx). 660 stays
+   inside `.gui-content`'s max-width. */
+.gui-canvas.is-wide {
+  --g-view: 660px;
+  width: var(--g-view);
+}
+
+.gui-canvas.is-wide .gui-stack.is-row {
+  flex-wrap: nowrap;
+}
+
+.gui-stack.is-row > .gui-view {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
+
+.gui-canvas.is-wide .gui-wx {
+  flex-direction: row;
+  gap: 28px;
+}
+
+.gui-canvas.is-wide .gui-wx-now {
+  flex: 0 0 auto;
+  min-width: 190px;
+}
+
+.gui-canvas.is-wide .gui-wx-later {
+  flex: 1 1 0;
+  justify-content: flex-end;
+  padding-left: 28px;
+  border-left: 1px solid var(--g-line);
+}
+
+.gui-canvas.is-wide .gui-wx-later > .gui-hairline {
+  display: none;
+}
+
+.gui-canvas.is-wide .gui-places .gui-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 28px;
+}
+
+/* The second place starts the first row's right column: no separator. */
+.gui-canvas.is-wide .gui-places .gui-place:nth-child(2)::before {
+  content: none;
+}
+
 .gui-hairline {
   width: 100%;
   height: 1px;
@@ -184,6 +234,14 @@
   font-size: 17px;
   font-weight: 600;
   letter-spacing: -0.015em;
+}
+
+.gui-wx-now,
+.gui-wx-later {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
 }
 
 .gui-wx-top {
@@ -565,6 +623,17 @@
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
+}
+
+/* Text wraps at the view width: the view sizes to its content, and one long
+   unwrapped line would otherwise stretch the whole view to the maximum. */
+.gui-heading,
+.gui-text,
+.gui-rows,
+.gui-details,
+.gui-steps,
+.gui-pills {
+  max-width: var(--g-view);
 }
 
 .gui-text {
