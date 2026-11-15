@@ -689,6 +689,7 @@ fn build_window(
                 std::mem::size_of::<windows::core::BOOL>() as u32,
             );
         }
+        suppress_classic_frame(&window, hwnd);
     }
 
     // [GRAIN] Release the transient global Enter/Escape shortcuts when this
@@ -894,6 +895,50 @@ fn has_region(hwnd: windows::Win32::Foundation::HWND) -> bool {
         let _ = DeleteObject(HGDIOBJ(probe.0));
         kind != GDI_REGION_TYPE(0)
     }
+}
+
+/// [GRAIN] A window region (`set_notch_region`) turns DWM's frame off for the
+/// window, and user32 then paints a classic title bar ("Grain Assist") across
+/// its top on activation changes — even with decorations off. It showed in the
+/// clip slack beside the shell. Skip all non-client painting: the notch has no
+/// frame to draw. Removed again when the window is destroyed. Subclassing only
+/// works on the window's own (main) thread, so it hops there.
+#[cfg(windows)]
+fn suppress_classic_frame(
+    window: &tauri::WebviewWindow,
+    hwnd: windows::Win32::Foundation::HWND,
+) {
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::{WM_NCACTIVATE, WM_NCDESTROY, WM_NCPAINT};
+
+    const ID: usize = 0x4e4f_5443; // "NOTC"
+
+    unsafe extern "system" fn frameless(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        match message {
+            WM_NCPAINT => LRESULT(0),
+            // lParam -1: handle activation without repainting the caption.
+            WM_NCACTIVATE => DefSubclassProc(hwnd, message, wparam, LPARAM(-1)),
+            WM_NCDESTROY => {
+                let _ = RemoveWindowSubclass(hwnd, Some(frameless), ID);
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            }
+            _ => DefSubclassProc(hwnd, message, wparam, lparam),
+        }
+    }
+
+    // HWND is not Send; its value is.
+    let raw = hwnd.0 as isize;
+    let _ = window.run_on_main_thread(move || unsafe {
+        let _ = SetWindowSubclass(HWND(raw as *mut _), Some(frameless), ID, 0);
+    });
 }
 
 #[cfg(windows)]
