@@ -389,6 +389,15 @@
   border-radius: 8px;
 }
 
+.gui-thumb.is-tall {
+  height: 69px;
+}
+
+.gui-thumb.is-small.is-tall {
+  height: 51px;
+  border-radius: 6px;
+}
+
 /* No photo (or a broken one): a quiet tile with the row's icon. */
 .gui-thumb.is-empty {
   display: grid;
@@ -805,6 +814,16 @@
 
 .gui-image.is-square img {
   aspect-ratio: 1;
+}
+
+.gui-image.is-tall {
+  width: 150px;
+  border-radius: 10px;
+}
+
+.gui-image.is-tall img,
+.gui-image.is-tall .gui-image-empty {
+  aspect-ratio: 2 / 3;
 }
 
 .gui-image.is-empty {

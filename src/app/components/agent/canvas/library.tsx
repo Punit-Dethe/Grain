@@ -167,14 +167,17 @@ function Thumb({
   src,
   icon: fallback,
   small = false,
+  tall = false,
 }: {
   src: unknown;
   icon: IconName;
   small?: boolean;
+  /** 2:3 portrait instead of a square. */
+  tall?: boolean;
 }) {
   const [broken, setBroken] = useState(false);
   const url = broken ? null : safeImage(src);
-  const className = `gui-thumb${small ? " is-small" : ""}`;
+  const className = `gui-thumb${small ? " is-small" : ""}${tall ? " is-tall" : ""}`;
   return url ? (
     <img
       className={className}
@@ -726,7 +729,7 @@ const Steps = defineComponent({
 const ListItem = defineComponent({
   name: "ListItem",
   description:
-    "One row of a List: title, subtitle, meta (right), icon, action (when tapped), image (real https thumbnail URL from a tool result). For places prefer Places.",
+    "One row of a List: title, subtitle, meta (right), icon, action (when tapped), image (real https image URL from a tool result), shape (square, default | tall: for portrait images). For places prefer Places.",
   props: z.object({
     title: z.string(),
     subtitle: z.string().optional(),
@@ -734,13 +737,19 @@ const ListItem = defineComponent({
     icon: icon.optional(),
     action: action().optional(),
     image: z.string().optional(),
+    shape: z.enum(["square", "tall"]).optional(),
   }),
   component: ({ props }) => {
     const run = useRun(props.title, props.action);
     const body = (
       <>
         {(props.image || props.icon) && (
-          <Thumb src={props.image} icon={props.icon ?? "image"} small />
+          <Thumb
+            src={props.image}
+            icon={props.icon ?? "image"}
+            small
+            tall={props.shape === "tall"}
+          />
         )}
         <span className="gui-place-main">
           <span className="gui-place-name">{props.title}</span>
@@ -775,12 +784,12 @@ const List = defineComponent({
 const Image = defineComponent({
   name: "Image",
   description:
-    "A photo. src must be a real https image URL from a tool result (never invented). shape: wide (default) | square. caption optional. A broken image shows a quiet placeholder.",
+    "An image. src must be a real https image URL from a tool result (never invented). shape: wide (default) | square | tall (portrait, 2:3), matching the image. Several side by side in a Stack row share the width. caption optional. A broken image shows a quiet placeholder.",
   props: z.object({
     src: z.string(),
     alt: z.string().optional(),
     caption: z.string().optional(),
-    shape: z.enum(["wide", "square"]).optional(),
+    shape: z.enum(["wide", "square", "tall"]).optional(),
   }),
   component: ({ props }) => {
     const [state, setState] = useState<"loading" | "ready" | "broken">(

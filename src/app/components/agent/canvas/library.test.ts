@@ -72,6 +72,15 @@ describe("canvas library", () => {
     expect(spec).toContain('"wide": a short landscape panel');
   });
 
+  it("parses images in every shape", () => {
+    const shelf = parse(
+      `root = Canvas([films, list])
+films = Stack([Image("https://a.org/p.jpg", "Dune", "Dune", "tall")], "row")
+list = List([ListItem("Blinding Lights", "The Weeknd", "1", null, null, "https://a.org/c.jpg", "square"), ListItem("Dune", "2021", null, null, null, "https://a.org/d.jpg", "tall")])`,
+    );
+    expect(shelf.meta.errors).toEqual([]);
+  });
+
   it("parses the wide layout and rejects an unknown one", () => {
     const wide = parse('root = Canvas([Heading("Hi")], "wide")');
     expect(wide.meta.errors).toEqual([]);
