@@ -651,6 +651,25 @@ async changeAgentSpokenAckSetting(enabled: boolean) : Promise<Result<null, strin
 }
 },
 /**
+ * [GRAIN] The talk-back voice presets, default first.
+ */
+async agentVoicePresets() : Promise<AgentVoicePreset[]> {
+    return await TAURI_INVOKE("agent_voice_presets");
+},
+/**
+ * [GRAIN] Pick the talk-back voice. A preset not yet on disk downloads in
+ * the background (256 KB); then it says a short line so you hear it. See
+ * `Settings::agent_voice`.
+ */
+async changeAgentVoiceSetting(voice: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_voice_setting", { voice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Dynamic UI: Agent replies may carry an interactive view. See
  * `Settings::agent_dynamic_ui`.
  */
@@ -2219,6 +2238,18 @@ export type AgentReply = { text: string; confirm_action: AgentConfirm | null;
  */
 ui: string | null }
 /**
+ * [GRAIN] A talk-back voice preset, for the settings picker.
+ */
+export type AgentVoicePreset = { name: string; 
+/**
+ * "us" or "gb".
+ */
+accent: string; 
+/**
+ * "female" or "male".
+ */
+gender: string }
+/**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
  * its `get_default_settings()` value when missing from a stored settings
@@ -2394,6 +2425,12 @@ agent_compact_voice?: boolean;
  * sent, while the Agent works. ON by default.
  */
 agent_spoken_ack?: boolean; 
+/**
+ * [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
+ * Presets other than the default download on first pick (256 KB each).
+ * An unknown or missing one falls back to the default.
+ */
+agent_voice?: string; 
 /**
  * [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
  * interactive view (`grain_agent_canvas`). ON by default; off sends no

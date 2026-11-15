@@ -1,8 +1,50 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { commands, type AgentVoicePreset } from "@/bindings";
+import { Dropdown } from "../../ui/Dropdown";
+import { SettingContainer } from "../../ui/SettingContainer";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ShortcutInput } from "../ShortcutInput";
+
+/** The talk-back voice: presets come from the backend (`grain_tts::VOICES`). */
+function VoicePicker() {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const [presets, setPresets] = useState<AgentVoicePreset[]>([]);
+  useEffect(() => {
+    let live = true;
+    void commands.agentVoicePresets().then((list) => {
+      if (live) setPresets(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const voice = getSetting("agent_voice") ?? presets[0]?.name ?? null;
+  const options = presets.map((preset) => ({
+    value: preset.name,
+    label: `${preset.name} · ${t(`ui2.settings.agent.voiceAccent.${preset.accent}`)}`,
+    group: t(`ui2.settings.agent.voiceGender.${preset.gender}`),
+  }));
+  return (
+    <SettingContainer
+      title={t("ui2.settings.agent.voice")}
+      description={t("ui2.settings.agent.voiceDescription")}
+      descriptionMode="tooltip"
+      grouped
+    >
+      <Dropdown
+        options={options}
+        selectedValue={voice}
+        onSelect={(value) => void updateSetting("agent_voice", value)}
+        disabled={!presets.length || isUpdating("agent_voice")}
+        ariaLabel={t("ui2.settings.agent.voice")}
+      />
+    </SettingContainer>
+  );
+}
 
 export function AgentSection() {
   const { t } = useTranslation();
@@ -52,6 +94,8 @@ export function AgentSection() {
             isUpdating={isUpdating("agent_talk_back")}
             onChange={(v) => updateSetting("agent_talk_back", v)}
           />
+
+          {talkBack && <VoicePicker />}
 
           {talkBack && (
             <ToggleSwitch

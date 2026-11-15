@@ -17,7 +17,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
-/// Voice name: the file stem under the model's `voices/` folder.
+/// The default voice (installed with the model): the file stem under the
+/// model's `voices/` folder. The acknowledgement clips use it.
 const VOICE: &str = "Zoey";
 /// Hard cap on what is read aloud; longer replies stop at a sentence end.
 const MAX_SPOKEN_CHARS: usize = 3000;
@@ -58,6 +59,246 @@ const FILES: [ModelFile; 4] = [
         sha256: "a7d9aad2cd6dc66473f24a08bc6d2939030ef4d751ef82349361fbef3272dbae",
     },
 ];
+
+/// A talk-back voice the user can pick. Each is one small embedding file,
+/// downloaded (pinned and verified) the first time it is picked.
+pub(crate) struct VoicePreset {
+    pub(crate) name: &'static str,
+    /// "us" or "gb".
+    pub(crate) accent: &'static str,
+    /// "female" or "male".
+    pub(crate) gender: &'static str,
+    file: ModelFile,
+}
+
+const VOICE_BYTES: u64 = 256_136;
+
+/// Seven female and seven male English presets (American and British), from
+/// gradium/phonon-voices at a pinned commit. The first is the default.
+pub(crate) const VOICES: [VoicePreset; 14] = [
+    VoicePreset {
+        name: "Zoey",
+        accent: "us",
+        gender: "female",
+        file: ModelFile {
+            name: "voices/Zoey.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/NbpkqMVS3CJeq2j8.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "97c7f8c253413574406ab80dd23f49c3ebb2517163b00a9bf86b9c4cf43e7e23",
+        },
+    },
+    VoicePreset {
+        name: "Harper",
+        accent: "us",
+        gender: "female",
+        file: ModelFile {
+            name: "voices/Harper.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/4SZHfMpw-p46Ywgs.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "6b3da6e2d796a20c51af892c482bd6509fb88267a221aff83c870843dee2a123",
+        },
+    },
+    VoicePreset {
+        name: "Hadley",
+        accent: "us",
+        gender: "female",
+        file: ModelFile {
+            name: "voices/Hadley.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/bXwrkHhURL1VFJdG.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "a879938aa9a2df0a8220bdadef88137929f71e887bd91e7db205bd5fa11661d2",
+        },
+    },
+    VoicePreset {
+        name: "Delia",
+        accent: "us",
+        gender: "female",
+        file: ModelFile {
+            name: "voices/Delia.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/nGzMHMPAWGaJFHOo.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "a0c3dcb91b2247eca56536be9ae8e8becc1c807b1136c5fe101552d6a155b24a",
+        },
+    },
+    VoicePreset {
+        name: "Maeve",
+        accent: "gb",
+        gender: "female",
+        file: ModelFile {
+            name: "voices/Maeve.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/6PWnV0Nq4wu7RVBT.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "56494ee67d533ad227ff0dfd0b1c13ff5aa91f1ad6e596e66c2986ba3005e844",
+        },
+    },
+    VoicePreset {
+        name: "Pippa",
+        accent: "gb",
+        gender: "female",
+        file: ModelFile {
+            name: "voices/Pippa.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/uem82D50GRv2Dwma.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "d41a8f01d6e33450f1ce062d332914da10beee99e585dab531750706f187c48a",
+        },
+    },
+    VoicePreset {
+        name: "Bryony",
+        accent: "gb",
+        gender: "female",
+        file: ModelFile {
+            name: "voices/Bryony.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/gfP44RlHwr2kEwk7.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "bcc207a73b7885e45b49ab633d3377a10158292e3a7cef9cd6764ad107f1cb9b",
+        },
+    },
+    VoicePreset {
+        name: "Micah",
+        accent: "us",
+        gender: "male",
+        file: ModelFile {
+            name: "voices/Micah.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/40QrMVgAxFiUnP9f.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "0de1098d1051686a138d068e83ff09deb5053328bc74ec9541a1fdb90bfc24da",
+        },
+    },
+    VoicePreset {
+        name: "Miles",
+        accent: "us",
+        gender: "male",
+        file: ModelFile {
+            name: "voices/Miles.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/d9XCyhjo4JhkHF1d.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "eab20e4f159b48cfbc01b1885804e24f681f80e7a64f909182763a4e3361bee8",
+        },
+    },
+    VoicePreset {
+        name: "Preston",
+        accent: "us",
+        gender: "male",
+        file: ModelFile {
+            name: "voices/Preston.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/qIxlZ7Ei8KvWlyQH.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "6e04b84d3ae8751b22bca0a4f63936f9cb648f4f2182b2d0788071ea1c0b68a1",
+        },
+    },
+    VoicePreset {
+        name: "Trevor",
+        accent: "us",
+        gender: "male",
+        file: ModelFile {
+            name: "voices/Trevor.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/0zLApsZfVLLNaEGl.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "dc1341c8937af5534e6bbcc5c0fc5e7c10312229b59061228074f93683fe2261",
+        },
+    },
+    VoicePreset {
+        name: "Hugh",
+        accent: "gb",
+        gender: "male",
+        file: ModelFile {
+            name: "voices/Hugh.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/YyKcxPG7iIgS3jsK.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "3169d74b47a54d1eb15e4c243f56393abe9fe90c7e1c308ecf96ee67618b152a",
+        },
+    },
+    VoicePreset {
+        name: "Edwin",
+        accent: "gb",
+        gender: "male",
+        file: ModelFile {
+            name: "voices/Edwin.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/zUCxzrOrugTSis03.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "ff1d0735b8b45710462b1d1f846da040f970c6eb62c7c2f36dbfb8e5bde74f1e",
+        },
+    },
+    VoicePreset {
+        name: "Teddy",
+        accent: "gb",
+        gender: "male",
+        file: ModelFile {
+            name: "voices/Teddy.safetensors",
+            url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/Zn7g6NxLqXlJb7Qi.safetensors",
+            bytes: VOICE_BYTES,
+            sha256: "baea0ea9506f3237a5ebfc61afb7c72dbd189c5603b199ef42fbb00dbda379e0",
+        },
+    },
+];
+
+pub(crate) fn preset(name: &str) -> Option<&'static VoicePreset> {
+    VOICES.iter().find(|voice| voice.name == name)
+}
+
+fn voice_ready(dir: &Path, voice: &VoicePreset) -> bool {
+    std::fs::metadata(dir.join(voice.file.name)).is_ok_and(|meta| meta.len() == voice.file.bytes)
+}
+
+/// The voice to speak with: the chosen preset once its file is here, else the
+/// default (starting the chosen one's download).
+fn chosen_voice(app: &AppHandle, dir: &Path) -> &'static str {
+    let chosen = crate::settings::get_settings(app).agent_voice;
+    match preset(&chosen) {
+        Some(voice) if voice_ready(dir, voice) => voice.name,
+        Some(voice) => {
+            fetch_voice(app, voice, false);
+            VOICE
+        }
+        None => VOICE,
+    }
+}
+
+static FETCHING_VOICE: AtomicBool = AtomicBool::new(false);
+
+/// Download a preset's file in the background when it is missing; with
+/// `preview`, then say a line in it (only while talk-back is on).
+pub(crate) fn fetch_voice(app: &AppHandle, voice: &'static VoicePreset, preview: bool) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Ok(dir) = model_dir(&app) else {
+            return;
+        };
+        if !installed(&dir) {
+            // The model download fetches the default voice; a preset waits
+            // for it (the reply speaks in the default until then).
+            ensure_installed(&app);
+            return;
+        }
+        if !voice_ready(&dir, voice) {
+            if FETCHING_VOICE.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let client = app.state::<reqwest::Client>().inner().clone();
+            let path = dir.join(voice.file.name);
+            let result = download_verified(&client, &voice.file, &path).await;
+            FETCHING_VOICE.store(false, Ordering::Release);
+            if let Err(e) = result {
+                warn!(
+                    "[GRAIN] talk-back: could not download voice {}: {e}",
+                    voice.name
+                );
+                return;
+            }
+            info!("[GRAIN] talk-back: voice {} downloaded", voice.name);
+        }
+        if preview && crate::settings::get_settings(&app).agent_voice == voice.name {
+            speak(
+                &app,
+                &format!(
+                    "Hi, I'm {}. This is how I'll read your replies.",
+                    voice.name
+                ),
+                |_| {},
+            );
+        }
+    });
+}
 
 /// Bumped by every new reply and every stop; a worker speaks only while its
 /// generation is current.
@@ -138,7 +379,11 @@ pub(crate) fn speak(
         ensure_installed(app);
         return None;
     }
-    info!("[GRAIN] talk-back: speaking {} chars", text.chars().count());
+    let voice = chosen_voice(app, &dir);
+    info!(
+        "[GRAIN] talk-back: speaking {} chars as {voice}",
+        text.chars().count()
+    );
     LIVE.store(generation, Ordering::SeqCst);
     let spawned = std::thread::Builder::new()
         .name("grain-tts".into())
@@ -147,7 +392,7 @@ pub(crate) fn speak(
                 let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
                 if GENERATION.load(Ordering::SeqCst) != generation {
                     info!("[GRAIN] talk-back: replaced before it started");
-                } else if let Err(e) = say(&dir, &text, generation) {
+                } else if let Err(e) = say(&dir, voice, &text, generation) {
                     warn!("[GRAIN] talk-back failed: {e}");
                 }
             }
@@ -164,13 +409,14 @@ pub(crate) fn speak(
     }
 }
 
-/// Load the voice model (CPU, Q8) with its voices registered.
-fn load_voice(dir: &Path) -> Result<ptts::synth::Synth, String> {
+/// Load the voice model (CPU, Q8) with only `voice` registered (the other
+/// downloaded presets stay on disk).
+fn load_voice(dir: &Path, voice: &str) -> Result<ptts::synth::Synth, String> {
     use ptts::checkpoint::{Checkpoint, ResolveOptions};
     use ptts::preprocess::Lang;
     use ptts::synth::{DeviceKind, Quant};
 
-    let checkpoint = Checkpoint::resolve(
+    let mut checkpoint = Checkpoint::resolve(
         dir,
         ResolveOptions {
             quant: Quant::Q80,
@@ -178,6 +424,7 @@ fn load_voice(dir: &Path) -> Result<ptts::synth::Synth, String> {
         },
     )
     .map_err(|e| format!("could not read the voice model: {e}"))?;
+    checkpoint.voices.retain(|(name, _)| name == voice);
     let mut tts = checkpoint
         .builder(Lang::En)
         .device(DeviceKind::Cpu)
@@ -187,14 +434,14 @@ fn load_voice(dir: &Path) -> Result<ptts::synth::Synth, String> {
     Ok(tts)
 }
 
-fn say(dir: &Path, text: &str, generation: u64) -> Result<(), String> {
+fn say(dir: &Path, voice: &str, text: &str, generation: u64) -> Result<(), String> {
     use ptts::synth::SpeechOptions;
     use rodio::buffer::SamplesBuffer;
     use rodio::{ChannelCount, DeviceSinkBuilder, Player, SampleRate};
 
     let current = || GENERATION.load(Ordering::SeqCst) == generation;
     let started = Instant::now();
-    let tts = load_voice(dir)?;
+    let tts = load_voice(dir, voice)?;
     let loaded = started.elapsed();
     if !current() {
         info!("[GRAIN] talk-back: stopped while loading");
@@ -211,7 +458,7 @@ fn say(dir: &Path, text: &str, generation: u64) -> Result<(), String> {
     device.log_on_drop(false);
     let player = Player::connect_new(device.mixer());
 
-    let options = SpeechOptions::default().voice(VOICE);
+    let options = SpeechOptions::default().voice(voice);
     let stream = tts
         .stream_with(text, &options)
         .map_err(|e| format!("could not start speech: {e}"))?;
@@ -460,7 +707,7 @@ pub(crate) fn prepare_acks(app: &AppHandle) {
 fn build_acks(model: &Path) -> Result<(), String> {
     use ptts::synth::SpeechOptions;
 
-    let tts = load_voice(model)?;
+    let tts = load_voice(model, VOICE)?;
     let rate = tts.sample_rate();
     let options = SpeechOptions::default().voice(VOICE);
     // Written to a scratch folder and renamed into place, so a half-made set
@@ -810,5 +1057,24 @@ mod tests {
             .iter()
             .all(|f| f.url.contains("/resolve/") && f.sha256.len() == 64));
         assert_eq!(FILES.last().unwrap().name, "model.q8.gguf");
+    }
+
+    #[test]
+    fn voice_presets_are_pinned_and_balanced() {
+        // The default comes with the model download, byte for byte.
+        assert_eq!(VOICES[0].name, VOICE);
+        let bundled = FILES.iter().find(|f| f.name == VOICES[0].file.name);
+        assert_eq!(bundled.map(|f| f.sha256), Some(VOICES[0].file.sha256));
+        for voice in &VOICES {
+            assert_eq!(
+                voice.file.name,
+                format!("voices/{}.safetensors", voice.name)
+            );
+            assert!(voice.file.url.contains("/resolve/") && voice.file.sha256.len() == 64);
+            assert!(matches!(voice.accent, "us" | "gb"));
+        }
+        let female = VOICES.iter().filter(|v| v.gender == "female").count();
+        assert_eq!((female, VOICES.len() - female), (7, 7));
+        assert!(preset("Harper").is_some() && preset("Nobody").is_none());
     }
 }

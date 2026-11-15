@@ -647,6 +647,46 @@ pub fn change_agent_dynamic_ui_setting(app: AppHandle, enabled: bool) -> Result<
     Ok(())
 }
 
+/// [GRAIN] A talk-back voice preset, for the settings picker.
+#[derive(serde::Serialize, Debug, Clone, specta::Type)]
+pub struct AgentVoicePreset {
+    pub name: String,
+    /// "us" or "gb".
+    pub accent: String,
+    /// "female" or "male".
+    pub gender: String,
+}
+
+/// [GRAIN] The talk-back voice presets, default first.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_voice_presets() -> Vec<AgentVoicePreset> {
+    crate::grain_tts::VOICES
+        .iter()
+        .map(|voice| AgentVoicePreset {
+            name: voice.name.to_string(),
+            accent: voice.accent.to_string(),
+            gender: voice.gender.to_string(),
+        })
+        .collect()
+}
+
+/// [GRAIN] Pick the talk-back voice. A preset not yet on disk downloads in
+/// the background (256 KB); then it says a short line so you hear it. See
+/// `Settings::agent_voice`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_voice_setting(app: AppHandle, voice: String) -> Result<(), String> {
+    let preset =
+        crate::grain_tts::preset(&voice).ok_or_else(|| format!("unknown voice {voice:?}"))?;
+    let mut settings = settings::get_settings(&app);
+    settings.agent_voice = preset.name.to_string();
+    settings::write_settings(&app, settings);
+    crate::grain_tts::stop();
+    crate::grain_tts::fetch_voice(&app, preset, true);
+    Ok(())
+}
+
 /// [GRAIN] Spoken acknowledgement ("Got it") while the Agent works. See
 /// `Settings::agent_spoken_ack`.
 #[tauri::command]

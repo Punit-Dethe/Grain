@@ -814,6 +814,11 @@ pub struct AppSettings {
     /// sent, while the Agent works. ON by default.
     #[serde(default = "default_true")]
     pub agent_spoken_ack: bool,
+    /// [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
+    /// Presets other than the default download on first pick (256 KB each).
+    /// An unknown or missing one falls back to the default.
+    #[serde(default = "default_agent_voice")]
+    pub agent_voice: String,
     /// [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
     /// interactive view (`grain_agent_canvas`). ON by default; off sends no
     /// view vocabulary to the model (fewer tokens) and replies are plain chat.
@@ -856,6 +861,10 @@ pub struct AppSettings {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_agent_voice() -> String {
+    "Zoey".to_string()
 }
 
 fn default_model() -> String {
@@ -1640,6 +1649,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_talk_back: false,
         agent_compact_voice: true,
         agent_spoken_ack: true,
+        agent_voice: default_agent_voice(),
         agent_dynamic_ui: true,
         agent_polished_ui: true,
         reach_enabled: false,
