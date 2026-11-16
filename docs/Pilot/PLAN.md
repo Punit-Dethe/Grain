@@ -38,7 +38,7 @@
 >   numbers below.
 >
 > The sections below describe the Cua build and stay as the record of what
-> was measured. A new plan for the extension follows.
+> was measured. The extension plan is [EXTENSION-PLAN.md](EXTENSION-PLAN.md).
 
 Status: **Phases 0–2 built, Phase 3 runs passing** (2026-11-16; see Phases).
 Written 2026-11-16. Name confirmed by the
