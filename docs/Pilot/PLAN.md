@@ -375,6 +375,24 @@ What this adds to the design:
 
 **Phase 1: core** (`grain-core/src/pilot/`): tools, parsing, request mapping,
 compaction, rendering, policy, manifest, with unit and golden tests.
+**Done 2026-11-16**: 47 Pilot tests (218 in grain-core), clippy clean.
+- `numbering.rs`: Pilot hands out its own control numbers, keyed by role,
+  name and occurrence, so a number never points at a different control after
+  the page changes. A click on a control that left the page is refused. This
+  replaces "retry by role and name".
+- `tools.rs`: 12 tools (adds `choose` for web drop-downs: expand, arrow keys,
+  Enter, re-park). The tool list is ≤1.5k tokens.
+- `policy.rs`: `is_payment_control` refuses Pay / Place order / Buy now and
+  similar, by whole words; `show` hands those to the user.
+- `compact.rs`: page subtree only (browser frame and other tabs dropped),
+  `find` and the after-action `changes` diff run on Grain's side.
+- Measured on the saved reads (tokens ≈ chars / 4):
+
+  | Page | Raw | Controls | Page view | `find` |
+  |---|---|---|---|---|
+  | BookMyShow showtimes | ~15.9k | ~2.9k | ~3.2k | ~6 |
+  | BookMyShow seat form | ~2.3k | ~0.14k | ~0.31k | ~11 |
+  | Zomato booking | ~7.9k | ~0.63k | ~1.0k | ~31 |
 
 **Phase 2: adapter and wiring**: install and verify, daemon, calls,
 settle-read, cleanup; registry arms; setting, command, updater; the

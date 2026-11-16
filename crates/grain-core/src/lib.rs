@@ -68,6 +68,7 @@ pub mod links;
 // agent-browser CLI (docs/Agent Browser/PLAN.md). Pure: tool schemas, argument
 // parsing, argv and reply rendering. The desktop crate spawns the process.
 pub mod agent_browser;
+pub mod pilot;
 // [GRAIN] Reminders (docs/Reminders/PLAN.md). Pure: the record, validation,
 // calendar arithmetic, day/time phrases and the Agent tool schemas.
 pub mod reminders;
