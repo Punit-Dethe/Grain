@@ -1,5 +1,45 @@
 # Grain Pilot: plan
 
+> **2026-11-17: STACK CHANGE (user decision). Cua Driver is out; this plan's
+> driver phases are superseded.** First live Edge use opened a new window per
+> page and could not run two jobs at once. Cua 0.52.x has no tool to open,
+> switch or close tabs (its guide calls tabs "native UI"), and gives Firefox
+> and Zen pages no typed actions. The user does not want computer control in
+> Grain at all, only browser control. New direction:
+>
+> - **A Grain browser extension, Chromium first, then Firefox/Zen from the
+>   same code.** Each Agent task gets background tabs (`active: false`) in its
+>   own tab group in the user's window, signed in as them. Several tasks run
+>   side by side. No windows, no focus changes. This is how HeyClicky (Chrome
+>   extension, tab group per job) and Open Browser Control (Firefox, tab group
+>   per agent) work.
+> - **Page reading and actions: `@page-agent/page-controller`** (Alibaba
+>   page-agent, MIT, ~29.7k stars, pushed 2026-11-15). It is browser-use's DOM
+>   serializer ported to in-page TypeScript: indexed interactive elements
+>   (`getBrowserState`), `clickElement(index)`, `inputText`, `selectOption`,
+>   `scroll`. Plain DOM, no LLM loop, no browser-specific API, so the same
+>   content script runs in Chromium and Firefox. Grain keeps its own LLM loop
+>   and compaction. Not used: its mask/animation, `executeJavascript`, its
+>   agent and MCP packages.
+> - **Grain writes the thin shell:** tab and tab-group lifecycle, native
+>   messaging to Grain (no open port), permission and payment/password checks.
+> - **Input fidelity:** page-controller clicks and types with synthetic DOM
+>   events, which a few strict sites ignore. Chromium can upgrade a refused
+>   action to `chrome.debugger` `Input.dispatch*` with focus emulation
+>   (trusted, works in background tabs; Chrome shows a "started debugging"
+>   bar). Firefox has no debugger API, so it stays on DOM events.
+> - **Rejected bases:** Cua (no tabs, no Firefox typing); browser-use itself
+>   (Python runtime, attaches over remote debugging or launches its own
+>   browser: RAM and setup cost); Playwright MCP Bridge (Chrome only, Node
+>   server, acts in the tab the user picks); nanobrowser (a full agent with
+>   its own LLM loop, not a controller).
+> - Unverified until built: page-controller inside a Firefox content script,
+>   and token size per read on real sites (BookMyShow, Zomato) versus the
+>   numbers below.
+>
+> The sections below describe the Cua build and stay as the record of what
+> was measured. A new plan for the extension follows.
+
 Status: **Phases 0–2 built, Phase 3 runs passing** (2026-11-16; see Phases).
 Written 2026-11-16. Name confirmed by the
 user 2026-11-16: **Grain Pilot** ("Pilot" for short in this document).
