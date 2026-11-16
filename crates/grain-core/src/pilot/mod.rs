@@ -31,7 +31,7 @@ pub const EXTENSION_ID: &str = "grain.pilot";
 pub const PROVIDER_NAME: &str = "Grain Pilot";
 /// Directory description the model reads when choosing a provider. The Agent
 /// directory shows at most 240 bytes.
-pub const DESCRIPTION: &str = "Act in the user's own browser (signed in as them) and apps: open pages, read, click, type, pick options. Works in the background. Prefer a connector when one exists. Hand over with show before paying or signing in.";
+pub const DESCRIPTION: &str = "Do things in the user's own browser (signed in as them) and apps: book, order, fill forms, change settings. Never to look things up or research: use web search. Prefer a connector. Hand over with show before paying.";
 
 /// Driver session label carried on every call, so read snapshots survive
 /// between the short-lived `cua-driver call` processes.

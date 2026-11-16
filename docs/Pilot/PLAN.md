@@ -528,6 +528,24 @@ Recommendation (for the user to decide):
    open flash).
 4. "Use my current tab" later, as an explicit hand-over, never the default.
 
+User decision (2026-11-16): go with 1–3; 4 later. First live Edge use found
+two more problems, fixed the same day:
+
+- **Pilot used for research.** Asked whether movie tickets were available,
+  the Agent opened 3–4 Edge windows instead of using web search. The
+  directory description and the `open` tool now say Pilot is only for doing
+  something on a site (book, order, fill a form, change a setting), never for
+  looking things up.
+- **Window pile-up.** Each `open` made a new window. Pilot now keeps one
+  browser window: a new `open` closes the window Pilot opened last (by its
+  recorded handle, never by foreground) and opens the next. Real tabs inside
+  Pilot's window need the DevTools route (point 2): `browser_navigate` on the
+  bound tab. A probe found that any capability manifest requires the exact
+  site origins (no wildcards) for `browser_navigate` and typing, even in
+  standard mode, so bounded mode with a fixed manifest cannot move between
+  sites freely. Open decision: standard mode with `--grant existing-profile`
+  and no manifest, or a daemon restart per new site.
+
 ## Risks
 
 - The driver ships several releases a day. Pilot pins one version and its

@@ -193,7 +193,9 @@ pub(crate) fn stop_in_background() {
 /// Stop the driver at app exit without waiting on a call in flight; the job
 /// object ends the daemon when Grain's process goes regardless.
 pub(crate) fn stop_at_exit() {
-    if let Ok(mut state) = STATE.try_lock() {}
+    if let Ok(mut state) = STATE.try_lock() {
+        stop(&mut state);
+    }
 }
 
 /// Disconnect: stop the driver, then delete it and its manifest.
@@ -904,6 +906,30 @@ fn new_window(
 }
 
 fn open_url(state: &mut State, ctx: &Ctx, url: &str) -> Result<String, Failure> {
+    // One browser window at a time: a new page replaces the browser window
+    // Pilot opened last, so a task never piles up windows. Only windows Pilot
+    // opened (found by diffing the browser's windows at launch) are closed.
+    let previous: Vec<u32> = state
+        .windows
+        .iter()
+        .filter(|(_, window)| window.opened && window.family.is_some())
+        .map(|(handle, _)| *handle)
+        .collect();
+    let mut replaced = None;
+    for handle in previous {
+        let window_id = state.windows[&handle].target.window_id;
+        if !win::is_window(window_id) {
+            state.windows.remove(&handle);
+            continue;
+        }
+        close(state, handle).map_err(|_| {
+            Failure::refused(format!(
+                "{} could not be closed to make room (it may ask to confirm). Keep working in it, or call show so the user closes it.",
+                Handle(handle)
+            ))
+        })?;
+        replaced = Some(handle);
+    }
     if state.windows.len() >= MAX_WINDOWS {
         return Err(Failure::refused(format!(
             "Grain Pilot already has {MAX_WINDOWS} windows open. Close one first."
@@ -950,7 +976,14 @@ fn open_url(state: &mut State, ctx: &Ctx, url: &str) -> Result<String, Failure> 
         ),
     )?;
     let read = read_until_loaded(state, ctx, handle, Some(&compact::host(url)))?;
-    Ok(render::opened_reply(Handle(handle), &read))
+    let reply = render::opened_reply(Handle(handle), &read);
+    Ok(match replaced {
+        Some(old) => format!(
+            "Closed {} (Pilot keeps one browser window). {reply}",
+            Handle(old)
+        ),
+        None => reply,
+    })
 }
 
 /// The browser's new window. When the browser was not running, it may

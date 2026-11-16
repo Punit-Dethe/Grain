@@ -35,7 +35,7 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "open",
             title: "Open a page in the user's browser",
-            description: "Open an https link in a new background window of the user's own browser, signed in as them. Returns the window (w1…) and a read of the page.",
+            description: "Open an https link in the user's own browser, signed in as them, in the background, to act on that site. Not for finding information: use web search. Pilot keeps one browser window; opening again replaces it. Returns the window and a read.",
             keywords: &["website", "url", "visit", "go to", "browse", "book", "order", "web page"],
             read_only: false,
             schema: json!({
