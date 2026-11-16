@@ -474,6 +474,60 @@ Extensions row. Seen in the Agent run: the first round offered 8 of the
 loop allows it cleanly; decide Agent Browser's removal; list the Reach
 features not covered yet (media keys, show file in folder).
 
+## Research: focus and which window (2026-11-16, decision pending)
+
+The user asked how HeyClicky and similar tools avoid a browser window that
+keeps jumping in front and back, before deciding between a background window
+and the user's own active tab. Findings:
+
+- **Nobody acts in the user's active tab by default.** Extension tools (Claude
+  in Chrome, HeyClicky's Chrome extension, OpenCode `browse`, `chrome-use`,
+  `agent-tabs`) open their own tabs **in the background, in a tab group inside
+  the user's window**, never activated. Using the user's current tab is an
+  explicit hand-over ("lend this tab" in `browse`, `tab adopt` in `chrome-use`,
+  "tabs a job borrowed go back where they were" in HeyClicky). Desktop-driver
+  tools (HeyClicky's Mac agent on Cua Driver) open a **new background window**.
+- **The production rule is: never take focus.** HeyClicky's Mac agent passes
+  `delivery_mode: "background"` on every input and denies `foreground`
+  ("the user's frontmost app MUST NOT change"). When a step truly needs the
+  user (sign-in, payment, CAPTCHA), it hands over; it does not flip focus back
+  and forth.
+- **How Chromium is driven without focus:** Chrome DevTools input
+  (`chrome.debugger` in an extension, or the browser's own remote-debugging
+  endpoint), with focus emulation on so background tabs behave as focused.
+  Background tabs still throttle timers; passkeys may hang there.
+- **Cua Driver 0.52 (our pinned version) already has this route:**
+  `browser_prepare` (`existing_profile`: switches on the browser's own "Allow
+  remote debugging" once, no profile copy, needs consent through the bounded
+  manifest), `get_browser_state` (binds the exact window and its tab),
+  `browser_click` / `browser_type` (trusted DevTools input, background,
+  including inactive tabs), `browser_select` (picks a `<select>` option
+  **without opening its popup**), `browser_navigate`. Chrome and Edge are
+  release-accepted; Brave is detected but not release-accepted. Firefox and
+  its forks get a clean refusal: no tool anywhere drives Firefox through
+  DevTools.
+- **Windows Copilot Actions** runs agents in a separate Windows session with
+  its own account (Agent Workspace): no focus conflict, but experimental and
+  far heavier.
+
+Where Pilot's jumps come from today: the new window shows for ~0.5–2 s before
+it is parked; native drop-downs (`choose`) come forward ~1–3 s; Chromium
+windows stay on screen behind the user's (UIA clicks need on-screen controls)
+and refuse background typing.
+
+Recommendation (for the user to decide):
+
+1. Keep background as the default and adopt the never-take-focus rule: a step
+   that needs focus hands over with `show` instead of flashing the window.
+2. Chrome/Edge (and Brave once tested): move web actions to the driver's
+   DevTools `browser_*` tools on Pilot's own window. That removes background
+   typing refusals and drop-down jumps and lets the window be parked like
+   Zen's.
+3. Zen/Firefox: keep the parked UIA window (already works without focus);
+   remove the remaining jumps (drop-downs without expanding, a shorter
+   open flash).
+4. "Use my current tab" later, as an explicit hand-over, never the default.
+
 ## Risks
 
 - The driver ships several releases a day. Pilot pins one version and its
