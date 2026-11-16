@@ -214,6 +214,43 @@ measured answer written into this file:
 Exit: every question has a measured answer. A "no" on 1 or 2 without a
 working fix stops the plan and comes back to the user.
 
+#### Phase 0a results (2026-11-17): page-controller as-is, visible tab
+
+The user asked to skip background tabs for now and see how page-controller
+does on its own. Setup: page-controller 1.12.4 bundled as one script (106 KB),
+injected by Playwright into **visible** tabs of a separate Edge profile. No
+extension yet, so no background tabs.
+
+| Site | Read time | Tokens, full page | Tokens, visible area | Action | Result |
+| --- | --- | --- | --- | --- | --- |
+| iana.org | 12 ms | ~480 | — | click link | ✅ navigated |
+| Wikipedia main page | ~90 ms | ~4.5k | ~1.3k | type "Pune", click Search | ❌ as-is, ✅ with fix (below) |
+| BookMyShow showtimes | ~120 ms | ~3.8k | ~1.2k | click a show | ✅ reached the seat-layout URL |
+| Zomato Pune delivery | ~70 ms | ~2.1k | ~0.55k | click "Pizza" | ✅ navigated (next page ~1.8k) |
+
+- **Reads are fast and small.** 10–120 ms per read. Full-page reads are about
+  the size of Cua's after Grain's compaction (BookMyShow 3.8k vs 3.7k), and
+  visible-area reads are 3–4× smaller. Clicks take about 0.6 s (built-in
+  waits).
+- **Typing failed silently on Wikipedia.** page-controller clicks the field,
+  then sets the value on that element. Wikipedia replaces its search box on
+  click, so the text went into a detached box: it reported success, and the
+  search ran empty. **Fix in Grain's wrapper (tested ✅):** after the click,
+  type into the field that has focus, then check its value and report the
+  truth.
+- **Reads do not show field values**, so the model cannot see what a box
+  holds. The wrapper adds `value=` to input rows (never for password fields).
+- **BookMyShow's seat page stuck on "Please wait, while we load the seats"**,
+  and after a few runs Cloudflare blocked the test browser ("Sorry, you have
+  been blocked"). This comes from the **test rig**: Playwright drives Edge
+  through the debugging protocol and flags it as automated. A real extension
+  in a normal browser does not carry that flag. BookMyShow testing waits for
+  the real extension; no more Playwright runs against it.
+
+Wrapper changes these add to Phase 2: type into the focused field and verify;
+add field values to reads; prefer visible-area reads plus `find`, with the
+full page on request.
+
 ### Phase 1: the link
 
 The host crate, the `grain_browser_link.rs` pipe server, host manifest
