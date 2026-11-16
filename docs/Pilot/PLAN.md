@@ -218,7 +218,7 @@ design if it fails)
 | 4 | Edge / Brave | Background **click** works on on-screen controls. Background **typing does not**. |
 | 5 | RAM / speed | 53–65 MB working set, 17–27 MB private; +2 MB after a 19k-character read. Read 0.45–0.6 s, click 0.4–0.6 s, `launch_app` ~1.8 s. |
 | 6 | Update check | `CUA_DRIVER_RS_UPDATE_CHECK=false` (else it calls GitHub on every daemon start). |
-| 7 | Zen booking | **Not run.** Blocked by the Zen tab-sync finding below; needs a user decision. |
+| 7 | Zen booking | **Not run yet.** The Zen tab-sync blocker is solved (unsynced window, below). Run it when the user is away from the desk; it briefly holds seats on their account. |
 
 **Manifest format** (YAML, version 3; a byte-order mark fails the parse;
 unknown keys are rejected):
@@ -304,19 +304,47 @@ so Pilot never sets it). `list_windows` with a listed app's `pid` works.
   `%LOCALAPPDATA%\cua-driver\` (pid file, pipe locks). Disconnect removes them
   only if Grain created them.
 
-**Zen tab sync (blocks item 7).** Zen 1.24 syncs tabs across windows by default.
-A "new background window" is not separate: its tabs appear in the user's main
-window, the main window's active tab followed a tab Pilot opened, and Zen
-brought the new window to the front (Edge and Brave did not). Test tabs were
-closed afterwards and the user's 9 tabs were checked unchanged. Options:
+**Zen tab sync.** Zen 1.24 syncs tabs across windows by default
+(`zen.window-sync.enabled`). A plain `--new-window` is not separate: its tabs
+appear in the user's main window, the main window's active tab followed a tab
+Pilot opened, and Zen brought the new window to the front (Edge and Brave did
+not). Test tabs were closed afterwards and the user's 9 tabs were checked
+unchanged.
 
-1. Open Pilot's work in a Zen **unsynced window**. The command exists
-   (`cmd_zenNewNavigatorUnsynced`); whether Pilot can reach it in the
-   background is not yet checked.
-2. Accept that Pilot's tabs appear in the user's Zen window (the HeyClicky
-   "own tab" model), and put back the user's active tab after each `open`.
-3. Use the user's Chromium browser for Pilot: separate windows, no focus
-   taken, but typing needs the window in front.
+**Decision (user, 2026-11-16): Zen work happens in an unsynced window.**
+Checked the same day:
+
+- `zen.exe --blank-window <url>` (Zen's own command-line flag, read from its
+  `BrowserContentHandler`) opens an **unsynced** window with only that tab.
+  The user's windows kept their 9 tabs and their active tab. The unsynced
+  window's read lists only Pilot's tab, so no other tab titles reach the
+  model. A second `--blank-window` opens a second separate window.
+- Zen brings the new window to the front every time. `launch_app`'s
+  `start_minimized` breaks this launch (no window opens), so Grain fixes focus
+  itself, once, as soon as the window appears (~2 s after launch):
+  1. Minimise it (title-bar Minimise through UIA Invoke, or
+     `ShowWindow(SW_MINIMIZE)`). Focus goes back to the user's window.
+  2. Restore it without activating and park it just past the right edge of
+     the virtual screen: `SetWindowPos(HWND_BOTTOM, right + 50, 0,
+     SWP_NOSIZE | SWP_NOACTIVATE)`. Do not use `SetWindowPlacement`; Windows
+     snaps that back onto a monitor.
+  The window is visible for about 0.5–2 s before step 1.
+- A minimised window can be read but not clicked (`window_minimized`), which
+  is why step 2 exists.
+- In the parked window, all of these worked in the background with the user's
+  window kept in front: reads, clicks (UIA Invoke; a link and a submit
+  button), typing (`type_text` with an element token; the value appears a
+  moment after the call returns, so the settle-read must wait for it), and the
+  UIA password check (its rectangle matched the driver's off-screen frame).
+- `show` moves the window back on screen and brings it to the front.
+- `close` (title-bar Close through UIA Invoke) closed the parked windows
+  cleanly, after checking each one held only Pilot's tab.
+- Zen restores unsynced windows after a restart
+  (`zen.session-store.restore-unsynced-windows`), so a window Pilot leaves
+  open can come back after a Zen restart.
+- Still to check, in item 7: an unsynced window opened from the command line
+  uses the default container. Sites the user signed in to only inside a Zen
+  space container may not be signed in there.
 
 **Phase 1: core** (`grain-core/src/pilot/`): tools, parsing, request mapping,
 compaction, rendering, policy, manifest, with unit and golden tests.
