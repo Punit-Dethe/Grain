@@ -256,6 +256,8 @@ const settingUpdaters: {
     commands.changeAgentCompactVoiceSetting(value as boolean),
   agent_browser_enabled: (value) =>
     commands.changeAgentBrowserEnabledSetting(value as boolean),
+  pilot_enabled: (value) =>
+    commands.changePilotEnabledSetting(value as boolean),
   meet_auto_summary: (value) =>
     commands.changeMeetAutoSummarySetting(value as boolean),
   meet_auto_transcribe: (value) =>

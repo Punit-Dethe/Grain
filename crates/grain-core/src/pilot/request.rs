@@ -147,6 +147,12 @@ pub fn launch(executable: &str, arguments: &[String]) -> DriverCall {
     )
 }
 
+/// Start a packaged (Store) app by its AUMID. Windows 11's Notepad,
+/// Calculator and Paint are packaged; their System32 `.exe` is a stub.
+pub fn launch_packaged(aumid: &str) -> DriverCall {
+    DriverCall::new("launch_app", json!({"aumid": aumid}))
+}
+
 /// Bring a window to the front for the user (`show`).
 pub fn bring_to_front(target: Target) -> DriverCall {
     DriverCall::new("bring_to_front", window(target))

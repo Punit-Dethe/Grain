@@ -68,7 +68,9 @@ mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permi
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_agent_browser; // [GRAIN] Agent Browser: the Agent's web browser via the agent-browser CLI, one process per call
-mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Agent Browser, Reminders)
+mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Agent Browser, Pilot, Reminders)
+mod grain_pilot; // [GRAIN] Grain Pilot: the Agent in the user's own browser and apps via the Cua Driver sidecar
+mod grain_pilot_install; // [GRAIN] Grain Pilot: download, verify, unpack and remove the pinned driver
 mod grain_reminders; // [GRAIN] Reminders: local store, one next-due timer, rings in the Agent notch, Agent tool
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
 
@@ -1312,6 +1314,9 @@ pub fn run(cli_args: CliArgs) {
         // outlives Grain (bounded; its idle timeout covers a hard kill).
         if let tauri::RunEvent::Exit = &event {
             grain_agent_browser::close_at_exit();
+            // [GRAIN] Stop Grain Pilot's driver (its job object also ends it
+            // with the process).
+            grain_pilot::stop_at_exit();
         }
         // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
         // process alive in the tray so dictation/rolling/pill keep working —
@@ -1407,6 +1412,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
             grain_commands::change_agent_compact_voice_setting, // [GRAIN]
             grain_agent_browser::change_agent_browser_enabled_setting, // [GRAIN] Agent Browser on/off
+            grain_pilot::change_pilot_enabled_setting, // [GRAIN] Grain Pilot on/off
             grain_reminders::reminders_list, // [GRAIN] Reminders
             grain_reminders::reminders_save,
             grain_reminders::reminders_delete,

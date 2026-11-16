@@ -814,6 +814,11 @@ pub struct AppSettings {
     /// off removes it from the Agent's tool directory and closes its browser.
     #[serde(default)]
     pub agent_browser_enabled: bool,
+    /// [GRAIN] Grain Pilot: the Agent acting in the user's own browser and apps
+    /// through the Cua Driver sidecar. OFF by default; off removes it from the
+    /// Agent's tool directory and stops the driver.
+    #[serde(default)]
+    pub pilot_enabled: bool,
     /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
     /// is published, through the configured AI provider. OFF by default while
     /// the feature is in development; off costs nothing.
@@ -1624,6 +1629,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_talk_back: false,
         agent_compact_voice: true,
         agent_browser_enabled: false,
+        pilot_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,
         meet_auto_title: false,

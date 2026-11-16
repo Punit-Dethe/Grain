@@ -36,6 +36,7 @@ import miroIcon from "./icons/miro.png";
 import mondayIcon from "./icons/monday.png";
 import notionIcon from "./icons/notion.png";
 import otterIcon from "./icons/otter.png";
+import pilotIcon from "./icons/pilot.svg";
 import raindropIcon from "./icons/raindrop.png";
 import readwiseIcon from "./icons/readwise.png";
 import stripeIcon from "./icons/stripe.png";
@@ -63,6 +64,7 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["monday", { src: mondayIcon }],
   ["notion", { src: notionIcon }],
   ["otter", { src: otterIcon }],
+  ["pilot", { src: pilotIcon }],
   ["raindrop", { src: raindropIcon }],
   ["readwise", { src: readwiseIcon }],
   ["stripe", { src: stripeIcon }],

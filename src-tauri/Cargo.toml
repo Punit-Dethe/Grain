@@ -142,6 +142,9 @@ keyring = "4.1.6"
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
+# [GRAIN] Grain Pilot: unpacks the pinned Cua Driver release after its SHA-256
+# matches. Already in the lockfile through another dependency.
+zip = { version = "4.6", default-features = false, features = ["deflate-flate2"] }
 # [GRAIN] Agent talk-back TTS (Gradium Phonon 31m). Pure-Rust `xn` runtime on the
 # CPU: no ONNX Runtime, no ggml, no C/C++ build. `hf` = pure-Rust JSON tokenizer.
 ptts = { version = "=0.7.0", default-features = false, features = ["hf"] }
@@ -207,6 +210,10 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_Shell_Common",
   # GetApplicationUserModelId â€” tells a packaged app from a classic Win32 one.
   "Win32_Storage_Packaging_Appx",
+  # [GRAIN] Grain Pilot: the driver daemon lives in a kill-on-close job object,
+  # so it never outlives Grain, even after a crash.
+  "Win32_System_JobObjects",
+  "Win32_Security",
 ] }
 winreg = "0.55"
 

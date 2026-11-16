@@ -651,6 +651,18 @@ async changeAgentBrowserEnabledSetting(enabled: boolean) : Promise<Result<null, 
 }
 },
 /**
+ * [GRAIN] Turn Grain Pilot on or off. Off removes its tools from the Agent on
+ * the next model round and stops the driver.
+ */
+async changePilotEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_pilot_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Every reminder, in no particular order (the tab groups and sorts).
  */
 async remindersList() : Promise<Result<Reminder[], string>> {
@@ -2341,6 +2353,12 @@ agent_compact_voice?: boolean;
  * off removes it from the Agent's tool directory and closes its browser.
  */
 agent_browser_enabled?: boolean; 
+/**
+ * [GRAIN] Grain Pilot: the Agent acting in the user's own browser and apps
+ * through the Cua Driver sidecar. OFF by default; off removes it from the
+ * Agent's tool directory and stops the driver.
+ */
+pilot_enabled?: boolean; 
 /**
  * [GRAIN] Recall: write a summary of each meeting as soon as its transcript
  * is published, through the configured AI provider. OFF by default while

@@ -1464,28 +1464,114 @@ pub async fn mcp_provider_status(
         });
     }
     if presets_only {
-        // The Agent Browser is compiled into Grain (it runs the user's
-        // agent-browser CLI), listed with the extensions so it connects and
-        // switches like them.
-        statuses.push(McpProviderStatus {
-            id: AGENT_BROWSER_ID.into(),
-            name: grain_core::agent_browser::PROVIDER_NAME.into(),
-            description: "Let the Agent browse the web in its own background browser. Uses agent-browser by Vercel Labs.".into(),
-            endpoint: String::new(),
-            setup_url: "https://agent-browser.dev".into(),
-            requires_client_credentials: false,
-            client_id_configured: false,
-            connected: settings.agent_browser_enabled
-                || no_account_connected(&settings, AGENT_BROWSER_ID),
-            enabled: settings.agent_browser_enabled,
-            state: "no_account".into(),
-        });
+        for built_in in BUILT_INS {
+            statuses.push(McpProviderStatus {
+                id: built_in.id().into(),
+                name: built_in.name().into(),
+                description: built_in.description().into(),
+                endpoint: String::new(),
+                setup_url: built_in.setup_url().into(),
+                requires_client_credentials: false,
+                client_id_configured: false,
+                connected: built_in.enabled(&settings)
+                    || no_account_connected(&settings, built_in.id()),
+                enabled: built_in.enabled(&settings),
+                state: "no_account".into(),
+            });
+        }
     }
     Ok(statuses)
 }
 
-/// Extensions page id of the Agent Browser, which is not a catalog row.
-const AGENT_BROWSER_ID: &str = "agent-browser";
+/// Extensions compiled into Grain that need no account. They are not catalog
+/// rows but are listed with the extensions, so they connect and switch like
+/// them. Each has its own Agent switch in settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BuiltIn {
+    /// Runs the user's agent-browser CLI.
+    AgentBrowser,
+    /// Runs the Cua Driver that Grain downloads at Connect.
+    Pilot,
+}
+
+const BUILT_INS: [BuiltIn; 2] = [BuiltIn::AgentBrowser, BuiltIn::Pilot];
+
+impl BuiltIn {
+    fn from_id(id: &str) -> Option<Self> {
+        BUILT_INS.into_iter().find(|built_in| built_in.id() == id)
+    }
+
+    /// Extensions page id.
+    fn id(self) -> &'static str {
+        match self {
+            BuiltIn::AgentBrowser => "agent-browser",
+            BuiltIn::Pilot => "pilot",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            BuiltIn::AgentBrowser => grain_core::agent_browser::PROVIDER_NAME,
+            BuiltIn::Pilot => grain_core::pilot::PROVIDER_NAME,
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            BuiltIn::AgentBrowser => "Let the Agent browse the web in its own background browser. Uses agent-browser by Vercel Labs.",
+            BuiltIn::Pilot => "Let the Agent work in your own browser and apps, signed in as you, in the background. Connect downloads Cua Driver (about 32 MB).",
+        }
+    }
+
+    fn setup_url(self) -> &'static str {
+        match self {
+            BuiltIn::AgentBrowser => "https://agent-browser.dev",
+            BuiltIn::Pilot => "https://github.com/trycua/cua",
+        }
+    }
+
+    fn enabled(self, settings: &crate::settings::AppSettings) -> bool {
+        match self {
+            BuiltIn::AgentBrowser => settings.agent_browser_enabled,
+            BuiltIn::Pilot => settings.pilot_enabled,
+        }
+    }
+
+    fn set_enabled(self, settings: &mut crate::settings::AppSettings, enabled: bool) {
+        match self {
+            BuiltIn::AgentBrowser => settings.agent_browser_enabled = enabled,
+            BuiltIn::Pilot => settings.pilot_enabled = enabled,
+        }
+    }
+
+    /// Make sure what it runs is present: the error says how to fix it. For
+    /// Pilot this downloads and verifies the driver when it is missing.
+    async fn prepare(self, app: &AppHandle) -> Result<(), String> {
+        match self {
+            BuiltIn::AgentBrowser => crate::grain_agent_browser::check_installed()
+                .await
+                .map(|_| ()),
+            BuiltIn::Pilot => crate::grain_pilot::prepare(app).await.map(|_| ()),
+        }
+    }
+
+    /// Switched off (still connected): stop what it runs.
+    fn switched_off(self) {
+        match self {
+            BuiltIn::AgentBrowser => crate::grain_agent_browser::close_in_background(),
+            BuiltIn::Pilot => crate::grain_pilot::stop_in_background(),
+        }
+    }
+
+    /// Disconnected: forget everything it kept (the Agent Browser's profile
+    /// and sign-ins; Pilot's driver).
+    fn disconnected(self, app: &AppHandle) {
+        match self {
+            BuiltIn::AgentBrowser => crate::grain_agent_browser::disconnect_in_background(app),
+            BuiltIn::Pilot => crate::grain_pilot::disconnect_in_background(app),
+        }
+    }
+}
 
 fn no_account_connected(settings: &crate::settings::AppSettings, id: &str) -> bool {
     settings
@@ -1494,33 +1580,33 @@ fn no_account_connected(settings: &crate::settings::AppSettings, id: &str) -> bo
         .any(|value| value == id)
 }
 
-/// Connect or disconnect an extension that needs no account (Exa, Agent
-/// Browser): a saved mark, with the Agent switch turned on at connect and off
-/// at disconnect. Returns None for an extension that signs in to an account.
+/// Connect or disconnect an extension that needs no account (Exa, the
+/// built-ins): a saved mark, with the Agent switch turned on at connect and
+/// off at disconnect. Returns None for an extension that signs in to an
+/// account.
 async fn set_no_account_connected(
     app: &AppHandle,
     id: &str,
     connected: bool,
 ) -> Option<Result<(), String>> {
-    let browser = id == AGENT_BROWSER_ID;
-    if !browser
+    let built_in = BuiltIn::from_id(id);
+    if built_in.is_none()
         && !provider(id)
             .is_ok_and(|item| is_preset(item) && item.registration == Registration::Anonymous)
     {
         return None;
     }
-    if browser && connected {
-        // Connect only once the CLI is installed and new enough; the error
-        // says how to install or update it.
-        if let Err(error) = crate::grain_agent_browser::check_installed().await {
+    if let (Some(built_in), true) = (built_in, connected) {
+        // Connect only once what it runs is present; the error says how to
+        // fix it.
+        if let Err(error) = built_in.prepare(app).await {
             return Some(Err(error));
         }
     }
-    let result = update_no_account(app, id, browser, connected).await;
-    if browser && !connected {
-        // Disconnect forgets everything: the browser closes and its profile,
-        // with every sign-in, is deleted. Switching off keeps sign-ins.
-        crate::grain_agent_browser::disconnect_in_background(app);
+    let result = update_no_account(app, id, built_in, connected).await;
+    if let (Some(built_in), false) = (built_in, connected) {
+        // Disconnect forgets everything; switching off keeps it.
+        built_in.disconnected(app);
     }
     Some(result)
 }
@@ -1528,7 +1614,7 @@ async fn set_no_account_connected(
 async fn update_no_account(
     app: &AppHandle,
     id: &str,
-    browser: bool,
+    built_in: Option<BuiltIn>,
     connected: bool,
 ) -> Result<(), String> {
     let ctx = app
@@ -1541,8 +1627,8 @@ async fn update_no_account(
         if connected {
             settings.mcp_no_account_connected.push(id.into());
         }
-        if browser {
-            settings.agent_browser_enabled = connected;
+        if let Some(built_in) = built_in {
+            built_in.set_enabled(settings, connected);
             return;
         }
         settings.mcp_enabled_providers.retain(|value| value != id);
@@ -1551,7 +1637,7 @@ async fn update_no_account(
             settings.mcp_enabled_providers.sort();
         }
     };
-    if browser {
+    if built_in.is_some() {
         return ctx
             .update_settings(apply)
             .map_err(|error| error.to_string());
@@ -1719,33 +1805,31 @@ pub async fn mcp_set_provider_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     crate::grain_commands::require_main_window(&window)?;
-    if id == AGENT_BROWSER_ID {
+    if let Some(built_in) = BuiltIn::from_id(&id) {
         let settings = crate::settings::get_settings(&app);
         if enabled
-            && !settings.agent_browser_enabled
-            && !no_account_connected(&settings, AGENT_BROWSER_ID)
+            && !built_in.enabled(&settings)
+            && !no_account_connected(&settings, built_in.id())
         {
-            return Err("connect the Agent Browser before enabling it".into());
+            return Err(format!("connect {} before enabling it", built_in.name()));
         }
         if enabled {
-            // It may have been uninstalled since it was connected.
-            crate::grain_agent_browser::check_installed().await?;
+            // What it runs may have gone since it was connected.
+            built_in.prepare(&app).await?;
         }
         let ctx = app
             .try_state::<std::sync::Arc<grain_core::AppContext>>()
             .ok_or("application context unavailable")?;
         ctx.update_settings(|settings| {
             // Switching off keeps it connected.
-            if !no_account_connected(settings, AGENT_BROWSER_ID) {
-                settings
-                    .mcp_no_account_connected
-                    .push(AGENT_BROWSER_ID.into());
+            if !no_account_connected(settings, built_in.id()) {
+                settings.mcp_no_account_connected.push(built_in.id().into());
             }
-            settings.agent_browser_enabled = enabled;
+            built_in.set_enabled(settings, enabled);
         })
         .map_err(|error| error.to_string())?;
         if !enabled {
-            crate::grain_agent_browser::close_in_background();
+            built_in.switched_off();
         }
         return Ok(());
     }

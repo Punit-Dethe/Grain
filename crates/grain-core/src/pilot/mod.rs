@@ -41,6 +41,52 @@ pub const SESSION: &str = "grain";
 /// change that re-runs the Phase 3 acceptance tests.
 pub const DRIVER_VERSION: &str = "0.52.0";
 
+/// GitHub release tag of [`DRIVER_VERSION`].
+const DRIVER_RELEASE_TAG: &str = "cua-driver-rs-v0.52.0";
+
+/// The pinned release download for one platform: its file name and the
+/// SHA-256 Grain checks it against before unpacking anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DriverAsset {
+    pub file: &'static str,
+    pub sha256: &'static str,
+}
+
+impl DriverAsset {
+    /// Where the asset is downloaded from.
+    pub fn url(&self) -> String {
+        format!(
+            "https://github.com/trycua/cua/releases/download/{DRIVER_RELEASE_TAG}/{}",
+            self.file
+        )
+    }
+}
+
+/// The driver download for an OS and CPU (`std::env::consts` names), or
+/// `None` where Pilot does not run yet (macOS and Linux this round).
+pub fn driver_asset(os: &str, arch: &str) -> Option<DriverAsset> {
+    match (os, arch) {
+        ("windows", "x86_64") => Some(DriverAsset {
+            file: "cua-driver-rs-0.52.0-windows-x86_64-binary.zip",
+            sha256: "788178cbdcce4de0121f6d04ef6cb5e9d512503371e60a70563aa6f69cdd50af",
+        }),
+        ("windows", "aarch64") => Some(DriverAsset {
+            file: "cua-driver-rs-0.52.0-windows-arm64-binary.zip",
+            sha256: "73e0a7daae34b81a15aa16d3827cb44b975254130906f99dfcd49ea4c518d40c",
+        }),
+        _ => None,
+    }
+}
+
+/// The files Grain unpacks from the download: the driver and its UI
+/// Automation helper. The SDK library, Node runtime and cursor theme tool are
+/// left out.
+pub const DRIVER_FILES: &[&str] = &["cua-driver.exe", "cua-driver-uia.exe"];
+/// Largest download Grain accepts (the Windows asset is ~32 MB).
+pub const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024;
+/// Largest single file Grain unpacks from it (the driver is ~33 MB).
+pub const MAX_UNPACKED_FILE_BYTES: u64 = 96 * 1024 * 1024;
+
 /// Environment set on every driver process Grain starts: telemetry, the
 /// update check and the script tool off.
 pub const DRIVER_ENV: &[(&str, &str)] = &[
@@ -122,6 +168,20 @@ mod tests {
         assert!(has("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false"));
         assert!(has("CUA_DRIVER_RS_UPDATE_CHECK", "false"));
         assert!(has("CUA_DRIVER_DISABLE_RUN_SCRIPT", "1"));
+    }
+
+    #[test]
+    fn driver_downloads_are_pinned_per_platform() {
+        let asset = driver_asset("windows", "x86_64").expect("windows x64");
+        assert_eq!(asset.sha256.len(), 64);
+        assert!(asset
+            .url()
+            .starts_with("https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.52.0/"));
+        assert!(asset.url().ends_with(asset.file));
+        assert!(asset.file.contains(DRIVER_VERSION));
+        assert!(driver_asset("windows", "aarch64").is_some());
+        assert!(driver_asset("macos", "aarch64").is_none());
+        assert!(driver_asset("linux", "x86_64").is_none());
     }
 
     #[test]

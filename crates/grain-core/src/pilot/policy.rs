@@ -164,6 +164,18 @@ pub fn is_refused_app(executable: &str) -> bool {
     REFUSED_EXECUTABLES.contains(&name.as_str())
 }
 
+/// Packaged (Store) apps Pilot refuses, by words in their AUMID: Windows
+/// Terminal, PowerShell and other shells ship as packages too.
+const REFUSED_PACKAGE_WORDS: &[&str] = &["terminal", "powershell", "wsl", "ubuntu", "debian"];
+
+/// Whether a packaged app (by AUMID) is one Pilot refuses.
+pub fn is_refused_packaged(aumid: &str) -> bool {
+    let lower = aumid.to_ascii_lowercase();
+    REFUSED_PACKAGE_WORDS
+        .iter()
+        .any(|word| lower.contains(word))
+}
+
 /// A rectangle in screen pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
@@ -246,6 +258,12 @@ mod tests {
         assert!(is_refused_app("WindowsTerminal.exe"));
         assert!(is_refused_app("C:/Program Files/Grain/grain.exe"));
         assert!(!is_refused_app(r"C:\Program Files\Zen Browser\zen.exe"));
+        assert!(is_refused_packaged(
+            "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"
+        ));
+        assert!(!is_refused_packaged(
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"
+        ));
     }
 
     #[test]

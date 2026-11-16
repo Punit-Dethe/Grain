@@ -372,6 +372,8 @@ What this adds to the design:
   accessibility or list alternative before handing over."
 - Not confirmed: whether the default container is signed in to BookMyShow
   (the site had not asked for sign-in by that point).
+- **Decision (user, 2026-11-16): the terms box is the hand-off point.** Item 7
+  is accepted as done there; Pilot does not accept terms itself.
 
 **Phase 1: core** (`grain-core/src/pilot/`): tools, parsing, request mapping,
 compaction, rendering, policy, manifest, with unit and golden tests.
