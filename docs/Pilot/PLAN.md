@@ -96,6 +96,7 @@ Eleven tools with short Grain-written descriptions. Budget for the whole list:
 | `type` | Put text in a numbered field (`replace` or append) | what changed |
 | `press` | Press one allow-listed key in a window | what changed |
 | `scroll` | Scroll a window | what changed |
+| `choose` | Pick an option in a numbered drop-down by its text (added after Phase 0) | what changed |
 | `steps` | Several `click` / `type` / `press` in one call, stopping at the first failure | one "what changed" |
 | `show` | Bring the window to the front for the user (`sign_in`, `user_action`, `view`) | instruction to stop and wait |
 | `close` | Close a window Pilot opened | confirmation |
@@ -218,7 +219,7 @@ design if it fails)
 | 4 | Edge / Brave | Background **click** works on on-screen controls. Background **typing does not**. |
 | 5 | RAM / speed | 53–65 MB working set, 17–27 MB private; +2 MB after a 19k-character read. Read 0.45–0.6 s, click 0.4–0.6 s, `launch_app` ~1.8 s. |
 | 6 | Update check | `CUA_DRIVER_RS_UPDATE_CHECK=false` (else it calls GitHub on every daemon start). |
-| 7 | Zen booking | **Not run yet.** The Zen tab-sync blocker is solved (unsynced window, below). Run it when the user is away from the desk; it briefly holds seats on their account. |
+| 7 | Zen booking | **Reached the last gate before payment** (details below), entirely in a parked unsynced window, the user's window in front throughout except ~1–3 s per drop-down. Stopped at BookMyShow's Terms & Conditions box (accepting terms needs the user's yes). |
 
 **Manifest format** (YAML, version 3; a byte-order mark fails the parse;
 unknown keys are rejected):
@@ -345,6 +346,32 @@ Checked the same day:
 - Still to check, in item 7: an unsynced window opened from the command line
   uses the default container. Sites the user signed in to only inside a Zen
   space container may not be signed in there.
+
+**Item 7: the booking run (2026-11-16, Zen, BookMyShow, Cinepolis Viviana).**
+
+| Step | What happened |
+| --- | --- |
+| `open` showtimes page | Parked unsynced window; loaded in ~5 s; 605 elements raw. Each show is a `Button "Book 10:15 PM"`. |
+| Click a show | Seat-layout page with a "How many seats?" box (buttons `1`–`10`), then "Select Seats". |
+| Seat map | Drawn (images only), as expected. **But** the page has `Button "Open accessibility seat selection"`: a form with drop-downs for tickets, category (with prices), row, then each seat as a button (`"Select seat 12 in row D"`). Pilot can book without seeing the map. |
+| Drop-downs | The driver's click, UIA `SelectionItem.Select` and `set_value` all leave a web `<select>` unchanged (the page never hears the change). What works: expand it (driver click = UIA Expand) → `press_key down` × n → `return`. Expanding moves keyboard focus to Pilot's window, so Grain re-parks it right after; the user lost focus for ~1–3 s, the window stayed off-screen. |
+| Seat | Seat buttons respond to a click (UIA Toggle). The page then shows `Button "Pay ₹ 340"`. |
+| "Pay ₹ 340" | Not payment yet: it opens a Terms & Conditions box (`Cancel` / `Accept`). Stopped there. |
+
+What this adds to the design:
+
+- **New tool `choose`** (pick an option in a drop-down by its text). Firefox
+  family: expand, arrow keys to the option, Enter, then re-park. Grain
+  computes the number of arrow presses from the option list in the latest
+  read. Chromium: not checked (background keys are refused there).
+- **The Agent's stop rule fires on the first button that says pay, accept,
+  confirm, place order or send**, even when it is only a step towards the
+  real payment page. Here that is "Pay ₹ 340"; stopping one step early is the
+  safe side. `show` hands the window over at that point.
+- **Provider description hint:** "On a drawn seat map or picker, look for an
+  accessibility or list alternative before handing over."
+- Not confirmed: whether the default container is signed in to BookMyShow
+  (the site had not asked for sign-in by that point).
 
 **Phase 1: core** (`grain-core/src/pilot/`): tools, parsing, request mapping,
 compaction, rendering, policy, manifest, with unit and golden tests.
