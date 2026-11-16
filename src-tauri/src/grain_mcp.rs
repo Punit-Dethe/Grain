@@ -1519,14 +1519,14 @@ impl BuiltIn {
     fn description(self) -> &'static str {
         match self {
             BuiltIn::AgentBrowser => "Let the Agent browse the web in its own background browser. Uses agent-browser by Vercel Labs.",
-            BuiltIn::Pilot => "Let the Agent work in your own browser and apps, signed in as you, in the background. Connect downloads Cua Driver (about 32 MB).",
+            BuiltIn::Pilot => "Let the Agent do things in your own browser, signed in as you, through the Grain Pilot extension (Chrome, Edge and Brave).",
         }
     }
 
     fn setup_url(self) -> &'static str {
         match self {
             BuiltIn::AgentBrowser => "https://agent-browser.dev",
-            BuiltIn::Pilot => "https://github.com/trycua/cua",
+            BuiltIn::Pilot => "https://github.com/alibaba/page-agent",
         }
     }
 
@@ -1545,7 +1545,7 @@ impl BuiltIn {
     }
 
     /// Make sure what it runs is present: the error says how to fix it. For
-    /// Pilot this downloads and verifies the driver when it is missing.
+    /// Pilot this registers the browser host and opens the link.
     async fn prepare(self, app: &AppHandle) -> Result<(), String> {
         match self {
             BuiltIn::AgentBrowser => crate::grain_agent_browser::check_installed()
@@ -1564,7 +1564,7 @@ impl BuiltIn {
     }
 
     /// Disconnected: forget everything it kept (the Agent Browser's profile
-    /// and sign-ins; Pilot's driver).
+    /// and sign-ins; Pilot's browser host registration).
     fn disconnected(self, app: &AppHandle) {
         match self {
             BuiltIn::AgentBrowser => crate::grain_agent_browser::disconnect_in_background(app),

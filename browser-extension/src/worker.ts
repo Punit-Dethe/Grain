@@ -18,18 +18,25 @@ type Request = { id: number; op: string; [key: string]: unknown };
 
 let port: any = null;
 const pilotTabs = new Set<number>();
+/** Per tab: the next control number, so numbers never repeat in a tab. */
+let nextNumber: Record<string, number> = {};
 let groupId: number | null = null;
 
-// The tab set survives a worker restart.
+// Pilot's tabs survive a worker restart.
 const restored = chrome.storage.session
-  .get(["pilotTabs", "groupId"])
+  .get(["pilotTabs", "groupId", "nextNumber"])
   .then((saved: any) => {
     for (const id of saved.pilotTabs ?? []) pilotTabs.add(id);
     groupId = saved.groupId ?? null;
+    nextNumber = saved.nextNumber ?? {};
   });
 
 function persist() {
-  return chrome.storage.session.set({ pilotTabs: [...pilotTabs], groupId });
+  return chrome.storage.session.set({
+    pilotTabs: [...pilotTabs],
+    groupId,
+    nextNumber,
+  });
 }
 
 function browserName(): string {
@@ -81,7 +88,10 @@ chrome.alarms.onAlarm.addListener((alarm: any) => {
 connect();
 
 chrome.tabs.onRemoved.addListener((tabId: number) => {
-  if (pilotTabs.delete(tabId)) void persist();
+  if (pilotTabs.delete(tabId)) {
+    delete nextNumber[tabId];
+    void persist();
+  }
 });
 
 function ownTab(value: unknown): number {
@@ -123,12 +133,21 @@ async function inPage(
   });
   const [frame] = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (method: string, args: unknown[]) =>
-      (globalThis as any).__grainPilot[method](...args),
-    args: [method, args],
+    func: async (method: string, args: unknown[], base: number) => {
+      const pilot = (globalThis as any).__grainPilot;
+      pilot.init(base);
+      const result = await pilot[method](...args);
+      return { result, next: pilot.next };
+    },
+    args: [method, args, nextNumber[tabId] ?? 1],
   });
   if (frame?.error) throw new Error(String(frame.error.message ?? frame.error));
-  return frame?.result;
+  const next = frame?.result?.next;
+  if (typeof next === "number" && next > (nextNumber[tabId] ?? 1)) {
+    nextNumber[tabId] = next;
+    await persist();
+  }
+  return frame?.result?.result;
 }
 
 /**
@@ -221,10 +240,12 @@ async function handle(request: Request): Promise<unknown> {
         Number(request.index),
         String(request.option),
       ]);
+    case "press":
+      return action(ownTab(request.tab), "press", [String(request.key)]);
     case "scroll":
-      return inPage(ownTab(request.tab), "scroll", [
-        request.down !== false,
-        Number(request.pages ?? 1),
+      return action(ownTab(request.tab), "scroll", [
+        String(request.direction ?? "down"),
+        Number(request.pixels ?? 500),
       ]);
     case "show": {
       const tab = await chrome.tabs.update(ownTab(request.tab), {

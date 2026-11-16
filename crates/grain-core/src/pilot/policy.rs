@@ -1,25 +1,22 @@
-//! What Pilot refuses, decided before anything reaches the driver.
+//! What Pilot refuses, decided before anything reaches the browser.
 //!
 //! - Only `http(s)` links that pass [`crate::links::validate_link`] are opened.
 //! - Typed text and short fields are bounded and may not carry control
 //!   characters.
 //! - `press` takes a closed list of keys.
-//! - Payment controls are never clicked: the Agent hands the window to the
-//!   user with `show` instead.
-//! - Terminals, shells and Grain's own windows are never driven.
-//! - Text is never typed into a password field. The driver gives no password
-//!   flag, so the desktop crate asks Windows UI Automation for `IsPassword`
-//!   rectangles and [`is_password_target`] decides.
+//! - Payment controls are never clicked: the Agent hands the tab to the user
+//!   with `show` instead.
+//! - Password, card and one-time-code fields are marked `secret` in reads and
+//!   never typed into (checked in the page script and here).
 
 use super::{clip, MAX_FIELD_CHARS, MAX_SHOW_MESSAGE_CHARS, MAX_TYPE_CHARS};
 
-/// Keys `press` accepts, in the driver's key names.
+/// Keys `press` accepts, in the page script's key names.
 pub const KEYS: &[&str] = &[
     "return",
     "tab",
     "escape",
     "backspace",
-    "delete",
     "space",
     "up",
     "down",
@@ -133,71 +130,6 @@ pub fn is_payment_control(name: &str) -> bool {
     })
 }
 
-/// Executables Pilot never opens, reads or types into: shells and terminals
-/// (typing there runs commands) and Grain itself.
-const REFUSED_EXECUTABLES: &[&str] = &[
-    "cmd.exe",
-    "powershell.exe",
-    "pwsh.exe",
-    "windowsterminal.exe",
-    "wt.exe",
-    "conhost.exe",
-    "openconsole.exe",
-    "bash.exe",
-    "wsl.exe",
-    "mintty.exe",
-    "alacritty.exe",
-    "wezterm-gui.exe",
-    "grain.exe",
-    "regedit.exe",
-    "mmc.exe",
-];
-
-/// Whether an app (by executable path or file name) is one Pilot refuses.
-pub fn is_refused_app(executable: &str) -> bool {
-    let name = executable
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(executable)
-        .trim()
-        .to_ascii_lowercase();
-    REFUSED_EXECUTABLES.contains(&name.as_str())
-}
-
-/// Packaged (Store) apps Pilot refuses, by words in their AUMID: Windows
-/// Terminal, PowerShell and other shells ship as packages too.
-const REFUSED_PACKAGE_WORDS: &[&str] = &["terminal", "powershell", "wsl", "ubuntu", "debian"];
-
-/// Whether a packaged app (by AUMID) is one Pilot refuses.
-pub fn is_refused_packaged(aumid: &str) -> bool {
-    let lower = aumid.to_ascii_lowercase();
-    REFUSED_PACKAGE_WORDS
-        .iter()
-        .any(|word| lower.contains(word))
-}
-
-/// A rectangle in screen pixels.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-}
-
-/// Whether the control at `target` is one of the password fields Windows UI
-/// Automation reported for the window. The driver's frame and UIA's rectangle
-/// matched exactly in testing; a small tolerance covers rounding.
-pub fn is_password_target(target: Rect, password_fields: &[Rect]) -> bool {
-    const TOLERANCE: f64 = 2.0;
-    password_fields.iter().any(|field| {
-        (field.x - target.x).abs() <= TOLERANCE
-            && (field.y - target.y).abs() <= TOLERANCE
-            && (field.w - target.w).abs() <= TOLERANCE
-            && (field.h - target.h).abs() <= TOLERANCE
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,33 +182,5 @@ mod tests {
         ] {
             assert!(!is_payment_control(name), "{name}");
         }
-    }
-
-    #[test]
-    fn shells_terminals_and_grain_are_refused() {
-        assert!(is_refused_app(r"C:\Windows\System32\cmd.exe"));
-        assert!(is_refused_app("WindowsTerminal.exe"));
-        assert!(is_refused_app("C:/Program Files/Grain/grain.exe"));
-        assert!(!is_refused_app(r"C:\Program Files\Zen Browser\zen.exe"));
-        assert!(is_refused_packaged(
-            "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"
-        ));
-        assert!(!is_refused_packaged(
-            "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"
-        ));
-    }
-
-    #[test]
-    fn password_target_matches_by_rectangle() {
-        let field = Rect {
-            x: 595.0,
-            y: 405.0,
-            w: 469.0,
-            h: 32.0,
-        };
-        assert!(is_password_target(field, &[field]));
-        let username = Rect { y: 342.0, ..field };
-        assert!(!is_password_target(username, &[field]));
-        assert!(!is_password_target(field, &[]));
     }
 }

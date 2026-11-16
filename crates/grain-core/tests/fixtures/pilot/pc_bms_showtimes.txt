@@ -1,0 +1,457 @@
+*[0]<a >Skip to main content />
+*[1]<a  />
+*[2]<div role=button>Search for Movies, Events, Plays, Sports and Activities />
+*[3]<div role=button id=common-header-region>Mumbai />
+*[4]<div  />
+	*[5]<button type=button>Sign in />
+	*[6]<div role=button aria-label=Menu />
+*[7]<a >Movies />
+*[8]<a >Stream />
+*[9]<a >Events />
+*[10]<a >Plays />
+*[11]<a >Sports />
+*[12]<a >Activities />
+*[13]<a >ListYourShow />
+*[14]<a >Corporates />
+*[15]<a >Offers />
+*[16]<a >Gift Cards />
+*[17]<div role=button aria-label=Toggle favourite />
+Cinepolis: Lake Shore, Thane (EX Viviana Mall)
+Viviana Mall, Eastern Express Highway, Laxmi Nagar, Thane (West), Thane, Maharashtra 400606, India
+*[18]<a target=_blank />
+	*[19]<span  />
+*[20]<div role=button>Details />
+Available Facilities
+MTicket
+Wheel Chair Facility
+Parking Facility
+Food Court
+*[21]<div  />
+*[22]<div data-scrollable="right=162, "  />
+	*[23]<div role=button>Tue
+17
+Nov />
+	*[24]<div role=button>Wed
+18
+Nov />
+	*[25]<div role=button>Thu
+19
+Nov />
+	*[26]<div role=button>Sat
+21
+Nov />
+	*[27]<div role=button>Thu
+17
+Dec />
+	*[28]<div role=button>Fri
+18
+Dec />
+	*[29]<div role=button>Sat
+19
+Dec />
+	*[30]<div role=button>Sun
+20
+Dec />
+*[31]<div role=button>Select Price Range />
+*[32]<div role=button>Select Show Timings />
+*[33]<div  />
+	*[34]<div role=button aria-label=Open search />
+AVAILABLE
+FAST FILLING
+lan
+SUBTITLES LANGUAGE
+*[35]<div >, IMAX 3D />
+	*[36]<a >Ramayana (U) />
+	*[37]<a >Hindi />
+	*[38]<div role=button aria-label=Book 07:30 AM>IMAX />
+		*[39]<div >07:30 AM />
+	*[40]<div role=button aria-label=Book 11:20 AM>IMAX />
+		*[41]<div >11:20 AM />
+	*[42]<div role=button aria-label=Book 03:15 PM>IMAX />
+		*[43]<div >03:15 PM />
+	*[44]<div role=button aria-label=Book 07:30 PM>IMAX />
+		*[45]<div >07:30 PM />
+	*[46]<div role=button aria-label=Book 11:45 PM>IMAX />
+		*[47]<div >11:45 PM />
+*[48]<div >, 4DX 3D />
+	*[49]<a >Ramayana (U) />
+	*[50]<a >Hindi />
+	*[51]<div role=button aria-label=Book 08:00 AM>4DX />
+		*[52]<div >08:00 AM />
+	*[53]<div role=button aria-label=Book 02:45 PM>4DX />
+		*[54]<div >02:45 PM />
+	*[55]<div role=button aria-label=Book 07:00 PM>4DX />
+		*[56]<div >07:00 PM />
+	*[57]<div role=button aria-label=Book 11:15 PM>4DX />
+		*[58]<div >11:15 PM />
+*[59]<div >, 3D />
+	*[60]<a >Ramayana (U) />
+	*[61]<a >Hindi />
+	*[62]<div role=button aria-label=Book 08:30 AM>2K LASER DOLBY 7.1 />
+		*[63]<div >08:30 AM />
+	*[64]<div role=button aria-label=Book 09:30 AM>ATMOS />
+		*[65]<div >09:30 AM />
+	*[66]<div role=button aria-label=Book 10:00 AM>2K LASER DOLBY 7.1 />
+		*[67]<div >10:00 AM />
+	*[68]<div role=button aria-label=Book 12:25 PM>2K LASER DOLBY 7.1 />
+		*[69]<div >12:25 PM />
+	*[70]<div role=button aria-label=Book 01:25 PM>ATMOS />
+		*[71]<div >01:25 PM />
+	*[72]<div role=button aria-label=Book 01:55 PM>2K LASER DOLBY 7.1 />
+		*[73]<div >01:55 PM />
+	*[74]<div role=button aria-label=Book 03:30 PM />
+		*[75]<div >03:30 PM />
+	*[76]<div role=button aria-label=Book 04:40 PM>2K LASER DOLBY 7.1 />
+		*[77]<div >04:40 PM />
+	*[78]<div role=button aria-label=Book 05:40 PM>ATMOS />
+		*[79]<div >05:40 PM />
+	*[80]<div role=button aria-label=Book 06:10 PM>2K LASER DOLBY 7.1 />
+		*[81]<div >06:10 PM />
+	*[82]<div role=button aria-label=Book 08:55 PM>2K LASER DOLBY 7.1 />
+		*[83]<div >08:55 PM />
+	*[84]<div role=button aria-label=Book 09:55 PM>ATMOS />
+		*[85]<div >09:55 PM />
+	*[86]<div role=button aria-label=Book 10:25 PM>2K LASER DOLBY 7.1 />
+		*[87]<div >10:25 PM />
+	*[88]<div role=button aria-label=Book 11:10 PM />
+		*[89]<div >11:10 PM />
+*[90]<div >, 2D />
+	*[91]<a >Ramayana (U) />
+	*[92]<a >Hindi />
+	*[93]<div role=button aria-label=Book 09:00 AM>2K LASER DOLBY 7.1 />
+		*[94]<div >09:00 AM />
+	*[95]<div role=button aria-label=Book 10:30 AM>2K LASER DOLBY 7.1 />
+		*[96]<div >10:30 AM />
+	*[97]<div role=button aria-label=Book 12:55 PM>2K LASER DOLBY 7.1 />
+		*[98]<div >12:55 PM />
+	*[99]<div role=button aria-label=Book 02:25 PM>2K LASER DOLBY 7.1 />
+		*[100]<div >02:25 PM />
+	*[101]<div role=button aria-label=Book 05:10 PM>2K LASER DOLBY 7.1 />
+		*[102]<div >05:10 PM />
+	*[103]<div role=button aria-label=Book 06:00 PM>2K LASER DOLBY 7.1 />
+		*[104]<div >06:00 PM />
+	*[105]<div role=button aria-label=Book 06:40 PM>2K LASER DOLBY 7.1 />
+		*[106]<div >06:40 PM />
+	*[107]<div role=button aria-label=Book 09:25 PM>2K LASER DOLBY 7.1 />
+		*[108]<div >09:25 PM />
+	*[109]<div role=button aria-label=Book 10:15 PM>2K LASER DOLBY 7.1 />
+		*[110]<div >10:15 PM />
+	*[111]<div role=button aria-label=Book 10:55 PM>2K LASER DOLBY 7.1 />
+		*[112]<div >10:55 PM />
+*[113]<div >, 2D />
+	*[114]<a >Aadi Anant (UA13+) />
+	*[115]<a >Marathi />
+	*[116]<div role=button aria-label=Book 09:20 AM>2K LASER DOLBY 7.1 />
+		*[117]<div >09:20 AM />
+	*[118]<div role=button aria-label=Book 12:55 PM />
+		*[119]<div >12:55 PM />
+	*[120]<div role=button aria-label=Book 04:05 PM />
+		*[121]<div >04:05 PM />
+	*[122]<div role=button aria-label=Book 07:20 PM />
+		*[123]<div >07:20 PM />
+*[124]<div >, 2D />
+	*[125]<a >I Play Rocky (A) />
+	*[126]<a >English />
+	*[127]<div role=button aria-label=Book 09:35 AM />
+		*[128]<div >09:35 AM />
+*[129]<div >, 2D />
+	*[130]<a >Hanuman Ansh (U) />
+	*[131]<a >Hindi />
+	*[132]<div role=button aria-label=Book 09:55 AM />
+		*[133]<div >09:55 AM />
+*[134]<div >, 4DX />
+	*[135]<a >Wildwood />
+	*[136]<a >English />
+	*[137]<div role=button aria-label=Book 11:45 AM>4DX />
+		*[138]<div >11:45 AM />
+*[139]<div >, 2D />
+	*[140]<a >Wildwood (UA13+) />
+	*[141]<a >English />
+	*[142]<div role=button aria-label=Book 02:55 PM>2K LASER DOLBY 7.1 />
+		*[143]<div >02:55 PM />
+*[144]<div >, 2D />
+	*[145]<a >Pyre (U) />
+	*[146]<a >Hindi />
+	*[147]<div role=button aria-label=Book 12:10 PM>2K LASER DOLBY 7.1 />
+		*[148]<div >12:10 PM />
+*[149]<div >, 2D />
+	*[150]<a >Drishyam The Conclusion (UA16+) />
+	*[151]<a >Hindi />
+	*[152]<div role=button aria-label=Book 12:15 PM />
+		*[153]<div >12:15 PM />
+	*[154]<div role=button aria-label=Book 07:45 PM />
+		*[155]<div >07:45 PM />
+*[156]<div >, 2D />
+	*[157]<a >Scene (UA16+) />
+	*[158]<a >Tamil />
+	*[159]<div role=button aria-label=Book 10:35 PM />
+		*[160]<div >10:35 PM />
+*[161]<a >Home />
+*[162]<a >Cinemas in Mumbai />
+*[163]<a >Cinepolis: Lake Shore, Thane (EX Viviana Mall) />
+List your Show
+Got a show, event, activity or a great experience? Partner with us & get listed on BookMyShow
+*[164]<button type=default>Contact today! />
+*[165]<a >24/7 CUSTOMER CARE />
+*[166]<a >RESEND BOOKING CONFIRMATION />
+*[167]<a >SUBSCRIBE TO THE NEWSLETTER />
+Movies Now Showing
+*[168]<a >Ramayana />
+*[169]<a >Scene />
+*[170]<a >DNK />
+*[171]<a >Adventure of Jetcat 7D - Combo />
+*[172]<a >Itllu Arjuna />
+*[173]<a >Adventure of Iceberg 7D - Combo />
+*[174]<a >Roller Coaster 7D - Combo />
+*[175]<a >Aadi Anant />
+*[176]<a >Pyre />
+*[177]<a >John Doe />
+Top Cinemas in Mumbai
+*[178]<a >PVR: Orion Mall, Panvel />
+*[179]<a >EROS INOX IMAX Cinema: Churchgate />
+*[180]<a >Cinepolis: Aurum, Ghansoli, Navi Mumbai />
+*[181]<a >MovieMax: Mira Road (Seats Renovated) />
+*[182]<a >Devgn CineX: The Walk, Thane />
+*[183]<a >INOX: Palm Beach Galleria Mall, Navi Mumbai />
+*[184]<a >Miraj Cinemas: Dombivali (E) />
+*[185]<a >MovieMax: Eternity Mall, Thane (Newly Renovated) />
+*[186]<a >PVR: The Capital Mall, Nalasopara (E) />
+*[187]<a >Gopi Cinema: Dombivali />
+Top Cinemas Chains in India
+*[188]<a >Justickets />
+*[189]<a >PVR />
+*[190]<a >INOX />
+*[191]<a >Miraj Cinemas />
+*[192]<a >Cinepolis />
+*[193]<a >Connplex Cinemas Ltd />
+*[194]<a >K Sera Sera Box Office Pvt. Ltd. />
+*[195]<a >Asian Cinemas />
+*[196]<a >Primeshow Films />
+*[197]<a >Gold Cinema />
+Movies Now Showing in Mumbai
+*[198]<a >Ramayana />
+*[199]<a >Aadi Anant />
+*[200]<a >Avengers: Doomsday />
+*[201]<a >I Play Rocky />
+*[202]<a >Scene />
+*[203]<a >Wildwood />
+*[204]<a >Udta Teer />
+*[205]<a >Gondhal />
+*[206]<a >Ghost Soldier />
+*[207]<a >Drishyam The Conclusion />
+Upcoming Movies in Mumbai
+*[208]<a >18 November />
+*[209]<a >ENE Repeat />
+*[210]<a >Chikeezing />
+*[211]<a >Sadhak Bamakhyapa />
+*[212]<a >View />
+*[213]<a >Badmash Pottey Returns />
+*[214]<a >Maharashtra Epstein Files />
+*[215]<a >Jijai />
+*[216]<a >Nazarbandi />
+*[217]<a >70 Syaal />
+*[218]<a >Mrigaya 1.5 - The Hunt Continues />
+*[219]<a >Chakkven />
+*[220]<a >Maitreyaa />
+*[221]<a >Pratap />
+*[222]<a >Adrishyya />
+*[223]<a >Ghaat Apaghaat />
+*[224]<a >Happy Happy Family />
+*[225]<a >Kankana />
+*[226]<a >Kerub />
+*[227]<a >Bandhu (Marathi) />
+Movies By Genre
+*[228]<a >Drama Movies />
+*[229]<a >Action Movies />
+*[230]<a >Thriller Movies />
+*[231]<a >Comedy Movies />
+*[232]<a >Adventure Movies />
+*[233]<a >Fantasy Movies />
+*[234]<a >Family Movies />
+*[235]<a >Animation Movies />
+*[236]<a >Biography Movies />
+*[237]<a >Romantic Movies />
+*[238]<a >Horror Movies />
+*[239]<a >Mystery Movies />
+*[240]<a >Devotional Movies />
+*[241]<a >Crime Movies />
+*[242]<a >Psychological Movies />
+*[243]<a >Sci-Fi Movies />
+*[244]<a >Adult Movies />
+*[245]<a >Adaptation Movies />
+*[246]<a >Heist Movies />
+*[247]<a >Musical Movies />
+*[248]<a >War Movies />
+*[249]<a >Anime Movies />
+*[250]<a >Political Movies />
+*[251]<a >Screening Movies />
+*[252]<a >Sports Movies />
+*[253]<a >Bollywood Movies />
+*[254]<a >Suspense Movies />
+*[255]<a >Classic Movies />
+*[256]<a >Historical Movies />
+*[257]<a >Supernatural Movies />
+*[258]<a >Period Movies />
+*[259]<a >Mythological Movies />
+*[260]<a >Noir Movies />
+*[261]<a >Tragedy Movies />
+Movies By Language
+*[262]<a >Movies in Hindi />
+*[263]<a >Movies in English />
+*[264]<a >Movies in Tamil />
+*[265]<a >Movies in Telugu />
+*[266]<a >Movies in Malayalam />
+*[267]<a >Movies in Marathi />
+*[268]<a >Movies in Kannada />
+*[269]<a >Movies in Sindhi />
+*[270]<a >Movies in Bengali />
+*[271]<a >Movies in Flemish />
+*[272]<a >Movies in Chattisgarhi />
+*[273]<a >Movies in French />
+*[274]<a >Movies in Portuguese />
+*[275]<a >Movies in Magahi />
+*[276]<a >Movies in Assamese />
+*[277]<a >Movies in Gujarati />
+*[278]<a >Movies in Rajasthani />
+*[279]<a >Movies in Konkani />
+*[280]<a >Movies in Afrikaans />
+*[281]<a >Movies in Khasi />
+*[282]<a >Movies in Odia />
+*[283]<a >Movies in Tulu />
+*[284]<a >Movies in Japanese />
+*[285]<a >Movies in Multi Language />
+*[286]<a >Movies in English 7D />
+*[287]<a >Movies in Bhojpuri />
+*[288]<a >Movies in Nepali />
+*[289]<a >Movies in Haryanavi />
+*[290]<a >Movies in Punjabi />
+*[291]<a >Movies in Urdu />
+Upcoming Movies By Genre
+*[292]<a >Upcoming Drama Movies />
+*[293]<a >Upcoming Thriller Movies />
+*[294]<a >Upcoming Action Movies />
+*[295]<a >Upcoming Comedy Movies />
+*[296]<a >Upcoming Romantic Movies />
+*[297]<a >Upcoming Crime Movies />
+*[298]<a >Upcoming Family Movies />
+*[299]<a >Upcoming Adventure Movies />
+*[300]<a >Upcoming Horror Movies />
+*[301]<a >Upcoming Fantasy Movies />
+*[302]<a >Upcoming Mystery Movies />
+*[303]<a >Upcoming Biography Movies />
+*[304]<a >Upcoming Suspense Movies />
+*[305]<a >Upcoming Period Movies />
+*[306]<a >Upcoming Historical Movies />
+*[307]<a >Upcoming Sci-Fi Movies />
+*[308]<a >Upcoming Mythological Movies />
+*[309]<a >Upcoming Animation Movies />
+*[310]<a >Upcoming Musical Movies />
+*[311]<a >Upcoming Psychological Movies />
+*[312]<a >Upcoming Devotional Movies />
+*[313]<a >Upcoming Supernatural Movies />
+*[314]<a >Upcoming War Movies />
+*[315]<a >Upcoming Sports Movies />
+*[316]<a >Upcoming Political Movies />
+*[317]<a >Upcoming Adult Movies />
+*[318]<a >Upcoming Adaptation Movies />
+*[319]<a >Upcoming Heist Movies />
+*[320]<a >Upcoming Anime Movies />
+*[321]<a >Upcoming Screening Movies />
+*[322]<a >Upcoming Bollywood Movies />
+*[323]<a >Upcoming Classic Movies />
+*[324]<a >Upcoming Noir Movies />
+*[325]<a >Upcoming Tragedy Movies />
+Upcoming Movies By Language
+*[326]<a >Upcoming Movies in Hindi />
+*[327]<a >Upcoming Movies in Telugu />
+*[328]<a >Upcoming Movies in Tamil />
+*[329]<a >Upcoming Movies in Kannada />
+*[330]<a >Upcoming Movies in Malayalam />
+*[331]<a >Upcoming Movies in English />
+*[332]<a >Upcoming Movies in Bengali />
+*[333]<a >Upcoming Movies in Marathi />
+*[334]<a >Upcoming Movies in Punjabi />
+*[335]<a >Upcoming Movies in Gujarati />
+*[336]<a >Upcoming Movies in Odia />
+*[337]<a >Upcoming Movies in Bhojpuri />
+*[338]<a >Upcoming Movies in Khasi />
+*[339]<a >Upcoming Movies in Japanese />
+*[340]<a >Upcoming Movies in Chattisgarhi />
+*[341]<a >Upcoming Movies in Assamese />
+*[342]<a >Upcoming Movies in Tulu />
+*[343]<a >Upcoming Movies in Sindhi />
+*[344]<a >Upcoming Movies in Flemish />
+*[345]<a >Upcoming Movies in French />
+*[346]<a >Upcoming Movies in Portuguese />
+*[347]<a >Upcoming Movies in Magahi />
+*[348]<a >Upcoming Movies in Rajasthani />
+*[349]<a >Upcoming Movies in Konkani />
+*[350]<a >Upcoming Movies in Afrikaans />
+*[351]<a >Upcoming Movies in Multi Language />
+*[352]<a >Upcoming Movies in English 7D />
+*[353]<a >Upcoming Movies in Nepali />
+*[354]<a >Upcoming Movies in Haryanavi />
+*[355]<a >Upcoming Movies in Urdu />
+Movies By Format
+*[356]<a >Movies in 2D />
+*[357]<a >Movies in 3D />
+*[358]<a >Movies in 2D SCREEN X />
+*[359]<a >Movies in 7D />
+*[360]<a >Movies in ICE />
+*[361]<a >Movies in HOUSEFULL 5A />
+*[362]<a >Movies in MX4D 3D />
+*[363]<a >Movies in Full Dome />
+*[364]<a >Movies in IMAX 3D />
+*[365]<a >Movies in DOLBY CINEMA 3D />
+*[366]<a >Movies in HOUSEFULL 5B />
+*[367]<a >Movies in IMAX 2D />
+*[368]<a >Movies in 4DX 3D />
+*[369]<a >Movies in DOLBY CINEMA 2D />
+*[370]<a >Movies in MX4D />
+*[371]<a >Movies in 3D SCREEN X />
+*[372]<a >Movies in 4DX />
+COUNTRIES
+*[373]<a >Indonesia />
+*[374]<a >Singapore />
+*[375]<a >Sri Lanka />
+*[376]<a >West Indies />
+HELP
+*[377]<a >About Us />
+*[378]<a >Contact Us />
+*[379]<a >Current Opening />
+*[380]<a >Press Release />
+*[381]<a >Press Coverage />
+*[382]<a >FAQs />
+*[383]<a >Terms and Conditions />
+*[384]<a >Privacy Policy />
+BOOKMYSHOW EXCLUSIVES
+*[385]<a >Lollapalooza India />
+*[386]<a >BookAChange />
+*[387]<a >Corporate Vouchers />
+*[388]<a >Gift Cards />
+*[389]<a >List My Show />
+*[390]<a >Offers />
+*[391]<a >Stream />
+*[392]<a >Movie Trailers />
+*[393]<a >Summer Activities />
+New Year Eve & Christmas Celebration
+*[394]<a >New Year Parties />
+*[395]<a >Christmas />
+*[396]<a >Dinner Experience />
+*[397]<a >Live Performances />
+*[398]<a >Nature Trails />
+*[399]<a >Staycation />
+*[400]<a >Unique Experiences />
+*[401]<a  />
+*[402]<a  />
+*[403]<a  />
+*[404]<a  />
+*[405]<a  />
+*[406]<a  />
+*[407]<a  />
+Copyright
+2026
+©
+Bigtree Entertainment Pvt. Ltd.
+All Rights Reserved.
+The content and images used on this site are copyright protected and copyrights vests with the respective owners. The usage of the content and images on this website is intended to promote the works and no endorsement of the artist shall be implied. Unauthorized use is prohibited and punishable by law.

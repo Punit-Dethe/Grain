@@ -16,10 +16,6 @@
 //! remote clients, and every client's process image is checked against
 //! [`host_path`] before a byte is read.
 
-// Wired into `grain_pilot.rs` in Phase 2 of the plan; until then only the
-// live test below drives it.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -1,0 +1,339 @@
+*[0]<img  />
+*[1]<ul role=none aria-label=navbar aria-expanded=false id=navigation_cmwjmhfef...>Detect current location
+Using GPS />
+	*[2]<i  />
+	*[3]<input placeholder=Pune />
+	*[4]<i  />
+	*[5]<i  />
+	*[6]<input placeholder=Search for restauran... />
+	*[7]<button type=button>Log in />
+	*[8]<button type=button>Sign up />
+*[9]<a title=Home role=link target=_self />
+	*[10]<span title=Home role=link target=_self>Home
+/ />
+*[11]<a title=India role=link target=_self />
+	*[12]<span title=India role=link target=_self>India
+/ />
+Pune Restaurants
+*[13]<div role=tab id=tablink_cmwjml6j104l... />
+	*[14]<h2 id=tablink_cmwjml6j104l...>Dining Out />
+		*[15]<div  />
+*[16]<div role=tab id=tablink_cmwjml6j104l... />
+	*[17]<h2 id=tablink_cmwjml6j104l...>Delivery />
+		*[18]<div  />
+*[19]<div role=tab id=tablink_cmwjml6j104l... />
+	*[20]<h2 id=tablink_cmwjml6j104l...>Nightlife />
+		*[21]<div  />
+*[22]<div >Filters />
+	*[23]<i  />
+*[24]<div >Pure Veg />
+*[25]<div >Cuisines />
+	*[26]<i  />
+Inspiration for your first order
+*[27]<div  />
+	*[28]<div  />
+		*[29]<div  />
+	*[30]<a >Pizza />
+*[31]<div  />
+	*[32]<div  />
+		*[33]<div  />
+	*[34]<a >Biryani />
+*[35]<div  />
+	*[36]<div  />
+		*[37]<div  />
+	*[38]<a >Burger />
+*[39]<div  />
+	*[40]<div  />
+		*[41]<div  />
+	*[42]<a >Chicken />
+*[43]<div  />
+	*[44]<div  />
+		*[45]<div  />
+	*[46]<a >Fried Rice />
+*[47]<div  />
+	*[48]<div  />
+		*[49]<div  />
+	*[50]<a >Rolls />
+*[51]<div  />
+	*[52]<div  />
+		*[53]<div  />
+	*[54]<a >Idli />
+*[55]<div  />
+	*[56]<div  />
+		*[57]<div  />
+	*[58]<a >North Indian />
+*[59]<div  />
+	*[60]<div  />
+		*[61]<div  />
+	*[62]<a >Thali />
+*[63]<div  />
+	*[64]<div  />
+		*[65]<div  />
+	*[66]<a >Cake />
+*[67]<div  />
+	*[68]<div  />
+		*[69]<div  />
+	*[70]<a >Ice Cream />
+*[71]<div  />
+	*[72]<div  />
+		*[73]<div  />
+	*[74]<a >Veg Meal />
+*[75]<section role=button aria-label=Next Slide aria-controls=carousel-items />
+Top brands for you
+*[76]<div >Burger King
+30–35 min />
+	*[77]<div  />
+*[78]<div >MH 12 Pav Bhaji
+20–25 min />
+	*[79]<div  />
+*[80]<div >Domino's Pizza
+40–45 min />
+	*[81]<div  />
+*[82]<div >KFC
+25–30 min />
+	*[83]<div  />
+*[84]<div >Subway
+20–25 min />
+	*[85]<div  />
+*[86]<div >Cheesiano Pizza
+20–25 min />
+	*[87]<div  />
+*[88]<div >Pizza Hut
+25–30 min />
+	*[89]<div  />
+*[90]<div >Oven Story Pizza
+20–25 min />
+	*[91]<div  />
+*[92]<div >Irani Cafe
+25–30 min />
+	*[93]<div  />
+*[94]<div >The Belgian Waffle Co.
+20–25 min />
+	*[95]<div  />
+*[96]<section role=button aria-label=Next Slide aria-controls=carousel-items />
+Food Delivery Restaurants in Pune
+*[97]<div  />
+	*[98]<a  />
+		*[99]<div >Promoted />
+		*[100]<div  />
+		*[101]<div >₹50 OFF />
+	*[102]<a  />
+		*[103]<div >Pizza Hut />
+			*[104]<div  />
+				*[105]<div  />
+					*[106]<div  />
+						*[107]<div  />
+							*[108]<div >4.2 />
+								*[109]<div  />
+									*[110]<i  />
+		*[111]<div >Pizza, Pasta, Fast Food, Beverages
+₹250 for one />
+		*[112]<div  />
+			*[113]<div >25–30 min />
+*[114]<div  />
+	*[115]<a  />
+		*[116]<div  />
+		*[117]<div >₹160 OFF />
+	*[118]<a  />
+		*[119]<div >MH 12 Pav Bhaji />
+			*[120]<div  />
+				*[121]<div  />
+					*[122]<div  />
+						*[123]<div  />
+							*[124]<div >4.4 />
+								*[125]<div  />
+									*[126]<i  />
+		*[127]<div >Street Food, Maharashtrian, Pizza, North Indian, Shake
+₹150 for one />
+		*[128]<div  />
+			*[129]<div >20–25 min />
+*[130]<div  />
+	*[131]<a  />
+		*[132]<div >Promoted />
+		*[133]<div  />
+		*[134]<div >30% OFF />
+	*[135]<a  />
+		*[136]<div >Persian Darbar />
+			*[137]<div  />
+				*[138]<div  />
+					*[139]<div  />
+						*[140]<div  />
+							*[141]<div >4.3 />
+								*[142]<div  />
+									*[143]<i  />
+		*[144]<div >North Indian, Mughlai, Kebab, Biryani, Seafood, Chinese, Desserts, Beverages
+₹700 for one />
+		*[145]<div  />
+			*[146]<div >25–30 min />
+*[147]<div  />
+	*[148]<a  />
+		*[149]<div >Promoted />
+		*[150]<div  />
+		*[151]<div >₹100 OFF />
+	*[152]<a  />
+		*[153]<div >La Pino'z Pizza />
+			*[154]<div  />
+				*[155]<div  />
+					*[156]<div  />
+						*[157]<div  />
+							*[158]<div >3.9 />
+								*[159]<div  />
+									*[160]<i  />
+		*[161]<div >Pizza, Italian, Pasta, Fast Food, Desserts, Beverages
+₹150 for one />
+		*[162]<div  />
+			*[163]<div >25–30 min />
+*[164]<div  />
+	*[165]<a  />
+		*[166]<div  />
+		*[167]<div >70% OFF />
+	*[168]<a  />
+		*[169]<div >McDonald's />
+			*[170]<div  />
+				*[171]<div  />
+					*[172]<div  />
+						*[173]<div  />
+							*[174]<div >4.2 />
+								*[175]<div  />
+									*[176]<i  />
+		*[177]<div >Burger
+₹200 for one />
+		*[178]<div  />
+			*[179]<div >20–25 min />
+*[180]<div  />
+	*[181]<a  />
+		*[182]<div >Promoted />
+		*[183]<div  />
+		*[184]<div >₹140 OFF />
+	*[185]<a  />
+		*[186]<div >Good Flippin' Burgers />
+			*[187]<div  />
+				*[188]<div  />
+					*[189]<div  />
+						*[190]<div  />
+							*[191]<div >4.6 />
+								*[192]<div  />
+									*[193]<i  />
+		*[194]<div >Burger, Wraps, Beverages, Shake, Fast Food, American
+₹400 for one />
+		*[195]<div  />
+			*[196]<div >30–35 min />
+*[197]<div  />
+	*[198]<a  />
+		*[199]<div  />
+		*[200]<div >₹100 OFF />
+	*[201]<a  />
+		*[202]<div >Burger King />
+			*[203]<div  />
+				*[204]<div  />
+					*[205]<div  />
+						*[206]<div  />
+							*[207]<div >4.1 />
+								*[208]<div  />
+									*[209]<i  />
+		*[210]<div >Burger, Fast Food, Beverages
+₹150 for one />
+		*[211]<div  />
+			*[212]<div >30–35 min />
+*[213]<div  />
+	*[214]<a  />
+		*[215]<div >Promoted />
+		*[216]<div  />
+		*[217]<div >₹50 OFF />
+	*[218]<a  />
+		*[219]<div >Cheesiano Pizza />
+			*[220]<div  />
+				*[221]<div  />
+					*[222]<div  />
+						*[223]<div  />
+							*[224]<div >4.3 />
+								*[225]<div  />
+									*[226]<i  />
+		*[227]<div >Pizza, Burger, Finger Food, Beverages
+₹200 for one />
+		*[228]<div  />
+			*[229]<div >20–25 min />
+*[230]<div  />
+	*[231]<a  />
+		*[232]<div  />
+		*[233]<div >₹125 OFF />
+	*[234]<a  />
+		*[235]<div >Domino's Pizza />
+			*[236]<div  />
+				*[237]<div  />
+					*[238]<div  />
+						*[239]<div  />
+							*[240]<div >4.1 />
+								*[241]<div  />
+									*[242]<i  />
+		*[243]<div >Pizza, Fast Food, Beverages
+₹200 for one />
+		*[244]<div  />
+			*[245]<div >40–45 min />
+Explore options near me
+*[246]<div title=Popular cuisines nea... role=button aria-expanded=false />
+	*[247]<section >Popular cuisines near me />
+*[248]<div title=Popular restaurant t... role=button aria-expanded=false />
+	*[249]<section >Popular restaurant types near me />
+*[250]<div title=Top restaurant chain... role=button aria-expanded=false />
+	*[251]<section >Top restaurant chains />
+*[252]<div title=Cities we deliver to role=button aria-expanded=false />
+	*[253]<section >Cities we deliver to />
+*[254]<div title=Popular Dishes Near ... role=button aria-expanded=false />
+	*[255]<section >Popular Dishes Near Me />
+*[256]<div >Select Country
+India
+UAE
+India />
+	*[257]<i  />
+*[258]<div >Select Language
+English />
+	*[259]<i  />
+	*[260]<i  />
+About Zomato
+*[261]<a >Who We Are />
+*[262]<a >Blog />
+*[263]<a >Work With Us />
+*[264]<a >Investor Relations />
+*[265]<a >Report Fraud />
+*[266]<a >Press Kit />
+*[267]<a >Contact Us />
+Zomaverse
+*[268]<a >Zomato />
+*[269]<a >Blinkit />
+*[270]<a >District />
+*[271]<a >Feeding India />
+*[272]<a >Hyperpure />
+*[273]<a >Eternal SBI Credit Card />
+*[274]<a >Zomato Live />
+*[275]<a >Zomaland />
+*[276]<a >Weather Union />
+For Restaurants
+*[277]<a >Partner With Us />
+*[278]<a >Apps For You />
+Learn More
+*[279]<a >Privacy />
+*[280]<a >Security />
+*[281]<a >Terms />
+Social links
+*[282]<a target=_blank />
+	*[283]<div  />
+		*[284]<i  />
+*[285]<a target=_blank />
+	*[286]<div  />
+		*[287]<i  />
+*[288]<a target=_blank />
+	*[289]<div  />
+		*[290]<i  />
+*[291]<a target=_blank />
+	*[292]<div  />
+		*[293]<i  />
+*[294]<a target=_blank />
+	*[295]<div  />
+		*[296]<i  />
+*[297]<section  />
+	*[298]<a aria-label=app store link target=_blank />
+		*[299]<div  />
+	*[300]<a aria-label=app store link target=_blank />
+		*[301]<div  />
+By continuing past this page, you agree to our Terms of Service, Cookie Policy, Privacy Policy and Content Policies. All trademarks are properties of their respective owners. 2008-2026 © Zomato™ Ltd. All rights reserved.

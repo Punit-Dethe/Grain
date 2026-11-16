@@ -302,6 +302,34 @@ Tests: `compact.rs` against saved page-controller output from the Phase 0
 sites (fixtures, like the current Zomato and BookMyShow ones), the token
 budget, the stable-number rules, and the tool parse tests carried over.
 
+**Phase 2 results (2026-11-17).** Built and wired. The shaping lives in
+`crates/grain-core/src/pilot/page.rs` (not `compact.rs`). The Cua files were
+removed at the same time: `compact.rs`, `manifest.rs`, `numbering.rs`,
+`request.rs`, `grain_pilot_install.rs` and the old fixtures. That also covers
+most of Phase 4.
+
+- Tools are now `open`, `tabs`, `read` (`find`, `detail` screen|page),
+  `click`, `type`, `choose`, `press`, `scroll`, `steps`, `show` and `close`,
+  with tabs named `t1`, `t2`.
+- Actions reply with what changed on screen, not the whole page.
+- When the screen shows only a loading placeholder ("Please wait…"), Pilot
+  reads it again, up to 4 times, 1.5 s apart.
+- The payment and secret-field refusals run in Grain before anything reaches
+  the browser.
+- Live test (`live_pilot_tools_book_up_to_the_seat_page`, separate Edge
+  profile) passes:
+  - Wikipedia search through `find`, `click` and `type` reaches "Pune -
+    Wikipedia".
+  - BookMyShow `find "Book"` lists the shows in about 550 tokens.
+  - Clicking a show reaches the seat-layout page.
+  - `tabs` and `close` work.
+- In the last runs the BookMyShow seat page stayed on "Please wait, while we
+  load the seats" for more than 15 s, even in a full-page read. The site did
+  not finish loading. This is probably throttling after many automated runs
+  from this IP, so recheck it in the real app.
+- Wikipedia shows its search box either as a search field or as a combobox,
+  depending on the layout.
+
 ### Phase 3: safety, hand-over and fallback
 
 Password, card and payment refusals on both sides, `show`, end-of-run
