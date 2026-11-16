@@ -18,8 +18,9 @@
 //!   thread or socket between calls; the idle stop is one sleeping task.
 //! - One call at a time: the state lock is the gate.
 //!
-//! Background by default: a Zen or Firefox window Pilot opens is parked just
-//! past the right edge of the screen (Zen takes focus for every new window).
+//! Background by default: Pilot opens a new window of the user's Windows
+//! default browser. A Firefox-family window (Firefox, Zen…) is parked just
+//! past the right edge of the screen (they take focus for a new window).
 //! Chromium windows stay where they open, behind the user's window, because
 //! Chromium only takes clicks on controls that are on a screen. `show` brings
 //! a window to the user; nothing else does.
@@ -105,7 +106,7 @@ struct PilotWindow {
     app: App,
     /// Pilot opened it, so `close` may close it.
     opened: bool,
-    /// Parked off-screen (Zen and Firefox windows until `show`).
+    /// Parked off-screen (Firefox-family windows until `show`).
     parked: bool,
     numbering: Numbering,
     /// Snapshot id of the latest read; `None` until read (or after the
@@ -974,7 +975,8 @@ fn wait_for_new_window(
                 found = Some(newest);
                 seen_at = Instant::now();
             }
-            // Zen takes focus as soon as its window exists: park quickly.
+            // Firefox-family browsers take focus as soon as the window
+            // exists: park quickly.
             let quiet = if family == BrowserFamily::Chromium {
                 600
             } else {

@@ -313,8 +313,17 @@ Pilot opened, and Zen brought the new window to the front (Edge and Brave did
 not). Test tabs were closed afterwards and the user's 9 tabs were checked
 unchanged.
 
-**Decision (user, 2026-11-16): Zen work happens in an unsynced window.**
-Checked the same day:
+**Reversed (user, 2026-11-16, later): no per-browser window modes.** Grain
+is for everyone, so Pilot drives whatever the Windows default browser is, the
+normal way: `--new-window <url>` for every family (Zen is treated as a
+Firefox fork). The `--blank-window` unsynced window below caused the user an
+error and was removed. With normal Zen, tab sync means Pilot's tab can appear
+in the user's main Zen window. The parking steps below still apply to every
+Firefox-family window. After the change, the browser and booking live tests
+passed again in normal Zen.
+
+~~Decision (user, 2026-11-16): Zen work happens in an unsynced window.~~
+History, checked the same day:
 
 - `zen.exe --blank-window <url>` (Zen's own command-line flag, read from its
   `BrowserContentHandler`) opens an **unsynced** window with only that tab.

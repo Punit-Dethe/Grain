@@ -163,9 +163,7 @@ pub fn bring_to_front(target: Target) -> DriverCall {
 /// How a browser opens Pilot's window and what it allows in the background.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserFamily {
-    /// Zen syncs tabs across windows; Pilot opens an unsynced window.
-    Zen,
-    /// Firefox and its other forks.
+    /// Firefox and its forks (Zen, LibreWolf, Floorp…).
     Firefox,
     /// Chrome, Edge, Brave and other Chromium browsers.
     Chromium,
@@ -180,25 +178,19 @@ pub fn browser_family(executable: &str) -> Option<BrowserFamily> {
         .unwrap_or(executable)
         .to_ascii_lowercase();
     Some(match name.as_str() {
-        "zen.exe" => BrowserFamily::Zen,
-        "firefox.exe" | "librewolf.exe" | "floorp.exe" | "waterfox.exe" | "mullvadbrowser.exe" => {
-            BrowserFamily::Firefox
-        }
+        "firefox.exe" | "zen.exe" | "librewolf.exe" | "floorp.exe" | "waterfox.exe"
+        | "mullvadbrowser.exe" => BrowserFamily::Firefox,
         "msedge.exe" | "chrome.exe" | "brave.exe" | "vivaldi.exe" | "opera.exe"
         | "chromium.exe" => BrowserFamily::Chromium,
         _ => return None,
     })
 }
 
-/// Command-line arguments that open `url` in a new window of its own.
-/// Zen's `--blank-window` opens an unsynced window, so Pilot's tab never
-/// appears in the user's synced windows.
-pub fn open_arguments(family: BrowserFamily, url: &str) -> Vec<String> {
-    let flag = match family {
-        BrowserFamily::Zen => "--blank-window",
-        BrowserFamily::Firefox | BrowserFamily::Chromium => "--new-window",
-    };
-    vec![flag.to_string(), url.to_string()]
+/// Command-line arguments that open `url` in a new window of the user's
+/// default browser, the browser's normal way (`--new-window` in every
+/// family). Pilot has no per-browser window modes.
+pub fn open_arguments(_family: BrowserFamily, url: &str) -> Vec<String> {
+    vec!["--new-window".to_string(), url.to_string()]
 }
 
 impl BrowserFamily {
@@ -305,12 +297,12 @@ mod tests {
         let url = "https://in.bookmyshow.com/";
         let call = launch(
             r"C:\Program Files\Zen Browser\zen.exe",
-            &open_arguments(BrowserFamily::Zen, url),
+            &open_arguments(BrowserFamily::Firefox, url),
         );
         assert_eq!(call.args["path"], "C:/Program Files/Zen Browser/zen.exe");
         assert_eq!(
             call.args["additional_arguments"],
-            json!(["--blank-window", url])
+            json!(["--new-window", url])
         );
         assert_eq!(list_windows(7).args["pid"], 7);
     }
@@ -319,13 +311,13 @@ mod tests {
     fn browser_families() {
         assert_eq!(
             browser_family(r"C:\Program Files\Zen Browser\zen.exe"),
-            Some(BrowserFamily::Zen)
+            Some(BrowserFamily::Firefox)
         );
         assert_eq!(browser_family("BRAVE.EXE"), Some(BrowserFamily::Chromium));
         assert_eq!(browser_family("firefox.exe"), Some(BrowserFamily::Firefox));
         assert_eq!(browser_family("notepad.exe"), None);
         assert!(!BrowserFamily::Chromium.types_in_background());
-        assert!(BrowserFamily::Zen.types_in_background());
+        assert!(BrowserFamily::Firefox.types_in_background());
         assert_eq!(
             open_arguments(BrowserFamily::Chromium, "https://a.example/")[0],
             "--new-window"
