@@ -636,6 +636,82 @@ pub fn change_agent_compact_voice_setting(app: AppHandle, enabled: bool) -> Resu
     Ok(())
 }
 
+/// [GRAIN] Dynamic UI: Agent replies may carry an interactive view. See
+/// `Settings::agent_dynamic_ui`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_dynamic_ui_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_dynamic_ui = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] A talk-back voice preset, for the settings picker.
+#[derive(serde::Serialize, Debug, Clone, specta::Type)]
+pub struct AgentVoicePreset {
+    pub name: String,
+    /// "us" or "gb".
+    pub accent: String,
+    /// "female" or "male".
+    pub gender: String,
+}
+
+/// [GRAIN] The talk-back voice presets, default first.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_voice_presets() -> Vec<AgentVoicePreset> {
+    crate::grain_tts::VOICES
+        .iter()
+        .map(|voice| AgentVoicePreset {
+            name: voice.name.to_string(),
+            accent: voice.accent.to_string(),
+            gender: voice.gender.to_string(),
+        })
+        .collect()
+}
+
+/// [GRAIN] Pick the talk-back voice. A preset not yet on disk downloads in
+/// the background (256 KB); then it says a short line so you hear it. See
+/// `Settings::agent_voice`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_voice_setting(app: AppHandle, voice: String) -> Result<(), String> {
+    let preset =
+        crate::grain_tts::preset(&voice).ok_or_else(|| format!("unknown voice {voice:?}"))?;
+    let mut settings = settings::get_settings(&app);
+    settings.agent_voice = preset.name.to_string();
+    settings::write_settings(&app, settings);
+    crate::grain_tts::stop();
+    crate::grain_tts::fetch_voice(&app, preset, true);
+    Ok(())
+}
+
+/// [GRAIN] Spoken acknowledgement ("Got it") while the Agent works. See
+/// `Settings::agent_spoken_ack`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_spoken_ack_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_spoken_ack = enabled;
+    settings::write_settings(&app, settings);
+    if enabled {
+        crate::grain_tts::prepare_acks(&app);
+    }
+    Ok(())
+}
+
+/// [GRAIN] Polished UI: ask the model to design every view properly. See
+/// `Settings::agent_polished_ui`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_polished_ui_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_polished_ui = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
 /// by default; see `Settings::meet_auto_summary`.
 #[tauri::command]

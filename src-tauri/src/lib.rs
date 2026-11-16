@@ -61,6 +61,7 @@ mod grain_llm_client;
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
+mod grain_agent_canvas; // [GRAIN] generated views in the Agent chat (experiment)
 mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
 mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the host
 mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebView)
@@ -1411,6 +1412,11 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
             grain_commands::change_agent_compact_voice_setting, // [GRAIN]
+            grain_commands::change_agent_spoken_ack_setting, // [GRAIN]
+            grain_commands::agent_voice_presets, // [GRAIN]
+            grain_commands::change_agent_voice_setting, // [GRAIN]
+            grain_commands::change_agent_dynamic_ui_setting, // [GRAIN]
+            grain_commands::change_agent_polished_ui_setting, // [GRAIN]
             grain_agent_browser::change_agent_browser_enabled_setting, // [GRAIN] Agent Browser on/off
             grain_pilot::change_pilot_enabled_setting, // [GRAIN] Grain Pilot on/off
             grain_reminders::reminders_list, // [GRAIN] Reminders

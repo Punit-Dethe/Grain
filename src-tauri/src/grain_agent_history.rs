@@ -23,6 +23,8 @@ const MAX_CHATS: usize = 100;
 const MAX_MESSAGES: usize = 200;
 /// A single stored message is cut to this many characters.
 const MAX_CHARS: usize = 20_000;
+/// A stored generated view is cut to this many characters.
+const MAX_UI_CHARS: usize = crate::grain_agent_canvas::MAX_UI_CHARS;
 /// A chat's title: its first request, cut to this many characters.
 const TITLE_CHARS: usize = 80;
 
@@ -32,9 +34,11 @@ static LOCK: Mutex<()> = Mutex::new(());
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentNotchMode {
-    #[default]
-    Chat,
     Recall,
+    /// Also what an unknown stored mode reads as (serde wants it last).
+    #[default]
+    #[serde(other)]
+    Chat,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -43,6 +47,9 @@ pub struct AgentHistoryMessage {
     pub role: String,
     pub content: String,
     pub at_unix_ms: u64,
+    /// The generated view an assistant reply carried (OpenUI Lang).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -131,7 +138,10 @@ fn now_ms() -> u64 {
 fn spoken(messages: Vec<AgentMessage>, at_unix_ms: u64) -> Vec<AgentHistoryMessage> {
     messages
         .into_iter()
-        .filter(|message| !message.content.trim().is_empty())
+        .filter(|message| {
+            !message.content.trim().is_empty()
+                || message.ui.as_ref().is_some_and(|ui| !ui.trim().is_empty())
+        })
         .map(|message| AgentHistoryMessage {
             role: if message.role == "assistant" {
                 "assistant".into()
@@ -140,6 +150,10 @@ fn spoken(messages: Vec<AgentMessage>, at_unix_ms: u64) -> Vec<AgentHistoryMessa
             },
             content: message.content.trim().chars().take(MAX_CHARS).collect(),
             at_unix_ms,
+            ui: message
+                .ui
+                .map(|ui| ui.trim().chars().take(MAX_UI_CHARS).collect::<String>())
+                .filter(|ui| !ui.is_empty()),
         })
         .collect()
 }
@@ -340,6 +354,7 @@ mod tests {
         AgentMessage {
             role: role.into(),
             content: content.into(),
+            ui: None,
         }
     }
 

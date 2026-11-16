@@ -1,0 +1,1002 @@
+/* Generated views in the Agent chat (experiment, see
+   docs/Generative UI/PLAN.md): the card in the chat and the full view it
+   opens. The view is laid out at its settled size and clipped by the shell as
+   it grows, like Recall. AgentCanvas measures `.gui-content` and `.gui-foot`
+   to size the shell (CANVAS_MIN/MAX and PAD_X there). It never scrolls: a
+   view taller than the bounds is scaled down to fit. Tokens come from
+   `.agent-panel-root` in agent.css. */
+.agent-notch-canvas-pane {
+  position: absolute;
+  top: var(--notch-reply-header);
+  left: 50%;
+  width: calc(min(var(--fit-w), 100vw) - 2px);
+  height: max(
+    0px,
+    calc(min(var(--fit-h), 100vh) - var(--notch-reply-header) - 1px)
+  );
+  transform: translateX(-50%);
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s linear 340ms;
+}
+
+.is-reply .agent-notch-canvas-pane {
+  visibility: visible;
+  opacity: 1;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s;
+}
+
+.agent-notch-canvas {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.gui-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 16px;
+}
+
+.gui-fit {
+  overflow: hidden;
+}
+
+/* Natural width, capped: independent of the shell, so measuring it never
+   feeds back into itself. 325 / 685 = CANVAS_MIN / CANVAS_MAX width minus
+   2 * PAD_X, FRAME.w and SUBPIXEL (AgentCanvas.tsx). */
+.gui-content {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 325px;
+  max-width: 685px;
+  padding: 6px 0 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  transform-origin: top left;
+  transition: opacity 200ms ease;
+}
+
+.gui-content.is-stale {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.gui-foot {
+  flex: 0 0 auto;
+}
+
+.gui-foot .agc-confirm-action {
+  margin: 0 12px 6px;
+}
+
+/* ── Look ─────────────────────────────────────────────────────────────────
+   Calm and premium: near-black, three greys of ink, hairlines, quiet pills.
+   Colour only carries meaning (weather glyphs, status, trends). */
+.agent-notch-canvas {
+  --g-ink: #f5f5f7;
+  --g-2: rgba(245, 245, 247, 0.56);
+  --g-3: rgba(245, 245, 247, 0.36);
+  --g-line: rgba(255, 255, 255, 0.07);
+  --g-raise: rgba(255, 255, 255, 0.05);
+  --g-pill: rgba(255, 255, 255, 0.08);
+  --g-pill-hover: rgba(255, 255, 255, 0.13);
+  --g-good: #7fcf9a;
+  --g-warn: #e8c37a;
+  --g-bad: #ef8a80;
+  --g-view: 440px;
+  color: var(--g-ink);
+  font-feature-settings: "tnum" 1;
+}
+
+.gui-t2 {
+  color: var(--g-2);
+}
+
+.gui-t3 {
+  color: var(--g-3);
+}
+
+.gui-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Wide: a short landscape panel, up to 660 px. Like any view it is only as
+   wide as its content (the shell fits it); the designed views re-arrange
+   across the room (see WideLayout in library.tsx). 660 stays inside
+   `.gui-content`'s max-width. */
+.gui-canvas.is-wide {
+  --g-view: 660px;
+}
+
+.gui-canvas.is-wide .gui-stack.is-row {
+  flex-wrap: nowrap;
+}
+
+.gui-stack.is-row > .gui-view {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
+
+.gui-canvas.is-wide .gui-wx {
+  flex-direction: row;
+  gap: 28px;
+}
+
+.gui-canvas.is-wide .gui-wx-now {
+  flex: 0 0 auto;
+  min-width: 190px;
+}
+
+.gui-canvas.is-wide .gui-wx-later {
+  flex: 1 1 0;
+  justify-content: flex-end;
+  padding-left: 28px;
+  border-left: 1px solid var(--g-line);
+}
+
+.gui-canvas.is-wide .gui-wx-later > .gui-hairline {
+  display: none;
+}
+
+.gui-canvas.is-wide .gui-places .gui-rows {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 28px;
+}
+
+/* The second place starts the first row's right column: no separator. */
+.gui-canvas.is-wide .gui-places .gui-place:nth-child(2)::before {
+  content: none;
+}
+
+.gui-hairline {
+  width: 100%;
+  height: 1px;
+  flex-shrink: 0;
+  background: var(--g-line);
+}
+
+.gui-icon {
+  flex-shrink: 0;
+  color: var(--g-2);
+}
+
+.gui-icon.hue-amber {
+  color: #f0c674;
+}
+.gui-icon.hue-blue {
+  color: #8fb8e8;
+}
+.gui-icon.hue-purple {
+  color: #b9a6ec;
+}
+.gui-icon.hue-ice {
+  color: #c9dcef;
+}
+.gui-icon.hue-moon {
+  color: #c8cbe0;
+}
+.gui-icon.hue-green {
+  color: var(--g-good);
+}
+.gui-icon.hue-red {
+  color: var(--g-bad);
+}
+
+.gui-status {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.gui-status.is-good {
+  color: var(--g-good);
+}
+.gui-status.is-warn {
+  color: var(--g-warn);
+}
+.gui-status.is-bad {
+  color: var(--g-bad);
+}
+.gui-status.is-muted {
+  color: var(--g-3);
+}
+
+/* ── Designed views ──────────────────────────────────────────────────── */
+.gui-view {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: var(--g-view);
+  max-width: 100%;
+}
+
+.gui-view-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gui-view-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.gui-wx-now,
+.gui-wx-later {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gui-wx-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+}
+
+.gui-wx-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gui-wx-temp {
+  font-size: 64px;
+  font-weight: 300;
+  line-height: 0.95;
+  letter-spacing: -0.045em;
+}
+
+.gui-wx-cond {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.gui-wx-hl {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.gui-wx-glyph {
+  margin-top: 6px;
+}
+
+.gui-wx-line {
+  display: block;
+  width: 100%;
+  height: 30px;
+  overflow: visible;
+}
+
+.gui-wx-line path {
+  fill: none;
+  stroke: rgba(245, 245, 247, 0.32);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.gui-wx-hours {
+  display: grid;
+  margin-top: -4px;
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.gui-wx-hours > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.gui-wx-hours > div > :first-child {
+  font-size: 11.5px;
+}
+
+.gui-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.gui-place {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+/* Separators start at the text, past the thumbnail (iOS inset lists). */
+.gui-place + .gui-place::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--g-line);
+}
+
+.gui-place + .gui-place:has(.gui-thumb.is-small)::before {
+  left: 46px;
+}
+
+.gui-place + .gui-place:has(.gui-thumb:not(.is-small))::before {
+  left: 58px;
+}
+
+.gui-place.is-action {
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background-color 140ms ease;
+}
+
+.gui-place.is-action:hover:not(:disabled),
+.gui-place.is-action:focus-visible {
+  outline: none;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--g-raise) 12%,
+    var(--g-raise) 88%,
+    transparent
+  );
+}
+
+.gui-thumb {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--g-raise);
+}
+
+.gui-thumb.is-small {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.gui-thumb.is-tall {
+  height: 69px;
+}
+
+.gui-thumb.is-small.is-tall {
+  height: 51px;
+  border-radius: 6px;
+}
+
+/* No photo (or a broken one): a quiet tile with the row's icon. */
+.gui-thumb.is-empty {
+  display: grid;
+  place-items: center;
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.08),
+    rgba(255, 255, 255, 0.03)
+  );
+  box-shadow: inset 0 0 0 1px var(--g-line);
+}
+
+.gui-thumb.is-empty .gui-icon:not([class*="hue-"]) {
+  color: var(--g-3);
+}
+
+.gui-place-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.gui-place-name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-place-detail {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gui-place-side {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  color: var(--g-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gui-place-side .gui-status {
+  font-size: 11.5px;
+}
+
+.gui-journey {
+  gap: 14px;
+}
+
+.gui-journey-route {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.gui-journey-code {
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.gui-journey-time {
+  margin-top: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.gui-journey-end {
+  text-align: right;
+}
+
+.gui-journey-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 1px;
+  margin-bottom: 18px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.gui-journey-done {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(245, 245, 247, 0.6);
+}
+
+.gui-journey-mode {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--agc-bg);
+  transform: translate(-50%, -50%);
+}
+
+.gui-journey-mode.is-plane .gui-icon {
+  transform: rotate(45deg);
+}
+
+.gui-journey-mode .gui-icon {
+  color: var(--g-ink);
+}
+
+.gui-facts {
+  display: grid;
+  gap: 12px;
+}
+
+.gui-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11.5px;
+}
+
+.gui-fact-value {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.gui-hero-label {
+  font-size: 12px;
+}
+
+.gui-hero-value {
+  font-size: 48px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.gui-hero-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.gui-hero-line.is-up {
+  color: var(--g-good);
+}
+
+.gui-hero-line.is-down {
+  color: var(--g-bad);
+}
+
+.gui-hero-detail {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+/* ── Building blocks ─────────────────────────────────────────────────── */
+.gui-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.gui-stack.is-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+
+.gui-stack.gap-s {
+  gap: 6px;
+}
+
+.gui-stack.gap-m {
+  gap: 10px;
+}
+
+.gui-stack.gap-l {
+  gap: 18px;
+}
+
+.gui-stack.align-start {
+  align-items: flex-start;
+}
+
+.gui-stack.align-center {
+  align-items: center;
+}
+
+.gui-stack.align-end {
+  align-items: flex-end;
+}
+
+.gui-card {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--g-raise);
+}
+
+.gui-heading {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+.gui-heading.is-l {
+  font-size: 44px;
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.gui-heading.is-s {
+  color: var(--g-3);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+/* Text wraps at the view width: the view sizes to its content, and one long
+   unwrapped line would otherwise stretch the whole view to the maximum. */
+.gui-heading,
+.gui-text,
+.gui-rows,
+.gui-details,
+.gui-steps,
+.gui-pills {
+  max-width: var(--g-view);
+}
+
+.gui-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.gui-text.is-muted {
+  color: var(--g-2);
+}
+
+.gui-text.is-faint {
+  color: var(--g-3);
+}
+
+.gui-markdown {
+  max-width: var(--g-view);
+  font-size: 13px;
+}
+
+.gui-stat {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 11.5px;
+}
+
+.gui-stat-value {
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.gui-stat-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--g-2);
+}
+
+.gui-stat-detail.is-up {
+  color: var(--g-good);
+}
+
+.gui-stat-detail.is-down {
+  color: var(--g-bad);
+}
+
+.gui-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+}
+
+.gui-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gui-progress-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.gui-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(245, 245, 247, 0.75);
+}
+
+.gui-details {
+  display: flex;
+  flex-direction: column;
+}
+
+.gui-pair {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 7px 0;
+  font-size: 13px;
+}
+
+.gui-pair + .gui-pair {
+  border-top: 1px solid var(--g-line);
+}
+
+.gui-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.gui-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.gui-table th {
+  padding: 0 16px 6px 0;
+  color: var(--g-3);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.gui-table td {
+  padding: 7px 16px 7px 0;
+  border-top: 1px solid var(--g-line);
+}
+
+.gui-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  list-style: none;
+}
+
+.gui-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.gui-step-n {
+  flex-shrink: 0;
+  width: 14px;
+  color: var(--g-3);
+  font-size: 12px;
+  text-align: right;
+}
+
+.gui-image {
+  margin: 0;
+  width: var(--g-view);
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--g-raise);
+}
+
+.gui-image img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+.gui-image.is-ready img {
+  opacity: 1;
+}
+
+.gui-image.is-square {
+  width: 200px;
+}
+
+.gui-image.is-square img {
+  aspect-ratio: 1;
+}
+
+.gui-image.is-tall {
+  width: 150px;
+  border-radius: 10px;
+}
+
+.gui-image.is-tall img,
+.gui-image.is-tall .gui-image-empty {
+  aspect-ratio: 2 / 3;
+}
+
+.gui-image.is-empty {
+  box-shadow: inset 0 0 0 1px var(--g-line);
+}
+
+.gui-image-empty {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  color: var(--g-3);
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0.02)
+  );
+}
+
+.gui-image.is-square .gui-image-empty {
+  aspect-ratio: 1;
+}
+
+.gui-image figcaption {
+  padding: 7px 12px 8px;
+  color: var(--g-2);
+  font-size: 12px;
+}
+
+.gui-stack.is-row > .gui-image {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.gui-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gui-pill {
+  height: 28px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--g-pill);
+  color: var(--g-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    opacity 140ms ease;
+}
+
+.gui-pill:hover:not(:disabled),
+.gui-pill:focus-visible {
+  outline: none;
+  background: var(--g-pill-hover);
+}
+
+.gui-pill:disabled,
+.gui-place:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.gui-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: var(--g-view);
+  max-width: 100%;
+}
+
+.gui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.gui-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--g-raise);
+  color: var(--g-ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: background-color 140ms ease;
+}
+
+.gui-input:focus {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+/* ── The view's card in the chat ─────────────────────────────────────── */
+.agc-ui-card {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: min(100%, 320px);
+  height: 52px;
+  margin-top: 6px;
+  padding: 0 12px 0 9px;
+  border: 0;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.agc-ui-card:hover,
+.agc-ui-card:focus-visible {
+  outline: none;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.agc-ui-card-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(245, 245, 247, 0.75);
+}
+
+.agc-ui-card-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agc-ui-card-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agc-ui-card-kind {
+  color: rgba(245, 245, 247, 0.48);
+  font-size: 11.5px;
+}
+
+.agc-ui-card-go {
+  flex-shrink: 0;
+  color: rgba(245, 245, 247, 0.36);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-content,
+  .agc-ui-card,
+  .gui-place,
+  .gui-pill,
+  .gui-input,
+  .gui-image img {
+    transition: none;
+  }
+}

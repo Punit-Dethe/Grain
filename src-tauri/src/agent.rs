@@ -43,7 +43,11 @@ const AGENT_BINDING: &str = "agent";
 const AGENT_SUBMIT_BINDING: &str = "agent_submit";
 const AGENT_CLOSE_BINDING: &str = "agent_close";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
-const NOTCH_REPLY: (f64, f64) = (600.0, 360.0);
+/// The reply window, in CSS px: room for the largest shell (a generated
+/// view's max, `CANVAS_MAX` in AgentCanvas.tsx, plus the clip slack in
+/// `set_notch_region`). The panel clips the window to its shell — the chat
+/// stays 600x360 — so the transparent rest never eats clicks (Windows).
+const NOTCH_REPLY: (f64, f64) = (760.0, 620.0);
 /// The compact shell, in CSS px (`.agent-notch` in agent.css).
 const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
 /// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.
@@ -384,6 +388,9 @@ pub struct AgentMessage {
     /// `"user"` or `"assistant"` (anything else is treated as `"user"`).
     pub role: String,
     pub content: String,
+    /// [GRAIN] The generated view an assistant turn carried (OpenUI Lang).
+    #[serde(default)]
+    pub ui: Option<String>,
 }
 
 /// The panel's per-turn reply, optionally carrying a host-held action confirmation.
@@ -391,6 +398,9 @@ pub struct AgentMessage {
 pub struct AgentReply {
     pub text: String,
     pub confirm_action: Option<AgentConfirm>,
+    /// [GRAIN] A generated view shown with the text (OpenUI Lang program,
+    /// see `grain_agent_canvas`).
+    pub ui: Option<String>,
 }
 
 /// [GRAIN] One material argument of a pending action, for the confirmation panel.
@@ -422,6 +432,7 @@ impl AgentReply {
         Self {
             text,
             confirm_action: None,
+            ui: None,
         }
     }
 }
@@ -677,6 +688,7 @@ fn build_window(
                 std::mem::size_of::<windows::core::BOOL>() as u32,
             );
         }
+        suppress_classic_frame(&window, hwnd);
     }
 
     // [GRAIN] Release the transient global Enter/Escape shortcuts when this
@@ -882,6 +894,86 @@ fn has_region(hwnd: windows::Win32::Foundation::HWND) -> bool {
         let _ = DeleteObject(HGDIOBJ(probe.0));
         kind != GDI_REGION_TYPE(0)
     }
+}
+
+/// [GRAIN] The notch must never show a Windows frame. tao keeps the caption
+/// styles (WS_CAPTION, WS_THICKFRAME, system menu and boxes) on undecorated
+/// windows and only hides them by sizing the client over the frame; once a
+/// window region (`set_notch_region`) turns DWM's frame off, user32 draws the
+/// classic one ("Grain Assist", minimise/maximise/close) — over the slack, or
+/// the whole window whenever its non-client size is recomputed.
+///
+/// So the frame is removed at its source: the caption styles are stripped now
+/// and on every later style change (tao re-applies its styles, e.g. on a
+/// focusable change), the non-client area is always zero, and nothing
+/// non-client is ever painted. Removed again when the window is destroyed.
+/// Subclassing only works on the window's own (main) thread, so it hops there.
+#[cfg(windows)]
+fn suppress_classic_frame(window: &tauri::WebviewWindow, hwnd: windows::Win32::Foundation::HWND) {
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, STYLESTRUCT,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_NCACTIVATE,
+        WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT, WM_STYLECHANGING, WS_CAPTION, WS_MAXIMIZEBOX,
+        WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    };
+
+    const ID: usize = 0x4e4f_5443; // "NOTC"
+    const FRAME: u32 =
+        WS_CAPTION.0 | WS_THICKFRAME.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0;
+
+    unsafe extern "system" fn frameless(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        match message {
+            // No frame may come back, whoever sets the styles.
+            WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 => {
+                let change = &mut *(lparam.0 as *mut STYLESTRUCT);
+                change.styleNew &= !FRAME;
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            }
+            // The client is the whole window: no non-client area at all.
+            WM_NCCALCSIZE if wparam.0 != 0 => LRESULT(0),
+            WM_NCPAINT => LRESULT(0),
+            // lParam -1: handle activation without repainting the caption.
+            WM_NCACTIVATE => DefSubclassProc(hwnd, message, wparam, LPARAM(-1)),
+            WM_NCDESTROY => {
+                let _ = RemoveWindowSubclass(hwnd, Some(frameless), ID);
+                DefSubclassProc(hwnd, message, wparam, lparam)
+            }
+            _ => DefSubclassProc(hwnd, message, wparam, lparam),
+        }
+    }
+
+    // HWND is not Send; its value is.
+    let raw = hwnd.0 as isize;
+    let _ = window.run_on_main_thread(move || unsafe {
+        let hwnd = HWND(raw as *mut _);
+        if !SetWindowSubclass(hwnd, Some(frameless), ID, 0).as_bool() {
+            log::warn!("[GRAIN] agent: could not subclass the notch window");
+            return;
+        }
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if style as u32 & FRAME != 0 {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, (style as u32 & !FRAME) as isize);
+        }
+        // Recompute the (now empty) frame right away.
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    });
 }
 
 #[cfg(windows)]
@@ -2546,14 +2638,17 @@ mod agent_routing_tests {
             AgentMessage {
                 role: "user".into(),
                 content: "rewrite it".into(),
+                ui: None,
             },
             AgentMessage {
                 role: "assistant".into(),
                 content: "first reply".into(),
+                ui: None,
             },
             AgentMessage {
                 role: "system".into(),
                 content: "follow-up".into(),
+                ui: None,
             },
         ];
         let full = build_messages(&messages, Some("  explicitly selected subject  "));
@@ -2625,7 +2720,29 @@ pub async fn agent_run(
     // [GRAIN] A notch chat turn: the host records it in the running chat (the
     // request now, the reply when it lands), so it survives the notch closing.
     record: bool,
+    // [GRAIN] The notch's generated-view vocabulary (OpenUI Lang component
+    // reference): with it, the reply may carry a view (`grain_agent_canvas`).
+    ui_spec: Option<String>,
 ) -> Result<AgentReply, String> {
+    if ui_spec
+        .as_ref()
+        .is_some_and(|spec| spec.len() > crate::grain_agent_canvas::MAX_SPEC_BYTES)
+    {
+        return Err("The view component reference is too large".into());
+    }
+    // [GRAIN] Read per turn, so switching views (or their polish) on or off
+    // mid-chat applies from the next reply.
+    let ui_prompt = {
+        let settings = crate::settings::get_settings(&app);
+        ui_spec
+            .filter(|_| settings.agent_dynamic_ui)
+            .map(|spec| crate::grain_agent_canvas::ui_prompt(&spec, settings.agent_polished_ui))
+    };
+    let mut messages = messages;
+    if ui_prompt.is_none() {
+        // Views off: earlier views are not sent back either.
+        messages.iter_mut().for_each(|message| message.ui = None);
+    }
     let state = app
         .try_state::<AgentState>()
         .ok_or("Agent state unavailable")?;
@@ -2641,11 +2758,29 @@ pub async fn agent_run(
     // A new turn silences the previous reply's talk-back.
     crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
-    let reply = run
-        .wait(registration, agent_run_owned(&app, messages, context, &run))
+    // A short spoken "Got it" while it works (skipped when the reply is quick).
+    let ack = if record {
+        crate::grain_tts::acknowledge(&app)
+    } else {
+        None
+    };
+    let mut reply = run
+        .wait(
+            registration,
+            agent_run_owned(&app, messages, context, ui_prompt.as_deref(), &run),
+        )
         .await?;
-    if let Ok(reply) = &reply {
-        speak_reply(&app, &reply.text, generation);
+    drop(ack);
+    if let Ok(reply) = &mut reply {
+        if ui_prompt.is_some() && reply.confirm_action.is_none() {
+            let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);
+            reply.text = text;
+            reply.ui = ui;
+        }
+        // A reply with a view always opens the notch to show it: never the
+        // compact spoken presentation, even with `agent_compact_voice`.
+        let first_turn = if reply.ui.is_some() { None } else { generation };
+        speak_reply(&app, &reply.text, first_turn);
     }
     if record {
         if let Ok(reply) = &reply {
@@ -2657,6 +2792,7 @@ pub async fn agent_run(
                     vec![AgentMessage {
                         role: "assistant".into(),
                         content: reply.text.clone(),
+                        ui: reply.ui.clone(),
                     }],
                 );
             }
@@ -2709,6 +2845,8 @@ async fn agent_run_owned(
     app: &AppHandle,
     messages: Vec<AgentMessage>,
     context: Option<String>,
+    // [GRAIN] The generated-view instructions (`grain_agent_canvas::ui_prompt`).
+    ui_prompt: Option<&str>,
     run: &AgentRun<'_>,
 ) -> Result<AgentReply, String> {
     // [GRAIN] A risky action from a prior turn is waiting on the user. The interim
@@ -2741,7 +2879,10 @@ async fn agent_run_owned(
             }
         }
     }
-    let full = build_messages(&messages, context.as_deref());
+    let mut full = build_messages(&messages, context.as_deref());
+    if let Some(prompt) = ui_prompt {
+        full.insert(1, ("system".to_string(), prompt.to_owned()));
+    }
     let image = screen_attachment(app);
     run_with_tools(app, full, image.as_ref(), run).await
 }
@@ -3819,6 +3960,7 @@ mod tool_continuation_tests {
             Ok(AgentReply {
                 text: "Approve second operation".into(),
                 confirm_action: Some(confirm),
+                ui: None,
             }),
         )
         .unwrap();
@@ -4050,6 +4192,7 @@ async fn drive_tool_turn_with<'a>(
             return Ok(AgentReply {
                 text,
                 confirm_action: Some(confirm),
+                ui: None,
             });
         }
         if let Some(final_reply) = same_round_reply.filter(|_| all_succeeded) {
@@ -4148,13 +4291,28 @@ fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(Stri
         ));
     }
 
-    for m in messages {
+    // [GRAIN] Only the latest generated view is sent back (views are long);
+    // a follow-up can refine it.
+    let latest_ui = messages
+        .iter()
+        .rposition(|m| m.role == "assistant" && m.ui.is_some());
+    for (index, m) in messages.iter().enumerate() {
         let role = if m.role == "assistant" {
             "assistant"
         } else {
             "user"
         };
-        full.push((role.to_string(), m.content.clone()));
+        let content = match m.ui.as_deref() {
+            Some(ui) if Some(index) == latest_ui => {
+                let ui: String = ui
+                    .chars()
+                    .take(crate::grain_agent_canvas::MAX_UI_CHARS)
+                    .collect();
+                format!("{}\n{ui}", m.content)
+            }
+            _ => m.content.clone(),
+        };
+        full.push((role.to_string(), content));
     }
     full
 }

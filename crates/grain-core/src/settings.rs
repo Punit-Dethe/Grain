@@ -809,14 +809,35 @@ pub struct AppSettings {
     /// talk-back.
     #[serde(default = "default_true")]
     pub agent_compact_voice: bool,
+    /// [GRAIN] Spoken acknowledgement: with talk-back on, the voice says a
+    /// short "Got it" (picked at random) a moment after an instruction is
+    /// sent, while the Agent works. ON by default.
+    #[serde(default = "default_true")]
+    pub agent_spoken_ack: bool,
+    /// [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
+    /// Presets other than the default download on first pick (256 KB each).
+    /// An unknown or missing one falls back to the default.
+    #[serde(default = "default_agent_voice")]
+    pub agent_voice: String,
+    /// [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
+    /// interactive view (`grain_agent_canvas`). ON by default; off sends no
+    /// view vocabulary to the model (fewer tokens) and replies are plain chat.
+    /// Read per turn, so it applies mid-chat from the next reply.
+    #[serde(default = "default_true")]
+    pub agent_dynamic_ui: bool,
+    /// [GRAIN] Polished UI: with Dynamic UI on, also tell the model to design
+    /// every view properly instead of the bare minimum. ON by default; costs a
+    /// few more prompt tokens per turn.
+    #[serde(default = "default_true")]
+    pub agent_polished_ui: bool,
     /// [GRAIN] Agent Browser: the Agent's web browser through Vercel Labs'
     /// `agent-browser` CLI (open, read, click and fill pages). OFF by default;
     /// off removes it from the Agent's tool directory and closes its browser.
     #[serde(default)]
     pub agent_browser_enabled: bool,
-    /// [GRAIN] Grain Pilot: the Agent acting in the user's own browser and apps
-    /// through the Cua Driver sidecar. OFF by default; off removes it from the
-    /// Agent's tool directory and stops the driver.
+    /// [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
+    /// the Grain Pilot extension. OFF by default; off removes it from the
+    /// Agent's tool directory and closes the browser link.
     #[serde(default)]
     pub pilot_enabled: bool,
     /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
@@ -845,6 +866,10 @@ pub struct AppSettings {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_agent_voice() -> String {
+    "Zoey".to_string()
 }
 
 fn default_model() -> String {
@@ -1628,6 +1653,10 @@ pub fn get_default_settings() -> AppSettings {
         agent_screen_image: false,
         agent_talk_back: false,
         agent_compact_voice: true,
+        agent_spoken_ack: true,
+        agent_voice: default_agent_voice(),
+        agent_dynamic_ui: true,
+        agent_polished_ui: true,
         agent_browser_enabled: false,
         pilot_enabled: false,
         meet_auto_summary: false,

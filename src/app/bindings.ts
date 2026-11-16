@@ -639,6 +639,61 @@ async changeAgentCompactVoiceSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
+ * [GRAIN] Spoken acknowledgement ("Got it") while the Agent works. See
+ * `Settings::agent_spoken_ack`.
+ */
+async changeAgentSpokenAckSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_spoken_ack_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] The talk-back voice presets, default first.
+ */
+async agentVoicePresets() : Promise<AgentVoicePreset[]> {
+    return await TAURI_INVOKE("agent_voice_presets");
+},
+/**
+ * [GRAIN] Pick the talk-back voice. A preset not yet on disk downloads in
+ * the background (256 KB); then it says a short line so you hear it. See
+ * `Settings::agent_voice`.
+ */
+async changeAgentVoiceSetting(voice: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_voice_setting", { voice }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Dynamic UI: Agent replies may carry an interactive view. See
+ * `Settings::agent_dynamic_ui`.
+ */
+async changeAgentDynamicUiSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_dynamic_ui_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Polished UI: ask the model to design every view properly. See
+ * `Settings::agent_polished_ui`.
+ */
+async changeAgentPolishedUiSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_polished_ui_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Turn the Agent Browser on or off. Off removes its tools from the
  * Agent on the next model round and closes its browser.
  */
@@ -652,7 +707,7 @@ async changeAgentBrowserEnabledSetting(enabled: boolean) : Promise<Result<null, 
 },
 /**
  * [GRAIN] Turn Grain Pilot on or off. Off removes its tools from the Agent on
- * the next model round and stops the driver.
+ * the next model round and closes the browser link.
  */
 async changePilotEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -1215,9 +1270,9 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
  * fallback pool (enabled providers in saved order). The
  * Explicitly selected text is supplied as the subject of the instruction.
  */
-async agentRun(messages: AgentMessage[], context: string | null, generation: number | null, record: boolean) : Promise<Result<AgentReply, string>> {
+async agentRun(messages: AgentMessage[], context: string | null, generation: number | null, record: boolean, uiSpec: string | null) : Promise<Result<AgentReply, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context, generation, record }) };
+    return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context, generation, record, uiSpec }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2130,7 +2185,11 @@ export type AgentHistoryMessage = {
 /**
  * `"user"` or `"assistant"`.
  */
-role: string; content: string; at_unix_ms: number }
+role: string; content: string; at_unix_ms: number; 
+/**
+ * The generated view an assistant reply carried (OpenUI Lang).
+ */
+ui?: string | null }
 /**
  * Consume the first instruction (the panel calls this on mount).
  */
@@ -2142,12 +2201,20 @@ export type AgentMessage = {
 /**
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
-role: string; content: string }
+role: string; content: string; 
+/**
+ * [GRAIN] The generated view an assistant turn carried (OpenUI Lang).
+ */
+ui?: string | null }
 /**
  * What the notch opens with: its mode and the chat it continues.
  */
 export type AgentNotchMemory = { mode: AgentNotchMode; chat: string | null; messages: AgentHistoryMessage[] }
-export type AgentNotchMode = "chat" | "recall"
+export type AgentNotchMode = "recall" | 
+/**
+ * Also what an unknown stored mode reads as (serde wants it last).
+ */
+"chat"
 /**
  * The shell size the hand-opened notch is animating to, in CSS px.
  */
@@ -2176,7 +2243,24 @@ voice: number | null }
 /**
  * The panel's per-turn reply, optionally carrying a host-held action confirmation.
  */
-export type AgentReply = { text: string; confirm_action: AgentConfirm | null }
+export type AgentReply = { text: string; confirm_action: AgentConfirm | null; 
+/**
+ * [GRAIN] A generated view shown with the text (OpenUI Lang program,
+ * see `grain_agent_canvas`).
+ */
+ui: string | null }
+/**
+ * [GRAIN] A talk-back voice preset, for the settings picker.
+ */
+export type AgentVoicePreset = { name: string; 
+/**
+ * "us" or "gb".
+ */
+accent: string; 
+/**
+ * "female" or "male".
+ */
+gender: string }
 /**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
@@ -2319,12 +2403,12 @@ mcp_enabled_providers?: string[];
  * support dynamic registration. Client secrets and tokens stay in the OS
  * credential vault and never enter AppSettings.
  */
-mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
+mcp_oauth_client_ids?: Partial<{ [key in string]: string }>; 
 /**
  * [GRAIN] Connected extensions that need no account (Exa, Agent Browser).
  * Their Agent switch stays `mcp_enabled_providers` / `agent_browser_enabled`.
  */
-mcp_no_account_connected?: string[];
+mcp_no_account_connected?: string[]; 
 /**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it
@@ -2348,15 +2432,40 @@ agent_talk_back?: boolean;
  */
 agent_compact_voice?: boolean; 
 /**
+ * [GRAIN] Spoken acknowledgement: with talk-back on, the voice says a
+ * short "Got it" (picked at random) a moment after an instruction is
+ * sent, while the Agent works. ON by default.
+ */
+agent_spoken_ack?: boolean; 
+/**
+ * [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
+ * Presets other than the default download on first pick (256 KB each).
+ * An unknown or missing one falls back to the default.
+ */
+agent_voice?: string; 
+/**
+ * [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
+ * interactive view (`grain_agent_canvas`). ON by default; off sends no
+ * view vocabulary to the model (fewer tokens) and replies are plain chat.
+ * Read per turn, so it applies mid-chat from the next reply.
+ */
+agent_dynamic_ui?: boolean; 
+/**
+ * [GRAIN] Polished UI: with Dynamic UI on, also tell the model to design
+ * every view properly instead of the bare minimum. ON by default; costs a
+ * few more prompt tokens per turn.
+ */
+agent_polished_ui?: boolean; 
+/**
  * [GRAIN] Agent Browser: the Agent's web browser through Vercel Labs'
  * `agent-browser` CLI (open, read, click and fill pages). OFF by default;
  * off removes it from the Agent's tool directory and closes its browser.
  */
 agent_browser_enabled?: boolean; 
 /**
- * [GRAIN] Grain Pilot: the Agent acting in the user's own browser and apps
- * through the Cua Driver sidecar. OFF by default; off removes it from the
- * Agent's tool directory and stops the driver.
+ * [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
+ * the Grain Pilot extension. OFF by default; off removes it from the
+ * Agent's tool directory and closes the browser link.
  */
 pilot_enabled?: boolean; 
 /**

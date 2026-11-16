@@ -1,8 +1,50 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { commands, type AgentVoicePreset } from "@/bindings";
+import { Dropdown } from "../../ui/Dropdown";
+import { SettingContainer } from "../../ui/SettingContainer";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ShortcutInput } from "../ShortcutInput";
+
+/** The talk-back voice: presets come from the backend (`grain_tts::VOICES`). */
+function VoicePicker() {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const [presets, setPresets] = useState<AgentVoicePreset[]>([]);
+  useEffect(() => {
+    let live = true;
+    void commands.agentVoicePresets().then((list) => {
+      if (live) setPresets(list);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  const voice = getSetting("agent_voice") ?? presets[0]?.name ?? null;
+  const options = presets.map((preset) => ({
+    value: preset.name,
+    label: `${preset.name} · ${t(`ui2.settings.agent.voiceAccent.${preset.accent}`)}`,
+    group: t(`ui2.settings.agent.voiceGender.${preset.gender}`),
+  }));
+  return (
+    <SettingContainer
+      title={t("ui2.settings.agent.voice")}
+      description={t("ui2.settings.agent.voiceDescription")}
+      descriptionMode="tooltip"
+      grouped
+    >
+      <Dropdown
+        options={options}
+        selectedValue={voice}
+        onSelect={(value) => void updateSetting("agent_voice", value)}
+        disabled={!presets.length || isUpdating("agent_voice")}
+        ariaLabel={t("ui2.settings.agent.voice")}
+      />
+    </SettingContainer>
+  );
+}
 
 export function AgentSection() {
   const { t } = useTranslation();
@@ -11,6 +53,9 @@ export function AgentSection() {
   const screenImage = getSetting("agent_screen_image") ?? false;
   const talkBack = getSetting("agent_talk_back") ?? false;
   const compactVoice = getSetting("agent_compact_voice") ?? true;
+  const spokenAck = getSetting("agent_spoken_ack") ?? true;
+  const dynamicUi = getSetting("agent_dynamic_ui") ?? true;
+  const polishedUi = getSetting("agent_polished_ui") ?? true;
 
   return (
     <SettingsGroup title={t("ui2.settings.agent.group")}>
@@ -50,6 +95,8 @@ export function AgentSection() {
             onChange={(v) => updateSetting("agent_talk_back", v)}
           />
 
+          {talkBack && <VoicePicker />}
+
           {talkBack && (
             <ToggleSwitch
               label={t("ui2.settings.agent.compactVoice")}
@@ -59,6 +106,40 @@ export function AgentSection() {
               checked={compactVoice}
               isUpdating={isUpdating("agent_compact_voice")}
               onChange={(v) => updateSetting("agent_compact_voice", v)}
+            />
+          )}
+
+          {talkBack && (
+            <ToggleSwitch
+              label={t("ui2.settings.agent.spokenAck")}
+              description={t("ui2.settings.agent.spokenAckDescription")}
+              descriptionMode="tooltip"
+              grouped
+              checked={spokenAck}
+              isUpdating={isUpdating("agent_spoken_ack")}
+              onChange={(v) => updateSetting("agent_spoken_ack", v)}
+            />
+          )}
+
+          <ToggleSwitch
+            label={t("ui2.settings.agent.dynamicUi")}
+            description={t("ui2.settings.agent.dynamicUiDescription")}
+            descriptionMode="tooltip"
+            grouped
+            checked={dynamicUi}
+            isUpdating={isUpdating("agent_dynamic_ui")}
+            onChange={(v) => updateSetting("agent_dynamic_ui", v)}
+          />
+
+          {dynamicUi && (
+            <ToggleSwitch
+              label={t("ui2.settings.agent.polishedUi")}
+              description={t("ui2.settings.agent.polishedUiDescription")}
+              descriptionMode="tooltip"
+              grouped
+              checked={polishedUi}
+              isUpdating={isUpdating("agent_polished_ui")}
+              onChange={(v) => updateSetting("agent_polished_ui", v)}
             />
           )}
         </>
