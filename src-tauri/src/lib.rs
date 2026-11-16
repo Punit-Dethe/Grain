@@ -71,6 +71,7 @@ mod grain_agent_browser; // [GRAIN] Agent Browser: the Agent's web browser via t
 mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Agent Browser, Pilot, Reminders)
 mod grain_pilot; // [GRAIN] Grain Pilot: the Agent in the user's own browser and apps via the Cua Driver sidecar
 mod grain_pilot_install; // [GRAIN] Grain Pilot: download, verify, unpack and remove the pinned driver
+mod grain_browser_link; // [GRAIN] Grain Pilot: native messaging link to the browser extension
 mod grain_reminders; // [GRAIN] Reminders: local store, one next-due timer, rings in the Agent notch, Agent tool
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
 

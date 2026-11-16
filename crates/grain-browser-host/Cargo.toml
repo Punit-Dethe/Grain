@@ -1,0 +1,14 @@
+[package]
+name = "grain-browser-host"
+version = "0.1.0"
+description = "Native messaging relay between the Grain Pilot browser extension and Grain"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "grain-browser-host"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1.43.0", features = ["rt", "net", "io-util", "io-std", "macros"] }

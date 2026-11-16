@@ -1,0 +1,11 @@
+{
+  "name": "grain-pilot-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/worker.ts --outfile dist/worker.js --format esm --target browser && bun build src/page.ts --outfile dist/page.js --format iife --target browser && bun -e \"require('fs').copyFileSync('manifest.json','dist/manifest.json')\""
+  },
+  "dependencies": {
+    "@page-agent/page-controller": "1.12.4"
+  }
+}

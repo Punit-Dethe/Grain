@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Grain Pilot",
+  "version": "0.1.0",
+  "description": "Lets Grain's Agent open pages and act in tabs it opens, signed in as you.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4E5lIw8PokZr1dw98xTrA++tNVXRjPd+IkfgY8KbbrPeaFUq7w+5IKG6eSZiEUaMMNuNR4+R2dFCOa3rMObBaYgbp+yOqHRcaLMV0orivAIb8CXGCL1y31JhIg4ox+KbSHYVdssERb4/cjjt5EThgTqVyPkPBb3G5ogbawJkljK18u5A+KGIPR7aE1edTem/zrzbv8FNqZqGymSO3asavU0Z6NIC4RS4rmjcsb4hfkxZicwcFFTXABbOkmhmYiN43JwiaLERO0wxfhdRZEJ20qhbQsKlJeLJFKEIKbewY17QBS/fYHL7x9FIknLdeAHgmlyoFfsOtlbf7rqVxAr52wIDAQAB",
+  "minimum_chrome_version": "116",
+  "background": { "service_worker": "worker.js", "type": "module" },
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "nativeMessaging",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": ["<all_urls>"]
+}

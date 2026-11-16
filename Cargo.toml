@@ -12,6 +12,7 @@ members = [
     "crates/grain-core",
     "crates/grain-sdk",
     "crates/grain-tdt",
+    "crates/grain-browser-host",
 ]
 exclude = ["src-tauri"]
 

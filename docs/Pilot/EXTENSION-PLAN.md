@@ -251,6 +251,35 @@ Wrapper changes these add to Phase 2: type into the focused field and verify;
 add field values to reads; prefer visible-area reads plus `find`, with the
 full page on request.
 
+#### Phase 0b/1 results (2026-11-17): the real chain works
+
+Built and run: `browser-extension/` (MV3 worker + page script around
+page-controller), `crates/grain-browser-host` (379 KB relay), and
+`src-tauri/src/grain_browser_link.rs` (pipe server, client check, host
+registration). The live test `live_browser_link_drives_a_separate_edge_profile`
+loads the unpacked extension into a fresh Edge profile with `--load-extension`
+(Edge still accepts it) and drives it from Rust. Tabs are visible (active) for
+now; background tabs come later, as the user asked.
+
+- The extension connects about 0.5 s after Edge starts.
+- **iana:** read 0.2 s, click a link ✅.
+- **Wikipedia:** at a narrow width the box is behind a Search button, so the
+  test clicks it, reads again, and types "Pune" with submit ✅ (reached the
+  Pune article).
+- **BookMyShow:** showtimes read ~3.6k tokens; click a show; **the seat page
+  loads** ("How many seats?" with prices and "Select Seats", ~83 tokens). No
+  Cloudflare block and no "Please wait": the earlier failures came from
+  Playwright's automation flag, not from page-controller.
+- An action that leaves the page removes its frame before the script answers;
+  the worker reports that as success ("the page changed").
+- Edge keeps an unpacked extension's old service worker in a reused profile,
+  so the test deletes its profile first.
+
+**Search inside a page.** page-controller has no search or filter: it always
+returns the whole page (or the visible part). Grain's existing `read find=…`
+view (`compact::View::Find`) will filter its output in Rust (Phase 2), along
+with the visible-area default.
+
 ### Phase 1: the link
 
 The host crate, the `grain_browser_link.rs` pipe server, host manifest
