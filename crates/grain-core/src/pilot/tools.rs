@@ -48,7 +48,7 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "open_app",
             title: "Open an app",
-            description: "Start or find an installed app by name, in the background. Returns its window.",
+            description: "Start an installed app by name, in the background. Returns its window. Apps can reopen the user's own documents: change only what the task asks for.",
             keywords: &["app", "application", "launch", "start", "notepad"],
             read_only: false,
             schema: json!({

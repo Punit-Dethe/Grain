@@ -1,6 +1,7 @@
 # Grain Pilot: plan
 
-Status: **plan only, nothing built.** Written 2026-11-16. Name confirmed by the
+Status: **Phases 0–2 built, Phase 3 runs passing** (2026-11-16; see Phases).
+Written 2026-11-16. Name confirmed by the
 user 2026-11-16: **Grain Pilot** ("Pilot" for short in this document).
 
 Pilot lets the Agent act in the user's own apps and browser: open a page in the
@@ -399,11 +400,66 @@ compaction, rendering, policy, manifest, with unit and golden tests.
 **Phase 2: adapter and wiring**: install and verify, daemon, calls,
 settle-read, cleanup; registry arms; setting, command, updater; the
 no-account built-ins table; Extensions row and icon.
+**Done 2026-11-16.**
+- `grain_pilot_install.rs`: Connect downloads the pinned asset (32 MB),
+  streams it through SHA-256 with a 64 MB cap, and only then unpacks
+  `cua-driver.exe` and `cua-driver-uia.exe` (fixed names, nothing from the
+  archive picks a path) through a `.partial` folder. The SDK DLL, Node
+  runtime and cursor tool are not unpacked (~55 MB on disk). Disconnect
+  deletes `<app data>/pilot`, and the driver's own state folders only when
+  they did not exist before Grain first ran it. `zip` with
+  `deflate-flate2` only (already in the lockfile; no new crates).
+- `grain_pilot.rs`: the state lock is the one-call-at-a-time gate. The
+  daemon runs in a kill-on-close job object; it stops after 5 minutes idle
+  (one sleeping task), on switch-off, disconnect and exit. A daemon restart
+  adds an app to the manifest. Actions re-read first when the session's
+  snapshot belongs to another window, retry once on a stale token, then
+  settle-read (≤3 s). Typing checks UIA `IsPassword` first and only reads
+  control frames when the window has a password field. Payment controls are
+  refused before the driver is called.
+- `grain_mcp.rs`: the six Agent Browser branches became one `BuiltIn`
+  table (Agent Browser, Pilot): id, name, setting, prepare (Pilot installs
+  the driver at Connect), switched off, disconnected.
+- Extensions row `pilot` with `icons/pilot.svg`; setting `pilot_enabled`,
+  command `change_pilot_enabled_setting`, updater in `settingsStore.ts`.
+- Not done: Chromium's scroll-into-view before clicking a control below the
+  fold (Zen, the user's browser, does not need it).
 
 **Phase 3: acceptance in the real app** through `tests/agent-harness/`: open
 BookMyShow → find a show → click → seat page → `show`; the same on Zomato; an
 app flow (Notepad: open, type, read back). Each run records tokens per read
 against the targets above. The user approves the Extensions row visually.
+**Run 2026-11-16 (Zen, driver downloaded and verified by Grain's installer):**
+
+| Run | Result |
+| --- | --- |
+| Live: iana.org open → `find` → click → `windows` → unknown number → `close` | Pass. open 3.6 s / ~264 tokens, `find` ~43, click 2.6 s / ~297 (new page, controls only), refusal "There is no [9999]" |
+| Live: BookMyShow showtimes → `find "PM"` → click a later show | Pass. open ~412 tokens, `find` ~130, click 2.8 s / ~197 to the seat page (shows "Open accessibility seat selection", "Select Seats") |
+| Live: Calculator `open_app` → `steps` (1 + 2 =) → `find display` → `close` | Pass. open 2.5 s / ~291, steps 3–4 s, the change report shows "Display is 3" |
+| Real Agent (Agent probe, GitHub test profile, deepseek-v4.1-flash): "open this BookMyShow page, open the 10:15 PM Ramayana show, go to seat selection, don't choose/pay/accept, describe it, close" | Pass in 29 s: open → click → read page → scroll → close; the reply named the five price tiers and "Select Seats", nothing selected |
+
+After every run: no `cua-driver` process left, no Pilot window left, the
+user's Zen windows untouched. The test profile's settings were restored.
+
+Found and fixed during the runs:
+- **Store apps** (Calculator, Paint) draw their windows in
+  `ApplicationFrameHost.exe`; bounded mode refuses them unless that exe is
+  in the manifest. Pilot adds it when a packaged app is listed. The driver
+  can then see every Store app window, but the model only has handles to
+  windows Pilot opened.
+- **Text changes:** the change report compared controls only, so a result
+  shown as text ("Display is 3", a total, an error) read as "nothing
+  changed". The baseline now includes page text; a new page still lists
+  controls only.
+- **Untitled pages** (a browser error page) now take the window title.
+- **Notepad replaced by Calculator:** Windows 11 Notepad reopens the
+  user's unsaved session tabs, so Pilot would land in the user's document.
+  `open_app`'s description now says apps can reopen the user's documents.
+- example.com does not load on this network; the browser test uses iana.org.
+
+Still open in Phase 3: Zomato, and the user's visual approval of the
+Extensions row. Seen in the Agent run: the first round offered 8 of the
+12 Pilot tools (not `click`), so the model spent one round loading it.
 
 **Phase 4: after it works**: shrink older reads in the conversation if the
 loop allows it cleanly; decide Agent Browser's removal; list the Reach
