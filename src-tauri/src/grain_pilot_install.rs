@@ -30,8 +30,8 @@ pub(crate) fn pilot_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("Could not find Grain's data folder: {error}"))
 }
 
-fn version_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(pilot_dir(app)?.join("driver").join(core::DRIVER_VERSION))
+fn version_dir(pilot: &Path) -> PathBuf {
+    pilot.join("driver").join(core::DRIVER_VERSION)
 }
 
 fn this_platform() -> Result<DriverAsset, String> {
@@ -41,7 +41,11 @@ fn this_platform() -> Result<DriverAsset, String> {
 
 /// The installed driver executable, when a verified install is present.
 pub(crate) fn installed(app: &AppHandle) -> Option<PathBuf> {
-    let dir = version_dir(app).ok()?;
+    installed_in(&pilot_dir(app).ok()?)
+}
+
+fn installed_in(pilot: &Path) -> Option<PathBuf> {
+    let dir = version_dir(pilot);
     let complete = dir.join(VERIFIED_MARKER).is_file()
         && core::DRIVER_FILES
             .iter()
@@ -49,14 +53,22 @@ pub(crate) fn installed(app: &AppHandle) -> Option<PathBuf> {
     complete.then(|| dir.join(core::DRIVER_FILES[0]))
 }
 
+/// One install at a time (two quick Connect clicks share one download).
+static INSTALLING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Install the driver if it is not installed yet. Returns the executable.
 pub(crate) async fn ensure_installed(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(path) = installed(app) {
+    ensure_installed_in(&pilot_dir(app)?).await
+}
+
+pub(crate) async fn ensure_installed_in(pilot: &Path) -> Result<PathBuf, String> {
+    let _installing = INSTALLING.lock().await;
+    if let Some(path) = installed_in(pilot) {
         return Ok(path);
     }
     let asset = this_platform()?;
-    let pilot = pilot_dir(app)?;
-    let target = version_dir(app)?;
+    let pilot = pilot.to_path_buf();
+    let target = version_dir(&pilot);
     std::fs::create_dir_all(&pilot)
         .map_err(|error| format!("Could not create Grain Pilot's folder: {error}"))?;
     let download = pilot.join(format!("{}.download", asset.file));
@@ -75,7 +87,7 @@ pub(crate) async fn ensure_installed(app: &AppHandle) -> Result<PathBuf, String>
     let _ = std::fs::remove_file(&download);
     unpacked?;
     remove_other_versions(&pilot);
-    installed(app).ok_or_else(|| "The driver was unpacked but is incomplete.".into())
+    installed_in(&pilot).ok_or_else(|| "The driver was unpacked but is incomplete.".into())
 }
 
 /// Download `asset` to `path`, refusing anything over the size cap or with

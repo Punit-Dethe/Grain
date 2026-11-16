@@ -192,9 +192,7 @@ pub(crate) fn stop_in_background() {
 /// Stop the driver at app exit without waiting on a call in flight; the job
 /// object ends the daemon when Grain's process goes regardless.
 pub(crate) fn stop_at_exit() {
-    if let Ok(mut state) = STATE.try_lock() {
-        stop(&mut state);
-    }
+    if let Ok(mut state) = STATE.try_lock() {}
 }
 
 /// Disconnect: stop the driver, then delete it and its manifest.
@@ -803,7 +801,10 @@ fn read_window(state: &mut State, ctx: &Ctx, handle: u32, view: &View) -> Result
             .ok_or_else(|| Failure::internal("The driver gave an unreadable reply."))?;
         state.last_read = Some(handle);
         let entry = window_mut(state, handle)?;
-        let baseline = compact::compact(&markdown, &View::Controls, &mut entry.numbering);
+        // The baseline keeps page text as well as controls, so the change
+        // report after an action also shows text that changed (a total, an
+        // error, a calculator display).
+        let baseline = compact::compact(&markdown, &View::Page, &mut entry.numbering);
         // Chromium switches on page accessibility when first read, so the
         // first read can come back almost empty.
         if family == Some(BrowserFamily::Chromium) && baseline.controls.is_empty() && attempt == 0 {
@@ -811,9 +812,18 @@ fn read_window(state: &mut State, ctx: &Ctx, handle: u32, view: &View) -> Result
             std::thread::sleep(Duration::from_millis(500));
             continue;
         }
+        let mut baseline = baseline;
+        if baseline.title.trim().is_empty() {
+            // An error page or app window can have an untitled document;
+            // the window's own title still says where it is.
+            baseline.title = win::title(entry.target.window_id);
+        }
         let shown = match view {
-            View::Controls => baseline.clone(),
-            other => compact::compact(&markdown, other, &mut entry.numbering),
+            View::Page => baseline.clone(),
+            other => Read {
+                title: baseline.title.clone(),
+                ..compact::compact(&markdown, other, &mut entry.numbering)
+            },
         };
         entry.snapshot = Some(snapshot);
         entry.markdown = markdown;
@@ -832,17 +842,27 @@ fn differs(a: &Read, b: &Read) -> bool {
 fn settle(state: &mut State, ctx: &Ctx, handle: u32, before: &Read) -> Result<String, Failure> {
     let deadline = Instant::now() + Duration::from_millis(core::SETTLE_MS);
     std::thread::sleep(Duration::from_millis(250));
-    let mut latest = read_window(state, ctx, handle, &View::Controls)?;
+    let mut latest = read_window(state, ctx, handle, &View::Page)?;
     let mut changed = differs(before, &latest);
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(if changed { 200 } else { 300 }));
-        let next = read_window(state, ctx, handle, &View::Controls)?;
+        let next = read_window(state, ctx, handle, &View::Page)?;
         if changed && !differs(&latest, &next) {
             latest = next;
             break;
         }
         changed = changed || differs(before, &next);
         latest = next;
+    }
+    if latest.url != before.url || latest.title != before.title {
+        // A new page: list its controls, as a fresh read would, rather than
+        // every line of its text.
+        let window = window_mut(state, handle)?;
+        let controls = Read {
+            title: latest.title.clone(),
+            ..compact::compact(&window.markdown, &View::Controls, &mut window.numbering)
+        };
+        return Ok(compact::changes(before, &controls));
     }
     Ok(compact::changes(before, &latest))
 }
@@ -1032,8 +1052,7 @@ fn open_app(state: &mut State, ctx: &Ctx, name: &str) -> Result<String, Failure>
         App::Executable(found.icon_id.clone())
     };
     // The manifest check also refuses relative paths and non-.exe targets.
-    manifest::manifest_yaml(std::slice::from_ref(&app))
-        .map_err(Failure::refused)?;
+    manifest::manifest_yaml(std::slice::from_ref(&app)).map_err(Failure::refused)?;
     ensure_daemon(state, ctx, &app)?;
     let before: HashSet<u64> = win::all_windows().into_iter().collect();
     let launch = match &app {
@@ -1042,7 +1061,16 @@ fn open_app(state: &mut State, ctx: &Ctx, name: &str) -> Result<String, Failure>
     };
     let reply = driver(state, ctx, &launch)?;
     let pid = reply.get("pid").and_then(Value::as_i64).unwrap_or(0);
-    let window_id = wait_for_app_window(state, ctx, pid, &app, &before)?;
+    // The launch reply usually lists the window already.
+    let launched = render::windows(&reply);
+    let window_id = match launched
+        .iter()
+        .find(|(id, _, minimized)| !before.contains(id) && !minimized)
+        .or_else(|| launched.iter().find(|(_, _, minimized)| !minimized))
+    {
+        Some((window_id, _, _)) => *window_id,
+        None => wait_for_app_window(state, ctx, pid, &app, &before)?,
+    };
     let pid = win::window_pid(window_id).map(i64::from).unwrap_or(pid);
     // A window that was already open (an app that reuses its window) is the
     // user's: Pilot works in it but never closes it.
@@ -1153,6 +1181,17 @@ fn ensure_daemon(state: &mut State, ctx: &Ctx, app: &App) -> Result<(), Failure>
     }
     if !apps.contains(app) {
         apps.push(app.clone());
+    }
+    // A Store app's window belongs to the system's frame host, not the app's
+    // own process, so the driver can only reach it with the host listed.
+    // Pilot still only acts in windows it opened (the model has no other
+    // handles).
+    if apps.iter().any(|app| matches!(app, App::Packaged(_))) {
+        if let Some(host) = win::frame_host() {
+            if !apps.contains(&host) {
+                apps.push(host);
+            }
+        }
     }
     stop_daemon(state);
     let daemon = start_daemon(ctx, apps)?;
@@ -1689,6 +1728,17 @@ mod win {
         }
     }
 
+    /// `ApplicationFrameHost.exe`, which owns Store apps' windows.
+    pub(crate) fn frame_host() -> Option<grain_core::pilot::manifest::App> {
+        let root = std::env::var_os("SystemRoot")?;
+        let path = PathBuf::from(root)
+            .join("System32")
+            .join("ApplicationFrameHost.exe");
+        path.is_file().then(|| {
+            grain_core::pilot::manifest::App::Executable(path.to_string_lossy().to_string())
+        })
+    }
+
     /// The default browser's executable, from the https association.
     pub(crate) fn default_browser() -> Option<PathBuf> {
         use winreg::enums::{HKEY_CLASSES_ROOT, HKEY_CURRENT_USER};
@@ -1752,6 +1802,9 @@ mod win {
         Vec::new()
     }
     pub(crate) fn default_browser() -> Option<PathBuf> {
+        None
+    }
+    pub(crate) fn frame_host() -> Option<grain_core::pilot::manifest::App> {
         None
     }
 }
@@ -1841,5 +1894,155 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.starts_with("Could not run"), "{error}");
+    }
+
+    // ── Live runs (Phase 3) ────────────────────────────────────────────────
+    //
+    // These download the pinned driver (once, into the temp folder), start it
+    // and drive the real default browser or a real app, printing each reply
+    // with its time and size. Run one at a time:
+    // `cargo test --lib live_pilot_ -- --ignored --nocapture --test-threads 1`
+
+    fn live_ctx() -> Ctx {
+        let dir = std::env::temp_dir().join("grain-pilot-live");
+        let exe =
+            tauri::async_runtime::block_on(crate::grain_pilot_install::ensure_installed_in(&dir))
+                .expect("driver installed");
+        Ctx { exe, dir }
+    }
+
+    fn step(state: &mut State, ctx: &Ctx, action: &str, args: Value) -> Result<String, String> {
+        let call = tools::parse(action, &args).expect("valid call");
+        let started = Instant::now();
+        let result = run(state, ctx, &call).map_err(|failure| failure.message);
+        let text = match &result {
+            Ok(text) => text.clone(),
+            Err(message) => format!("FAILED: {message}"),
+        };
+        println!(
+            "--- {action} {args} ({} ms, ~{} tokens)\n{text}\n",
+            started.elapsed().as_millis(),
+            text.chars().count() / 4
+        );
+        result
+    }
+
+    /// Pilot's state for one live test. Dropping it (also when the test
+    /// panics) closes the windows Pilot opened and stops the driver.
+    struct Live(State);
+
+    impl Drop for Live {
+        fn drop(&mut self) {
+            for window in self.0.windows.values().filter(|window| window.opened) {
+                win::close(window.target.window_id);
+            }
+            stop(&mut self.0);
+        }
+    }
+
+    /// The number of the first control line that contains every word.
+    fn number_of(text: &str, words: &[&str]) -> u32 {
+        text.lines()
+            .find(|line| words.iter().all(|word| line.contains(word)))
+            .and_then(|line| line.split('[').nth(1)?.split(']').next()?.parse().ok())
+            .unwrap_or_else(|| panic!("no control with {words:?} in:\n{text}"))
+    }
+
+    #[test]
+    #[ignore = "downloads the driver and drives the default browser"]
+    fn live_pilot_browser_reads_clicks_and_closes() {
+        let ctx = live_ctx();
+        let mut live = Live(State::new());
+        let state = &mut live.0;
+        let opened = step(
+            state,
+            &ctx,
+            "open",
+            serde_json::json!({"url": "https://www.iana.org/help/example-domains"}),
+        )
+        .expect("open");
+        assert!(opened.starts_with("Opened w1"), "{opened}");
+        assert!(opened.contains(render::UNTRUSTED));
+        let found = step(
+            state,
+            &ctx,
+            "read",
+            serde_json::json!({"find": "reserved domains"}),
+        )
+        .expect("find");
+        let link = number_of(&found, &["link", "Reserved"]);
+        let clicked =
+            step(state, &ctx, "click", serde_json::json!({"control": link})).expect("click");
+        assert!(
+            clicked.contains("Reserved") || clicked.contains("reserved"),
+            "{clicked}"
+        );
+        let listed = step(state, &ctx, "windows", serde_json::json!({})).expect("windows");
+        assert!(listed.starts_with("w1:"), "{listed}");
+        // A number Pilot never gave out is refused, not guessed.
+        let unknown = step(state, &ctx, "click", serde_json::json!({"control": 9999}));
+        assert!(unknown.unwrap_err().contains("There is no [9999]"));
+        let closed = step(state, &ctx, "close", serde_json::json!({})).expect("close");
+        assert_eq!(closed, "Closed w1.");
+    }
+
+    #[test]
+    #[ignore = "downloads the driver and drives BookMyShow in the default browser"]
+    fn live_pilot_booking_reaches_the_seat_page() {
+        let ctx = live_ctx();
+        let mut live = Live(State::new());
+        let state = &mut live.0;
+        let date = chrono::Local::now().format("%Y%m%d");
+        let url = format!(
+            "https://in.bookmyshow.com/cinemas/mumbai/cinepolis-lake-shore-thane-ex-viviana-mall/buytickets/CPVM/{date}"
+        );
+        step(state, &ctx, "open", serde_json::json!({ "url": url })).expect("open");
+        let shows =
+            step(state, &ctx, "read", serde_json::json!({"find": "PM"})).expect("find shows");
+        let show = number_of(&shows, &["button", "Book 10:"]);
+        let clicked =
+            step(state, &ctx, "click", serde_json::json!({"control": show})).expect("click show");
+        println!(
+            "seat page reached: {}",
+            clicked.contains("Select Seats") || clicked.contains("seat")
+        );
+        let closed = step(state, &ctx, "close", serde_json::json!({})).expect("close");
+        assert_eq!(closed, "Closed w1.");
+    }
+
+    /// Calculator holds no user data, unlike Notepad, which restores the
+    /// user's unsaved tabs when it starts.
+    #[test]
+    #[ignore = "downloads the driver and drives Calculator"]
+    fn live_pilot_app_clicks_and_reads_back() {
+        let ctx = live_ctx();
+        let mut live = Live(State::new());
+        let state = &mut live.0;
+        let opened = step(
+            state,
+            &ctx,
+            "open_app",
+            serde_json::json!({"name": "Calculator"}),
+        )
+        .expect("open_app");
+        let one = number_of(&opened, &["button \"One\""]);
+        let plus = number_of(&opened, &["button \"Plus\""]);
+        let two = number_of(&opened, &["button \"Two\""]);
+        let equals = number_of(&opened, &["button \"Equals\""]);
+        let clicks: Vec<Value> = [one, plus, two, equals]
+            .iter()
+            .map(|control| serde_json::json!({"action": "click", "control": control}))
+            .collect();
+        let ran =
+            step(state, &ctx, "steps", serde_json::json!({ "steps": clicks })).expect("steps");
+        let display =
+            step(state, &ctx, "read", serde_json::json!({"find": "display"})).expect("read");
+        let closed = step(state, &ctx, "close", serde_json::json!({})).expect("close");
+        assert!(display.contains("Display is 3"), "{display}");
+        assert!(
+            ran.contains("Display is 3"),
+            "the change report shows the result: {ran}"
+        );
+        assert_eq!(closed, "Closed w1.");
     }
 }
