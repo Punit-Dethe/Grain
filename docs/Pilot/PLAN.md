@@ -1,7 +1,7 @@
-# Pilot: plan
+# Grain Pilot: plan
 
-Status: **plan only, nothing built.** Written 2026-11-16. "Pilot" is a working
-name (see Decisions).
+Status: **plan only, nothing built.** Written 2026-11-16. Name confirmed by the
+user 2026-11-16: **Grain Pilot** ("Pilot" for short in this document).
 
 Pilot lets the Agent act in the user's own apps and browser: open a page in the
 browser they already use (signed in as them), read it, click, type, and hand
@@ -21,6 +21,8 @@ calls, plus the part that keeps page reads small. No overlays, no agent cursor.
 
 - Drove the user's real Zen in a new background window: page read ~0.1 s,
   click ~0.1 s, no focus taken, BookMyShow showtimes → seat page worked.
+  (Phase 0 later found Zen syncs that window's tabs into the user's main
+  window and can take focus; see Phase 0 results.)
 - A raw page read is large (showtimes page ~16k tokens). The same data filtered
   to controls only is ~3.7k (Agent Browser: ~4.0k); seat page 0.26k; Zomato
   booking page 1.0k. A `find` read is ~0.5k.
@@ -30,10 +32,11 @@ calls, plus the part that keeps page reads small. No overlays, no agent cursor.
   "no change". Pilot must wait for the page to settle (see Adapter).
 - Not measured: sign-in, OTP, payment, Chromium browsers, driver RAM.
 
-## Decisions (recommended; the first two are the user's to confirm)
+## Decisions
 
-- **Name / id:** "Pilot", extension id `grain.pilot`, Extensions page id
-  `pilot`, setting `pilot_enabled` (default off). Renaming is one constant.
+- **Name / id (confirmed):** display name "Grain Pilot", extension id
+  `grain.pilot`, Extensions page id `pilot`, setting `pilot_enabled` (default
+  off).
 - **Agent Browser:** left as it is, off by default, until Pilot passes Phase 3.
   Then removed in its own commit. Reach stays removed; Pilot replaces it.
 - **Branch:** `feat/pilot`, cut from `feat/agent-browser` because it needs the
@@ -162,8 +165,8 @@ Each test also asserts the control the booking needs survives
   `session: "grain"` so read tokens survive between processes, and
   `include_screenshot: false`.
 - **Environment on every spawn:** `CUA_DRIVER_RS_TELEMETRY_ENABLED=false`,
-  `DO_NOT_TRACK=1`, `CUA_DRIVER_DISABLE_RUN_SCRIPT=1`, update check off,
-  `CREATE_NO_WINDOW`.
+  `DO_NOT_TRACK=1`, `CUA_DRIVER_DISABLE_RUN_SCRIPT=1`,
+  `CUA_DRIVER_RS_UPDATE_CHECK=false`, `CREATE_NO_WINDOW`.
 - **Settle-read.** After an action Pilot re-reads with the driver's diff
   (`since`) at short intervals until two reads agree or 3 s pass, then returns
   that one diff. Bounded, no background thread.
@@ -204,6 +207,116 @@ design if it fails)
 5. Daemon RAM at rest and after a large read; start-up time.
 6. The config key that turns the update check off.
 7. A real booking in Zen, signed in, up to the payment page.
+
+### Phase 0 results (2026-11-16, driver 0.52.0, bounded mode, private pipe)
+
+| # | Check | Result |
+| --- | --- | --- |
+| 1 | Manifest | Works. Format below. |
+| 2 | Private pipe + session | Works. Ready for the first call ~0.6 s after start. |
+| 3 | Password fields | Driver gives no flag. Windows UIA `IsPassword` does (Zen and Edge, 18–77 ms). |
+| 4 | Edge / Brave | Background **click** works on on-screen controls. Background **typing does not**. |
+| 5 | RAM / speed | 53–65 MB working set, 17–27 MB private; +2 MB after a 19k-character read. Read 0.45–0.6 s, click 0.4–0.6 s, `launch_app` ~1.8 s. |
+| 6 | Update check | `CUA_DRIVER_RS_UPDATE_CHECK=false` (else it calls GitHub on every daemon start). |
+| 7 | Zen booking | **Not run.** Blocked by the Zen tab-sync finding below; needs a user decision. |
+
+**Manifest format** (YAML, version 3; a byte-order mark fails the parse;
+unknown keys are rejected):
+
+```yaml
+version: 3
+expires_after: 2h        # bounded mode requires both; max 24h
+idle_timeout: 15m
+resources:
+  apps:                  # exact absolute paths; packaged apps use bundle_id (AUMID)
+    - executable: 'C:\Program Files\Zen Browser\zen.exe'
+      launch: true
+      windows: all
+      terminate: deny
+allow:
+  tools: [launch_app, list_windows, get_window_state, click, set_value,
+          type_text, press_key, hotkey, scroll, run_steps, bring_to_front,
+          start_session, end_session]
+deny:
+  tools: [run_script, kill_app, clipboard_read, clipboard_write,
+          get_desktop_state, zoom, start_recording, browser_prepare,
+          browser_download, browser_set_input_files, set_config,
+          install_extension, move_cursor]
+```
+
+Bounded mode scopes **apps**, not just tools: reading, input and `launch_app`
+work only on processes whose executable is listed. `list_windows` /
+`list_apps` without a `pid` count as watching the whole screen and are refused
+(that would need `desktop.display: true`, which also unlocks screen-wide input,
+so Pilot never sets it). `list_windows` with a listed app's `pid` works.
+
+**What this changes in the design**
+
+- **Manifest is written per daemon start** from the default browser's
+  executable (registry `UserChoice` → path) plus the apps Pilot may open.
+  `open_app` for an app not in the manifest restarts the daemon with it added
+  (~0.6 s).
+- **Finding Pilot's window.** `launch_app` returns the launcher's pid, which
+  hands off to the running browser and exits, and its `windows` list comes back
+  empty. Grain finds the browser's main pid itself, then compares
+  `list_windows(pid)` before and after the launch to find the new window.
+- **`windows` tool** lists only windows of manifest apps (Grain-side, through
+  `list_windows(pid)`), never the whole desktop.
+- **Numbers.** Every read replaces the window's previous snapshot; a token from
+  any older read is refused (`stale_element_token`), even if nothing changed.
+  Row numbers stay put while the page is unchanged and shift after it
+  changes. A `find` read still lets Pilot click a row it did not show (the
+  token uses the latest snapshot id). So Grain keeps the latest snapshot id
+  per window plus the role and name behind each number the model saw, and
+  resolves a number against the latest snapshot by role and name.
+- **Privacy:** the browser's own rows list **every open tab title** (here,
+  one included the user's email address). Compaction step 1 is a privacy rule,
+  not only a token saving, and gets its own test.
+- **Password check is Grain's own.** Before `type` into a control, Grain asks
+  Windows UIA for `IsPassword` descendants of that window and refuses if one
+  has the control's bounds (read with `tree_format: "elements"`, whose
+  `frame` matched UIA's rectangle exactly). The site's label or `id` is never
+  trusted.
+- **Chromium (Edge, Brave):**
+  - The first read can come back nearly empty (reading is what switches on
+    Chromium's page accessibility). Re-read once when the document has almost
+    no rows.
+  - Clicks are sent as synthetic events at the control's on-screen point. A
+    control below the fold is "sent" and silently missed. Scrolling a given
+    control into view is a no-op on Windows, so Pilot scrolls the window
+    toward an off-screen target, re-reads, and only then clicks (bounded
+    tries).
+  - Background `type_text` and `press_key` return `background_unavailable`.
+    `set_value` on a web field reports success but leaves it empty (checked
+    through UIA). **Typing into Chromium pages needs the window in front.**
+    Foreground typing could not be checked this round (the window was
+    minimised mid-test while the user was at the desk).
+- **Firefox family (Zen):** clicks go through UIA Invoke and work off-screen.
+  `set_value` + Enter on the address bar works in the background. Typing into
+  a web field in the background has not been checked yet.
+- **Closing.** Background Ctrl+W does not reach Zen (key chords sent this way
+  are ignored), and Zen's tabs expose no close button. Closing a whole window
+  through its title-bar Close button (UIA Invoke) works in the background. On
+  Chromium, closing a window with several tabs opens a "Close all tabs?"
+  dialog that blocks it. So `close` closes **windows** Pilot opened, and only
+  when the window holds only Pilot's tabs.
+- **Driver state outside Grain's folder:** `~/.cua-driver/` (update cache) and
+  `%LOCALAPPDATA%\cua-driver\` (pid file, pipe locks). Disconnect removes them
+  only if Grain created them.
+
+**Zen tab sync (blocks item 7).** Zen 1.24 syncs tabs across windows by default.
+A "new background window" is not separate: its tabs appear in the user's main
+window, the main window's active tab followed a tab Pilot opened, and Zen
+brought the new window to the front (Edge and Brave did not). Test tabs were
+closed afterwards and the user's 9 tabs were checked unchanged. Options:
+
+1. Open Pilot's work in a Zen **unsynced window**. The command exists
+   (`cmd_zenNewNavigatorUnsynced`); whether Pilot can reach it in the
+   background is not yet checked.
+2. Accept that Pilot's tabs appear in the user's Zen window (the HeyClicky
+   "own tab" model), and put back the user's active tab after each `open`.
+3. Use the user's Chromium browser for Pilot: separate windows, no focus
+   taken, but typing needs the window in front.
 
 **Phase 1: core** (`grain-core/src/pilot/`): tools, parsing, request mapping,
 compaction, rendering, policy, manifest, with unit and golden tests.
