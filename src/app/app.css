@@ -6399,28 +6399,34 @@ html[data-theme="light"] .meet-info-card {
   font-size: 10px;
 }
 
+/* Speaker avatars look the same in both themes: light mode's colours (its
+   speaker hue mixed into its #f3f1ec surface, with its #1a1a1a text). */
+.meet-avatar[class*="tone-"] {
+  color: #1a1a1a;
+}
+
 .meet-avatar.tone-amber {
-  background: color-mix(in srgb, var(--speaker-amber) 34%, var(--meet-surface));
+  background: color-mix(in srgb, #e89f4d 34%, #f3f1ec);
 }
 
 .meet-avatar.tone-green {
-  background: color-mix(in srgb, var(--speaker-green) 34%, var(--meet-surface));
+  background: color-mix(in srgb, #3e9e6e 34%, #f3f1ec);
 }
 
 .meet-avatar.tone-blue {
-  background: color-mix(in srgb, var(--speaker-blue) 34%, var(--meet-surface));
+  background: color-mix(in srgb, #3b82e0 34%, #f3f1ec);
 }
 
 .meet-avatar.tone-violet {
-  background: color-mix(in srgb, var(--speaker-violet) 34%, var(--meet-surface));
+  background: color-mix(in srgb, #8b6bdd 34%, #f3f1ec);
 }
 
 .meet-avatar.tone-rose {
-  background: color-mix(in srgb, var(--speaker-rose) 34%, var(--meet-surface));
+  background: color-mix(in srgb, #db5b8c 34%, #f3f1ec);
 }
 
 .meet-avatar.tone-teal {
-  background: color-mix(in srgb, var(--speaker-teal) 34%, var(--meet-surface));
+  background: color-mix(in srgb, #1f9fa3 34%, #f3f1ec);
 }
 
 .meet-turn-body {
