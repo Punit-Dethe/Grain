@@ -32,9 +32,11 @@ pub(crate) const EXTENSION_ID: &str = core::EXTENSION_ID;
 
 /// One extension operation: a page load or an action and its settle wait.
 const OP_TIMEOUT: Duration = Duration::from_secs(40);
-/// How long a call waits for the extension to connect after the link starts
-/// (the extension retries every minute, and at browser start-up).
+/// How long a call waits for the extension to connect.
 const CONNECT_WAIT: Duration = Duration::from_secs(3);
+/// After Grain starts the link, an already-open browser connects on the
+/// extension's next retry (every 30 s): calls wait out that first window.
+const FIRST_CONNECT_WINDOW: Duration = Duration::from_secs(35);
 /// Tabs one Agent run may keep open through Pilot.
 const MAX_TABS: usize = 8;
 /// Extra reads while a page only shows a loading placeholder.
@@ -261,12 +263,15 @@ async fn ensure_link(app: &AppHandle) -> Result<(), String> {
         return Ok(());
     }
     prepare(app).await?;
-    let deadline = tokio::time::Instant::now() + CONNECT_WAIT;
+    let mut deadline = tokio::time::Instant::now() + CONNECT_WAIT;
+    if let Some(started) = link::started_at() {
+        deadline = deadline.max((started + FIRST_CONNECT_WINDOW).into());
+    }
     while link::connected_browser().is_none() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     if link::connected_browser().is_none() {
-        return Err("The Grain Pilot browser extension is not connected. Ask the user to open their browser with the Grain Pilot extension turned on (it connects within a minute), then try again.".into());
+        return Err("The Grain Pilot browser extension is not connected. Ask the user to open their browser with the Grain Pilot extension turned on (it connects within 30 seconds), then try again.".into());
     }
     Ok(())
 }
@@ -450,6 +455,19 @@ async fn settled_read(state: &mut State, handle: u32) -> Result<Read, Failure> {
     Ok(read_now)
 }
 
+/// A reply whose page still only shows a loading placeholder after the
+/// retries says what to do: background tabs run a site's own loaders slowly.
+fn still_loading(reply: String, read: &Read) -> String {
+    if page::looks_loading(read) {
+        format!(
+            "{reply}
+(Still loading. A background tab can load slowly: read again, or call show to bring it forward.)"
+        )
+    } else {
+        reply
+    }
+}
+
 /// Read the screen after an action and report what changed.
 async fn report(
     state: &mut State,
@@ -458,12 +476,47 @@ async fn report(
     done: &str,
 ) -> Result<String, Failure> {
     let after = settled_read(state, handle).await?;
-    Ok(render::action_reply(Handle(handle), done, before, &after))
+    Ok(still_loading(
+        render::action_reply(Handle(handle), done, before, &after),
+        &after,
+    ))
+}
+
+/// Drop tabs the user closed (or a browser restart ended) and return the
+/// open ones' titles by tab id.
+async fn forget_closed_tabs(state: &mut State) -> Result<HashMap<i64, String>, Failure> {
+    let reply = ext(json!({"op": "tabs"})).await?;
+    let open: HashMap<i64, String> = reply
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tab| {
+            Some((
+                tab.get("tab")?.as_i64()?,
+                tab.get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            ))
+        })
+        .collect();
+    state.tabs.retain(|_, tab| open.contains_key(&tab.tab_id));
+    if state
+        .last
+        .is_some_and(|last| !state.tabs.contains_key(&last))
+    {
+        state.last = None;
+    }
+    Ok(open)
 }
 
 async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
     match call {
         Call::Open(url) => {
+            if state.tabs.len() >= MAX_TABS {
+                // Tabs the user closed no longer count.
+                forget_closed_tabs(state).await?;
+            }
             if state.tabs.len() >= MAX_TABS {
                 return Err(Failure::refused(format!(
                     "Grain Pilot already has {MAX_TABS} tabs open. Close one first."
@@ -485,7 +538,10 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
             );
             state.last = Some(handle);
             let read = settled_read(state, handle).await?;
-            Ok(render::opened_reply(Handle(handle), &read))
+            Ok(still_loading(
+                render::opened_reply(Handle(handle), &read),
+                &read,
+            ))
         }
         Call::Read { tab, view } => {
             let handle = pick(state, *tab)?;
@@ -557,23 +613,7 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
                 }
                 closed = format!("Closed {close}.\n");
             }
-            let reply = ext(json!({"op": "tabs"})).await?;
-            let open: HashMap<i64, String> = reply
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|tab| {
-                    Some((
-                        tab.get("tab")?.as_i64()?,
-                        tab.get("title")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    ))
-                })
-                .collect();
-            // Tabs the user closed are forgotten.
-            state.tabs.retain(|_, tab| open.contains_key(&tab.tab_id));
+            let open = forget_closed_tabs(state).await?;
             let rows: Vec<(Handle, String)> = state
                 .tabs
                 .iter()
@@ -604,9 +644,10 @@ mod tests {
 
     // ── Live tests ─────────────────────────────────────────────────────────
     //
-    // All run in a SEPARATE Edge profile (fresh each run) with the unpacked
+    // All run in a SEPARATE browser profile (fresh each run; Edge, or the
+    // Chromium browser at `PILOT_BROWSER`) with the unpacked
     // extension. They need `browser-extension/dist` built and
-    // `GRAIN_BROWSER_HOST` pointing at a built host, and end only the Edge
+    // `GRAIN_BROWSER_HOST` pointing at a built host, and end only the browser
     // processes started with their own profile folder.
 
     /// A fresh Edge profile with the unpacked extension. Dropping it ends only
@@ -614,6 +655,15 @@ mod tests {
     struct LiveEdge {
         root: PathBuf,
         profile: PathBuf,
+    }
+
+    /// The browser the live tests drive: `PILOT_BROWSER`, or Edge.
+    fn browser() -> PathBuf {
+        std::env::var_os("PILOT_BROWSER")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                PathBuf::from(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+            })
     }
 
     impl LiveEdge {
@@ -635,18 +685,16 @@ mod tests {
             tauri::async_runtime::block_on(async {
                 link::ensure_started().expect("start");
             });
-            std::process::Command::new(
-                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            )
-            .arg(format!("--user-data-dir={}", edge.profile.display()))
-            .arg(format!("--load-extension={}", extension.display()))
-            .args([
-                "--no-first-run",
-                "--no-default-browser-check",
-                "about:blank",
-            ])
-            .spawn()
-            .expect("launch Edge");
+            std::process::Command::new(browser())
+                .arg(format!("--user-data-dir={}", edge.profile.display()))
+                .arg(format!("--load-extension={}", extension.display()))
+                .args([
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "about:blank",
+                ])
+                .spawn()
+                .expect("launch Edge");
             edge
         }
     }
@@ -654,7 +702,8 @@ mod tests {
     impl Drop for LiveEdge {
         fn drop(&mut self) {
             let script = format!(
-                "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object {{ $_.CommandLine -like '*{}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+                "Get-CimInstance Win32_Process -Filter \"Name='{}'\" | Where-Object {{ $_.CommandLine -like '*{}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+                browser().file_name().and_then(|n| n.to_str()).unwrap_or("msedge.exe"),
                 self.profile.display()
             );
             let _ = std::process::Command::new("powershell")
@@ -914,6 +963,86 @@ mod tests {
             );
             let tabs = go(&mut state, step("tabs", json!({}))).await;
             assert!(tabs.contains("t5"), "{tabs}");
+        });
+    }
+
+    /// Live: a background tab hidden for over 5 minutes (when Chromium's
+    /// intensive timer throttling starts) still reads and acts. Set
+    /// `PILOT_HIDDEN_SECS` to change the wait (default 360).
+    ///
+    /// `cargo test --lib live_pilot_long_hidden -- --ignored --nocapture --test-threads 1`
+    #[test]
+    #[ignore]
+    #[cfg(windows)]
+    fn live_pilot_long_hidden_tab_still_works() {
+        let hidden: u64 = std::env::var("PILOT_HIDDEN_SECS")
+            .ok()
+            .and_then(|secs| secs.parse().ok())
+            .unwrap_or(360);
+        let _edge = LiveEdge::start("grain-pilot-hidden-live");
+        tauri::async_runtime::block_on(async {
+            connected().await;
+            let mut state = State::new();
+            let date = chrono::Local::now().format("%Y%m%d");
+            let url = format!("https://in.bookmyshow.com/cinemas/mumbai/cinepolis-lake-shore-thane-ex-viviana-mall/buytickets/CPVM/{date}");
+            go(&mut state, step("open", json!({ "url": url }))).await;
+            let form = "https://www.selenium.dev/selenium/web/web-form.html";
+            go(&mut state, step("open", json!({ "url": form }))).await;
+            println!("hiding both tabs for {hidden} s");
+            tokio::time::sleep(Duration::from_secs(hidden)).await;
+            println!("{:?}", ext(json!({"op": "tabs"})).await.ok());
+
+            let page = go(&mut state, step("read", json!({"tab": "t2", "page": true}))).await;
+            let text = number_in(&page, "] field Text input");
+            let typed = go(
+                &mut state,
+                step(
+                    "act",
+                    json!({"tab": "t2", "do": [{"fill": text, "text": "late"}]}),
+                ),
+            )
+            .await;
+            assert!(typed.contains("value=late"), "{typed}");
+
+            let shows = go(
+                &mut state,
+                step("read", json!({"tab": "t1", "find": "Book"})),
+            )
+            .await;
+            let show = shows
+                .lines()
+                .filter(|row| row.contains("] Book "))
+                .last()
+                .and_then(|row| row[1..row.find(']')?].parse::<u32>().ok())
+                .expect("a Book row");
+            let clicked = go(
+                &mut state,
+                step("act", json!({"tab": "t1", "do": [{"click": show}]})),
+            )
+            .await;
+            let mut seats = clicked.contains("How many seats");
+            for _ in 0..3 {
+                if seats {
+                    break;
+                }
+                let again = go(&mut state, step("read", json!({"tab": "t1"}))).await;
+                seats = again.contains("How many seats");
+            }
+            println!("seat dialog after a long hide: {seats}");
+            if !seats {
+                assert!(clicked.contains("call show"), "{clicked}");
+                go(
+                    &mut state,
+                    step("show", json!({"tab": "t1", "reason": "view"})),
+                )
+                .await;
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                let shown = go(&mut state, step("read", json!({"tab": "t1"}))).await;
+                println!(
+                    "seat dialog once shown: {}",
+                    shown.contains("How many seats")
+                );
+            }
         });
     }
 

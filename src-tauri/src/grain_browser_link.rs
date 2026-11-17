@@ -129,6 +129,7 @@ struct Link {
     next_id: AtomicU64,
     next_generation: AtomicU64,
     stop: tokio::sync::Notify,
+    started: std::time::Instant,
 }
 
 static LINK: Mutex<Option<Arc<Link>>> = Mutex::new(None);
@@ -150,6 +151,7 @@ pub(crate) fn ensure_started() -> Result<(), String> {
         next_id: AtomicU64::new(1),
         next_generation: AtomicU64::new(1),
         stop: tokio::sync::Notify::new(),
+        started: std::time::Instant::now(),
     });
     #[cfg(windows)]
     {
@@ -180,6 +182,11 @@ pub(crate) fn stop() {
             .unwrap_or_else(|p| p.into_inner())
             .clear();
     }
+}
+
+/// When the pipe server started, while it runs.
+pub(crate) fn started_at() -> Option<std::time::Instant> {
+    Some(link()?.started)
 }
 
 /// The browser the extension reported, when one is connected.

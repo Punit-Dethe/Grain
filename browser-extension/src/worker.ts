@@ -81,7 +81,9 @@ function connect() {
 
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
-chrome.alarms.create(RETRY_ALARM, { periodInMinutes: 1 });
+// 30 s is the shortest alarm Chromium allows (older versions round up to 1
+// minute). Each retry while Grain is closed starts and ends the small host.
+chrome.alarms.create(RETRY_ALARM, { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm: any) => {
   if (alarm.name === RETRY_ALARM) connect();
 });
@@ -97,7 +99,9 @@ chrome.tabs.onRemoved.addListener((tabId: number) => {
 function ownTab(value: unknown): number {
   const id = Number(value);
   if (!pilotTabs.has(id))
-    throw new Error("Grain Pilot only works in tabs it opened.");
+    throw new Error(
+      "That tab is closed, or Grain Pilot did not open it. Call tabs to list Pilot's tabs.",
+    );
   return id;
 }
 
@@ -119,19 +123,49 @@ function waitForLoad(tabId: number): Promise<void> {
   });
 }
 
+const ASLEEP =
+  "The browser put this tab to sleep. Call show to bring it forward, then read it again.";
+/** Longer than any page-script wait, shorter than Grain's own timeout. */
+const PAGE_TIMEOUT_MS = 25_000;
+
+/** `work`, or an error if the page has not answered within `ms`. */
+function answerWithin<T>(ms: number, work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            "The page did not answer; it may be asleep or stuck. Call show to bring it forward, then read it again.",
+          ),
+        ),
+      ms,
+    );
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
 /** Run one page-script method in a Pilot tab, injecting the script first. */
 async function inPage(
   tabId: number,
   method: string,
   args: unknown[],
 ): Promise<any> {
-  const status = (await chrome.tabs.get(tabId)).status;
-  if (status !== "complete") await waitForLoad(tabId);
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["page.js"],
-  });
-  const [frame] = await chrome.scripting.executeScript({
+  const tab = await chrome.tabs.get(tabId);
+  if (tab.discarded) {
+    // The browser unloaded it to save memory; the page has to load again.
+    await chrome.tabs.reload(tabId);
+    await waitForLoad(tabId);
+  } else if (tab.frozen) {
+    throw new Error(ASLEEP);
+  } else if (tab.status !== "complete") {
+    await waitForLoad(tabId);
+  }
+  await answerWithin(
+    PAGE_TIMEOUT_MS,
+    chrome.scripting.executeScript({ target: { tabId }, files: ["page.js"] }),
+  );
+  const [frame] = await answerWithin(PAGE_TIMEOUT_MS, chrome.scripting.executeScript({
     target: { tabId },
     func: async (method: string, args: unknown[], base: number) => {
       const pilot = (globalThis as any).__grainPilot;
@@ -140,7 +174,7 @@ async function inPage(
       return { result, next: pilot.next };
     },
     args: [method, args, nextNumber[tabId] ?? 1],
-  });
+  }));
   if (frame?.error) throw new Error(String(frame.error.message ?? frame.error));
   const next = frame?.result?.next;
   if (typeof next === "number" && next > (nextNumber[tabId] ?? 1)) {
@@ -215,11 +249,18 @@ async function handle(request: Request): Promise<unknown> {
       const url = String(request.url);
       if (!/^https?:\/\//i.test(url))
         throw new Error("Grain Pilot only opens http and https links.");
-      const tab = await chrome.tabs.create({
-        url,
-        active: request.active !== false,
-      });
+      // Background by default: the user keeps working in their own tab.
+      // With no browser window open, a window is made without focus.
+      const active = request.active === true;
+      const tab = await chrome.tabs
+        .create({ url, active })
+        .catch(async () => {
+          const made = await chrome.windows.create({ url, focused: active });
+          return made.tabs[0];
+        });
       pilotTabs.add(tab.id);
+      // A busy background tab may otherwise be put to sleep mid-task.
+      await chrome.tabs.update(tab.id, { autoDiscardable: false }).catch(() => {});
       try {
         if (groupId !== null)
           await chrome.tabs.group({ groupId, tabIds: [tab.id] });
@@ -244,7 +285,12 @@ async function handle(request: Request): Promise<unknown> {
       );
       return tabs
         .filter(Boolean)
-        .map((tab: any) => ({ tab: tab.id, title: tab.title, url: tab.url }));
+        .map((tab: any) => ({
+          tab: tab.id,
+          title: tab.title,
+          url: tab.url,
+          asleep: Boolean(tab.frozen || tab.discarded),
+        }));
     }
     case "read":
       return inPage(ownTab(request.tab), "read", [

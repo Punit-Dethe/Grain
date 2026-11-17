@@ -1,6 +1,6 @@
 # Grain Pilot: browser extension plan
 
-Status: **Phases 0–2 and 4 done** (written 2026-11-17). Pilot is the Agent's
+Status: **V1, parked 2026-11-17** (see "V1" below). Phases 0–2 and 4 done. Pilot is the Agent's
 only browser path; it replaced the earlier Cua Driver build. Branch:
 `feat/pilot`.
 
@@ -474,6 +474,63 @@ Live tests (fresh Edge profile, nothing signed in), both passing:
 
 Known site limits seen in the captures: Reddit blocks fresh profiles, and
 Booking, MakeMyTrip and Swiggy cover the page with a sign-in popup.
+
+## V1 (parked 2026-11-17)
+
+Pilot is parked here as V1 so other parts of Grain can move. What V1 is:
+
+- **Five tools** (`open`, `read`, `act`, `show`, `tabs`), token-cut rows, one
+  view per tab in the conversation, and the reliability pass above.
+- **Background tabs.** `open` makes a background tab in the "Grain" tab
+  group; the user's own tab keeps focus. `show` brings a tab forward (sign-in,
+  a human step). With no browser window open, a window is made without focus.
+  Pilot's tabs are marked not-discardable.
+- **Asleep tabs fail fast.** A tab the browser unloaded is reloaded before a
+  read. A frozen tab, or a page that does not answer within 25 s, returns
+  "call show to bring it forward" instead of a 40 s silent wait.
+- **Tab tidiness.** Tabs the user closed (or a browser restart ended) are
+  forgotten before Pilot refuses a ninth tab. A closed tab's error says so.
+- **Reconnect.** The extension retries every 30 s (the shortest alarm
+  Chromium allows). For 35 s after Grain starts its link, a call waits for an
+  already-open browser to connect instead of failing.
+- **Browsers:** Chromium family (Edge, Chrome, Brave), one build, hosts
+  registered for all three.
+
+Measured in background tabs (live, fresh profile):
+
+| Run | Edge | Brave |
+| --- | --- | --- |
+| Many-site acts (form, dropdown, search, refusals, find) | ✅ 46 s | ✅ 45 s |
+| Wikipedia search + BookMyShow to the seat dialog | ✅ 46 s | ✅ 45 s |
+
+- **Every step costs about 1 s more than in a visible tab.** Hidden tabs run
+  timers at most once a second, Pilot's own "wait until the page is quiet"
+  included. Reads take ~1 s (0.2 s visible); the 4-step form fill took
+  9–17 s (5 s visible). Pilot keeps this wait as it is: shortening it
+  would end before a hidden page's own delayed updates and report "nothing
+  changed" wrongly.
+- **Six minutes hidden** (`live_pilot_long_hidden_tab_still_works`), when
+  Chromium's intensive throttling starts: reads and typing still work. The
+  first run without `autoDiscardable: false` lost the BookMyShow tab (no
+  answer in 40 s); with it, both tabs stayed awake.
+- **Known limit: a heavy site's own loader.** BookMyShow's seat dialog stays
+  on "Please wait" in a long-hidden tab, and was not back within a few
+  seconds of `show` in the test browser (whose window is not in front). The
+  reply now says "Still loading… read again, or call show", so the Agent can
+  hand it to the user.
+
+Parked for later (not V1):
+
+- **Firefox and Zen.** Same page script, but a new runtime (event-page
+  worker, `browser.*`), Mozilla's registry key, and signing through AMO, which
+  needs the user's account. Too many new variables for now.
+- **Store listings and one-click Connect** (Chrome Web Store, Edge Add-ons,
+  AMO). Need the user's developer accounts. Until then: load unpacked.
+- **The Chromium debugger fallback** for sites that ignore synthetic events.
+  Not needed by any site tested so far, and it shows a "debugging" bar.
+- **Several Agent tasks at once,** each in its own group. Pilot's state is
+  one shared set of tabs today; calls are serialized.
+- **The repo split** of `browser-extension/` (seam first).
 
 ## Open decisions for the user
 
