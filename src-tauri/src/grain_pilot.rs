@@ -387,8 +387,14 @@ async fn check(state: &mut State, handle: u32, step: &Step) -> Result<(), Failur
     Ok(())
 }
 
+/// What one `act` step did, and whether it left the page.
+struct Performed {
+    message: String,
+    left: bool,
+}
+
 /// Run one `act` step in the page.
-async fn perform(state: &mut State, handle: u32, step: &Step) -> Result<String, Failure> {
+async fn perform(state: &mut State, handle: u32, step: &Step) -> Result<Performed, Failure> {
     check(state, handle, step).await?;
     let tab_id = tab_mut(state, handle)?.tab_id;
     let op = match step {
@@ -409,7 +415,17 @@ async fn perform(state: &mut State, handle: u32, step: &Step) -> Result<String, 
             "pixels": core::SCROLL_PIXELS,
         }),
     };
-    outcome(ext(op).await?)
+    let reply = ext(op).await?;
+    let left = reply.get("left").and_then(Value::as_bool) == Some(true);
+    let message = outcome(reply)?;
+    Ok(if left {
+        Performed {
+            message: format!("{} The page changed.", step.done()),
+            left,
+        }
+    } else {
+        Performed { message, left }
+    })
 }
 
 /// The on-screen read before an action, for the change report.
@@ -482,7 +498,19 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
             let mut done = Vec::new();
             for (at, step) in steps.iter().enumerate() {
                 match perform(state, handle, step).await {
-                    Ok(message) => done.push(message),
+                    Ok(Performed { message, left }) => {
+                        done.push(message);
+                        // Later numbers belonged to the old page.
+                        if left && at + 1 < steps.len() {
+                            let rest = if at + 2 == steps.len() {
+                                format!("Step {}", at + 2)
+                            } else {
+                                format!("Steps {}-{}", at + 2, steps.len())
+                            };
+                            done.push(format!("{rest} did not run; read the new page first."));
+                            break;
+                        }
+                    }
                     Err(failure) => {
                         let so_far = if done.is_empty() {
                             String::new()
@@ -495,7 +523,7 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
                             format!(
                                 "Step {} failed: {}.{so_far}{changes}",
                                 at + 1,
-                                failure.message
+                                failure.message.trim_end_matches('.')
                             ),
                         ));
                     }
@@ -574,53 +602,43 @@ mod tests {
         )));
     }
 
-    /// Live: the Agent's Pilot tools end to end through the real extension,
-    /// in a SEPARATE Edge profile (fresh each run) with the unpacked
-    /// extension. Needs `browser-extension/dist` built and
-    /// `GRAIN_BROWSER_HOST` pointing at a built host. Ends only the Edge
-    /// processes started with this test's profile folder.
-    ///
-    /// `cargo test --lib live_pilot_tools -- --ignored --nocapture --test-threads 1`
-    #[test]
-    #[ignore]
-    #[cfg(windows)]
-    fn live_pilot_tools_book_up_to_the_seat_page() {
-        let host = link::host_path().expect("host");
-        let root = std::env::temp_dir().join("grain-pilot-tools-live");
-        let profile = root.join("edge-profile");
-        let extension = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("browser-extension")
-            .join("dist");
-        assert!(
-            extension.join("page.js").is_file(),
-            "build browser-extension first"
-        );
-        let _ = std::fs::remove_dir_all(&profile);
-        link::register(&host, &root).expect("register");
+    // ── Live tests ─────────────────────────────────────────────────────────
+    //
+    // All run in a SEPARATE Edge profile (fresh each run) with the unpacked
+    // extension. They need `browser-extension/dist` built and
+    // `GRAIN_BROWSER_HOST` pointing at a built host, and end only the Edge
+    // processes started with their own profile folder.
 
-        struct Cleanup(PathBuf, PathBuf);
-        impl Drop for Cleanup {
-            fn drop(&mut self) {
-                let script = format!(
-                    "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object {{ $_.CommandLine -like '*{}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
-                    self.1.display()
-                );
-                let _ = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-Command", &script])
-                    .status();
-                link::stop();
-                link::unregister(&self.0);
-            }
-        }
-        let _cleanup = Cleanup(root.clone(), profile.clone());
+    /// A fresh Edge profile with the unpacked extension. Dropping it ends only
+    /// the Edge processes using that profile and unregisters the host.
+    struct LiveEdge {
+        root: PathBuf,
+        profile: PathBuf,
+    }
 
-        tauri::async_runtime::block_on(async {
-            link::ensure_started().expect("start");
+    impl LiveEdge {
+        fn start(name: &str) -> Self {
+            let host = link::host_path().expect("host");
+            let root = std::env::temp_dir().join(name);
+            let profile = root.join("edge-profile");
+            let extension = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("browser-extension")
+                .join("dist");
+            assert!(
+                extension.join("page.js").is_file(),
+                "build browser-extension first"
+            );
+            let _ = std::fs::remove_dir_all(&profile);
+            link::register(&host, &root).expect("register");
+            let edge = LiveEdge { root, profile };
+            tauri::async_runtime::block_on(async {
+                link::ensure_started().expect("start");
+            });
             std::process::Command::new(
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
             )
-            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg(format!("--user-data-dir={}", edge.profile.display()))
             .arg(format!("--load-extension={}", extension.display()))
             .args([
                 "--no-first-run",
@@ -629,47 +647,78 @@ mod tests {
             ])
             .spawn()
             .expect("launch Edge");
-            for _ in 0..60 {
-                if link::connected_browser().is_some() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-            assert!(
-                link::connected_browser().is_some(),
-                "the extension never connected"
+            edge
+        }
+    }
+
+    impl Drop for LiveEdge {
+        fn drop(&mut self) {
+            let script = format!(
+                "Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object {{ $_.CommandLine -like '*{}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+                self.profile.display()
             );
+            let _ = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &script])
+                .status();
+            link::stop();
+            link::unregister(&self.root);
+        }
+    }
 
-            let mut state = State::new();
-            let step = |name: &'static str, args: Value| {
-                let call = tools::parse(name, &args).unwrap_or_else(|e| panic!("{name}: {e}"));
-                (name, call)
-            };
-            async fn go(state: &mut State, (name, call): (&'static str, Call)) -> String {
-                let started = std::time::Instant::now();
-                let reply = match run(state, &call).await {
-                    Ok(text) => text,
-                    Err(failure) => format!("FAILED: {}", failure.message),
-                };
-                println!(
-                    "--- {name} ({} ms, ~{} tokens)\n{}\n",
-                    started.elapsed().as_millis(),
-                    reply.len() / 4,
-                    reply.chars().take(1200).collect::<String>()
-                );
-                reply
+    async fn connected() {
+        for _ in 0..60 {
+            if link::connected_browser().is_some() {
+                return;
             }
-            let number_in = |reply: &str, needle: &str| -> u32 {
-                reply
-                    .lines()
-                    .find(|line| line.contains(needle) && line.trim_start().starts_with('['))
-                    .and_then(|line| {
-                        let line = line.trim_start();
-                        line[1..line.find(']')?].parse().ok()
-                    })
-                    .unwrap_or_else(|| panic!("no row with {needle}"))
-            };
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        panic!("the extension never connected");
+    }
 
+    fn step(name: &'static str, args: Value) -> (&'static str, Call) {
+        let call = tools::parse(name, &args).unwrap_or_else(|e| panic!("{name}: {e}"));
+        (name, call)
+    }
+
+    /// Run one tool call and print its reply with its size.
+    async fn go(state: &mut State, (name, call): (&'static str, Call)) -> String {
+        let started = std::time::Instant::now();
+        let reply = match run(state, &call).await {
+            Ok(text) => text,
+            Err(failure) => format!("FAILED: {}", failure.message),
+        };
+        println!(
+            "--- {name} ({} ms, ~{} tokens)\n{}\n",
+            started.elapsed().as_millis(),
+            reply.len() / 4,
+            reply.chars().take(1500).collect::<String>()
+        );
+        reply
+    }
+
+    /// The control number of the first row containing `needle`.
+    fn number_of(reply: &str, needle: &str) -> Option<u32> {
+        reply
+            .lines()
+            .find(|line| line.contains(needle) && line.starts_with('['))
+            .and_then(|line| line[1..line.find(']')?].parse().ok())
+    }
+
+    fn number_in(reply: &str, needle: &str) -> u32 {
+        number_of(reply, needle).unwrap_or_else(|| panic!("no row with {needle}"))
+    }
+
+    /// Live: the Agent's Pilot tools end to end on Wikipedia and BookMyShow.
+    ///
+    /// `cargo test --lib live_pilot_tools -- --ignored --nocapture --test-threads 1`
+    #[test]
+    #[ignore]
+    #[cfg(windows)]
+    fn live_pilot_tools_book_up_to_the_seat_page() {
+        let _edge = LiveEdge::start("grain-pilot-tools-live");
+        tauri::async_runtime::block_on(async {
+            connected().await;
+            let mut state = State::new();
             let opened = go(
                 &mut state,
                 step(
@@ -680,14 +729,15 @@ mod tests {
             .await;
             assert!(opened.starts_with("Opened.\nt1 · "), "{opened}");
             let found = go(&mut state, step("read", json!({"find": "search"}))).await;
-            let field = if found.contains("] field") {
-                number_in(&found, "] field")
-            } else {
-                // A narrow window hides the search box behind a button.
-                let opener = number_in(&found, "Search Wikipedia");
-                go(&mut state, step("act", json!({"do": [{"click": opener}]}))).await;
-                let found = go(&mut state, step("read", json!({"find": "search"}))).await;
-                number_in(&found, "] field")
+            let field = match number_of(&found, "] field") {
+                Some(field) => field,
+                None => {
+                    // A narrow window hides the search box behind a button.
+                    let opener = number_in(&found, "Search Wikipedia");
+                    go(&mut state, step("act", json!({"do": [{"click": opener}]}))).await;
+                    let found = go(&mut state, step("read", json!({"find": "search"}))).await;
+                    number_in(&found, "] field")
+                }
             };
             let typed = go(
                 &mut state,
@@ -703,7 +753,13 @@ mod tests {
             let url = format!("https://in.bookmyshow.com/cinemas/mumbai/cinepolis-lake-shore-thane-ex-viviana-mall/buytickets/CPVM/{date}");
             go(&mut state, step("open", json!({"url": url}))).await;
             let shows = go(&mut state, step("read", json!({"find": "Book"}))).await;
-            let show = number_in(&shows, "] Book ");
+            // The day's last show: earlier ones may have started already.
+            let show = shows
+                .lines()
+                .filter(|row| row.contains("] Book "))
+                .last()
+                .and_then(|row| row[1..row.find(']')?].parse::<u32>().ok())
+                .expect("a Book row");
             let clicked = go(&mut state, step("act", json!({"do": [{"click": show}]}))).await;
             println!(
                 "seat page reached: {}",
@@ -717,6 +773,240 @@ mod tests {
                 closed.starts_with("Closed t2.") && !closed.contains("t2:"),
                 "{closed}"
             );
+        });
+    }
+
+    /// Live: every `act` verb and both refusals on forms, a search box and
+    /// a list, on public pages with nothing signed in.
+    ///
+    /// `cargo test --lib live_pilot_acts -- --ignored --nocapture --test-threads 1`
+    #[test]
+    #[ignore]
+    #[cfg(windows)]
+    fn live_pilot_acts_on_many_sites() {
+        let _edge = LiveEdge::start("grain-pilot-acts-live");
+        tauri::async_runtime::block_on(async {
+            connected().await;
+            let mut state = State::new();
+            let refused = "never types there";
+
+            // A form with every kind of control.
+            let url = "https://www.selenium.dev/selenium/web/web-form.html";
+            go(&mut state, step("open", json!({ "url": url }))).await;
+            let form = go(&mut state, step("read", json!({"page": true}))).await;
+            let text = number_in(&form, "] field Text input");
+            let password = number_in(&form, "] field Password");
+            let dropdown = number_in(&form, "] dropdown Dropdown (select)");
+            let checkbox = number_in(&form, "] checkbox Default checkbox");
+            let radio = number_in(&form, "] radio Default radio");
+            let submit = number_in(&form, "] Submit");
+            let secret = go(
+                &mut state,
+                step("act", json!({"do": [{"fill": password, "text": "x"}]})),
+            )
+            .await;
+            assert!(secret.contains(refused), "{secret}");
+            let filled = go(
+                &mut state,
+                step(
+                    "act",
+                    json!({"do": [
+                        {"fill": text, "text": "hello pilot"},
+                        {"choose": dropdown, "option": "Two"},
+                        {"click": checkbox},
+                        {"click": radio}
+                    ]}),
+                ),
+            )
+            .await;
+            assert!(!filled.starts_with("FAILED"), "{filled}");
+            let after = go(&mut state, step("read", json!({"page": true}))).await;
+            assert!(after.contains("hello pilot"), "typed text shows:\n{after}");
+            assert!(
+                after.contains("Default checkbox checked"),
+                "the click checked it:\n{after}"
+            );
+            assert!(after.contains("value=Two"), "the choice shows:\n{after}");
+            // A step after one that leaves the page must not run on the new one.
+            let started = std::time::Instant::now();
+            let sent = go(
+                &mut state,
+                step("act", json!({"do": [{"click": submit}, {"click": text}]})),
+            )
+            .await;
+            assert!(
+                sent.contains("Form submitted") || sent.contains("Received"),
+                "{sent}"
+            );
+            assert!(
+                sent.contains("Clicked [") && sent.contains("did not run"),
+                "{sent}"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "leaving the page is quick"
+            );
+
+            // A plain <select>.
+            let url = "https://the-internet.herokuapp.com/dropdown";
+            let page = go(&mut state, step("open", json!({ "url": url }))).await;
+            let select = number_in(&page, "] dropdown");
+            let chosen = go(
+                &mut state,
+                step(
+                    "act",
+                    json!({"do": [{"choose": select, "option": "Option 2"}]}),
+                ),
+            )
+            .await;
+            assert!(!chosen.starts_with("FAILED"), "{chosen}");
+            assert!(
+                chosen.contains("value=Option 2"),
+                "the change shows:\n{chosen}"
+            );
+
+            // A search box submitted with Enter.
+            let found = go(
+                &mut state,
+                step("open", json!({"url": "https://duckduckgo.com/"})),
+            )
+            .await;
+            let search =
+                number_of(&found, "] field").unwrap_or_else(|| number_in(&found, "Search"));
+            let results = go(
+                &mut state,
+                step(
+                    "act",
+                    json!({"do": [{"fill": search, "text": "Wikipedia Pune", "enter": true}]}),
+                ),
+            )
+            .await;
+            assert!(results.contains("Pune"), "{results}");
+
+            // A sign-in page: the password field is refused.
+            let login = go(
+                &mut state,
+                step("open", json!({"url": "https://github.com/login"})),
+            )
+            .await;
+            let password = number_in(&login, "] field Password");
+            let secret = go(
+                &mut state,
+                step("act", json!({"do": [{"fill": password, "text": "x"}]})),
+            )
+            .await;
+            assert!(secret.contains(refused), "{secret}");
+
+            // A long list searched with find.
+            go(
+                &mut state,
+                step("open", json!({"url": "https://news.ycombinator.com/"})),
+            )
+            .await;
+            let comments = go(&mut state, step("read", json!({"find": "comments"}))).await;
+            assert!(
+                comments
+                    .lines()
+                    .filter(|row| row.contains("comments"))
+                    .count()
+                    >= 5,
+                "{comments}"
+            );
+            let tabs = go(&mut state, step("tabs", json!({}))).await;
+            assert!(tabs.contains("t5"), "{tabs}");
+        });
+    }
+
+    /// Public pages of many kinds (search, forms, shops, travel, food,
+    /// single-page apps, text-heavy), saved as page-controller reads for the
+    /// offline tests in `grain-core`. Fresh profile: nothing signed in.
+    const CAPTURE_SITES: &[(&str, &str)] = &[
+        ("duckduckgo", "https://duckduckgo.com/"),
+        (
+            "selenium_form",
+            "https://www.selenium.dev/selenium/web/web-form.html",
+        ),
+        (
+            "internet_dropdown",
+            "https://the-internet.herokuapp.com/dropdown",
+        ),
+        (
+            "internet_checkboxes",
+            "https://the-internet.herokuapp.com/checkboxes",
+        ),
+        ("github_login", "https://github.com/login"),
+        ("hackernews", "https://news.ycombinator.com/"),
+        ("amazon_search", "https://www.amazon.in/s?k=usb+cable"),
+        (
+            "flipkart_search",
+            "https://www.flipkart.com/search?q=usb%20cable",
+        ),
+        ("makemytrip", "https://www.makemytrip.com/"),
+        ("swiggy", "https://www.swiggy.com/"),
+        ("booking", "https://www.booking.com/"),
+        (
+            "youtube_search",
+            "https://www.youtube.com/results?search_query=lofi",
+        ),
+        ("reddit", "https://www.reddit.com/r/india/"),
+        ("irctc", "https://www.irctc.co.in/nget/train-search"),
+        ("bms_home", "https://in.bookmyshow.com/explore/home/mumbai"),
+        ("wikipedia_article", "https://en.wikipedia.org/wiki/Pune"),
+        ("airbnb", "https://www.airbnb.co.in/"),
+        ("google_flights", "https://www.google.com/travel/flights"),
+    ];
+
+    /// Live: save [`CAPTURE_SITES`] as fixtures.
+    ///
+    /// `cargo test --lib live_pilot_capture -- --ignored --nocapture --test-threads 1`
+    #[test]
+    #[ignore]
+    #[cfg(windows)]
+    fn live_pilot_capture_site_fixtures() {
+        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("crates")
+            .join("grain-core")
+            .join("tests")
+            .join("fixtures")
+            .join("pilot")
+            .join("sites");
+        std::fs::create_dir_all(&out).expect("fixture folder");
+        let _edge = LiveEdge::start("grain-pilot-capture-live");
+        tauri::async_runtime::block_on(async {
+            connected().await;
+            let mut state = State::new();
+            for (name, url) in CAPTURE_SITES {
+                let opened = run(&mut state, &Call::Open(url.to_string())).await;
+                if let Err(failure) = opened {
+                    println!("{name}: open failed: {}", failure.message);
+                    continue;
+                }
+                let handle = state.last.expect("opened tab");
+                let tab_id = state.tabs[&handle].tab_id;
+                // Let late scripts and lazy content settle.
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                for view in ["full", "visible"] {
+                    match ext(json!({"op": "read", "tab": tab_id, "view": view})).await {
+                        Ok(reply) => {
+                            let text = serde_json::to_string_pretty(&reply).unwrap_or_default();
+                            println!("{name}.{view}: {} chars", text.len());
+                            if text.len() <= 400_000 {
+                                let _ =
+                                    std::fs::write(out.join(format!("{name}.{view}.json")), text);
+                            }
+                        }
+                        Err(failure) => println!("{name}.{view}: read failed: {}", failure.message),
+                    }
+                }
+                let _ = run(
+                    &mut state,
+                    &Call::Tabs {
+                        close: Some(Handle(handle)),
+                    },
+                )
+                .await;
+            }
         });
     }
 }

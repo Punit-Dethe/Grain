@@ -411,7 +411,7 @@ Measured on the same steps (live Edge run, about 4 characters per token):
 | Wikipedia search result page | ~1,040 | ~890 |
 | Full page, showtimes / Zomato / Wikipedia | 3.3k / 1.1k / 4.0k | 2.5k / 0.8k / 3.4k |
 
-Next ideas, not built:
+Next ideas (the first two are built; see the reliability pass below):
 
 - `find` with context: matching rows lose their group (which movie a show
   time belongs to). Keep the nearest heading-like row above each match.
@@ -419,6 +419,61 @@ Next ideas, not built:
   bare `04:05 PM`. A control whose name repeats the one before it could be
   dropped.
 - Site chrome: the same header links on every page of a site.
+
+## Reliability pass (2026-11-17)
+
+The user's rule for token work: never less reliable than before. Checked on
+36 saved page reads from 18 public sites (search, forms, shops, travel, food,
+single-page apps, a long article) in
+`crates/grain-core/tests/fixtures/pilot/sites/`, captured by the live test
+`live_pilot_capture_site_fixtures`. The offline test
+`every_captured_site_keeps_every_named_control` checks every capture: no
+named element loses its number, no row is bare or shown twice, and every
+read fits its cap.
+
+Built:
+
+- **Field names from labels.** A nameless field takes its `<label>` (wrapping,
+  `for=`, or directly before it), and a checkbox or radio the text after it,
+  so `[2] field Username or email address` instead of `[2] field`. The folded
+  label row is hidden; its number still works.
+- **Duplicates dropped, numbers kept.** A child that repeats its parent's name
+  (BookMyShow's bare `04:05 PM` inside `Book 04:05 PM`), a cut-off name
+  (`Zebronics Wattz 60CC...`) right before its full one, and text that only
+  repeats the name are not shown. Hidden controls still resolve by number.
+- **`find` with context.** Each run of matches keeps the two nearest rows
+  above it that say something (skipping `|`), and `…` marks skipped rows.
+  BookMyShow shows each movie and language before its times for ~10 tokens
+  a movie. One- and two-letter words count only when nothing longer is asked
+  (`Add to cart` no longer matches every "to").
+- **Dropdowns show their choice** (`value=Two`). Before, the chosen option
+  was hidden because the option list already held it, so a pick looked like
+  "Nothing visible changed".
+- **Leaving the page is quick and stops the rest.** A click that navigates
+  used to wait 20 s (Edge keeps the old page frozen for Back, so the click's
+  answer never came). The extension now ends the step once the tab loads a
+  document without Pilot's script (a single-page app keeps it, so its own
+  answer still wins). Later steps in the same `act` do not run on the new
+  page: `Clicked [25]. The page changed. Step 2 did not run; read the new
+  page first.` Form submit: 24 s → 1 s.
+
+Not built, by decision: **collapsing a repeated site menu.** The Agent loop
+already keeps one view per tab, so a menu is in the conversation once.
+Collapsing it in the new view would either lose it (the old view is
+shrunk) or cost more (keep both).
+
+Live tests (fresh Edge profile, nothing signed in), both passing:
+
+- `live_pilot_acts_on_many_sites`: Selenium web form (fill, choose, checkbox,
+  radio, submit, a step after leaving the page, password refused),
+  the-internet dropdown, DuckDuckGo search with Enter, GitHub password
+  refused, Hacker News `find`.
+- `live_pilot_tools_book_up_to_the_seat_page`: Wikipedia search, BookMyShow
+  `find "Book"` and the last show of the day to the seat-count dialog. (An
+  earlier show that has started does nothing when clicked; that is the site.)
+
+Known site limits seen in the captures: Reddit blocks fresh profiles, and
+Booking, MakeMyTrip and Swiggy cover the page with a sign-in popup.
 
 ## Open decisions for the user
 

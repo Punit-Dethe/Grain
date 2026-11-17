@@ -75,41 +75,76 @@ impl Read {
 pub fn parse(value: &Value) -> Option<Read> {
     let text = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or("");
     let content = value.get("content")?.as_str()?;
-    let mut read = Read {
+    let read = Read {
         title: clip(text("title").trim(), 200),
         url: text("url").to_string(),
         above: hint(text("header")),
         below: hint(text("footer")),
         ..Read::default()
     };
-    let mut open: Option<(u32, String)> = None;
+    Some(shape(read, items(content)))
+}
+
+/// One element of a read, before it becomes a row.
+struct Element {
+    number: u32,
+    /// Nesting depth (page-controller indents children with tabs).
+    depth: usize,
+    tag: String,
+    kind: &'static str,
+    /// Its own name: aria-label, title, image alt, or a button's value.
+    label: String,
+    text: String,
+    attrs: Vec<(String, String)>,
+    secret: bool,
+}
+
+impl Element {
+    fn attr(&self, name: &str) -> Option<&str> {
+        self.attrs
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+}
+
+enum Item {
+    Text(String),
+    Element(Element),
+}
+
+/// The read's content as elements and page text, in page order.
+fn items(content: &str) -> Vec<Item> {
+    let mut items = Vec::new();
+    let mut open: Option<(usize, u32, String)> = None;
     for line in content.lines() {
-        if let Some((number, mut body)) = open.take() {
+        if let Some((depth, number, mut body)) = open.take() {
             body.push('\n');
             body.push_str(line.trim());
             if line.trim_end().ends_with("/>") {
-                push_element(&mut read, number, &body);
+                items.push(Item::Element(element(number, depth, &body)));
             } else {
-                open = Some((number, body));
+                open = Some((depth, number, body));
             }
             continue;
         }
+        let depth = line.len() - line.trim_start_matches('\t').len();
         let trimmed = line.trim();
         if let Some((number, body)) = element_start(trimmed) {
             if trimmed.ends_with("/>") {
-                push_element(&mut read, number, body);
+                items.push(Item::Element(element(number, depth, body)));
             } else {
-                open = Some((number, body.to_string()));
+                open = Some((depth, number, body.to_string()));
             }
         } else if !trimmed.is_empty() && trimmed != "[Start of page]" && trimmed != "[End of page]"
         {
-            read.rows.push(clip(trimmed, MAX_TEXT_ROW_CHARS));
+            items.push(Item::Text(clip(trimmed, MAX_TEXT_ROW_CHARS)));
         }
     }
-    if let Some((number, body)) = open {
-        push_element(&mut read, number, &body);
+    if let Some((depth, number, body)) = open {
+        items.push(Item::Element(element(number, depth, &body)));
     }
-    Some(read)
+    items
 }
 
 /// `*[12]<button …` → (12, "<button …").
@@ -135,94 +170,64 @@ fn hint(text: &str) -> Option<String> {
 
 /// Longest line of plain page text kept in a row.
 const MAX_TEXT_ROW_CHARS: usize = 160;
+/// A nested control repeating its parent's name is dropped only when the
+/// repeat is at least this long, so short distinct controls ("+", "M") stay.
+const MIN_REPEAT_CHARS: usize = 4;
 
-/// Attributes worth showing; the rest (ids, classes, data-*) are noise.
-/// `checked` and `selected` show as a bare word when true.
-const KEPT_ATTRIBUTES: &[&str] = &["value", "placeholder", "checked", "selected", "expanded"];
-
-fn push_element(read: &mut Read, number: u32, body: &str) {
-    // `<tag attrs>text />` or `<tag attrs />`.
+/// `<tag attrs>text />` or `<tag attrs />` as an element.
+fn element(number: u32, depth: usize, body: &str) -> Element {
     let body = body.trim().trim_end_matches("/>").trim_end();
     let body = body.strip_prefix('<').unwrap_or(body);
     let tag_end = body
         .find(|c: char| c.is_whitespace() || c == '>')
         .unwrap_or(body.len());
-    let tag = &body[..tag_end];
+    let tag = body[..tag_end].to_ascii_lowercase();
     let (attrs, text) = match body[tag_end..].find('>') {
         Some(at) => (&body[tag_end..tag_end + at], &body[tag_end + at + 1..]),
         None => (&body[tag_end..], ""),
     };
     let attrs = attributes(attrs);
-    let secret = attrs.iter().any(|(key, _)| key == "secret");
     let get = |name: &str| {
         attrs
             .iter()
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_str())
+            .filter(|value| !value.is_empty())
     };
-    let kind = kind(tag, get("role"), get("type"));
+    let input_type = get("type");
+    let kind = kind(&tag, get("role"), input_type);
+    let is_button_input =
+        tag == "input" && matches!(input_type, Some("submit" | "button" | "reset"));
     let label = get("aria-label")
         .or_else(|| get("title"))
+        .or_else(|| get("alt"))
+        .or_else(|| if is_button_input { get("value") } else { None })
         .unwrap_or("")
-        .trim();
+        .trim()
+        .to_string();
     let text = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" · ");
-    let text = clip(&text, 120);
-    let mut extras = String::new();
-    for (key, value) in &attrs {
-        match (key.as_str(), value.as_str()) {
-            ("checked" | "selected", "false") => {}
-            ("checked" | "selected", _) => extras.push_str(&format!(" {key}")),
-            ("placeholder", value) if value == label || value == text => {}
-            (key, value) if KEPT_ATTRIBUTES.contains(&key) => {
-                extras.push_str(&format!(" {key}={}", clip(value, 80)))
-            }
-            _ => {}
-        }
-    }
-    // A nameless div, span or link (a click handler on a wrapper) tells the
-    // model nothing and costs a row; form fields stay even unnamed.
-    if label.is_empty() && text.is_empty() && extras.is_empty() && !secret && kind.is_empty() {
-        return;
-    }
-    let mut row = format!("[{number}]");
-    if !kind.is_empty() {
-        row.push(' ');
-        row.push_str(kind);
-    }
-    if !label.is_empty() {
-        row.push(' ');
-        row.push_str(&clip(label, 80));
-    }
-    if !text.is_empty() && text != label {
-        if label.is_empty() {
-            row.push(' ');
-            row.push_str(&text);
-        } else {
-            row.push_str(&format!(" ({text})"));
-        }
-    }
-    row.push_str(&extras);
-    if secret {
-        row.push_str(" secret");
-    }
-    let name = format!("{label} {text}").trim().to_string();
-    read.rows.push(row.clone());
-    read.controls.push(Control {
+    Element {
         number,
-        row,
-        name,
-        secret,
-    });
+        depth,
+        secret: attrs.iter().any(|(key, _)| key == "secret"),
+        tag,
+        kind,
+        label,
+        text: clip(&text, 120),
+        attrs,
+    }
 }
 
 /// `type=search placeholder=Search Wikipedia id=x` → pairs. Values run to the
-/// next ` key=`, since page-controller does not quote them. A bare word (the
-/// page script's `secret`) has an empty value.
+/// next ` key=`, since page-controller does not quote them; the page script's
+/// own `value="…"` is unquoted, and a repeated key keeps its first value. ARIA
+/// state is folded into the plain names (`aria-expanded` → `expanded`). A bare
+/// word (the page script's `secret`) has an empty value.
 fn attributes(raw: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for word in raw.split_whitespace() {
@@ -239,14 +244,33 @@ fn attributes(raw: &str) -> Vec<(String, String)> {
             value.push_str(word);
         }
     }
-    out
+    let mut seen = HashSet::new();
+    out.into_iter()
+        .map(|(key, value)| {
+            let key = match key.as_str() {
+                "aria-expanded" => "expanded".to_string(),
+                "aria-checked" => "checked".to_string(),
+                "aria-selected" => "selected".to_string(),
+                _ => key,
+            };
+            let value = value.trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or(value)
+                .to_string();
+            (key, value)
+        })
+        .filter(|(key, _)| seen.insert(key.clone()))
+        .collect()
 }
 
 /// What a control is, said only when it takes something other than a click:
 /// `field` (fill), `dropdown` (choose), `checkbox`, `radio`, `switch`,
-/// `slider`. Empty for anything clicked: links, buttons, tabs, menu items.
+/// `slider`, `file`. Empty for anything clicked: links, buttons, tabs, menu
+/// items.
 fn kind(tag: &str, role: Option<&str>, input_type: Option<&str>) -> &'static str {
-    if let Some(role) = role.filter(|role| !role.is_empty()) {
+    if let Some(role) = role {
         return match role {
             "textbox" | "searchbox" | "combobox" => "field",
             "checkbox" | "menuitemcheckbox" => "checkbox",
@@ -262,27 +286,230 @@ fn kind(tag: &str, role: Option<&str>, input_type: Option<&str>) -> &'static str
         ("input", "checkbox") => "checkbox",
         ("input", "radio") => "radio",
         ("input", "range") => "slider",
-        ("input", "button" | "submit" | "reset" | "image") => "",
+        ("input", "file") => "file",
+        ("input", "button" | "submit" | "reset" | "image" | "hidden") => "",
         ("input", _) => "field",
         _ => "",
     }
 }
 
+/// Turn elements and text into rows:
+///
+/// - A field without a name of its own takes its label's text: the `<label>`
+///   wrapping it, the `<label for=…>` naming its id, or (for a checkbox or
+///   radio) the text right after it. That label then shows no row of its own.
+/// - A control nested in the control before it, repeating part of its name
+///   ("04:05 PM" inside "Book 04:05 PM"), shows no row: clicking the parent
+///   does the same.
+/// - A nameless wrapper (a click handler on a div) shows no row.
+///
+/// Every element with a name stays in `controls`, rowless or not, so a number
+/// the model has seen always resolves and the payment rule sees its name.
+fn shape(mut read: Read, items: Vec<Item>) -> Read {
+    let mut hidden = vec![false; items.len()];
+    let mut borrowed: Vec<Option<String>> = vec![None; items.len()];
+    for at in 0..items.len() {
+        let Item::Element(field) = &items[at] else {
+            continue;
+        };
+        if field.kind.is_empty() || !field.label.is_empty() {
+            continue;
+        }
+        let wrapping = at.checked_sub(1).and_then(|before| match &items[before] {
+            Item::Element(label)
+                if label.tag == "label"
+                    && label.depth + 1 == field.depth
+                    && !label.text.is_empty() =>
+            {
+                Some(before)
+            }
+            _ => None,
+        });
+        let pointing = || {
+            let id = field.attr("id").filter(|id| !id.is_empty())?;
+            items.iter().position(|item| {
+                matches!(item, Item::Element(label)
+                    if label.tag == "label" && label.attr("for") == Some(id) && !label.text.is_empty())
+            })
+        };
+        // A label right before the field that names no other element (the
+        // field's id can be missing from the read, as on password fields).
+        let before = || {
+            let before = at.checked_sub(1)?;
+            let Item::Element(label) = &items[before] else {
+                return None;
+            };
+            let names_other = label.attr("for").is_some_and(|target| {
+                items.iter().any(|item| {
+                    matches!(item, Item::Element(other)
+                        if other.number != field.number && other.attr("id") == Some(target))
+                })
+            });
+            (label.tag == "label" && !label.text.is_empty() && !names_other).then_some(before)
+        };
+        if let Some(label_at) = wrapping.or_else(pointing).or_else(before) {
+            if let Item::Element(label) = &items[label_at] {
+                borrowed[at] = Some(label.text.clone());
+                hidden[label_at] = true;
+            }
+        } else if matches!(field.kind, "checkbox" | "radio" | "switch") {
+            if let Some(Item::Text(text)) = items.get(at + 1) {
+                borrowed[at] = Some(text.clone());
+                hidden[at + 1] = true;
+            }
+        }
+    }
+    for at in 1..items.len() {
+        let (Item::Element(parent), Item::Element(child)) = (&items[at - 1], &items[at]) else {
+            continue;
+        };
+        if hidden[at - 1] || !child.kind.is_empty() || child.depth != parent.depth + 1 {
+            continue;
+        }
+        let repeat = if child.label.is_empty() {
+            &child.text
+        } else {
+            &child.label
+        };
+        let parent_name = format!("{} {}", parent.label, parent.text).to_lowercase();
+        if repeat.chars().count() >= MIN_REPEAT_CHARS
+            && parent_name.contains(&repeat.to_lowercase())
+        {
+            hidden[at] = true;
+        }
+    }
+    // page-controller cuts long names to 20 characters plus "...". A control
+    // whose cut name begins the next control's name (a product's image link
+    // before its title link) repeats it.
+    for at in 0..items.len().saturating_sub(1) {
+        let (Item::Element(cut), Item::Element(next)) = (&items[at], &items[at + 1]) else {
+            continue;
+        };
+        let Some(stem) = cut.label.strip_suffix("...").map(str::trim_end) else {
+            continue;
+        };
+        let next_name = format!("{} {}", next.label, next.text);
+        if cut.kind.is_empty()
+            && next.kind.is_empty()
+            && cut.text.is_empty()
+            && stem.chars().count() >= MIN_REPEAT_CHARS
+            && next_name.trim_start().starts_with(stem)
+        {
+            hidden[at] = true;
+        }
+    }
+    for (at, item) in items.into_iter().enumerate() {
+        match item {
+            Item::Text(text) => {
+                if !hidden[at] {
+                    read.rows.push(text);
+                }
+            }
+            Item::Element(element) => {
+                if let Some(control) = control(&element, borrowed[at].as_deref()) {
+                    if !hidden[at] {
+                        read.rows.push(control.row.clone());
+                    }
+                    read.controls.push(control);
+                }
+            }
+        }
+    }
+    read
+}
+
+/// An element's row and control, or `None` for a nameless wrapper.
+fn control(element: &Element, borrowed: Option<&str>) -> Option<Control> {
+    let mut label = if element.label.is_empty() {
+        borrowed.unwrap_or("").trim()
+    } else {
+        element.label.as_str()
+    };
+    // A name cut to "Lofi Chill S..." whose text carries it in full shows
+    // the text once.
+    if let Some(stem) = label.strip_suffix("...").map(str::trim_end) {
+        if !stem.is_empty() && element.text.starts_with(stem) {
+            label = "";
+        }
+    }
+    // Text the name already holds ("Home · Home", "Book 04:40 PM · 04:40 PM")
+    // says nothing more.
+    let text = element
+        .text
+        .split(" · ")
+        .filter(|part| !label.contains(part))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let text = text.as_str();
+    let mut extras = String::new();
+    for (key, value) in &element.attrs {
+        match (key.as_str(), value.as_str()) {
+            ("checked" | "selected", "false" | "") => {}
+            ("checked" | "selected", _) => extras.push_str(&format!(" {key}")),
+            // Open or closed matters for menus, not for a field's suggestions.
+            ("expanded", value) if !value.is_empty() && element.kind != "field" => {
+                extras.push_str(&format!(" expanded={value}"))
+            }
+            // A dropdown's text lists every option; its value is the chosen one.
+            ("value", value) if element.kind == "dropdown" && !value.is_empty() => {
+                extras.push_str(&format!(" value={}", clip(value, 80)))
+            }
+            ("placeholder" | "value", value)
+                if value.is_empty()
+                    || value == label
+                    || value == element.label
+                    || text.contains(value) => {}
+            ("placeholder" | "value", value) => {
+                extras.push_str(&format!(" {key}={}", clip(value, 80)))
+            }
+            _ => {}
+        }
+    }
+    // A nameless div, span or link (a click handler on a wrapper) tells the
+    // model nothing and costs a row; form fields stay even unnamed.
+    if label.is_empty()
+        && text.is_empty()
+        && extras.is_empty()
+        && !element.secret
+        && element.kind.is_empty()
+    {
+        return None;
+    }
+    let mut row = format!("[{}]", element.number);
+    if !element.kind.is_empty() {
+        row.push(' ');
+        row.push_str(element.kind);
+    }
+    if !label.is_empty() {
+        row.push(' ');
+        row.push_str(&clip(label, 80));
+    }
+    if !text.is_empty() && text != label {
+        if label.is_empty() {
+            row.push(' ');
+            row.push_str(text);
+        } else {
+            row.push_str(&format!(" ({text})"));
+        }
+    }
+    row.push_str(&extras);
+    if element.secret {
+        row.push_str(" secret");
+    }
+    Some(Control {
+        number: element.number,
+        row,
+        name: format!("{label} {text}").trim().to_string(),
+        secret: element.secret,
+    })
+}
+
 /// The rows the model reads for `view`, capped at [`MAX_READ_CHARS`]. The
 /// header (tab, title, host) is the reply's, in `render.rs`.
 pub fn body(read: &Read, view: &View) -> String {
-    let rows: Vec<&String> = match view {
-        View::Find(words) => {
-            let words: Vec<String> = words.split_whitespace().map(str::to_lowercase).collect();
-            read.rows
-                .iter()
-                .filter(|row| {
-                    let row = row.to_lowercase();
-                    words.iter().any(|word| row.contains(word))
-                })
-                .collect()
-        }
-        _ => read.rows.iter().collect(),
+    let rows: Vec<&str> = match view {
+        View::Find(words) => found(&read.rows, words),
+        _ => read.rows.iter().map(String::as_str).collect(),
     };
     let mut out = String::new();
     if let (Some(above), View::Visible) = (&read.above, view) {
@@ -297,7 +524,7 @@ pub fn body(read: &Read, view: &View) -> String {
     let mut omitted = 0;
     for row in &rows {
         if out.len() + row.len() + 1 > MAX_READ_CHARS {
-            omitted += 1;
+            omitted += usize::from(*row != GAP);
             continue;
         }
         out.push_str(row.trim_end());
@@ -310,6 +537,72 @@ pub fn body(read: &Read, view: &View) -> String {
         out.push_str(&format!("({below})\n"));
     }
     out.trim_end().to_string()
+}
+
+/// Marks rows skipped between two find results.
+const GAP: &str = "…";
+
+/// Rows kept before the first of a run of matches, so a match keeps what it
+/// belongs to ("Aadi Anant", "Marathi" before its "Book 07:30 AM").
+const FIND_CONTEXT_ROWS: usize = 2;
+
+/// Rows matching any of `words`, each run led by its context rows, with
+/// [`GAP`] where rows were skipped.
+fn found<'a>(rows: &'a [String], words: &str) -> Vec<&'a str> {
+    let mut words: Vec<String> = words.split_whitespace().map(str::to_lowercase).collect();
+    // "to", "of", "a" match nearly every row; they count only when nothing
+    // longer was asked for.
+    if words.iter().any(|word| word.chars().count() > 2) {
+        words.retain(|word| word.chars().count() > 2);
+    }
+    let hits: Vec<bool> = rows
+        .iter()
+        .map(|row| {
+            let row = row.to_lowercase();
+            words.iter().any(|word| row.contains(word))
+        })
+        .collect();
+    if !hits.contains(&true) {
+        return Vec::new();
+    }
+    let mut keep = hits.clone();
+    for at in 0..rows.len() {
+        if !hits[at] || (at > 0 && hits[at - 1]) {
+            continue;
+        }
+        // The nearest rows that say something, skipping separators like "|".
+        let mut wanted = FIND_CONTEXT_ROWS;
+        for before in (at.saturating_sub(FIND_CONTEXT_ROWS * 2)..at).rev() {
+            if wanted == 0 || keep[before] {
+                break;
+            }
+            if says_something(&rows[before]) {
+                keep[before] = true;
+                wanted -= 1;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut last: Option<usize> = None;
+    for (at, row) in rows.iter().enumerate().filter(|(at, _)| keep[*at]) {
+        if let Some(last) = last {
+            if rows[last + 1..at].iter().any(|row| says_something(row)) {
+                out.push(GAP);
+            }
+        }
+        out.push(row.as_str());
+        last = Some(at);
+    }
+    out
+}
+
+/// Whether a row has at least three letters or digits besides its number.
+fn says_something(row: &str) -> bool {
+    let text = row
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once("] "))
+        .map_or(row, |(_, text)| text);
+    text.chars().filter(|c| c.is_alphanumeric()).count() >= 3
 }
 
 /// What an action did to a tab's screen.
@@ -504,6 +797,114 @@ mod tests {
     }
 
     #[test]
+    fn find_leads_each_run_of_matches_with_its_context() {
+        let rows: Vec<String> = [
+            "Header",
+            "Movie A",
+            "Hindi",
+            "[1] Book 10:00",
+            "[2] Book 13:00",
+            "Movie B",
+            "English",
+            "[3] Book 18:00",
+            "Footer",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            found(&rows, "book"),
+            [
+                "Movie A",
+                "Hindi",
+                "[1] Book 10:00",
+                "[2] Book 13:00",
+                "Movie B",
+                "English",
+                "[3] Book 18:00"
+            ]
+        );
+        assert_eq!(
+            found(&rows, "13:00 footer"),
+            [
+                "Hindi",
+                "[1] Book 10:00",
+                "[2] Book 13:00",
+                GAP,
+                "English",
+                "[3] Book 18:00",
+                "Footer"
+            ]
+        );
+        assert_eq!(found(&rows, "header"), ["Header"]);
+        assert!(found(&rows, "zzzz").is_empty());
+
+        // Separators are skipped as context and never cause a gap mark.
+        let news: Vec<String> = [
+            "Story",
+            "[1] 3 hours ago",
+            "|",
+            "[2] hide",
+            "|",
+            "[3] 219 comments",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            found(&news, "comments"),
+            ["[1] 3 hours ago", "[2] hide", "[3] 219 comments"]
+        );
+        // Short words count only when nothing longer was asked for.
+        let menu: Vec<String> = ["Go to top", "[1] EN"].map(String::from).to_vec();
+        assert!(found(&menu, "add to cart").is_empty());
+        assert_eq!(found(&menu, "to"), ["Go to top"]);
+        assert_eq!(found(&menu, "EN"), ["Go to top", "[1] EN"]);
+
+        let shows = body(&read(SHOWTIMES), &View::Find("Book".into()));
+        let first = shows
+            .lines()
+            .position(|row| row.contains("] Book "))
+            .unwrap();
+        assert!(
+            first >= 1,
+            "the first show keeps its movie:
+{shows}"
+        );
+    }
+
+    #[test]
+    fn cut_names_and_repeated_text_show_once() {
+        let page = read(concat!(
+            "[1]<a aria-label=Zebronics Wattz 60CC... />
+",
+            "[2]<a >Zebronics Wattz 60CC4 Type-C cable />
+",
+            "[3]<a aria-label=90's Chill Lofi S... >90's Chill Lofi Study Music />
+",
+            "[4]<a aria-label=Home >Home · Home />
+",
+            "[5]<input role=combobox aria-expanded=false placeholder=Search />
+",
+            "[6]<button aria-expanded=false >Menu />\n",
+            "[7]<button aria-label=Book 04:40 PM >04:40 PM · IMAX />",
+        ));
+        assert_eq!(
+            page.rows,
+            [
+                "[2] Zebronics Wattz 60CC4 Type-C cable",
+                "[3] 90's Chill Lofi Study Music",
+                "[4] Home",
+                "[5] field placeholder=Search",
+                "[6] Menu expanded=false",
+                "[7] Book 04:40 PM (IMAX)",
+            ]
+        );
+        assert!(
+            page.control(1).is_some(),
+            "the hidden cut name still resolves"
+        );
+    }
+
+    #[test]
     fn visible_view_carries_the_scroll_hint() {
         let shown = body(&read(SEATS), &View::Visible);
         assert!(shown.contains("1200 pixels below"), "{shown}");
@@ -550,5 +951,153 @@ mod tests {
             "in.bookmyshow.com"
         );
         assert_eq!(host("not a url"), "not a url");
+    }
+
+    // ── Captured sites ──────────────────────────────────────────────────
+    //
+    // Real page-controller reads of public pages of many kinds, saved by the
+    // desktop crate's `live_pilot_capture_site_fixtures`.
+
+    fn sites_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("pilot")
+            .join("sites")
+    }
+
+    fn site(file: &str) -> (Value, Read) {
+        let raw: Value = serde_json::from_str(
+            &std::fs::read_to_string(sites_dir().join(file))
+                .unwrap_or_else(|e| panic!("{file}: {e}")),
+        )
+        .unwrap_or_else(|e| panic!("{file}: {e}"));
+        let read = parse(&raw).unwrap_or_else(|| panic!("{file}: unreadable"));
+        (raw, read)
+    }
+
+    fn all_sites() -> Vec<String> {
+        let mut files: Vec<String> = std::fs::read_dir(sites_dir())
+            .expect("captured sites")
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".json"))
+            .collect();
+        files.sort();
+        assert!(files.len() >= 20, "{} captured reads", files.len());
+        files
+    }
+
+    #[test]
+    fn every_captured_site_keeps_every_named_control() {
+        for file in all_sites() {
+            let (raw, read) = site(&file);
+            let content = raw["content"].as_str().unwrap_or("");
+            let known: HashSet<u32> = read.controls.iter().map(|c| c.number).collect();
+            for item in items(content) {
+                if let Item::Element(element) = item {
+                    let named = !element.label.is_empty()
+                        || !element.text.is_empty()
+                        || !element.kind.is_empty();
+                    assert!(
+                        !named || known.contains(&element.number),
+                        "{file}: [{}] lost",
+                        element.number
+                    );
+                }
+            }
+            let mut shown = HashSet::new();
+            for row in &read.rows {
+                assert!(!row.starts_with(' ') && !row.is_empty(), "{file}: {row:?}");
+                if let Some(number) = row
+                    .strip_prefix('[')
+                    .and_then(|rest| rest.split_once(']'))
+                    .and_then(|(n, rest)| Some((n.parse::<u32>().ok()?, rest)))
+                {
+                    assert!(!number.1.trim().is_empty(), "{file}: bare row {row}");
+                    assert!(known.contains(&number.0), "{file}: {row}");
+                    assert!(shown.insert(number.0), "{file}: [{}] twice", number.0);
+                }
+            }
+            let page = body(&read, &View::Page);
+            assert!(page.len() <= MAX_READ_CHARS + 200, "{file}: {}", page.len());
+            println!(
+                "{file}: raw ~{} tokens, shown ~{} tokens",
+                content.len() / 4,
+                page.len() / 4
+            );
+        }
+    }
+
+    /// Print captured reads as the model sees them, for review:
+    /// `PILOT_SITES=amazon_search.visible.json,… [PILOT_FIND=words] cargo test -p grain-core
+    /// --lib show_captured -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn show_captured_sites() {
+        let files = std::env::var("PILOT_SITES").unwrap_or_default();
+        for file in files.split(',').filter(|file| !file.is_empty()) {
+            let (_, read) = site(file);
+            let view = match std::env::var("PILOT_FIND") {
+                Ok(words) => View::Find(words),
+                Err(_) if file.contains(".full.") => View::Page,
+                Err(_) => View::Visible,
+            };
+            println!("===== {file}\n{}\n", body(&read, &view));
+        }
+    }
+
+    #[test]
+    fn form_controls_are_named_from_their_labels() {
+        let (_, github) = site("github_login.visible.json");
+        let rows = github.rows.join("\n");
+        for row in [
+            "[2] field Username or email address",
+            "[4] field Password secret",
+            "[6] Sign in",
+        ] {
+            assert!(rows.lines().any(|line| line == row), "{row}\n{rows}");
+        }
+        assert!(
+            !rows.contains("[1] "),
+            "the folded label has no row:\n{rows}"
+        );
+        assert!(github.control(1).is_some(), "but its number still resolves");
+
+        let (_, form) = site("selenium_form.full.json");
+        let rows = form.rows.join("\n");
+        for row in [
+            "[2] field Text input",
+            "[4] field Password secret",
+            "[6] field Textarea",
+            "[12] dropdown Dropdown (select) (Open this select menu · One · Two · Three) value=Open this select menu",
+            "[16] file File input",
+            "[18] checkbox Checked checkbox checked",
+            "[20] checkbox Default checkbox",
+            "[22] radio Checked radio checked",
+            "[25] Submit",
+            "[31] slider Example range value=5",
+        ] {
+            assert!(rows.lines().any(|line| line == row), "{row}\n{rows}");
+        }
+
+        let (_, boxes) = site("internet_checkboxes.full.json");
+        let rows = boxes.rows.join("\n");
+        assert!(rows.contains("[2] checkbox checkbox 1\n"), "{rows}");
+        assert!(rows.contains("[3] checkbox checkbox 2 checked"), "{rows}");
+    }
+
+    #[test]
+    fn nested_repeats_are_dropped_but_short_names_stay() {
+        let shows = read(SHOWTIMES);
+        let rows = shows.rows.join("\n");
+        assert!(rows.contains("Book 04:05 PM"), "{rows}");
+        assert!(
+            !rows.lines().any(|row| row.ends_with("] 04:05 PM")),
+            "nested time repeats its Book button:\n{rows}"
+        );
+        // The repeat still resolves for a number seen earlier.
+        assert!(shows.control(121).is_some());
+        let page = read("[1]<button aria-label=Add one />\n\t[2]<span >+ />");
+        assert_eq!(page.rows, ["[1] Add one", "[2] +"]);
     }
 }

@@ -323,6 +323,17 @@ fn parse_step(step: &Value) -> Result<Step, String> {
 }
 
 impl Step {
+    /// What the step did, for a reply; never the typed text.
+    pub fn done(&self) -> String {
+        match self {
+            Step::Click(n) => format!("Clicked [{n}]."),
+            Step::Fill { control, .. } => format!("Typed into [{control}]."),
+            Step::Choose { control, option } => format!("Picked \"{option}\" in [{control}]."),
+            Step::Key(key) => format!("Pressed {key}."),
+            Step::Scroll(direction) => format!("Scrolled {direction}."),
+        }
+    }
+
     /// The control the step acts on, if any.
     pub fn control(&self) -> Option<u32> {
         match self {
@@ -453,6 +464,22 @@ mod tests {
         }
         assert!(parse("act", &json!({"do": [{"click": 0}]})).is_err());
         assert!(parse("act", &json!({"do": [{"click": "s0001:12"}]})).is_err());
+    }
+
+    #[test]
+    fn step_reports_never_carry_typed_text() {
+        let fill = Step::Fill {
+            control: 2,
+            text: "hunter2".into(),
+            enter: true,
+        };
+        assert_eq!(fill.done(), "Typed into [2].");
+        assert_eq!(Step::Click(25).done(), "Clicked [25].");
+        let choose = Step::Choose {
+            control: 12,
+            option: "Two".into(),
+        };
+        assert_eq!(choose.done(), "Picked \"Two\" in [12].");
     }
 
     #[test]

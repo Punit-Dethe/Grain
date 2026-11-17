@@ -152,15 +152,36 @@ async function inPage(
 
 /**
  * Run an action. An action that leaves the page (a link, a form submit)
- * removes the frame before the script can answer; that is a success.
+ * ends the script before it can answer; that is a success, flagged `left`.
+ * Browsers may keep the old page frozen for Back instead of removing it, so
+ * its answer never comes: when the tab starts loading and the new document
+ * has no Pilot script, the old page is gone. A single-page app that only
+ * changes its address keeps the script, and the action's own answer wins.
  */
 async function action(
   tabId: number,
   method: string,
   args: unknown[],
 ): Promise<any> {
+  const LEFT = { ok: true, message: "Done; the page changed.", left: true };
+  let stop = () => {};
+  const left = new Promise<typeof LEFT>((resolve) => {
+    const listener = async (id: number, change: any) => {
+      if (id !== tabId || change.status !== "loading") return;
+      await waitForLoad(tabId);
+      const [probe] = await chrome.scripting
+        .executeScript({
+          target: { tabId },
+          func: () => Boolean((globalThis as any).__grainPilot),
+        })
+        .catch(() => [] as any[]);
+      if (probe?.result !== true) resolve(LEFT);
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    stop = () => chrome.tabs.onUpdated.removeListener(listener);
+  });
   try {
-    const result = await inPage(tabId, method, args);
+    const result = await Promise.race([inPage(tabId, method, args), left]);
     await afterAction(tabId);
     return result;
   } catch (error) {
@@ -170,9 +191,11 @@ async function action(
       )
     ) {
       await afterAction(tabId);
-      return { ok: true, message: "Done; the page changed." };
+      return LEFT;
     }
     throw error;
+  } finally {
+    stop();
   }
 }
 
