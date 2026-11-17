@@ -124,6 +124,17 @@ function pressOn(target: Element, name: string): boolean {
   return true;
 }
 
+/**
+ * Remove the numbered boxes the library draws while it reads. Same as its
+ * own cleanUpHighlights (not exported), without the console log.
+ */
+function hideBoxes() {
+  const w = window as unknown as { _highlightCleanupFunctions?: unknown[] };
+  for (const cleanup of w._highlightCleanupFunctions ?? [])
+    if (typeof cleanup === "function") cleanup();
+  w._highlightCleanupFunctions = [];
+}
+
 class GrainPilot {
   private full = new PageController({ viewportExpansion: -1 });
   private visible = new PageController({ viewportExpansion: 0 });
@@ -154,7 +165,15 @@ class GrainPilot {
   async read(view: "full" | "visible") {
     await settle(200, 1500);
     const pc = view === "visible" ? this.visible : this.full;
-    const state = await pc.getBrowserState();
+    // The library always draws numbered boxes while it reads, and its switch
+    // to skip them also changes which controls get numbered. Removing them in
+    // the same task means the browser never paints them.
+    let state: Awaited<ReturnType<PageController["getBrowserState"]>>;
+    try {
+      state = await pc.getBrowserState();
+    } finally {
+      hideBoxes();
+    }
     const map = (pc as unknown as { selectorMap: SelectorMap }).selectorMap;
     const content = state.content
       .split("\n")
