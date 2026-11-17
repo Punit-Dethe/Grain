@@ -6399,28 +6399,34 @@ html[data-theme="light"] .meet-info-card {
   font-size: 10px;
 }
 
+/* The avatar stack keeps the same colours in light and dark: solid fills
+   deep enough for a white number on either page. */
+.meet-avatar[class*="tone-"] {
+  color: #ffffff;
+}
+
 .meet-avatar.tone-amber {
-  background: color-mix(in srgb, var(--speaker-amber) 34%, var(--meet-surface));
+  background: #c27a2c;
 }
 
 .meet-avatar.tone-green {
-  background: color-mix(in srgb, var(--speaker-green) 34%, var(--meet-surface));
+  background: #2f8f63;
 }
 
 .meet-avatar.tone-blue {
-  background: color-mix(in srgb, var(--speaker-blue) 34%, var(--meet-surface));
+  background: #3572d1;
 }
 
 .meet-avatar.tone-violet {
-  background: color-mix(in srgb, var(--speaker-violet) 34%, var(--meet-surface));
+  background: #7458cc;
 }
 
 .meet-avatar.tone-rose {
-  background: color-mix(in srgb, var(--speaker-rose) 34%, var(--meet-surface));
+  background: #c24877;
 }
 
 .meet-avatar.tone-teal {
-  background: color-mix(in srgb, var(--speaker-teal) 34%, var(--meet-surface));
+  background: #1b8a8e;
 }
 
 .meet-turn-body {
