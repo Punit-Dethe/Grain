@@ -639,12 +639,12 @@ async changeAgentCompactVoiceSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
- * [GRAIN] Spoken acknowledgement ("Got it") while the Agent works. See
- * `Settings::agent_spoken_ack`.
+ * [GRAIN] Spoken progress lines while the Agent works through tools. See
+ * `Settings::agent_spoken_progress`.
  */
-async changeAgentSpokenAckSetting(enabled: boolean) : Promise<Result<null, string>> {
+async changeAgentSpokenProgressSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_spoken_ack_setting", { enabled }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_spoken_progress_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2420,11 +2420,12 @@ agent_talk_back?: boolean;
  */
 agent_compact_voice?: boolean; 
 /**
- * [GRAIN] Spoken acknowledgement: with talk-back on, the voice says a
- * short "Got it" (picked at random) a moment after an instruction is
- * sent, while the Agent works. ON by default.
+ * [GRAIN] Progress speech: with talk-back on, a request that needs tools
+ * gets a short spoken line on what the Agent is doing ("Checking your
+ * calendar."), written by the AI and rationed so a long task is not
+ * narrated step by step. A quick reply gets none. ON by default.
  */
-agent_spoken_ack?: boolean; 
+agent_spoken_progress?: boolean;
 /**
  * [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
  * Presets other than the default download on first pick (256 KB each).

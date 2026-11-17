@@ -69,7 +69,12 @@ const FINAL_REPLY_MARKER: &str = "[final]";
 /// not to spend rounds re-checking successful results, and may finish in the
 /// same message as its last calls. Grain shows such a reply only when every
 /// call in that message succeeded (see `same_round_final_reply`).
-const AGENT_TOOL_GUIDANCE: &str = "Tool-use rules: A tool result that reports success is authoritative; do not search, fetch or re-read an object to verify a change you just made unless the user asked you to check it. Call independent tools together in one message. Continue calling tools until the requested work is complete or the user cancels; Grain imposes no tool-call or round quota. When the tool calls in a message are the last steps the request needs and your reply does not depend on what they return, also write the final reply to the user in that same message, starting with [final]. Grain shows that reply only if every call succeeds; otherwise you receive the results and continue. Do not invent identifiers, numbers or links that only a result would reveal. If more steps may remain, leave the message text empty.";
+const AGENT_TOOL_GUIDANCE: &str = "Tool-use rules: A tool result that reports success is authoritative; do not search, fetch or re-read an object to verify a change you just made unless the user asked you to check it. Call independent tools together in one message. Continue calling tools until the requested work is complete or the user cancels; Grain imposes no tool-call or round quota. When the tool calls in a message are the last steps the request needs and your reply does not depend on what they return, also write the final reply to the user in that same message, starting with [final]. Grain shows that reply only if every call succeeds; otherwise you receive the results and continue. Do not invent identifiers, numbers or links that only a result would reveal.";
+/// Ends the tool guidance when progress speech is off.
+const AGENT_STEPS_SILENT: &str = " If more steps may remain, leave the message text empty.";
+/// Ends the tool guidance when progress speech is on: the line is read aloud
+/// while the tools run (`grain_tts::speak_progress`).
+const AGENT_STEPS_SPOKEN: &str = " If more steps may remain, the message text is one short sentence (at most ten words) saying what you are doing now, in the first person, for example \"Checking your calendar for tomorrow.\" It is read aloud while you work. Never put results, guesses or the answer in it.";
 
 /// Strip the same-round marker. Returns the reply only when the marker leads
 /// the text and something follows it.
@@ -1705,6 +1710,15 @@ fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
     }
 }
 
+/// [GRAIN] Read a tool round's progress line aloud (rationed in `grain_tts`).
+/// It shows like any speech: the blue sliver, and Escape stops it.
+fn speak_progress(app: &AppHandle, line: &str) {
+    let handle = app.clone();
+    if crate::grain_tts::speak_progress(app, line, move |_| voice_ended(&handle)).is_some() {
+        voice_started(app);
+    }
+}
+
 /// [GRAIN] The voice is talking: wherever the notch is, the resting sliver
 /// sweeps blue, and Escape on it stops the voice. Escape is held globally for
 /// the speech's whole life (the notch, while open, keeps its own Escape rules).
@@ -2758,19 +2772,12 @@ pub async fn agent_run(
     // A new turn silences the previous reply's talk-back.
     crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
-    // A short spoken "Got it" while it works (skipped when the reply is quick).
-    let ack = if record {
-        crate::grain_tts::acknowledge(&app)
-    } else {
-        None
-    };
     let mut reply = run
         .wait(
             registration,
             agent_run_owned(&app, messages, context, ui_prompt.as_deref(), &run),
         )
         .await?;
-    drop(ack);
     if let Ok(reply) = &mut reply {
         if ui_prompt.is_some() && reply.confirm_action.is_none() {
             let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);
@@ -3209,6 +3216,14 @@ async fn run_with_tools(
         }
         directory.push('\n');
         directory.push_str(AGENT_TOOL_GUIDANCE);
+        let settings = get_settings(app);
+        directory.push_str(
+            if settings.agent_talk_back && settings.agent_spoken_progress {
+                AGENT_STEPS_SPOKEN
+            } else {
+                AGENT_STEPS_SILENT
+            },
+        );
         let position = entries
             .iter()
             .take_while(|entry| matches!(entry, ChatEntry::System(_)))
@@ -4098,7 +4113,19 @@ async fn drive_tool_turn(
         turn,
         run,
         |session| crate::capability::prune_disabled(app, session),
-        |entries, tools| Box::pin(run_messages_with_tools(app, entries, tools, image)),
+        |entries, tools| {
+            Box::pin(async move {
+                let reply = run_messages_with_tools(app, entries, tools, image).await?;
+                // A round that calls tools may say what it is doing.
+                if !reply.tool_calls.is_empty() && same_round_final_reply(&reply.content).is_none()
+                {
+                    if let Some(line) = crate::grain_tts::progress_line(&reply.content) {
+                        speak_progress(app, &line);
+                    }
+                }
+                Ok(reply)
+            })
+        },
         move |calls, session, offered| {
             let app = dispatch_app.clone();
             Box::pin(async move {

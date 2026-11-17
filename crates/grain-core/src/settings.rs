@@ -809,11 +809,12 @@ pub struct AppSettings {
     /// talk-back.
     #[serde(default = "default_true")]
     pub agent_compact_voice: bool,
-    /// [GRAIN] Spoken acknowledgement: with talk-back on, the voice says a
-    /// short "Got it" (picked at random) a moment after an instruction is
-    /// sent, while the Agent works. ON by default.
+    /// [GRAIN] Progress speech: with talk-back on, a request that needs tools
+    /// gets a short spoken line on what the Agent is doing ("Checking your
+    /// calendar."), written by the AI and rationed so a long task is not
+    /// narrated step by step. A quick reply gets none. ON by default.
     #[serde(default = "default_true")]
-    pub agent_spoken_ack: bool,
+    pub agent_spoken_progress: bool,
     /// [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
     /// Presets other than the default download on first pick (256 KB each).
     /// An unknown or missing one falls back to the default.
@@ -1648,7 +1649,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_screen_image: false,
         agent_talk_back: false,
         agent_compact_voice: true,
-        agent_spoken_ack: true,
+        agent_spoken_progress: true,
         agent_voice: default_agent_voice(),
         agent_dynamic_ui: true,
         agent_polished_ui: true,

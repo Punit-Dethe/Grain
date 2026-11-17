@@ -687,17 +687,14 @@ pub fn change_agent_voice_setting(app: AppHandle, voice: String) -> Result<(), S
     Ok(())
 }
 
-/// [GRAIN] Spoken acknowledgement ("Got it") while the Agent works. See
-/// `Settings::agent_spoken_ack`.
+/// [GRAIN] Spoken progress lines while the Agent works through tools. See
+/// `Settings::agent_spoken_progress`.
 #[tauri::command]
 #[specta::specta]
-pub fn change_agent_spoken_ack_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub fn change_agent_spoken_progress_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
-    settings.agent_spoken_ack = enabled;
+    settings.agent_spoken_progress = enabled;
     settings::write_settings(&app, settings);
-    if enabled {
-        crate::grain_tts::prepare_acks(&app);
-    }
     Ok(())
 }
 
