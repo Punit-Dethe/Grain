@@ -241,9 +241,9 @@ pub(crate) async fn run_agent_calls(
             .map(|(index, result)| (index, mcp_outcome(result, &prepared[index])))
             .collect::<Vec<_>>()
     });
-    // Compiled tools (Agent Browser, Reminders) run one after another, in the
+    // Compiled tools (Grain Pilot, Reminders) run one after another, in the
     // order the model wrote them, alongside the MCP batches: browser steps
-    // (open, then snapshot, then click) act on one shared page.
+    // (open, then read, then click) act on one shared tab.
     let compiled_run = async {
         let mut done = Vec::with_capacity(compiled.len());
         for index in compiled {

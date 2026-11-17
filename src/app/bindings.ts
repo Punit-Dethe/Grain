@@ -694,18 +694,6 @@ async changeAgentPolishedUiSetting(enabled: boolean) : Promise<Result<null, stri
 }
 },
 /**
- * [GRAIN] Turn the Agent Browser on or off. Off removes its tools from the
- * Agent on the next model round and closes its browser.
- */
-async changeAgentBrowserEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_browser_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Turn Grain Pilot on or off. Off removes its tools from the Agent on
  * the next model round and closes the browser link.
  */
@@ -2405,8 +2393,8 @@ mcp_enabled_providers?: string[];
  */
 mcp_oauth_client_ids?: Partial<{ [key in string]: string }>; 
 /**
- * [GRAIN] Connected extensions that need no account (Exa, Agent Browser).
- * Their Agent switch stays `mcp_enabled_providers` / `agent_browser_enabled`.
+ * [GRAIN] Connected extensions that need no account (Exa, Grain Pilot).
+ * Their Agent switch stays `mcp_enabled_providers` / `pilot_enabled`.
  */
 mcp_no_account_connected?: string[]; 
 /**
@@ -2456,12 +2444,6 @@ agent_dynamic_ui?: boolean;
  * few more prompt tokens per turn.
  */
 agent_polished_ui?: boolean; 
-/**
- * [GRAIN] Agent Browser: the Agent's web browser through Vercel Labs'
- * `agent-browser` CLI (open, read, click and fill pages). OFF by default;
- * off removes it from the Agent's tool directory and closes its browser.
- */
-agent_browser_enabled?: boolean; 
 /**
  * [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
  * the Grain Pilot extension. OFF by default; off removes it from the

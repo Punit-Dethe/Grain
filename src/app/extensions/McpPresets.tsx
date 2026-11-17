@@ -14,7 +14,6 @@ import {
   signInCancelled,
   unwrapResult,
 } from "./extensionRuntime";
-import agentBrowserIcon from "./icons/agent-browser.svg";
 import airtableIcon from "./icons/airtable.png";
 import asanaIcon from "./icons/asana.svg";
 import calcomIcon from "./icons/calcom.png";
@@ -45,7 +44,6 @@ import zapierIcon from "./icons/zapier.svg";
 import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
-  ["agent-browser", { src: agentBrowserIcon }],
   ["airtable", { src: airtableIcon }],
   ["asana", { src: asanaIcon }],
   ["atlassian", { src: atlassianIcon, darkSrc: atlassianDarkIcon }],
@@ -72,7 +70,7 @@ const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
   ["zapier", { src: zapierIcon }],
 ]);
 
-/** Extensions without an account (Exa, Agent Browser) connect without a sign-in. */
+/** Extensions without an account (Exa, Grain Pilot) connect without a sign-in. */
 const noAccount = (row: McpProviderStatus) => row.state === "no_account";
 
 export function McpPresets({

@@ -142,7 +142,7 @@ pub fn prune_disabled(app: &AppHandle, session: &mut CapabilitySession) {
 }
 
 /// Whether an Agent tool provider is on: an MCP connection or a compiled
-/// provider (Agent Browser, Reminders).
+/// provider (Grain Pilot, Reminders).
 pub(crate) fn extension_enabled(app: &AppHandle, extension_id: &str) -> bool {
     crate::grain_compiled_tools::enabled(app, extension_id)
         .unwrap_or_else(|| crate::grain_mcp::is_enabled_extension(app, extension_id))

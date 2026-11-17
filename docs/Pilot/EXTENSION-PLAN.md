@@ -1,8 +1,8 @@
 # Grain Pilot: browser extension plan
 
-Status: **plan only, nothing built** (written 2026-11-17).
-Replaces the Cua Driver build described in [PLAN.md](PLAN.md) (stack change
-recorded at its top). Branch: `feat/pilot`.
+Status: **Phases 0–2 and 4 done** (written 2026-11-17). Pilot is the Agent's
+only browser path; it replaced the earlier Cua Driver build. Branch:
+`feat/pilot`.
 
 ## Goal
 
@@ -201,7 +201,7 @@ measured answer written into this file:
 3. **Lazy content.** Do scroll-to-load lists and `IntersectionObserver`-based
    lazy content load in a hidden tab? If not, what does the fallback cost
    (the debugger route, or `show`)?
-4. **Tokens per read** versus the Cua numbers in PLAN.md (showtimes ~3.7k
+4. **Tokens per read** versus the earlier Cua numbers (showtimes ~3.7k
    interactive-only, seat page ~260, Zomato ~1.0k).
 5. **Which sites ignore synthetic events**, and does the debugger fallback
    click and type in a background tab **without activating it**?
@@ -337,12 +337,12 @@ cleanup, and the Chromium debugger fallback behind its optional permission.
 
 ### Phase 4: remove the Cua path
 
-Delete the files listed above, along with the Cua live tests and the
-`agent-browser`/Cua references in the Extensions row. Update the memory file
-and this plan.
-
-The Agent Browser (Vercel `agent-browser` CLI) is removed in a follow-up
-once Pilot passes Phase 5. It is not part of this plan.
+**Done 2026-11-17.** The Cua files went in Phase 2. After the user tried
+Pilot in the real app, they chose it as the Agent's only browser path, so the
+Agent Browser (Vercel `agent-browser` CLI) was removed as well. That covered
+its core and desktop modules, its setting and command, its Extensions row and
+icon, and its plan. Reach had already been removed on 2026-11-15. The old Cua
+plan (`PLAN.md`) was deleted too.
 
 ### Phase 5: live acceptance (Edge, then Brave)
 

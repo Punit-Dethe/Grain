@@ -2,8 +2,8 @@
 //!
 //! A link the model or a saved record supplies must pass [`validate_link`]: a
 //! fixed allowlist of schemes, with protocol handlers abused in real attacks
-//! refused outright. Reminders uses it for its "Open" links; the Agent Browser
-//! uses it (web links only) before navigating. Pure: no I/O.
+//! refused outright. Reminders uses it for its "Open" links; Grain Pilot
+//! uses it (web links only) before opening a tab. Pure: no I/O.
 
 /// Longest link Grain will open.
 const MAX_LINK_BYTES: usize = 8 * 1024;

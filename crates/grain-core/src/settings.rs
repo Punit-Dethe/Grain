@@ -786,8 +786,8 @@ pub struct AppSettings {
     /// credential vault and never enter AppSettings.
     #[serde(default)]
     pub mcp_oauth_client_ids: HashMap<String, String>,
-    /// [GRAIN] Connected extensions that need no account (Exa, Agent Browser).
-    /// Their Agent switch stays `mcp_enabled_providers` / `agent_browser_enabled`.
+    /// [GRAIN] Connected extensions that need no account (Exa, Grain Pilot).
+    /// Their Agent switch stays `mcp_enabled_providers` / `pilot_enabled`.
     #[serde(default)]
     pub mcp_no_account_connected: Vec<String>,
     /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
@@ -830,11 +830,6 @@ pub struct AppSettings {
     /// few more prompt tokens per turn.
     #[serde(default = "default_true")]
     pub agent_polished_ui: bool,
-    /// [GRAIN] Agent Browser: the Agent's web browser through Vercel Labs'
-    /// `agent-browser` CLI (open, read, click and fill pages). OFF by default;
-    /// off removes it from the Agent's tool directory and closes its browser.
-    #[serde(default)]
-    pub agent_browser_enabled: bool,
     /// [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
     /// the Grain Pilot extension. OFF by default; off removes it from the
     /// Agent's tool directory and closes the browser link.
@@ -1657,7 +1652,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_voice: default_agent_voice(),
         agent_dynamic_ui: true,
         agent_polished_ui: true,
-        agent_browser_enabled: false,
         pilot_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,

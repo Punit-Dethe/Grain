@@ -61,13 +61,9 @@ pub mod tool_schema;
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{DaemonEvent, SessionMode};
 pub use settings::{AppSettings, PostProcessProvider, SecretMap};
-// [GRAIN] Link policy for links Grain hands to the OS (Reminders) or the Agent
-// Browser. Pure.
+// [GRAIN] Link policy for links Grain hands to the OS (Reminders) or to Grain
+// Pilot. Pure.
 pub mod links;
-// [GRAIN] Agent Browser — the Agent's web browser through Vercel Labs'
-// agent-browser CLI (docs/Agent Browser/PLAN.md). Pure: tool schemas, argument
-// parsing, argv and reply rendering. The desktop crate spawns the process.
-pub mod agent_browser;
 pub mod pilot;
 // [GRAIN] Reminders (docs/Reminders/PLAN.md). Pure: the record, validation,
 // calendar arithmetic, day/time phrases and the Agent tool schemas.

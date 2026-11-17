@@ -1488,13 +1488,11 @@ pub async fn mcp_provider_status(
 /// them. Each has its own Agent switch in settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum BuiltIn {
-    /// Runs the user's agent-browser CLI.
-    AgentBrowser,
-    /// Runs the Cua Driver that Grain downloads at Connect.
+    /// Drives the user's own browser through the Grain Pilot extension.
     Pilot,
 }
 
-const BUILT_INS: [BuiltIn; 2] = [BuiltIn::AgentBrowser, BuiltIn::Pilot];
+const BUILT_INS: [BuiltIn; 1] = [BuiltIn::Pilot];
 
 impl BuiltIn {
     fn from_id(id: &str) -> Option<Self> {
@@ -1504,42 +1502,36 @@ impl BuiltIn {
     /// Extensions page id.
     fn id(self) -> &'static str {
         match self {
-            BuiltIn::AgentBrowser => "agent-browser",
             BuiltIn::Pilot => "pilot",
         }
     }
 
     fn name(self) -> &'static str {
         match self {
-            BuiltIn::AgentBrowser => grain_core::agent_browser::PROVIDER_NAME,
             BuiltIn::Pilot => grain_core::pilot::PROVIDER_NAME,
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            BuiltIn::AgentBrowser => "Let the Agent browse the web in its own background browser. Uses agent-browser by Vercel Labs.",
             BuiltIn::Pilot => "Let the Agent do things in your own browser, signed in as you, through the Grain Pilot extension (Chrome, Edge and Brave).",
         }
     }
 
     fn setup_url(self) -> &'static str {
         match self {
-            BuiltIn::AgentBrowser => "https://agent-browser.dev",
             BuiltIn::Pilot => "https://github.com/alibaba/page-agent",
         }
     }
 
     fn enabled(self, settings: &crate::settings::AppSettings) -> bool {
         match self {
-            BuiltIn::AgentBrowser => settings.agent_browser_enabled,
             BuiltIn::Pilot => settings.pilot_enabled,
         }
     }
 
     fn set_enabled(self, settings: &mut crate::settings::AppSettings, enabled: bool) {
         match self {
-            BuiltIn::AgentBrowser => settings.agent_browser_enabled = enabled,
             BuiltIn::Pilot => settings.pilot_enabled = enabled,
         }
     }
@@ -1548,9 +1540,6 @@ impl BuiltIn {
     /// Pilot this registers the browser host and opens the link.
     async fn prepare(self, app: &AppHandle) -> Result<(), String> {
         match self {
-            BuiltIn::AgentBrowser => crate::grain_agent_browser::check_installed()
-                .await
-                .map(|_| ()),
             BuiltIn::Pilot => crate::grain_pilot::prepare(app).await.map(|_| ()),
         }
     }
@@ -1558,16 +1547,14 @@ impl BuiltIn {
     /// Switched off (still connected): stop what it runs.
     fn switched_off(self) {
         match self {
-            BuiltIn::AgentBrowser => crate::grain_agent_browser::close_in_background(),
             BuiltIn::Pilot => crate::grain_pilot::stop_in_background(),
         }
     }
 
-    /// Disconnected: forget everything it kept (the Agent Browser's profile
-    /// and sign-ins; Pilot's browser host registration).
+    /// Disconnected: forget everything it kept (Pilot's browser host
+    /// registration).
     fn disconnected(self, app: &AppHandle) {
         match self {
-            BuiltIn::AgentBrowser => crate::grain_agent_browser::disconnect_in_background(app),
             BuiltIn::Pilot => crate::grain_pilot::disconnect_in_background(app),
         }
     }

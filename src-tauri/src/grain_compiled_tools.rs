@@ -1,5 +1,5 @@
 //! [GRAIN] Agent tool providers compiled into Grain, beside MCP connections:
-//! the Agent Browser, Grain Pilot and Reminders.
+//! Grain Pilot and Reminders.
 //!
 //! One place answers, for every compiled provider, the questions the Agent
 //! loop asks of a tool provider: is it on, what is its directory entry, its
@@ -12,7 +12,6 @@ use grain_core::execution::ActionOutcome;
 use grain_sdk::action::ActionRisk;
 use tauri::AppHandle;
 
-use crate::grain_agent_browser as browser;
 use crate::grain_pilot as pilot;
 use crate::grain_reminders as reminders;
 
@@ -77,16 +76,12 @@ pub(crate) fn catalog_tool(
 
 /// Whether `extension_id` names a compiled provider (rather than `mcp.*`).
 pub(crate) fn is_compiled(extension_id: &str) -> bool {
-    extension_id == browser::EXTENSION_ID
-        || extension_id == pilot::EXTENSION_ID
-        || extension_id == reminders::EXTENSION_ID
+    extension_id == pilot::EXTENSION_ID || extension_id == reminders::EXTENSION_ID
 }
 
 /// Whether a compiled provider is on. `None` for an id that is not compiled.
 pub(crate) fn enabled(app: &AppHandle, extension_id: &str) -> Option<bool> {
-    if extension_id == browser::EXTENSION_ID {
-        Some(browser::is_enabled(app))
-    } else if extension_id == pilot::EXTENSION_ID {
+    if extension_id == pilot::EXTENSION_ID {
         Some(pilot::is_enabled(app))
     } else if extension_id == reminders::EXTENSION_ID {
         // Always on: it only writes Grain's own reminder list.
@@ -98,8 +93,7 @@ pub(crate) fn enabled(app: &AppHandle, extension_id: &str) -> Option<bool> {
 
 /// Directory entries of the compiled providers that are on.
 pub(crate) fn directory(app: &AppHandle) -> Vec<ExtensionDirectoryEntry> {
-    let mut entries = Vec::with_capacity(3);
-    entries.extend(browser::directory(app));
+    let mut entries = Vec::with_capacity(2);
     entries.extend(pilot::directory(app));
     entries.push(reminders::directory());
     entries
@@ -108,9 +102,7 @@ pub(crate) fn directory(app: &AppHandle) -> Vec<ExtensionDirectoryEntry> {
 /// A compiled provider's tool set and digest. `None` for an id that is not
 /// compiled. No I/O.
 pub(crate) fn catalog(extension_id: &str) -> Option<(String, Vec<CatalogTool>)> {
-    if extension_id == browser::EXTENSION_ID {
-        Some(browser::catalog())
-    } else if extension_id == pilot::EXTENSION_ID {
+    if extension_id == pilot::EXTENSION_ID {
         Some(pilot::catalog())
     } else if extension_id == reminders::EXTENSION_ID {
         Some(reminders::catalog())
@@ -123,9 +115,7 @@ pub(crate) fn catalog(extension_id: &str) -> Option<(String, Vec<CatalogTool>)> 
 /// `None` when the provider is off (or the id is not compiled). Compiled
 /// digests only change with a new build.
 pub(crate) fn current_digest(app: &AppHandle, extension_id: &str) -> Option<String> {
-    if extension_id == browser::EXTENSION_ID {
-        browser::is_enabled(app).then(grain_core::agent_browser::catalog_digest)
-    } else if extension_id == pilot::EXTENSION_ID {
+    if extension_id == pilot::EXTENSION_ID {
         pilot::is_enabled(app).then(grain_core::pilot::catalog_digest)
     } else if extension_id == reminders::EXTENSION_ID {
         Some(grain_core::reminders::catalog_digest())
@@ -141,9 +131,7 @@ pub(crate) async fn call(
     action_id: &str,
     arguments: &serde_json::Value,
 ) -> ActionOutcome {
-    if extension_id == browser::EXTENSION_ID {
-        browser::call(app, action_id, arguments).await
-    } else if extension_id == pilot::EXTENSION_ID {
+    if extension_id == pilot::EXTENSION_ID {
         pilot::call(app, action_id, arguments).await
     } else if extension_id == reminders::EXTENSION_ID {
         reminders::call(app, action_id, arguments).await

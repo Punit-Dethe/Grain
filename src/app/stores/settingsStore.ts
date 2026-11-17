@@ -261,8 +261,6 @@ const settingUpdaters: {
     commands.changeAgentDynamicUiSetting(value as boolean),
   agent_polished_ui: (value) =>
     commands.changeAgentPolishedUiSetting(value as boolean),
-  agent_browser_enabled: (value) =>
-    commands.changeAgentBrowserEnabledSetting(value as boolean),
   pilot_enabled: (value) =>
     commands.changePilotEnabledSetting(value as boolean),
   meet_auto_summary: (value) =>
