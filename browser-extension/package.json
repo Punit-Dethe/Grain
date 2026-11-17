@@ -7,5 +7,8 @@
   },
   "dependencies": {
     "@page-agent/page-controller": "1.12.4"
+  },
+  "patchedDependencies": {
+    "@page-agent/page-controller@1.12.4": "patches/@page-agent%2Fpage-controller@1.12.4.patch"
   }
 }
