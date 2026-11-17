@@ -37,7 +37,8 @@ pub struct SourceStatus {
     /// The device being recorded.
     pub name: String,
     pub recorded_ms: u64,
-    /// Peak audio level since the previous status read, 0 to 1.
+    /// Peak audio level of the latest tenth of a second, 0 to 1 (0 while
+    /// muted or not delivering audio).
     pub level: f32,
     /// False while this source is not delivering audio.
     pub active: bool,
@@ -162,13 +163,23 @@ fn snapshot(state: &State) -> MeetStatus {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .iter()
-                .map(|source| SourceStatus {
-                    kind: source.kind,
-                    name: source.name.clone(),
-                    recorded_ms: source.frames_ns.load(Ordering::Acquire) / 1_000_000,
-                    level: f32::from_bits(source.level.swap(0, Ordering::AcqRel)),
-                    active: source.active.load(Ordering::Acquire),
-                    muted: source.muted.load(Ordering::Acquire),
+                .map(|source| {
+                    let active = source.active.load(Ordering::Acquire);
+                    let muted = source.muted.load(Ordering::Acquire);
+                    SourceStatus {
+                        kind: source.kind,
+                        name: source.name.clone(),
+                        recorded_ms: source.frames_ns.load(Ordering::Acquire) / 1_000_000,
+                        // A closed (muted) or stalled device sends no frames,
+                        // so its last published level would otherwise stay up.
+                        level: if active && !muted {
+                            f32::from_bits(source.level.load(Ordering::Acquire))
+                        } else {
+                            0.0
+                        },
+                        active,
+                        muted,
+                    }
                 })
                 .collect(),
             error: recording

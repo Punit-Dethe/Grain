@@ -25,7 +25,6 @@ const IDLE: MeetStatus = {
 
 /** The level meters need a fast read; the clock only shows whole seconds.
  * Only polled while a recording is on screen. */
-const LIVE_POLL_MS = 120;
 
 function unwrap<T>(
   result: { status: "ok"; data: T } | { status: "error"; error: string },
@@ -325,35 +324,4 @@ export function useMeetController(): MeetController {
   };
 }
 
-/**
- * Refresh the recording clock and capture error only while recording and only
- * in the component that displays them.
- */
-export function useLiveRecording(
-  initial: RecordingStatus | null,
-): RecordingStatus | null {
-  const [live, setLive] = useState(initial);
-  const sessionId = initial?.session_id ?? null;
-  useEffect(() => {
-    if (!sessionId) {
-      setLive(null);
-      return;
-    }
-    let active = true;
-    let timer = 0;
-    const tick = async () => {
-      try {
-        const next = await commands.meetStatus();
-        if (active) setLive(next.recording);
-      } finally {
-        if (active) timer = window.setTimeout(tick, LIVE_POLL_MS);
-      }
-    };
-    void tick();
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [sessionId]);
-  return live;
-}
+export { useLiveRecording } from "./live";

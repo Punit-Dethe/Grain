@@ -24,7 +24,9 @@ import {
   type SourceDevice,
   type SourceKind,
   type SourceSettings,
+  type SourceStatus,
 } from "@/bindings";
+import { useLiveRecording, useMeterFill } from "@/meet/live";
 
 /* Recall's layout, in CSS px. The notch shell is sized from these (it cannot
    measure content it clips), so they match the `.agr*` rules in agent.css. */
@@ -36,9 +38,11 @@ const CARD = 108;
 const BEFORE_START = 18;
 const BUTTON = 34;
 const MESSAGE = 24;
-const LIVE_TOP = 10;
-const CLOCK = 28;
-const LIVE_GAP = 12;
+/** While recording: the clock and Stop bar, then the source cards. */
+const LIVE_BAR = 34;
+const LIVE_GAP = 14;
+const LIVE_CARD = 88;
+const METER_SEGMENTS = 18;
 /** `.agr-menu` max-height; shorter when the window has less room below. */
 const MENU_MAX_HEIGHT = 158;
 /** `.agr-menu` width. */
@@ -91,6 +95,8 @@ export function AgentRecall({
   }, []);
 
   const recording = status?.recording ?? null;
+  // Levels change many times a second; poll them only while recording.
+  const live = useLiveRecording(recording);
   const systemSupported = sources?.system_audio_supported ?? true;
   const message = error || recording?.error || (!recording && saved);
 
@@ -98,10 +104,10 @@ export function AgentRecall({
     if (recording) {
       onHeightChange(
         HEADER +
-          LIVE_TOP +
-          CLOCK +
+          PAD_TOP +
+          LIVE_BAR +
           LIVE_GAP +
-          BUTTON +
+          LIVE_CARD +
           PAD_BOTTOM +
           (message ? MESSAGE : 0),
       );
@@ -177,54 +183,19 @@ export function AgentRecall({
 
   if (recording) {
     const elapsed = recording.elapsed_ms + Math.max(0, now - receivedAt);
-    const isMuted = (kind: SourceKind) =>
-      recording.sources.find((source) => source.kind === kind)?.muted ?? true;
-    const micMuted = isMuted("Microphone");
-    const systemMuted = isMuted("SystemAudio");
+    const sourceOf = (kind: SourceKind) =>
+      (live ?? recording).sources.find((source) => source.kind === kind) ??
+      null;
     return (
       <div className="agr agr-live">
-        <div className="agr-clock" role="timer">
-          <span className="agr-rec-dot" aria-hidden="true" />
-          <span className="agr-clock-label">{t("agent.recallRecording")}</span>
-          <time className="agr-clock-time">{formatElapsed(elapsed)}</time>
-        </div>
-        <div className="agr-controls">
-          <button
-            type="button"
-            className={`agr-source-btn${micMuted ? " is-off" : ""}`}
-            disabled={pending}
-            aria-pressed={!micMuted}
-            title={t(
-              micMuted ? "agent.recallUnmuteMic" : "agent.recallMuteMic",
-            )}
-            aria-label={t(
-              micMuted ? "agent.recallUnmuteMic" : "agent.recallMuteMic",
-            )}
-            onClick={() => toggle("Microphone", !micMuted)}
-          >
-            {micMuted ? <MicOff size={15} /> : <Mic size={15} />}
-          </button>
-          {systemSupported && (
-            <button
-              type="button"
-              className={`agr-source-btn${systemMuted ? " is-off" : ""}`}
-              disabled={pending}
-              aria-pressed={!systemMuted}
-              title={t(
-                systemMuted
-                  ? "agent.recallUnmuteSystem"
-                  : "agent.recallMuteSystem",
-              )}
-              aria-label={t(
-                systemMuted
-                  ? "agent.recallUnmuteSystem"
-                  : "agent.recallMuteSystem",
-              )}
-              onClick={() => toggle("SystemAudio", !systemMuted)}
-            >
-              {systemMuted ? <VolumeOff size={15} /> : <Volume2 size={15} />}
-            </button>
-          )}
+        <div className="agr-live-bar">
+          <div className="agr-clock" role="timer">
+            <span className="agr-rec-dot" aria-hidden="true" />
+            <span className="agr-clock-label">
+              {t("agent.recallRecording")}
+            </span>
+            <time className="agr-clock-time">{formatElapsed(elapsed)}</time>
+          </div>
           <button
             type="button"
             className="agr-stop"
@@ -235,8 +206,34 @@ export function AgentRecall({
             {t("agent.recallStop")}
           </button>
         </div>
-        {(error || recording.error) && (
-          <div className="agr-error">{error || recording.error}</div>
+        <div className="agr-cards">
+          <LiveSourceCard
+            on={<Mic size={17} />}
+            off={<MicOff size={17} />}
+            label={t("agent.recallMicrophone")}
+            tone="mic"
+            source={sourceOf("Microphone")}
+            disabled={pending}
+            muteLabel={t("agent.recallMuteMic")}
+            unmuteLabel={t("agent.recallUnmuteMic")}
+            onToggle={(muted) => toggle("Microphone", muted)}
+          />
+          {systemSupported && (
+            <LiveSourceCard
+              on={<Volume2 size={17} />}
+              off={<VolumeOff size={17} />}
+              label={t("agent.recallSystemAudio")}
+              tone="system"
+              source={sourceOf("SystemAudio")}
+              disabled={pending}
+              muteLabel={t("agent.recallMuteSystem")}
+              unmuteLabel={t("agent.recallUnmuteSystem")}
+              onToggle={(muted) => toggle("SystemAudio", muted)}
+            />
+          )}
+        </div>
+        {(error || (live ?? recording).error) && (
+          <div className="agr-error">{error || (live ?? recording).error}</div>
         )}
       </div>
     );
@@ -367,6 +364,60 @@ function SourceCard({
     </div>
   );
 }
+
+/** A source while recording: its icon, name and live level. Anywhere on the
+ * card mutes or unmutes it. A source left off at the start is muted here and
+ * can be turned on. */
+function LiveSourceCard({
+  on,
+  off,
+  label,
+  tone,
+  source,
+  disabled,
+  muteLabel,
+  unmuteLabel,
+  onToggle,
+}: {
+  on: React.ReactNode;
+  off: React.ReactNode;
+  label: string;
+  tone: "mic" | "system";
+  source: SourceStatus | null;
+  disabled: boolean;
+  muteLabel: string;
+  unmuteLabel: string;
+  onToggle: (muted: boolean) => void;
+}) {
+  const muted = source?.muted ?? true;
+  const fill = useMeterFill(source ?? SILENT);
+  const lit = fill < 0.04 ? 0 : Math.ceil(fill * METER_SEGMENTS);
+  return (
+    <button
+      type="button"
+      className={`agr-card agr-live-card is-${tone}${muted ? " is-off" : ""}`}
+      aria-pressed={!muted}
+      title={muted ? unmuteLabel : muteLabel}
+      disabled={disabled}
+      onClick={() => onToggle(!muted)}
+    >
+      <span className="agr-live-head">
+        <span className="agr-card-icon" aria-hidden="true">
+          {muted ? off : on}
+        </span>
+        <span className="agr-card-label">{label}</span>
+      </span>
+      <span className="agr-meter" aria-hidden="true">
+        {Array.from({ length: METER_SEGMENTS }, (_, index) => (
+          <i key={index} className={index < lit ? "is-lit" : undefined} />
+        ))}
+      </span>
+    </button>
+  );
+}
+
+/** A source not in the recording: silent and muted. */
+const SILENT = { level: 0, muted: true };
 
 /** A compact device picker: the current device, and a short list below it. */
 function DeviceMenu({

@@ -60,6 +60,7 @@ import {
   useMeetController,
   type MeetController,
 } from "../meet/useMeetController";
+import { useMeterFill } from "../meet/live";
 
 type T = (key: string, options?: Record<string, unknown>) => string;
 
@@ -240,21 +241,10 @@ function switchedOff(kind: SourceKind): SourceStatus {
 const DOCK_CHROME = 18;
 
 const METER_SEGMENTS = 8;
-/** Peak amplitude to a 0..1 meter fill: -50 dB is empty, -6 dB is full. */
-function meterFill(peak: number): number {
-  const db = 20 * Math.log10(Math.max(peak, 1e-5));
-  return Math.min(1, Math.max(0, (db + 50) / 44));
-}
-
 /** Stacked bars that darken from the bottom up with the signal. The level
  * rises at once and falls away smoothly. */
 function LevelMeter({ source }: { source: SourceStatus }) {
-  const [shown, setShown] = useState(0);
-  useEffect(() => {
-    setShown((previous) =>
-      source.muted ? 0 : Math.max(meterFill(source.level), previous * 0.7),
-    );
-  }, [source]);
+  const shown = useMeterFill(source);
   const lit = shown < 0.04 ? 0 : Math.ceil(shown * METER_SEGMENTS);
   return (
     <span className="meet-meter" aria-hidden="true">

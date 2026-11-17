@@ -48,8 +48,9 @@ pub(crate) struct SourceProgress {
     pub kind: SourceKind,
     pub name: String,
     pub frames_ns: AtomicU64,
-    /// Peak level since the last status read, 0..1, as f32 bits (non-negative
-    /// f32 bits order like the values, so etch_max keeps the peak).
+    /// [GRAIN] Peak level of the latest tenth of a second of audio, 0..1, as
+    /// f32 bits. Reading it changes nothing, so any number of views (the Meet
+    /// page, the notch) can show a meter at once.
     pub level: AtomicU32,
     pub active: AtomicBool,
     /// [GRAIN] Muted mid-recording: the writer closes the device (no audio is
@@ -152,7 +153,14 @@ struct Source {
     closed_by_mute: bool,
     /// The next block follows an unmute: record the muted time as a silent gap.
     resume_gap: bool,
+    /// Peak and length of the meter window being filled.
+    meter_peak: f32,
+    meter_frames: u64,
 }
+
+/// [GRAIN] The meter publishes one peak per tenth of a second of audio,
+/// counted in frames so it does not depend on delivery timing.
+const LEVEL_WINDOWS_PER_SECOND: u64 = 10;
 
 fn deliver_to(sender: SyncSender<Frame>, source: usize, dropped: Arc<AtomicU64>) -> Deliver {
     Arc::new(move |samples: &[f32], rate: u32, channels: u16| {
@@ -245,6 +253,8 @@ impl Recording {
                 lost: false,
                 closed_by_mute: false,
                 resume_gap: false,
+                meter_peak: 0.0,
+                meter_frames: 0,
             });
         }
         let progress = Arc::new(Progress {
@@ -373,6 +383,8 @@ fn add_source(
         lost: false,
         closed_by_mute: false,
         resume_gap: false,
+        meter_peak: 0.0,
+        meter_frames: 0,
     };
     progress
         .sources
@@ -408,13 +420,19 @@ fn write_loop(
             .iter()
             .fold(0.0f32, |m, s| m.max(s.abs()))
             .min(1.0);
-        source
-            .progress
-            .level
-            .fetch_max(peak.to_bits(), Ordering::AcqRel);
         let lost = source.dropped.swap(0, Ordering::AcqRel);
         let end = writer.manifest().tracks[source.track as usize].end_ns();
         let len = (frame.samples.len() / usize::from(frame.channels)) as u64;
+        source.meter_peak = source.meter_peak.max(peak);
+        source.meter_frames += len;
+        if source.meter_frames >= u64::from(frame.rate) / LEVEL_WINDOWS_PER_SECOND {
+            source
+                .progress
+                .level
+                .store(source.meter_peak.to_bits(), Ordering::Release);
+            source.meter_peak = 0.0;
+            source.meter_frames = 0;
+        }
         let arrival_start =
             since_origin(origin, frame.arrived).saturating_sub(frames_ns(len, frame.rate));
         let resumed = std::mem::take(&mut source.resume_gap);
@@ -653,6 +671,41 @@ mod tests {
         assert_eq!(mic.chunks.iter().map(|c| c.frames).sum::<u64>(), 48_000);
         assert_eq!(system.chunks.iter().map(|c| c.frames).sum::<u64>(), 48_000);
         assert_eq!(system.chunks[0].channels, 2);
+    }
+
+    #[test]
+    fn the_level_meter_survives_reads_and_drops_with_the_signal() {
+        let root = tempfile::tempdir().unwrap();
+        let opener = FakeOpener::default();
+        let kinds = vec![(SourceKind::Microphone, "Mic".into())];
+        let recording = Recording::begin(root.path(), "Meter", &kinds, opener.clone()).unwrap();
+        let level = |r: &Recording| {
+            f32::from_bits(
+                r.source(SourceKind::Microphone)
+                    .unwrap()
+                    .level
+                    .load(Ordering::Acquire),
+            )
+        };
+        let wait_until = |r: &Recording, done: &dyn Fn(f32) -> bool| {
+            let start = Instant::now();
+            while !done(level(r)) && start.elapsed() < Duration::from_secs(5) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let deliver = opener.latest(SourceKind::Microphone).0;
+        push(&deliver, 0.5, 48_000, 1);
+        wait_until(&recording, &|l| l > 0.0);
+        // Reading never resets it: two views see the same level.
+        assert!((level(&recording) - 0.2).abs() < 1e-6);
+        assert!((level(&recording) - 0.2).abs() < 1e-6);
+        let quiet = vec![0.0f32; 480];
+        for _ in 0..30 {
+            deliver(&quiet, 48_000, 1);
+        }
+        wait_until(&recording, &|l| l == 0.0);
+        assert_eq!(level(&recording), 0.0);
+        recording.finish().unwrap();
     }
 
     #[test]

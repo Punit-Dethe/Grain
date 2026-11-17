@@ -839,21 +839,30 @@ html[data-window="agent-panel"] body {
   filter: brightness(1.08);
 }
 
+/* While recording: the clock and Stop on one bar, the source cards below. */
 .agr-live {
+  gap: 14px;
+}
+
+.agr-live-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
   gap: 12px;
-  padding-top: 10px;
+  height: 34px;
+  padding-left: 4px;
 }
 
 .agr-clock {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
-  gap: 8px;
-  height: 28px;
-  flex: none;
-  padding-inline: 4px;
+  gap: 9px;
 }
 
 .agr-rec-dot {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -876,44 +885,64 @@ html[data-window="agent-panel"] body {
 .agr-clock-time {
   margin-left: auto;
   color: var(--agc-ink);
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
 }
 
-.agr-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.agr-source-btn {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid #ffffff17;
-  border-radius: 50%;
-  background: #ffffff12;
+/* A live source card is one button: anywhere on it mutes or unmutes. */
+.agr-live-card {
+  height: 88px;
+  width: 100%;
   color: var(--agc-ink);
+  font: inherit;
+  text-align: start;
   cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease;
 }
 
-.agr-source-btn:hover:not(:disabled) {
-  background: #ffffff1f;
+.agr-live-card:hover:not(:disabled) {
+  border-color: #ffffff26;
+  background-color: #ffffff06;
 }
 
-.agr-source-btn.is-off {
-  background: transparent;
-  color: var(--agc-faint);
+.agr-live-card:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #ffffff40;
 }
 
-.agr-stop {
-  margin-left: auto;
+.agr-live-card:disabled {
+  cursor: default;
+}
+
+.agr-live-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+/* The level: short bars that light up in the source's tint. */
+.agr-meter {
+  display: flex;
+  gap: 3px;
+  height: 8px;
+  padding-inline: 1px;
+}
+
+.agr-meter > i {
+  flex: 1;
+  border-radius: 2px;
+  background: #ffffff12;
+  transition: background-color 90ms linear;
+}
+
+.agr-meter > i.is-lit {
+  background: var(--agr-tint-ink);
+}
+
+.agr-live-card.is-off .agr-meter > i {
+  background: #ffffff08;
 }
 
 .agr-error,
