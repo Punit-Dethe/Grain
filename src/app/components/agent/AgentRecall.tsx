@@ -32,8 +32,8 @@ const HEADER = 34;
 const PAD_TOP = 16;
 const PAD_BOTTOM = 14;
 /** A source card: icon, name, then its device picker. */
-const CARD = 92;
-const BEFORE_START = 14;
+const CARD = 108;
+const BEFORE_START = 18;
 const BUTTON = 34;
 const MESSAGE = 24;
 const LIVE_TOP = 10;
@@ -247,9 +247,10 @@ export function AgentRecall({
     <div className="agr">
       <div className="agr-cards">
         <SourceCard
-          on={<Mic size={16} />}
-          off={<MicOff size={16} />}
+          on={<Mic size={17} />}
+          off={<MicOff size={17} />}
           label={t("agent.recallMicrophone")}
+          tone="mic"
           enabled={!!settings?.microphone.enabled}
           deviceId={settings?.microphone.device_id ?? null}
           devices={sources?.microphones ?? []}
@@ -266,9 +267,10 @@ export function AgentRecall({
         />
         {systemSupported && (
           <SourceCard
-            on={<Volume2 size={16} />}
-            off={<VolumeOff size={16} />}
+            on={<Volume2 size={17} />}
+            off={<VolumeOff size={17} />}
             label={t("agent.recallSystemAudio")}
+            tone="system"
             enabled={!!settings?.system_audio.enabled}
             deviceId={settings?.system_audio.device_id ?? null}
             devices={sources?.outputs ?? []}
@@ -310,6 +312,7 @@ function SourceCard({
   on,
   off,
   label,
+  tone,
   enabled,
   deviceId,
   devices,
@@ -321,6 +324,8 @@ function SourceCard({
   on: React.ReactNode;
   off: React.ReactNode;
   label: string;
+  /** The icon's colour while the source is on. */
+  tone: "mic" | "system";
   enabled: boolean;
   deviceId: string | null;
   devices: SourceDevice[];
@@ -331,7 +336,7 @@ function SourceCard({
 }) {
   const { t } = useTranslation();
   return (
-    <div className={`agr-card${enabled ? "" : " is-off"}`}>
+    <div className={`agr-card is-${tone}${enabled ? "" : " is-off"}`}>
       <button
         type="button"
         className="agr-source"

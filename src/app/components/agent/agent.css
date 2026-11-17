@@ -571,7 +571,7 @@ html[data-window="agent-panel"] body {
   flex: none;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .agr-card {
@@ -579,9 +579,9 @@ html[data-window="agent-panel"] body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  height: 92px;
+  height: 108px;
   box-sizing: border-box;
-  padding: 12px 10px 10px;
+  padding: 14px 12px 12px;
   border: 1px solid #ffffff17;
   border-radius: 16px;
   background: linear-gradient(to bottom, #ffffff0f, #ffffff07);
@@ -605,9 +605,9 @@ html[data-window="agent-panel"] body {
 .agr-source {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 11px;
   min-width: 0;
-  padding: 0 2px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--agc-ink);
@@ -635,23 +635,39 @@ html[data-window="agent-panel"] body {
   cursor: default;
 }
 
+/* Each source has its own tint while on: blue for the microphone, amber for
+   system audio. Off is neutral. */
+.agr-card {
+  --agr-tint: #2f7bff;
+  --agr-tint-ink: #a9d6ff;
+}
+
+.agr-card.is-system {
+  --agr-tint: #ff9f2e;
+  --agr-tint-ink: #ffd49a;
+}
+
 .agr-card-icon {
   display: grid;
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: 34px;
+  height: 34px;
   place-items: center;
-  border-radius: 9px;
-  background: #ffffff14;
-  color: var(--agc-light);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--agr-tint) 22%, transparent);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--agr-tint) 30%, transparent);
+  color: var(--agr-tint-ink);
   transition:
     background-color 160ms ease,
+    box-shadow 160ms ease,
     color 160ms ease;
 }
 
 .agr-card-label {
   min-width: 0;
   overflow: hidden;
+  font-size: 13px;
   font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -660,6 +676,7 @@ html[data-window="agent-panel"] body {
 
 .agr-card.is-off .agr-card-icon {
   background: #ffffff08;
+  box-shadow: inset 0 0 0 1px #ffffff0d;
   color: var(--agc-faint);
 }
 
@@ -814,7 +831,7 @@ html[data-window="agent-panel"] body {
 }
 
 .agr-start {
-  margin-top: 6px;
+  margin-top: 10px;
 }
 
 .agr-start:hover:not(:disabled),
