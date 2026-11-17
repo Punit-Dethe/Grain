@@ -31,8 +31,8 @@ import {
 const HEADER = 34;
 const PAD_TOP = 16;
 const PAD_BOTTOM = 14;
-const ROW = 40;
-const ROW_GAP = 8;
+/** A source card: icon, name, then its device picker. */
+const CARD = 92;
 const BEFORE_START = 14;
 const BUTTON = 34;
 const MESSAGE = 24;
@@ -41,6 +41,8 @@ const CLOCK = 28;
 const LIVE_GAP = 12;
 /** `.agr-menu` max-height; shorter when the window has less room below. */
 const MENU_MAX_HEIGHT = 158;
+/** `.agr-menu` width. */
+const MENU_WIDTH = 236;
 
 /** The notch's Recall: pick sources, start a meeting, then mute or stop it.
  * Mounted only while Recall is shown, so its listener and clock go with it. */
@@ -105,18 +107,16 @@ export function AgentRecall({
       );
       return;
     }
-    const rows = systemSupported ? 2 : 1;
     onHeightChange(
       HEADER +
         PAD_TOP +
-        rows * ROW +
-        (rows - 1) * ROW_GAP +
+        CARD +
         BEFORE_START +
         BUTTON +
         PAD_BOTTOM +
         (message ? MESSAGE : 0),
     );
-  }, [recording, systemSupported, message, onHeightChange]);
+  }, [recording, message, onHeightChange]);
 
   // The device menu floats outside the shell; the window must take clicks there.
   useEffect(() => onMenuChange(menu !== null), [menu, onMenuChange]);
@@ -245,44 +245,46 @@ export function AgentRecall({
   const settings = sources?.settings;
   return (
     <div className="agr">
-      <SourceRow
-        on={<Mic size={15} />}
-        off={<MicOff size={15} />}
-        label={t("agent.recallMicrophone")}
-        enabled={!!settings?.microphone.enabled}
-        deviceId={settings?.microphone.device_id ?? null}
-        devices={sources?.microphones ?? []}
-        disabled={!settings || pending}
-        menuOpen={menu === "Microphone"}
-        onMenuOpen={(open) => setMenu(open ? "Microphone" : null)}
-        onChange={(enabled, deviceId) =>
-          settings &&
-          saveSources({
-            ...settings,
-            microphone: { enabled, device_id: deviceId },
-          })
-        }
-      />
-      {systemSupported && (
-        <SourceRow
-          on={<Volume2 size={15} />}
-          off={<VolumeOff size={15} />}
-          label={t("agent.recallSystemAudio")}
-          enabled={!!settings?.system_audio.enabled}
-          deviceId={settings?.system_audio.device_id ?? null}
-          devices={sources?.outputs ?? []}
+      <div className="agr-cards">
+        <SourceCard
+          on={<Mic size={16} />}
+          off={<MicOff size={16} />}
+          label={t("agent.recallMicrophone")}
+          enabled={!!settings?.microphone.enabled}
+          deviceId={settings?.microphone.device_id ?? null}
+          devices={sources?.microphones ?? []}
           disabled={!settings || pending}
-          menuOpen={menu === "SystemAudio"}
-          onMenuOpen={(open) => setMenu(open ? "SystemAudio" : null)}
+          menuOpen={menu === "Microphone"}
+          onMenuOpen={(open) => setMenu(open ? "Microphone" : null)}
           onChange={(enabled, deviceId) =>
             settings &&
             saveSources({
               ...settings,
-              system_audio: { enabled, device_id: deviceId },
+              microphone: { enabled, device_id: deviceId },
             })
           }
         />
-      )}
+        {systemSupported && (
+          <SourceCard
+            on={<Volume2 size={16} />}
+            off={<VolumeOff size={16} />}
+            label={t("agent.recallSystemAudio")}
+            enabled={!!settings?.system_audio.enabled}
+            deviceId={settings?.system_audio.device_id ?? null}
+            devices={sources?.outputs ?? []}
+            disabled={!settings || pending}
+            menuOpen={menu === "SystemAudio"}
+            onMenuOpen={(open) => setMenu(open ? "SystemAudio" : null)}
+            onChange={(enabled, deviceId) =>
+              settings &&
+              saveSources({
+                ...settings,
+                system_audio: { enabled, device_id: deviceId },
+              })
+            }
+          />
+        )}
+      </div>
       <button
         type="button"
         className="agr-start"
@@ -300,9 +302,11 @@ export function AgentRecall({
   );
 }
 
-/** One source: click its icon or name to turn it on or off (a slashed icon
- * means off); pick its device on the right. */
-function SourceRow({
+/** One source as a card: anywhere on it turns the source on or off (a
+ * slashed icon means off), except its device picker at the bottom. The toggle
+ * is one button whose hit area covers the card (see `.agr-source::after`), so
+ * the picker is a sibling, never a button inside a button. */
+function SourceCard({
   on,
   off,
   label,
@@ -327,7 +331,7 @@ function SourceRow({
 }) {
   const { t } = useTranslation();
   return (
-    <div className={`agr-row${enabled ? "" : " is-off"}`}>
+    <div className={`agr-card${enabled ? "" : " is-off"}`}>
       <button
         type="button"
         className="agr-source"
@@ -338,10 +342,10 @@ function SourceRow({
         })}
         onClick={() => onChange(!enabled, deviceId)}
       >
-        <span className="agr-row-icon" aria-hidden="true">
+        <span className="agr-card-icon" aria-hidden="true">
           {enabled ? on : off}
         </span>
-        <span className="agr-row-label">{label}</span>
+        <span className="agr-card-label">{label}</span>
       </button>
       <DeviceMenu
         label={label}
@@ -391,7 +395,7 @@ function DeviceMenu({
   // Where the list floats, measured from the trigger once it opens.
   const [place, setPlace] = useState<{
     top: number;
-    right: number;
+    left: number;
     maxHeight: number;
     host: Element;
   } | null>(null);
@@ -406,7 +410,12 @@ function DeviceMenu({
     const top = rect.bottom + 6;
     setPlace({
       top,
-      right: Math.max(8, window.innerWidth - rect.right),
+      // Under the trigger, kept inside the window (the left card's menu
+      // would otherwise run off the left edge, the right card's off the right).
+      left: Math.max(
+        8,
+        Math.min(rect.left, window.innerWidth - MENU_WIDTH - 8),
+      ),
       maxHeight: Math.max(
         60,
         Math.min(MENU_MAX_HEIGHT, window.innerHeight - top - 8),
@@ -482,7 +491,7 @@ function DeviceMenu({
             aria-label={label}
             style={{
               top: place.top,
-              right: place.right,
+              left: place.left,
               maxHeight: place.maxHeight,
             }}
           >

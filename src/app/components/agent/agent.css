@@ -564,69 +564,114 @@ html[data-window="agent-panel"] body {
   font-size: 12.5px;
 }
 
-.agr-row {
-  position: relative;
-  display: flex;
+/* Two source cards side by side (one fills the row when system audio is not
+   available). */
+.agr-cards {
+  display: grid;
   flex: none;
-  align-items: center;
-  gap: 10px;
-  height: 40px;
-  box-sizing: border-box;
-  padding: 0 6px 0 4px;
-  border: 1px solid #ffffff10;
-  border-radius: 12px;
-  background: var(--agc-raise);
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 8px;
 }
 
-/* The source toggle: its icon and name. Off shows the slashed icon. */
+.agr-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 92px;
+  box-sizing: border-box;
+  padding: 12px 10px 10px;
+  border: 1px solid #ffffff17;
+  border-radius: 16px;
+  background: linear-gradient(to bottom, #ffffff0f, #ffffff07);
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.agr-card:has(.agr-source:hover:not(:disabled)) {
+  border-color: #ffffff26;
+  background-color: #ffffff06;
+}
+
+.agr-card.is-off {
+  border-color: #ffffff0d;
+  background: #ffffff04;
+}
+
+/* The toggle: its icon and name. Its ::after spreads its hit area over the
+   whole card; the device picker sits above that layer. */
 .agr-source {
-  display: inline-flex;
-  flex: 1;
-  min-width: 0;
+  display: flex;
   align-items: center;
   gap: 9px;
-  height: 30px;
-  padding: 0 10px 0 8px;
+  min-width: 0;
+  padding: 0 2px;
   border: 0;
-  border-radius: 9px;
   background: transparent;
   color: var(--agc-ink);
   font: inherit;
   text-align: start;
   cursor: pointer;
-  transition:
-    background-color 140ms ease,
-    color 140ms ease;
 }
 
-.agr-source:hover:not(:disabled) {
-  background: #ffffff0d;
+.agr-source::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
 }
 
-.agr-row-icon {
+.agr-source:focus-visible {
+  outline: none;
+}
+
+.agr-source:focus-visible::after {
+  box-shadow: 0 0 0 2px #ffffff40;
+}
+
+.agr-source:disabled {
+  cursor: default;
+}
+
+.agr-card-icon {
   display: grid;
   flex: none;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 9px;
+  background: #ffffff14;
   color: var(--agc-light);
-  transition: color 140ms ease;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
-.agr-row-label {
+.agr-card-label {
   min-width: 0;
   overflow: hidden;
-  font-weight: 550;
+  font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color 140ms ease;
+  transition: color 160ms ease;
 }
 
-.agr-row.is-off .agr-row-icon,
-.agr-row.is-off .agr-row-label {
+.agr-card.is-off .agr-card-icon {
+  background: #ffffff08;
   color: var(--agc-faint);
 }
 
-/* The device picker: compact, right-aligned, with its own short list. */
+.agr-card.is-off .agr-card-label {
+  color: var(--agc-faint);
+}
+
+/* The device picker: the card's bottom row, with its own short list. It sits
+   above the toggle's card-wide hit area. */
 .agr-menu-wrap {
-  position: static;
+  position: relative;
+  z-index: 1;
   flex: none;
 }
 
@@ -635,8 +680,8 @@ html[data-window="agent-panel"] body {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  /* One size whatever the device name: long names are cut with an ellipsis. */
-  width: 150px;
+  /* The card's width whatever the device name: long names are cut. */
+  width: 100%;
   height: 28px;
   padding: 0 8px 0 10px;
   border: 1px solid #ffffff12;
@@ -668,7 +713,7 @@ html[data-window="agent-panel"] body {
   transform: rotate(180deg);
 }
 
-.agr-row.is-off .agr-menu-trigger {
+.agr-card.is-off .agr-menu-trigger {
   color: var(--agc-faint);
 }
 
@@ -697,7 +742,7 @@ html[data-window="agent-panel"] body {
   background: #121217;
   box-shadow: 0 10px 28px #00000080;
   animation: agr-menu-in 160ms var(--notch-ease);
-  transform-origin: top right;
+  transform-origin: top left;
 }
 
 @keyframes agr-menu-in {
