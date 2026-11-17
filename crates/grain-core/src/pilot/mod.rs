@@ -38,15 +38,13 @@ pub const MAX_TYPE_CHARS: usize = 5_000;
 pub const MAX_FIELD_CHARS: usize = 300;
 /// Longest note `show` passes on for the user.
 pub const MAX_SHOW_MESSAGE_CHARS: usize = 200;
-/// Most actions one `steps` call runs.
+/// Most steps one `act` call runs.
 pub const MAX_STEPS: usize = 8;
-/// Largest scroll, in wheel notches.
-pub const MAX_SCROLL_AMOUNT: u32 = 20;
-/// Pixels one wheel notch scrolls.
-pub const SCROLL_NOTCH_PIXELS: u32 = 100;
+/// Pixels one `scroll` step moves: about one screen.
+pub const SCROLL_PIXELS: u32 = 600;
 
 /// Bump when the tool set or a policy here changes meaning.
-const POLICY_VERSION: u32 = 2;
+const POLICY_VERSION: u32 = 3;
 
 /// Content digest of the tool set and policy, the compiled equivalent of an
 /// MCP manifest digest. Changes only with a new build.

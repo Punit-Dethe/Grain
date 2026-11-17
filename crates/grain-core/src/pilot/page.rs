@@ -3,8 +3,13 @@
 //! The extension's page script returns page-controller's simplified HTML
 //! (`[12]<button aria-label=…>Text />`, one element per entry, page text in
 //! between) with Grain's stable control numbers. This module turns it into
-//! short rows (`[12] button "Text"`), applies the read views, caps the size,
-//! and reports what changed after an action.
+//! short rows, applies the read views, caps the size, and reports what changed
+//! after an action.
+//!
+//! Rows are written for the fewest tokens that stay unambiguous: a plain
+//! clickable control is just `[12] Book 07:30 AM (IMAX)`; only controls that
+//! take a different step say what they are (`[4] field Search`,
+//! `[7] dropdown Seats`, `[9] checkbox Terms checked`). No indents, no quotes.
 
 use std::collections::{HashMap, HashSet};
 
@@ -77,34 +82,32 @@ pub fn parse(value: &Value) -> Option<Read> {
         below: hint(text("footer")),
         ..Read::default()
     };
-    let mut open: Option<(usize, u32, String)> = None;
+    let mut open: Option<(u32, String)> = None;
     for line in content.lines() {
-        if let Some((depth, number, mut body)) = open.take() {
+        if let Some((number, mut body)) = open.take() {
             body.push('\n');
             body.push_str(line.trim());
             if line.trim_end().ends_with("/>") {
-                push_element(&mut read, depth, number, &body);
+                push_element(&mut read, number, &body);
             } else {
-                open = Some((depth, number, body));
+                open = Some((number, body));
             }
             continue;
         }
-        let depth = line.len() - line.trim_start_matches('\t').len();
         let trimmed = line.trim();
         if let Some((number, body)) = element_start(trimmed) {
             if trimmed.ends_with("/>") {
-                push_element(&mut read, depth, number, body);
+                push_element(&mut read, number, body);
             } else {
-                open = Some((depth, number, body.to_string()));
+                open = Some((number, body.to_string()));
             }
         } else if !trimmed.is_empty() && trimmed != "[Start of page]" && trimmed != "[End of page]"
         {
-            read.rows
-                .push(format!("{}{}", indent(depth), clip(trimmed, 200)));
+            read.rows.push(clip(trimmed, MAX_TEXT_ROW_CHARS));
         }
     }
-    if let Some((depth, number, body)) = open {
-        push_element(&mut read, depth, number, &body);
+    if let Some((number, body)) = open {
+        push_element(&mut read, number, &body);
     }
     Some(read)
 }
@@ -116,10 +119,6 @@ fn element_start(line: &str) -> Option<(u32, &str)> {
     let number = rest[..close].parse().ok()?;
     let body = &rest[close + 1..];
     body.starts_with('<').then_some((number, body))
-}
-
-fn indent(depth: usize) -> String {
-    "  ".repeat(depth.min(8))
 }
 
 /// A scroll hint from the header or footer, if the page continues.
@@ -134,10 +133,14 @@ fn hint(text: &str) -> Option<String> {
     })
 }
 
+/// Longest line of plain page text kept in a row.
+const MAX_TEXT_ROW_CHARS: usize = 160;
+
 /// Attributes worth showing; the rest (ids, classes, data-*) are noise.
+/// `checked` and `selected` show as a bare word when true.
 const KEPT_ATTRIBUTES: &[&str] = &["value", "placeholder", "checked", "selected", "expanded"];
 
-fn push_element(read: &mut Read, depth: usize, number: u32, body: &str) {
+fn push_element(read: &mut Read, number: u32, body: &str) {
     // `<tag attrs>text />` or `<tag attrs />`.
     let body = body.trim().trim_end_matches("/>").trim_end();
     let body = body.strip_prefix('<').unwrap_or(body);
@@ -157,7 +160,7 @@ fn push_element(read: &mut Read, depth: usize, number: u32, body: &str) {
             .find(|(key, _)| key == name)
             .map(|(_, value)| value.as_str())
     };
-    let role = role(tag, get("role"), get("type"));
+    let kind = kind(tag, get("role"), get("type"));
     let label = get("aria-label")
         .or_else(|| get("title"))
         .unwrap_or("")
@@ -169,30 +172,41 @@ fn push_element(read: &mut Read, depth: usize, number: u32, body: &str) {
         .collect::<Vec<_>>()
         .join(" · ");
     let text = clip(&text, 120);
-    let shown_attribute = attrs.iter().any(|(key, value)| {
-        KEPT_ATTRIBUTES.contains(&key.as_str()) && !(key == "checked" && value == "false")
-    });
+    let mut extras = String::new();
+    for (key, value) in &attrs {
+        match (key.as_str(), value.as_str()) {
+            ("checked" | "selected", "false") => {}
+            ("checked" | "selected", _) => extras.push_str(&format!(" {key}")),
+            ("placeholder", value) if value == label || value == text => {}
+            (key, value) if KEPT_ATTRIBUTES.contains(&key) => {
+                extras.push_str(&format!(" {key}={}", clip(value, 80)))
+            }
+            _ => {}
+        }
+    }
     // A nameless div, span or link (a click handler on a wrapper) tells the
     // model nothing and costs a row; form fields stay even unnamed.
-    if label.is_empty() && text.is_empty() && !shown_attribute && !secret && !is_field(&role) {
+    if label.is_empty() && text.is_empty() && extras.is_empty() && !secret && kind.is_empty() {
         return;
     }
-    let mut row = format!("{}[{number}] {role}", indent(depth));
+    let mut row = format!("[{number}]");
+    if !kind.is_empty() {
+        row.push(' ');
+        row.push_str(kind);
+    }
     if !label.is_empty() {
-        row.push_str(&format!(" \"{}\"", clip(label, 80)));
+        row.push(' ');
+        row.push_str(&clip(label, 80));
     }
     if !text.is_empty() && text != label {
         if label.is_empty() {
-            row.push_str(&format!(" \"{text}\""));
+            row.push(' ');
+            row.push_str(&text);
         } else {
             row.push_str(&format!(" ({text})"));
         }
     }
-    for (key, value) in &attrs {
-        if KEPT_ATTRIBUTES.contains(&key.as_str()) && !(key == "checked" && value == "false") {
-            row.push_str(&format!(" {key}={value}"));
-        }
-    }
+    row.push_str(&extras);
     if secret {
         row.push_str(" secret");
     }
@@ -200,24 +214,10 @@ fn push_element(read: &mut Read, depth: usize, number: u32, body: &str) {
     read.rows.push(row.clone());
     read.controls.push(Control {
         number,
-        row: row.trim_start().to_string(),
+        row,
         name,
         secret,
     });
-}
-
-fn is_field(role: &str) -> bool {
-    matches!(
-        role,
-        "field"
-            | "search field"
-            | "checkbox"
-            | "radio"
-            | "slider"
-            | "dropdown"
-            | "textbox"
-            | "combobox"
-    )
 }
 
 /// `type=search placeholder=Search Wikipedia id=x` → pairs. Values run to the
@@ -242,26 +242,35 @@ fn attributes(raw: &str) -> Vec<(String, String)> {
     out
 }
 
-fn role(tag: &str, role: Option<&str>, kind: Option<&str>) -> String {
+/// What a control is, said only when it takes something other than a click:
+/// `field` (fill), `dropdown` (choose), `checkbox`, `radio`, `switch`,
+/// `slider`. Empty for anything clicked: links, buttons, tabs, menu items.
+fn kind(tag: &str, role: Option<&str>, input_type: Option<&str>) -> &'static str {
     if let Some(role) = role.filter(|role| !role.is_empty()) {
-        return role.to_string();
+        return match role {
+            "textbox" | "searchbox" | "combobox" => "field",
+            "checkbox" | "menuitemcheckbox" => "checkbox",
+            "radio" | "menuitemradio" => "radio",
+            "switch" => "switch",
+            "slider" | "spinbutton" => "slider",
+            _ => "",
+        };
     }
-    match (tag, kind.unwrap_or("")) {
-        ("a", _) => "link".into(),
-        ("select", _) => "dropdown".into(),
-        ("textarea", _) => "field".into(),
-        ("input", "checkbox") => "checkbox".into(),
-        ("input", "radio") => "radio".into(),
-        ("input", "range") => "slider".into(),
-        ("input", "button" | "submit" | "reset" | "image") => "button".into(),
-        ("input", "search") => "search field".into(),
-        ("input", _) => "field".into(),
-        (other, _) => other.to_string(),
+    match (tag, input_type.unwrap_or("")) {
+        ("select", _) => "dropdown",
+        ("textarea", _) => "field",
+        ("input", "checkbox") => "checkbox",
+        ("input", "radio") => "radio",
+        ("input", "range") => "slider",
+        ("input", "button" | "submit" | "reset" | "image") => "",
+        ("input", _) => "field",
+        _ => "",
     }
 }
 
-/// The text the model reads for `view`, capped at [`MAX_READ_CHARS`].
-pub fn render(read: &Read, view: &View) -> String {
+/// The rows the model reads for `view`, capped at [`MAX_READ_CHARS`]. The
+/// header (tab, title, host) is the reply's, in `render.rs`.
+pub fn body(read: &Read, view: &View) -> String {
     let rows: Vec<&String> = match view {
         View::Find(words) => {
             let words: Vec<String> = words.split_whitespace().map(str::to_lowercase).collect();
@@ -275,7 +284,7 @@ pub fn render(read: &Read, view: &View) -> String {
         }
         _ => read.rows.iter().collect(),
     };
-    let mut out = format!("{} ({})\n", read.title, host(&read.url));
+    let mut out = String::new();
     if let (Some(above), View::Visible) = (&read.above, view) {
         out.push_str(&format!("({above})\n"));
     }
@@ -295,25 +304,29 @@ pub fn render(read: &Read, view: &View) -> String {
         out.push('\n');
     }
     if omitted > 0 {
-        out.push_str(&format!(
-            "… {omitted} more rows. Use find, or scroll and read again.\n"
-        ));
+        out.push_str(&format!("… {omitted} more rows: use find, or scroll.\n"));
     }
     if let (Some(below), View::Visible) = (&read.below, view) {
-        out.push_str(&format!("({below}; scroll, or read detail=page)\n"));
+        out.push_str(&format!("({below})\n"));
     }
     out.trim_end().to_string()
 }
 
-/// What changed between two reads of the same tab, capped at
-/// [`MAX_CHANGE_CHARS`]. A new page lists its rows as a fresh read would.
-pub fn changes(before: &Read, after: &Read) -> String {
+/// What an action did to a tab's screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Change {
+    /// A different page: report it as a fresh read.
+    NewPage,
+    Nothing,
+    /// Rows that appeared or changed, then how many went away, capped at
+    /// [`MAX_CHANGE_CHARS`].
+    Rows(String),
+}
+
+/// What changed between two on-screen reads of the same tab.
+pub fn changes(before: &Read, after: &Read) -> Change {
     if before.url != after.url || before.title != after.title {
-        let mut text = format!("Now on: {}", render(after, &View::Visible));
-        if text.len() > MAX_CHANGE_CHARS {
-            text = clip(&text, MAX_CHANGE_CHARS);
-        }
-        return text;
+        return Change::NewPage;
     }
     let seen: HashSet<&str> = before.rows.iter().map(|row| row.trim()).collect();
     let now: HashSet<&str> = after.rows.iter().map(|row| row.trim()).collect();
@@ -329,28 +342,25 @@ pub fn changes(before: &Read, after: &Read) -> String {
         .filter(|row| !now.contains(row.trim()))
         .count();
     if added.is_empty() && removed == 0 {
-        return "Nothing visible changed.".into();
+        return Change::Nothing;
     }
     let mut text = String::new();
-    if !added.is_empty() {
-        text.push_str("New or changed:\n");
-        let mut left = 0;
-        for row in &added {
-            if text.len() + row.len() + 1 > MAX_CHANGE_CHARS {
-                left += 1;
-                continue;
-            }
-            text.push_str(row);
-            text.push('\n');
+    let mut left = 0;
+    for row in &added {
+        if text.len() + row.len() + 1 > MAX_CHANGE_CHARS {
+            left += 1;
+            continue;
         }
-        if left > 0 {
-            text.push_str(&format!("… {left} more; read to see them.\n"));
-        }
+        text.push_str(row);
+        text.push('\n');
+    }
+    if left > 0 {
+        text.push_str(&format!("… {left} more: read to see them.\n"));
     }
     if removed > 0 {
-        text.push_str(&format!("{removed} rows went away.\n"));
+        text.push_str(&format!("({removed} rows went away)\n"));
     }
-    text.trim_end().to_string()
+    Change::Rows(text.trim_end().to_string())
 }
 
 /// Whether a read is only a loading placeholder ("Please wait…", "Loading…")
@@ -408,7 +418,9 @@ mod tests {
         let seats = read(SEATS);
         let rows = seats.rows.join("\n");
         assert!(rows.contains("[0] slider value=2"), "{rows}");
-        assert!(rows.contains("[3] button \"Select Seats\""), "{rows}");
+        assert!(rows.contains("[3] Select Seats"), "{rows}");
+        assert!(!rows.contains('"'), "rows carry no quotes");
+        assert!(!rows.lines().any(|row| row.starts_with(' ')), "no indents");
         assert!(rows.contains("How many seats?"));
         // A multi-line element joins its text.
         assert!(rows.contains("NORMAL · ₹500 · Available"), "{rows}");
@@ -418,9 +430,25 @@ mod tests {
             .iter()
             .find(|c| c.name.contains("Book 07:30 AM"))
             .expect("show button");
+        assert_eq!(show.row, format!("[{}] Book 07:30 AM (IMAX)", show.number));
+    }
+
+    #[test]
+    fn only_non_click_controls_say_what_they_are() {
+        let page = read(
+            "[1]<a >Home />\n[2]<input type=search placeholder=Search />\n[3]<select aria-label=Seats />\n[4]<input type=checkbox checked=true aria-label=Terms />\n[5]<input type=checkbox checked=false role=button aria-label=Menu />\n[6]<div role=combobox aria-label=City />",
+        );
+        let rows: Vec<&str> = page.rows.iter().map(String::as_str).collect();
         assert_eq!(
-            show.row,
-            format!("[{}] button \"Book 07:30 AM\" (IMAX)", show.number)
+            rows,
+            [
+                "[1] Home",
+                "[2] field placeholder=Search",
+                "[3] dropdown Seats",
+                "[4] checkbox Terms checked",
+                "[5] Menu",
+                "[6] field City",
+            ]
         );
     }
 
@@ -433,11 +461,10 @@ mod tests {
         assert!(!rows.contains("/>"));
         // Nameless wrappers are dropped; the labelled controls stay.
         assert!(
-            !rows.lines().any(|row| row.trim_end().ends_with("] div")),
+            !rows.lines().any(|row| row.trim_end().ends_with(']')),
             "{rows}"
         );
-        assert!(!rows.lines().any(|row| row.trim_end().ends_with("] span")));
-        assert!(rows.contains("link \"Donate\""));
+        assert!(rows.contains("] Donate"), "{rows}");
     }
 
     #[test]
@@ -447,7 +474,7 @@ mod tests {
             ("zomato", ZOMATO),
             ("wikipedia", WIKIPEDIA),
         ] {
-            let shown = render(&read(raw), &View::Page);
+            let shown = body(&read(raw), &View::Page);
             assert!(
                 shown.len() <= MAX_READ_CHARS + 200,
                 "{name}: {}",
@@ -469,18 +496,17 @@ mod tests {
 
     #[test]
     fn find_keeps_only_matching_rows() {
-        let shown = render(&read(SHOWTIMES), &View::Find("07:30".into()));
+        let shown = body(&read(SHOWTIMES), &View::Find("07:30".into()));
         assert!(shown.contains("Book 07:30 AM"), "{shown}");
         assert!(shown.len() < 1_000, "{}", shown.len());
-        let none = render(&read(SEATS), &View::Find("zzzz".into()));
+        let none = body(&read(SEATS), &View::Find("zzzz".into()));
         assert!(none.contains("Nothing on the page matches"));
     }
 
     #[test]
     fn visible_view_carries_the_scroll_hint() {
-        let shown = render(&read(SEATS), &View::Visible);
+        let shown = body(&read(SEATS), &View::Visible);
         assert!(shown.contains("1200 pixels below"), "{shown}");
-        assert!(shown.starts_with("Page (in.bookmyshow.com)"), "{shown}");
     }
 
     #[test]
@@ -495,18 +521,18 @@ mod tests {
     fn changes_on_the_same_page_and_on_a_new_page() {
         let before = read(SEATS);
         let mut after = before.clone();
-        after.rows.push("[9] button \"Proceed\"".into());
-        let report = changes(&before, &after);
-        assert!(
-            report.contains("New or changed:\n[9] button \"Proceed\""),
-            "{report}"
+        after.rows.push("[9] Proceed".into());
+        after.rows.remove(0);
+        assert_eq!(
+            changes(&before, &after),
+            Change::Rows("[9] Proceed\n(1 rows went away)".into())
         );
-        assert_eq!(changes(&before, &before), "Nothing visible changed.");
+        assert_eq!(changes(&before, &before), Change::Nothing);
         let moved = Read {
             url: "https://in.bookmyshow.com/seat".into(),
             ..after.clone()
         };
-        assert!(changes(&before, &moved).starts_with("Now on: Page"));
+        assert_eq!(changes(&before, &moved), Change::NewPage);
     }
 
     #[test]

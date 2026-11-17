@@ -375,6 +375,51 @@ Chrome Web Store and Edge Add-ons listings (unlisted to start), the AMO
 listing, and the one-click Connect: Grain opens the store page, the user
 clicks Add, and Grain shows Connected.
 
+## Token cuts (2026-11-17)
+
+The user's first priority after Pilot was chosen. Changes:
+
+- **Five tools instead of eleven:** `open`, `read` (`find`, `page`), `act`,
+  `show` and `tabs` (`close`). `act` takes a list of up to 8 steps
+  (`{click:n}`, `{fill:n,text,enter?}`, `{choose:n,option}`, `{key}`,
+  `{scroll}`) and replaces click, type, choose, press, scroll and steps. The
+  list is re-sent on every model round: about 990 → 460 tokens.
+- **Shorter rows:** a clicked control is `[34] Book 07:30 AM (IMAX)`, with no
+  role word, quotes or indent. Only controls that take another step say what
+  they are (`field`, `dropdown`, `checkbox`, `radio`, `switch`, `slider`).
+  Plain text lines are capped at 160 characters.
+- **One header line per reply:** `t2 · Title (host) · untrusted page text`,
+  in place of a sentence about untrusted content on every reply.
+- **One view per tab in the conversation:** when a tab gets a new whole view,
+  the Agent loop (`ToolTurn::supersede_pilot_views` in `agent.rs`) shrinks
+  that tab's earlier Pilot results to the line saying what they did. Change
+  reports and `find` results do not shrink anything. Only Pilot's own results
+  are touched, so another tool's output cannot erase them.
+- **Failures no longer block Pilot.** The Agent loop blocks a tool for the
+  rest of a task after any non-success, which is meant for uncertain effects.
+  Pilot's failures are definite (refused before acting, or the failed step
+  with the screen it left), so its tools stay usable. Before this, one stale
+  `[n]` ended the task's clicking.
+
+Measured on the same steps (live Edge run, about 4 characters per token):
+
+| Step | Before | After |
+| --- | --- | --- |
+| Tool list (every round) | ~990 | ~460 |
+| BookMyShow `open` | ~880 | ~500 |
+| BookMyShow `read find "Book"` | ~550 | ~240 |
+| Wikipedia search result page | ~1,040 | ~890 |
+| Full page, showtimes / Zomato / Wikipedia | 3.3k / 1.1k / 4.0k | 2.5k / 0.8k / 3.4k |
+
+Next ideas, not built:
+
+- `find` with context: matching rows lose their group (which movie a show
+  time belongs to). Keep the nearest heading-like row above each match.
+- Duplicate controls: BookMyShow repeats each show as `Book 04:05 PM` and a
+  bare `04:05 PM`. A control whose name repeats the one before it could be
+  dropped.
+- Site chrome: the same header links on every page of a site.
+
 ## Open decisions for the user
 
 1. **Store accounts.** The Chrome Web Store needs a developer account (one-time

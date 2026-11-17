@@ -1,14 +1,15 @@
 //! The tools the model sees, and parsing their arguments into a [`Call`].
 //!
-//! The whole list is budgeted at ~1.5k tokens. Tabs are `t1`, `t2`…; controls
-//! are the bracketed numbers from Pilot's reads. Neither is a browser id, so
-//! the model cannot name a tab Pilot did not open.
+//! Five tools, budgeted at ~600 tokens, because the list is re-sent on every
+//! model round. Every page action goes through one `act` list. Tabs are `t1`,
+//! `t2`…; controls are the bracketed numbers from Pilot's reads. Neither is a
+//! browser id, so the model cannot name a tab Pilot did not open.
 
 use serde_json::{json, Value};
 
 use super::page::View;
 use super::policy;
-use super::{clip, MAX_SCROLL_AMOUNT, MAX_STEPS};
+use super::{clip, MAX_STEPS};
 
 /// One Pilot tool, as the Agent catalogue needs it.
 pub struct Tool {
@@ -21,11 +22,7 @@ pub struct Tool {
 }
 
 fn tab_property() -> Value {
-    json!({"type": "string", "description": "Tab like t1. Default: the last one used."})
-}
-
-fn control_property() -> Value {
-    json!({"type": "integer", "minimum": 1, "description": "Control number from a read, e.g. 12 for [12]."})
+    json!({"type": "string"})
 }
 
 /// Every tool, in the order the catalogue lists them.
@@ -34,7 +31,7 @@ pub fn tools() -> Vec<Tool> {
         Tool {
             name: "open",
             title: "Open a page in the user's browser",
-            description: "Open an https link in a new tab of the user's own browser, signed in as them, to act on that site. Not for finding information: use web search. Returns the tab (t1…) and a read of what is on screen.",
+            description: "Open an https link in a new tab of the user's own browser, signed in as them, to do something there (book, order, fill a form). Not for looking things up: use web search. Returns the tab (t1…) and what is on screen.",
             keywords: &["website", "url", "visit", "go to", "browse", "book", "order", "web page"],
             read_only: false,
             schema: json!({
@@ -45,17 +42,9 @@ pub fn tools() -> Vec<Tool> {
             }),
         },
         Tool {
-            name: "tabs",
-            title: "List Pilot's tabs",
-            description: "List the tabs Pilot opened, with their titles.",
-            keywords: &["tabs", "which tab", "open tabs"],
-            read_only: true,
-            schema: json!({"type": "object", "properties": {}, "additionalProperties": false}),
-        },
-        Tool {
             name: "read",
             title: "Read a tab",
-            description: "Read what is on screen in a tab, with numbered controls. find: only rows of the whole page matching these words (cheapest). detail=page: the whole page.",
+            description: "Read a tab (default: the last one used). Rows of what is on screen; [n] is a control. find: only rows of the whole page with any of these words (cheapest). page: the whole page.",
             keywords: &["read", "look", "page", "see", "find", "what is on", "buttons", "text"],
             read_only: true,
             schema: json!({
@@ -63,127 +52,52 @@ pub fn tools() -> Vec<Tool> {
                 "properties": {
                     "tab": tab_property(),
                     "find": {"type": "string"},
-                    "detail": {"type": "string", "enum": ["screen", "page"]}
+                    "page": {"type": "boolean"}
                 },
                 "additionalProperties": false
             }),
         },
         Tool {
-            name: "click",
-            title: "Click a control",
-            description: "Click a numbered control. Returns what changed.",
-            keywords: &["click", "press", "tap", "select", "button", "link"],
-            read_only: false,
-            schema: json!({
-                "type": "object",
-                "properties": {"tab": tab_property(), "control": control_property()},
-                "required": ["control"],
-                "additionalProperties": false
-            }),
-        },
-        Tool {
-            name: "type",
-            title: "Type into a field",
-            description: "Put text into a numbered field. submit=true presses Enter after. Never for passwords, codes or card details.",
-            keywords: &["type", "fill", "enter text", "search", "write", "field"],
+            name: "act",
+            title: "Act in a tab",
+            description: "Do up to 8 steps in a tab, in order; stops at the first failure. Returns what changed. A step is one of {click:n} {fill:n,text,enter?} {choose:n,option} {key:\"enter\"} {scroll:\"down\"}, n from a read. Never fill passwords, codes or card details.",
+            keywords: &[
+                "click", "press", "tap", "select", "button", "link", "type", "fill", "enter text",
+                "search", "field", "dropdown", "choose", "option", "key", "scroll", "form",
+            ],
             read_only: false,
             schema: json!({
                 "type": "object",
                 "properties": {
                     "tab": tab_property(),
-                    "control": control_property(),
-                    "text": {"type": "string"},
-                    "submit": {"type": "boolean"}
-                },
-                "required": ["control", "text"],
-                "additionalProperties": false
-            }),
-        },
-        Tool {
-            name: "choose",
-            title: "Pick a drop-down option",
-            description: "Pick an option in a numbered drop-down by its text.",
-            keywords: &["dropdown", "choose", "option", "select", "pick"],
-            read_only: false,
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "tab": tab_property(),
-                    "control": control_property(),
-                    "option": {"type": "string"}
-                },
-                "required": ["control", "option"],
-                "additionalProperties": false
-            }),
-        },
-        Tool {
-            name: "press",
-            title: "Press a key",
-            description: "Press one key in the focused part of a tab.",
-            keywords: &["key", "enter", "escape", "tab", "arrow"],
-            read_only: false,
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "tab": tab_property(),
-                    "key": {"type": "string", "enum": policy::KEYS}
-                },
-                "required": ["key"],
-                "additionalProperties": false
-            }),
-        },
-        Tool {
-            name: "scroll",
-            title: "Scroll a tab",
-            description: "Scroll a tab to reveal more. amount is wheel notches (default 5).",
-            keywords: &["scroll", "more", "down", "up", "load more"],
-            read_only: false,
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "tab": tab_property(),
-                    "direction": {"type": "string", "enum": ["down", "up", "left", "right"]},
-                    "amount": {"type": "integer", "minimum": 1, "maximum": MAX_SCROLL_AMOUNT}
-                },
-                "required": ["direction"],
-                "additionalProperties": false
-            }),
-        },
-        Tool {
-            name: "steps",
-            title: "Several actions at once",
-            description: "Run up to 8 click/type/press actions in one tab in order, stopping at the first failure. Returns what changed once.",
-            keywords: &["steps", "fill form", "several", "batch"],
-            read_only: false,
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "tab": tab_property(),
-                    "steps": {
+                    "do": {
                         "type": "array",
                         "minItems": 1,
                         "maxItems": MAX_STEPS,
                         "items": {
                             "type": "object",
                             "properties": {
-                                "action": {"type": "string", "enum": ["click", "type", "press"]},
-                                "control": {"type": "integer", "minimum": 1},
+                                "click": {"type": "integer"},
+                                "fill": {"type": "integer"},
                                 "text": {"type": "string"},
-                                "key": {"type": "string", "enum": policy::KEYS}
+                                "enter": {"type": "boolean"},
+                                "choose": {"type": "integer"},
+                                "option": {"type": "string"},
+                                "key": {"type": "string"},
+                                "scroll": {"type": "string", "enum": ["down", "up", "left", "right"]}
                             },
-                            "required": ["action"],
                             "additionalProperties": false
                         }
                     }
                 },
-                "required": ["steps"],
+                "required": ["do"],
                 "additionalProperties": false
             }),
         },
         Tool {
             name: "show",
             title: "Hand the tab to the user",
-            description: "Bring a tab to the user's screen and stop. reason: sign_in, user_action (pay, accept terms, a code, a CAPTCHA) or view. Use before any payment.",
+            description: "Bring a tab in front of the user and stop. reason: sign_in, user_action (pay, accept terms, a code, a CAPTCHA) or view. Always before paying.",
             keywords: &["sign in", "log in", "pay", "payment", "confirm", "captcha", "show me", "let me see"],
             read_only: false,
             schema: json!({
@@ -191,21 +105,21 @@ pub fn tools() -> Vec<Tool> {
                 "properties": {
                     "tab": tab_property(),
                     "reason": {"type": "string", "enum": ["sign_in", "user_action", "view"]},
-                    "message": {"type": "string", "description": "One line for the user."}
+                    "message": {"type": "string"}
                 },
                 "required": ["reason"],
                 "additionalProperties": false
             }),
         },
         Tool {
-            name: "close",
-            title: "Close a tab Pilot opened",
-            description: "Close a tab Pilot opened when you are done with it.",
-            keywords: &["close", "done", "finished"],
-            read_only: false,
+            name: "tabs",
+            title: "Pilot's tabs",
+            description: "List Pilot's tabs. close: a tab to close when done with it.",
+            keywords: &["tabs", "which tab", "open tabs", "close", "done", "finished"],
+            read_only: true,
             schema: json!({
                 "type": "object",
-                "properties": {"tab": tab_property()},
+                "properties": {"close": tab_property()},
                 "additionalProperties": false
             }),
         },
@@ -242,48 +156,32 @@ pub enum ShowReason {
     View,
 }
 
-/// One action inside `steps`.
+/// One step of `act`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     Click(u32),
-    Type(u32, String),
-    Press(&'static str),
+    Fill {
+        control: u32,
+        text: String,
+        enter: bool,
+    },
+    Choose {
+        control: u32,
+        option: String,
+    },
+    Key(&'static str),
+    Scroll(&'static str),
 }
 
 /// One validated call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
     Open(String),
-    Tabs,
     Read {
         tab: Option<Handle>,
         view: View,
     },
-    Click {
-        tab: Option<Handle>,
-        control: u32,
-    },
-    Type {
-        tab: Option<Handle>,
-        control: u32,
-        text: String,
-        submit: bool,
-    },
-    Choose {
-        tab: Option<Handle>,
-        control: u32,
-        option: String,
-    },
-    Press {
-        tab: Option<Handle>,
-        key: &'static str,
-    },
-    Scroll {
-        tab: Option<Handle>,
-        direction: &'static str,
-        amount: u32,
-    },
-    Steps {
+    Act {
         tab: Option<Handle>,
         steps: Vec<Step>,
     },
@@ -292,8 +190,8 @@ pub enum Call {
         reason: ShowReason,
         message: Option<String>,
     },
-    Close {
-        tab: Option<Handle>,
+    Tabs {
+        close: Option<Handle>,
     },
 }
 
@@ -305,16 +203,15 @@ fn required<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     text(args, key).ok_or_else(|| format!("`{key}` is required"))
 }
 
-fn tab(args: &Value) -> Result<Option<Handle>, String> {
-    match text(args, "tab").map(str::trim) {
+fn handle(args: &Value, key: &str) -> Result<Option<Handle>, String> {
+    match text(args, key).map(str::trim) {
         None | Some("") => Ok(None),
         Some(raw) => Handle::parse(raw).map(Some),
     }
 }
 
 /// A control number: 12, "12" or "[12]".
-fn control(args: &Value) -> Result<u32, String> {
-    let value = args.get("control").ok_or("`control` is required")?;
+fn control(value: &Value) -> Result<u32, String> {
     let number = match value {
         Value::Number(n) => n.as_u64(),
         Value::String(s) => s.trim().trim_matches(['[', ']']).parse::<u64>().ok(),
@@ -323,85 +220,32 @@ fn control(args: &Value) -> Result<u32, String> {
     number
         .filter(|n| (1..=u32::MAX as u64).contains(n))
         .map(|n| n as u32)
-        .ok_or_else(|| "`control` must be a control number from a read, like 12".into())
-}
-
-fn bool_arg(args: &Value, key: &str) -> bool {
-    args.get(key).and_then(Value::as_bool).unwrap_or(false)
+        .ok_or_else(|| "a control must be a number from a read, like 12".into())
 }
 
 /// Validate the model's arguments for `action`.
 pub fn parse(action: &str, args: &Value) -> Result<Call, String> {
     match action {
         "open" => Ok(Call::Open(policy::web_link(required(args, "url")?)?)),
-        "tabs" => Ok(Call::Tabs),
         "read" => {
             let find = text(args, "find").map(str::trim).filter(|f| !f.is_empty());
-            let view = match (find, text(args, "detail")) {
+            let whole = args.get("page").and_then(Value::as_bool).unwrap_or(false);
+            let view = match (find, whole) {
                 (Some(find), _) => View::Find(policy::short_field(find, "find")?),
-                (None, None | Some("screen")) => View::Visible,
-                (None, Some("page")) => View::Page,
-                (None, Some(other)) => {
-                    return Err(format!("`{}` is not screen or page", clip(other, 40)))
-                }
+                (None, true) => View::Page,
+                (None, false) => View::Visible,
             };
             Ok(Call::Read {
-                tab: tab(args)?,
+                tab: handle(args, "tab")?,
                 view,
             })
         }
-        "click" => Ok(Call::Click {
-            tab: tab(args)?,
-            control: control(args)?,
-        }),
-        "type" => Ok(Call::Type {
-            tab: tab(args)?,
-            control: control(args)?,
-            text: policy::typed_text(required(args, "text")?)?,
-            submit: bool_arg(args, "submit"),
-        }),
-        "choose" => Ok(Call::Choose {
-            tab: tab(args)?,
-            control: control(args)?,
-            option: policy::short_field(required(args, "option")?, "the option")?,
-        }),
-        "press" => Ok(Call::Press {
-            tab: tab(args)?,
-            key: policy::key(required(args, "key")?)?,
-        }),
-        "scroll" => {
-            let direction = match required(args, "direction")? {
-                "down" => "down",
-                "up" => "up",
-                "left" => "left",
-                "right" => "right",
-                other => {
-                    return Err(format!(
-                        "`{}` is not down, up, left or right",
-                        clip(other, 40)
-                    ))
-                }
-            };
-            let amount = match args.get("amount") {
-                None => 5,
-                Some(value) => value
-                    .as_u64()
-                    .filter(|n| (1..=MAX_SCROLL_AMOUNT as u64).contains(n))
-                    .ok_or_else(|| format!("`amount` must be 1 to {MAX_SCROLL_AMOUNT}"))?
-                    as u32,
-            };
-            Ok(Call::Scroll {
-                tab: tab(args)?,
-                direction,
-                amount,
-            })
-        }
-        "steps" => {
+        "act" => {
             let items = args
-                .get("steps")
+                .get("do")
                 .and_then(Value::as_array)
                 .filter(|items| !items.is_empty())
-                .ok_or("`steps` must be a list of actions")?;
+                .ok_or("`do` must be a list of steps")?;
             if items.len() > MAX_STEPS {
                 return Err(format!("at most {MAX_STEPS} steps at a time"));
             }
@@ -410,13 +254,13 @@ pub fn parse(action: &str, args: &Value) -> Result<Call, String> {
                 .enumerate()
                 .map(|(at, step)| parse_step(step).map_err(|e| format!("step {}: {e}", at + 1)))
                 .collect::<Result<Vec<_>, String>>()?;
-            Ok(Call::Steps {
-                tab: tab(args)?,
+            Ok(Call::Act {
+                tab: handle(args, "tab")?,
                 steps,
             })
         }
         "show" => Ok(Call::Show {
-            tab: tab(args)?,
+            tab: handle(args, "tab")?,
             reason: match required(args, "reason")? {
                 "sign_in" => ShowReason::SignIn,
                 "user_action" => ShowReason::UserAction,
@@ -433,40 +277,84 @@ pub fn parse(action: &str, args: &Value) -> Result<Call, String> {
                 Some(message) => Some(policy::show_message(message)?),
             },
         }),
-        "close" => Ok(Call::Close { tab: tab(args)? }),
+        "tabs" => Ok(Call::Tabs {
+            close: handle(args, "close")?,
+        }),
         other => Err(format!("Grain Pilot has no action `{}`", clip(other, 40))),
     }
 }
 
+/// One `act` step: exactly one of click, fill, choose, key or scroll.
 fn parse_step(step: &Value) -> Result<Step, String> {
-    Ok(match required(step, "action")? {
-        "click" => Step::Click(control(step)?),
-        "type" => Step::Type(control(step)?, policy::typed_text(required(step, "text")?)?),
-        "press" => Step::Press(policy::key(required(step, "key")?)?),
-        other => return Err(format!("`{}` is not click, type or press", clip(other, 40))),
+    let object = step.as_object().ok_or("a step must be an object")?;
+    let verbs: Vec<&str> = ["click", "fill", "choose", "key", "scroll"]
+        .into_iter()
+        .filter(|verb| object.contains_key(*verb))
+        .collect();
+    let [verb] = verbs[..] else {
+        return Err("give exactly one of click, fill, choose, key or scroll".into());
+    };
+    let value = &object[verb];
+    Ok(match verb {
+        "click" => Step::Click(control(value)?),
+        "fill" => Step::Fill {
+            control: control(value)?,
+            text: policy::typed_text(required(step, "text")?)?,
+            enter: step.get("enter").and_then(Value::as_bool).unwrap_or(false),
+        },
+        "choose" => Step::Choose {
+            control: control(value)?,
+            option: policy::short_field(required(step, "option")?, "the option")?,
+        },
+        "key" => Step::Key(policy::key(value.as_str().unwrap_or(""))?),
+        _ => Step::Scroll(match value.as_str().unwrap_or("") {
+            "down" => "down",
+            "up" => "up",
+            "left" => "left",
+            "right" => "right",
+            other => {
+                return Err(format!(
+                    "`{}` is not down, up, left or right",
+                    clip(other, 40)
+                ))
+            }
+        }),
     })
+}
+
+impl Step {
+    /// The control the step acts on, if any.
+    pub fn control(&self) -> Option<u32> {
+        match self {
+            Step::Click(n) | Step::Fill { control: n, .. } | Step::Choose { control: n, .. } => {
+                Some(*n)
+            }
+            Step::Key(_) | Step::Scroll(_) => None,
+        }
+    }
+
+    fn describe_for_log(&self) -> String {
+        match self {
+            Step::Click(n) => format!("click {n}"),
+            Step::Fill {
+                control,
+                text,
+                enter,
+            } => format!(
+                "fill {control} chars={} enter={enter}",
+                text.chars().count()
+            ),
+            Step::Choose { control, .. } => format!("choose {control}"),
+            Step::Key(key) => format!("key {key}"),
+            Step::Scroll(direction) => format!("scroll {direction}"),
+        }
+    }
 }
 
 impl Call {
     /// Whether the call only reads.
     pub fn read_only(&self) -> bool {
-        matches!(self, Call::Tabs | Call::Read { .. })
-    }
-
-    /// The tab the call names, if any.
-    pub fn tab(&self) -> Option<Handle> {
-        match self {
-            Call::Open(_) | Call::Tabs => None,
-            Call::Read { tab, .. }
-            | Call::Click { tab, .. }
-            | Call::Type { tab, .. }
-            | Call::Choose { tab, .. }
-            | Call::Press { tab, .. }
-            | Call::Scroll { tab, .. }
-            | Call::Steps { tab, .. }
-            | Call::Show { tab, .. }
-            | Call::Close { tab } => *tab,
-        }
+        matches!(self, Call::Read { .. } | Call::Tabs { close: None })
     }
 
     /// Log-safe description: the action and its shape, never typed text or a
@@ -474,32 +362,24 @@ impl Call {
     pub fn describe_for_log(&self) -> String {
         match self {
             Call::Open(url) => format!("open host={}", super::page::host(url)),
-            Call::Tabs => "tabs".into(),
             Call::Read { view, .. } => match view {
                 View::Visible => "read".into(),
                 View::Page => "read page".into(),
                 View::Find(_) => "read find".into(),
             },
-            Call::Click { control, .. } => format!("click {control}"),
-            Call::Type {
-                control,
-                text,
-                submit,
-                ..
-            } => {
-                format!(
-                    "type {control} chars={} submit={submit}",
-                    text.chars().count()
-                )
-            }
-            Call::Choose { control, .. } => format!("choose {control}"),
-            Call::Press { key, .. } => format!("press {key}"),
-            Call::Scroll {
-                direction, amount, ..
-            } => format!("scroll {direction} {amount}"),
-            Call::Steps { steps, .. } => format!("steps {}", steps.len()),
+            Call::Act { steps, .. } => format!(
+                "act {}",
+                steps
+                    .iter()
+                    .map(Step::describe_for_log)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Call::Show { reason, .. } => format!("show {reason:?}"),
-            Call::Close { .. } => "close".into(),
+            Call::Tabs { close } => match close {
+                Some(handle) => format!("tabs close {handle}"),
+                None => "tabs".into(),
+            },
         }
     }
 }
@@ -511,7 +391,7 @@ mod tests {
     #[test]
     fn every_tool_has_a_closed_schema_and_a_parse_arm() {
         let tools = tools();
-        assert_eq!(tools.len(), 11);
+        assert_eq!(tools.len(), 5);
         for tool in &tools {
             assert_eq!(tool.schema["type"], "object", "{}", tool.name);
             assert_eq!(tool.schema["additionalProperties"], false, "{}", tool.name);
@@ -530,8 +410,13 @@ mod tests {
             .iter()
             .map(|tool| format!("{}{}{}", tool.name, tool.description, tool.schema))
             .collect();
-        // About four characters a token; budget 1.5k tokens.
-        assert!(text.len() / 4 <= 1_500, "{} tokens", text.len() / 4);
+        // About four characters a token; budget 600 tokens.
+        println!(
+            "tool list: ~{} tokens ({} chars)",
+            text.len() / 4,
+            text.len()
+        );
+        assert!(text.len() / 4 <= 600, "{} tokens", text.len() / 4);
     }
 
     #[test]
@@ -539,18 +424,14 @@ mod tests {
         for tool in tools() {
             let sample = match tool.name {
                 "open" => json!({"url": "https://example.com"}),
-                "click" => json!({"control": 3}),
-                "type" => json!({"control": 3, "text": "x"}),
-                "choose" => json!({"control": 3, "option": "NORMAL"}),
-                "press" => json!({"key": "return"}),
-                "scroll" => json!({"direction": "down"}),
-                "steps" => json!({"steps": [{"action": "click", "control": 1}]}),
+                "act" => json!({"do": [{"click": 1}]}),
                 "show" => json!({"reason": "view"}),
                 _ => json!({}),
             };
             let call = parse(tool.name, &sample).unwrap_or_else(|e| panic!("{}: {e}", tool.name));
             assert_eq!(call.read_only(), tool.read_only, "{}", tool.name);
         }
+        assert!(!parse("tabs", &json!({"close": "t2"})).unwrap().read_only());
     }
 
     #[test]
@@ -561,17 +442,59 @@ mod tests {
         assert!(Handle::parse("132036x").is_err());
         assert_eq!(Handle(4).to_string(), "t4");
         for raw in [json!(12), json!("12"), json!("[12]")] {
-            let call = parse("click", &json!({"control": raw})).unwrap();
+            let call = parse("act", &json!({"do": [{"click": raw}]})).unwrap();
             assert_eq!(
                 call,
-                Call::Click {
+                Call::Act {
                     tab: None,
-                    control: 12
+                    steps: vec![Step::Click(12)]
                 }
             );
         }
-        assert!(parse("click", &json!({"control": 0})).is_err());
-        assert!(parse("click", &json!({"control": "s0001:12"})).is_err());
+        assert!(parse("act", &json!({"do": [{"click": 0}]})).is_err());
+        assert!(parse("act", &json!({"do": [{"click": "s0001:12"}]})).is_err());
+    }
+
+    #[test]
+    fn act_steps_parse_each_verb() {
+        let call = parse(
+            "act",
+            &json!({"tab": "t2", "do": [
+                {"fill": 4, "text": "Pune", "enter": true},
+                {"choose": 7, "option": "NORMAL"},
+                {"key": "Escape"},
+                {"scroll": "down"},
+                {"click": "[9]"}
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(
+            call,
+            Call::Act {
+                tab: Some(Handle(2)),
+                steps: vec![
+                    Step::Fill {
+                        control: 4,
+                        text: "Pune".into(),
+                        enter: true
+                    },
+                    Step::Choose {
+                        control: 7,
+                        option: "NORMAL".into()
+                    },
+                    Step::Key("escape"),
+                    Step::Scroll("down"),
+                    Step::Click(9),
+                ]
+            }
+        );
+        // Exactly one verb per step.
+        assert!(parse(
+            "act",
+            &json!({"do": [{"click": 1, "fill": 2, "text": "x"}]})
+        )
+        .is_err());
+        assert!(parse("act", &json!({"do": [{"text": "x"}]})).is_err());
     }
 
     #[test]
@@ -585,7 +508,7 @@ mod tests {
             }
         );
         assert_eq!(
-            read(json!({"detail": "page", "tab": "t2"})),
+            read(json!({"page": true, "tab": "t2"})),
             Call::Read {
                 tab: Some(Handle(2)),
                 view: View::Page
@@ -598,32 +521,29 @@ mod tests {
                 view: View::Find("11:20".into())
             }
         );
-        assert!(parse("read", &json!({"detail": "everything"})).is_err());
     }
 
     #[test]
     fn refusals_happen_at_parse_time() {
         assert!(parse("open", &json!({"url": "file:///C:/x"})).is_err());
-        assert!(parse("open_app", &json!({"name": "notepad"})).is_err());
-        assert!(parse("press", &json!({"key": "ctrl+w"})).is_err());
-        assert!(parse("scroll", &json!({"direction": "down", "amount": 500})).is_err());
-        assert!(parse("type", &json!({"control": 1, "text": "a\u{1b}[2J"})).is_err());
-        let too_many: Vec<Value> = (0..9)
-            .map(|_| json!({"action": "press", "key": "tab"}))
-            .collect();
-        assert!(parse("steps", &json!({"steps": too_many})).is_err());
-        let error = parse(
-            "steps",
-            &json!({"steps": [{"action": "press", "key": "tab"}, {"action": "drag"}]}),
-        )
-        .unwrap_err();
+        assert!(parse("click", &json!({"control": 1})).is_err());
+        assert!(parse("act", &json!({"do": [{"key": "ctrl+w"}]})).is_err());
+        assert!(parse("act", &json!({"do": [{"scroll": "sideways"}]})).is_err());
+        assert!(parse("act", &json!({"do": [{"fill": 1, "text": "a\u{1b}[2J"}]})).is_err());
+        let too_many: Vec<Value> = (0..9).map(|_| json!({"key": "tab"})).collect();
+        assert!(parse("act", &json!({"do": too_many})).is_err());
+        let error = parse("act", &json!({"do": [{"key": "tab"}, {"drag": 3}]})).unwrap_err();
         assert!(error.starts_with("step 2"), "{error}");
     }
 
     #[test]
     fn log_lines_never_carry_typed_text_or_full_addresses() {
-        let typed = parse("type", &json!({"control": 4, "text": "my secret note"})).unwrap();
-        assert_eq!(typed.describe_for_log(), "type 4 chars=14 submit=false");
+        let typed = parse(
+            "act",
+            &json!({"do": [{"fill": 4, "text": "my secret note"}]}),
+        )
+        .unwrap();
+        assert_eq!(typed.describe_for_log(), "act fill 4 chars=14 enter=false");
         let open = parse(
             "open",
             &json!({"url": "https://in.bookmyshow.com/buytickets/CPVM?x=1"}),

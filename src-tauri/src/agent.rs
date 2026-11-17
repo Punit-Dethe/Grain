@@ -2938,6 +2938,8 @@ struct ToolTurn {
     started: Instant,
     call_occurrences: HashMap<[u8; 32], usize>,
     receipts: Vec<String>,
+    /// Call ids of Grain Pilot results, whose superseded page views shrink.
+    pilot_results: HashSet<String>,
 }
 
 struct PendingToolTurn {
@@ -2989,15 +2991,43 @@ impl ToolTurn {
         call: &crate::llm_client::ToolCallOut,
         outcome: grain_core::execution::ActionOutcome,
     ) {
-        if !matches!(outcome, grain_core::execution::ActionOutcome::Succeeded(_)) {
+        // [GRAIN] Grain Pilot's failures are never uncertain: it refuses before
+        // acting, or reports the step that failed with the screen it left. Its
+        // read-act-check loop must stay usable after one (a stale [n]).
+        let pilot = crate::grain_pilot::is_pilot_tool(&call.name);
+        if !pilot && !matches!(outcome, grain_core::execution::ActionOutcome::Succeeded(_)) {
             // Automatic approval must not replay an uncertain effect. A fresh
             // explicit request is required, as in the former confirmation path.
             self.blocked_tools.insert(call.name.clone());
         }
-        self.result(call.id.clone(), outcome.model_summary());
+        let summary = outcome.model_summary();
+        if pilot {
+            self.supersede_pilot_views(&summary);
+            self.pilot_results.insert(call.id.clone());
+        }
+        self.result(call.id.clone(), summary);
         let receipt = outcome_to_reply(outcome).text;
         self.receipts
             .push(grain_core::execution::bounded_result_text(&receipt, MAX_TOOL_RESULT_BYTES).text);
+    }
+
+    /// [GRAIN] A new whole view of a Pilot tab makes every earlier Pilot result
+    /// for that tab stale: shrink them to what they did, so the conversation
+    /// carries one copy of each page instead of every copy the task read.
+    fn supersede_pilot_views(&mut self, newest: &str) {
+        use grain_core::pilot::render::{page_of, superseded};
+        let Some((tab, true)) = page_of(newest) else {
+            return;
+        };
+        for entry in &mut self.entries {
+            if let crate::llm_client::ChatEntry::ToolResult { call_id, content } = entry {
+                if self.pilot_results.contains(call_id)
+                    && page_of(content).is_some_and(|(old, _)| old == tab)
+                {
+                    *content = superseded(content);
+                }
+            }
+        }
     }
 
     fn failure(&self, error: String) -> Result<AgentReply, String> {
@@ -3198,6 +3228,7 @@ async fn run_with_tools(
             started: preparation_started,
             call_occurrences: HashMap::new(),
             receipts: Vec::new(),
+            pilot_results: HashSet::new(),
         },
         image,
         run,
@@ -3283,6 +3314,7 @@ mod tool_continuation_tests {
             started: Instant::now(),
             call_occurrences: HashMap::new(),
             receipts: Vec::new(),
+            pilot_results: HashSet::new(),
         }
     }
 
@@ -3291,6 +3323,91 @@ mod tool_continuation_tests {
             content: String::new(),
             tool_calls: calls,
         }
+    }
+
+    fn pilot_call(id: &str, action: &str) -> ToolCallOut {
+        ToolCallOut {
+            id: id.into(),
+            name: grain_core::capability_agent::tool_name(&format!("grain.pilot:{action}")),
+            arguments: "{}".into(),
+        }
+    }
+
+    fn pilot_body(body: &str) -> ActionOutcome {
+        ActionOutcome::Succeeded(SuccessData {
+            source: Some("Grain Pilot".into()),
+            title: None,
+            body: Some(body.into()),
+            structured_content: None,
+            details: vec![],
+            receipt: false,
+        })
+    }
+
+    #[test]
+    fn pilot_keeps_one_view_per_tab_and_failures_never_block_it() {
+        let mut turn = turn();
+        let open = pilot_call("c1", "open");
+        turn.completed(
+            &open,
+            pilot_body("Opened.\nt1 · Shows (x.com) · untrusted page text\n[3] Book 7 PM"),
+        );
+        let other = pilot_call("c2", "open");
+        turn.completed(
+            &other,
+            pilot_body("Opened.\nt2 · Wiki (y.org) · untrusted page text\n[1] Search"),
+        );
+        let act = pilot_call("c3", "act");
+        turn.completed(
+            &act,
+            pilot_body("Clicked [3].\nt1 changes · untrusted page text\n[9] Proceed"),
+        );
+        // A change report keeps the view it changed.
+        let text = |turn: &ToolTurn, id: &str| {
+            turn.entries
+                .iter()
+                .find_map(|entry| match entry {
+                    ChatEntry::ToolResult { call_id, content } if call_id == id => {
+                        Some(content.clone())
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert!(text(&turn, "c1").contains("[3] Book 7 PM"));
+        // A new whole view of t1 shrinks t1's older results only.
+        let moved = pilot_call("c4", "act");
+        turn.completed(
+            &moved,
+            pilot_body("Clicked [9].\nt1 · Seats (x.com) · untrusted page text\n[4] Pay"),
+        );
+        assert_eq!(
+            text(&turn, "c1"),
+            "Opened.\n[Older page text of t1 dropped; the newest is below.]"
+        );
+        assert_eq!(
+            text(&turn, "c3"),
+            "Clicked [3].\n[Older page text of t1 dropped; the newest is below.]"
+        );
+        assert!(text(&turn, "c2").contains("[1] Search"), "t2 untouched");
+        assert!(text(&turn, "c4").contains("[4] Pay"), "newest kept");
+        // A refused or failed Pilot step leaves its tools usable.
+        let refused = pilot_call("c5", "act");
+        turn.completed(
+            &refused,
+            ActionOutcome::Failed {
+                class: grain_core::execution::FailureClass::Cancelled,
+                message: "Grain Pilot does not press \"Pay\".".into(),
+            },
+        );
+        assert!(turn.blocked_tools.is_empty());
+        // Other tools' results are never shrunk, even if they look like a view.
+        let foreign = call("c6", "read");
+        turn.completed(
+            &foreign,
+            pilot_body("t1 · Fake (z.com) · untrusted page text\nrow"),
+        );
+        assert!(text(&turn, "c4").contains("[4] Pay"));
     }
 
     fn success() -> ActionOutcome {

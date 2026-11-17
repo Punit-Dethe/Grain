@@ -180,6 +180,26 @@ pub(crate) fn catalog() -> (String, Vec<crate::grain_compiled_tools::CatalogTool
     (core::catalog_digest(), tools)
 }
 
+/// Whether a model-facing tool name (as the catalogue names it) is one of
+/// Pilot's. Built once; the names only change with a new build.
+pub(crate) fn is_pilot_tool(name: &str) -> bool {
+    static NAMES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            tools::tools()
+                .iter()
+                .map(|tool| {
+                    grain_core::capability_agent::tool_name(&format!(
+                        "{EXTENSION_ID}:{}",
+                        tool.name
+                    ))
+                })
+                .collect()
+        })
+        .iter()
+        .any(|known| known == name)
+}
+
 /// Run one Pilot action. Never panics into the Agent loop: every failure is
 /// a typed outcome the model can read and act on.
 pub(crate) async fn call(
@@ -341,7 +361,7 @@ async fn control(state: &mut State, handle: u32, number: u32) -> Result<Control,
         })
 }
 
-/// Refuse a click that commits money and typing into a secret field.
+/// Refuse a click that commits money and filling a secret field.
 async fn check(state: &mut State, handle: u32, step: &Step) -> Result<(), Failure> {
     match step {
         Step::Click(number) => {
@@ -350,25 +370,44 @@ async fn check(state: &mut State, handle: u32, step: &Step) -> Result<(), Failur
                 return Err(Failure::refused(render::payment_refusal(&control.name)));
             }
         }
-        Step::Type(number, _) => {
+        Step::Fill {
+            control: number, ..
+        } => {
             if control(state, handle, *number).await?.secret {
                 return Err(Failure::refused(render::secret_refusal()));
             }
         }
-        Step::Press(_) => {}
+        Step::Choose {
+            control: number, ..
+        } => {
+            control(state, handle, *number).await?;
+        }
+        Step::Key(_) | Step::Scroll(_) => {}
     }
     Ok(())
 }
 
+/// Run one `act` step in the page.
 async fn perform(state: &mut State, handle: u32, step: &Step) -> Result<String, Failure> {
     check(state, handle, step).await?;
     let tab_id = tab_mut(state, handle)?.tab_id;
     let op = match step {
         Step::Click(number) => json!({"op": "click", "tab": tab_id, "index": number}),
-        Step::Type(number, text) => {
-            json!({"op": "type", "tab": tab_id, "index": number, "text": text, "submit": false})
+        Step::Fill {
+            control,
+            text,
+            enter,
+        } => json!({"op": "type", "tab": tab_id, "index": control, "text": text, "submit": enter}),
+        Step::Choose { control, option } => {
+            json!({"op": "select", "tab": tab_id, "index": control, "option": option})
         }
-        Step::Press(key) => json!({"op": "press", "tab": tab_id, "key": key}),
+        Step::Key(key) => json!({"op": "press", "tab": tab_id, "key": key}),
+        Step::Scroll(direction) => json!({
+            "op": "scroll",
+            "tab": tab_id,
+            "direction": direction,
+            "pixels": core::SCROLL_PIXELS,
+        }),
     };
     outcome(ext(op).await?)
 }
@@ -403,11 +442,7 @@ async fn report(
     done: &str,
 ) -> Result<String, Failure> {
     let after = settled_read(state, handle).await?;
-    Ok(render::action_reply(
-        Handle(handle),
-        done,
-        &page::changes(before, &after),
-    ))
+    Ok(render::action_reply(Handle(handle), done, before, &after))
 }
 
 async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
@@ -436,98 +471,12 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
             let read = settled_read(state, handle).await?;
             Ok(render::opened_reply(Handle(handle), &read))
         }
-        Call::Tabs => {
-            let reply = ext(json!({"op": "tabs"})).await?;
-            let open: HashMap<i64, String> = reply
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|tab| {
-                    Some((
-                        tab.get("tab")?.as_i64()?,
-                        tab.get("title")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    ))
-                })
-                .collect();
-            // Tabs the user closed are forgotten.
-            state.tabs.retain(|_, tab| open.contains_key(&tab.tab_id));
-            let rows: Vec<(Handle, String)> = state
-                .tabs
-                .iter()
-                .map(|(handle, tab)| (Handle(*handle), open[&tab.tab_id].clone()))
-                .collect();
-            Ok(render::tabs_reply(&rows))
-        }
         Call::Read { tab, view } => {
             let handle = pick(state, *tab)?;
             let read = read(state, handle, view).await?;
             Ok(render::read_reply(Handle(handle), &read, view))
         }
-        Call::Click { tab, control } => {
-            let handle = pick(state, *tab)?;
-            let before = baseline(state, handle).await?;
-            let done = perform(state, handle, &Step::Click(*control)).await?;
-            report(state, handle, &before, &done).await
-        }
-        Call::Type {
-            tab,
-            control,
-            text,
-            submit,
-        } => {
-            let handle = pick(state, *tab)?;
-            check(state, handle, &Step::Type(*control, text.clone())).await?;
-            let before = baseline(state, handle).await?;
-            let tab_id = tab_mut(state, handle)?.tab_id;
-            let done = outcome(
-                ext(json!({"op": "type", "tab": tab_id, "index": control, "text": text, "submit": submit}))
-                    .await?,
-            )?;
-            report(state, handle, &before, &done).await
-        }
-        Call::Choose {
-            tab,
-            control,
-            option,
-        } => {
-            let handle = pick(state, *tab)?;
-            let before = baseline(state, handle).await?;
-            let tab_id = tab_mut(state, handle)?.tab_id;
-            let done = outcome(
-                ext(json!({"op": "select", "tab": tab_id, "index": control, "option": option}))
-                    .await?,
-            )?;
-            report(state, handle, &before, &done).await
-        }
-        Call::Press { tab, key } => {
-            let handle = pick(state, *tab)?;
-            let before = baseline(state, handle).await?;
-            let done = perform(state, handle, &Step::Press(key)).await?;
-            report(state, handle, &before, &done).await
-        }
-        Call::Scroll {
-            tab,
-            direction,
-            amount,
-        } => {
-            let handle = pick(state, *tab)?;
-            let tab_id = tab_mut(state, handle)?.tab_id;
-            outcome(
-                ext(json!({
-                    "op": "scroll",
-                    "tab": tab_id,
-                    "direction": direction,
-                    "pixels": amount * core::SCROLL_NOTCH_PIXELS,
-                }))
-                .await?,
-            )?;
-            let read = read(state, handle, &View::Visible).await?;
-            Ok(render::read_reply(Handle(handle), &read, &View::Visible))
-        }
-        Call::Steps { tab, steps } => {
+        Call::Act { tab, steps } => {
             let handle = pick(state, *tab)?;
             let before = baseline(state, handle).await?;
             let mut done = Vec::new();
@@ -540,13 +489,11 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
                         } else {
                             format!(" Done before it: {}", done.join(" "))
                         };
-                        let changes = report(state, handle, &before, "Stopped")
-                            .await
-                            .unwrap_or_default();
+                        let changes = report(state, handle, &before, "").await.unwrap_or_default();
                         return Err(Failure::new(
                             failure.class,
                             format!(
-                                "Step {} failed: {}.{so_far}\n{changes}",
+                                "Step {} failed: {}.{so_far}{changes}",
                                 at + 1,
                                 failure.message
                             ),
@@ -570,15 +517,41 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
                 message.as_deref(),
             ))
         }
-        Call::Close { tab } => {
-            let handle = pick(state, *tab)?;
-            let tab_id = tab_mut(state, handle)?.tab_id;
-            ext(json!({"op": "close", "tab": tab_id})).await?;
-            state.tabs.remove(&handle);
-            if state.last == Some(handle) {
-                state.last = None;
+        Call::Tabs { close } => {
+            let mut closed = String::new();
+            if let Some(close) = close {
+                let handle = pick(state, Some(*close))?;
+                let tab_id = tab_mut(state, handle)?.tab_id;
+                ext(json!({"op": "close", "tab": tab_id})).await?;
+                state.tabs.remove(&handle);
+                if state.last == Some(handle) {
+                    state.last = None;
+                }
+                closed = format!("Closed {close}.\n");
             }
-            Ok(format!("Closed {}.", Handle(handle)))
+            let reply = ext(json!({"op": "tabs"})).await?;
+            let open: HashMap<i64, String> = reply
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tab| {
+                    Some((
+                        tab.get("tab")?.as_i64()?,
+                        tab.get("title")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                    ))
+                })
+                .collect();
+            // Tabs the user closed are forgotten.
+            state.tabs.retain(|_, tab| open.contains_key(&tab.tab_id));
+            let rows: Vec<(Handle, String)> = state
+                .tabs
+                .iter()
+                .map(|(handle, tab)| (Handle(*handle), open[&tab.tab_id].clone()))
+                .collect();
+            Ok(format!("{closed}{}", render::tabs_reply(&rows)))
         }
     }
 }
@@ -586,6 +559,20 @@ async fn run(state: &mut State, call: &Call) -> Result<String, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pilot_tool_names_are_recognised_exactly() {
+        let (_, catalog) = catalog();
+        assert_eq!(catalog.len(), tools::tools().len());
+        for tool in &catalog {
+            let name = grain_core::capability_agent::tool_name(&tool.action.canonical_id);
+            assert!(is_pilot_tool(&name), "{name}");
+        }
+        assert!(!is_pilot_tool("act"));
+        assert!(!is_pilot_tool(&grain_core::capability_agent::tool_name(
+            "grain.reminders:list"
+        )));
+    }
 
     /// Live: the Agent's Pilot tools end to end through the real extension,
     /// in a SEPARATE Edge profile (fresh each run) with the unpacked
@@ -691,25 +678,22 @@ mod tests {
                 ),
             )
             .await;
-            assert!(opened.starts_with("Opened t1"), "{opened}");
+            assert!(opened.starts_with("Opened.\nt1 · "), "{opened}");
             let found = go(&mut state, step("read", json!({"find": "search"}))).await;
-            let field = if found.contains("search field") {
-                number_in(&found, "search field")
+            let field = if found.contains("] field") {
+                number_in(&found, "] field")
             } else {
+                // A narrow window hides the search box behind a button.
                 let opener = number_in(&found, "Search Wikipedia");
-                go(&mut state, step("click", json!({"control": opener}))).await;
+                go(&mut state, step("act", json!({"do": [{"click": opener}]}))).await;
                 let found = go(&mut state, step("read", json!({"find": "search"}))).await;
-                if found.contains("search field") {
-                    number_in(&found, "search field")
-                } else {
-                    number_in(&found, "combobox")
-                }
+                number_in(&found, "] field")
             };
             let typed = go(
                 &mut state,
                 step(
-                    "type",
-                    json!({"control": field, "text": "Pune", "submit": true}),
+                    "act",
+                    json!({"do": [{"fill": field, "text": "Pune", "enter": true}]}),
                 ),
             )
             .await;
@@ -719,15 +703,20 @@ mod tests {
             let url = format!("https://in.bookmyshow.com/cinemas/mumbai/cinepolis-lake-shore-thane-ex-viviana-mall/buytickets/CPVM/{date}");
             go(&mut state, step("open", json!({"url": url}))).await;
             let shows = go(&mut state, step("read", json!({"find": "Book"}))).await;
-            let show = number_in(&shows, "\"Book ");
-            let clicked = go(&mut state, step("click", json!({"control": show}))).await;
+            let show = number_in(&shows, "] Book ");
+            let clicked = go(&mut state, step("act", json!({"do": [{"click": show}]}))).await;
             println!(
                 "seat page reached: {}",
                 clicked.contains("Select Seats") || clicked.contains("seats")
             );
+            go(&mut state, step("act", json!({"do": [{"scroll": "down"}]}))).await;
             let tabs = go(&mut state, step("tabs", json!({}))).await;
             assert!(tabs.contains("t1") && tabs.contains("t2"), "{tabs}");
-            go(&mut state, step("close", json!({"tab": "t2"}))).await;
+            let closed = go(&mut state, step("tabs", json!({"close": "t2"}))).await;
+            assert!(
+                closed.starts_with("Closed t2.") && !closed.contains("t2:"),
+                "{closed}"
+            );
         });
     }
 }
