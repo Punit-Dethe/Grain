@@ -1050,7 +1050,7 @@
         "voiceAccent": { "us": "American", "gb": "British" },
         "voiceGender": { "female": "Female", "male": "Male" },
         "spokenProgress": "Progress speech",
-        "spokenProgressDescription": "When a request takes a few steps, the voice briefly says what Agent is doing, like \"Checking your calendar.\" Quick replies get none, and a long task gets an occasional update, not one per step.",
+        "spokenProgressDescription": "When a request needs a tool, the voice first says in a few words what Agent is doing, like \"Checking your calendar.\" Replies that need no tool skip it.",
         "dynamicUi": "Dynamic UI",
         "dynamicUiDescription": "Replies can come with an interactive view, like a weather card or a list of places, that opens in the notch. Turn it off for plain chat replies that use fewer tokens. Applies from the next reply, even mid-chat.",
         "polishedUi": "Polished UI",

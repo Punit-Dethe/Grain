@@ -810,9 +810,9 @@ pub struct AppSettings {
     #[serde(default = "default_true")]
     pub agent_compact_voice: bool,
     /// [GRAIN] Progress speech: with talk-back on, a request that needs tools
-    /// gets a short spoken line on what the Agent is doing ("Checking your
-    /// calendar."), written by the AI and rationed so a long task is not
-    /// narrated step by step. A quick reply gets none. ON by default.
+    /// gets one short spoken line from the AI on its first tool step
+    /// ("Checking your calendar."). Later steps stay silent, and a reply that
+    /// needs no tool gets none. ON by default.
     #[serde(default = "default_true")]
     pub agent_spoken_progress: bool,
     /// [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).

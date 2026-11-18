@@ -2421,11 +2421,11 @@ agent_talk_back?: boolean;
 agent_compact_voice?: boolean; 
 /**
  * [GRAIN] Progress speech: with talk-back on, a request that needs tools
- * gets a short spoken line on what the Agent is doing ("Checking your
- * calendar."), written by the AI and rationed so a long task is not
- * narrated step by step. A quick reply gets none. ON by default.
+ * gets one short spoken line from the AI on its first tool step
+ * ("Checking your calendar."). Later steps stay silent, and a reply that
+ * needs no tool gets none. ON by default.
  */
-agent_spoken_progress?: boolean;
+agent_spoken_progress?: boolean; 
 /**
  * [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
  * Presets other than the default download on first pick (256 KB each).

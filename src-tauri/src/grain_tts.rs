@@ -333,12 +333,11 @@ pub(crate) fn init_threads() {
     xn::set_num_threads((cores / 2).clamp(1, 4));
 }
 
-/// Stop any speech now (a progress line too), and let the next request's
-/// first progress line through. Cheap and safe to call from any thread.
+/// Stop any speech now (a progress line too). Cheap and safe to call from any
+/// thread.
 pub(crate) fn stop() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
     STOPS.fetch_add(1, Ordering::SeqCst);
-    *PROGRESS_LAST.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// The id of the speech playing right now, if any — for a notch opened while
@@ -535,24 +534,17 @@ async fn install(app: &AppHandle) -> Result<(), String> {
 
 // ── Progress lines ──────────────────────────────────────────────────────────
 //
-// While the Agent works through tools, the AI may write one short line about
-// what it is doing ("Checking your calendar."). With progress speech on, that
-// line is read aloud. A quick reply has no tool round, so it gets no line.
-// Lines are rationed: none while the voice is already talking, and none within
-// [`PROGRESS_GAP`] of the last one, so a long task is not narrated call by
-// call.
+// With progress speech on, the AI's first tool step carries one short line
+// confirming what it is doing ("Checking your calendar."), and that line is
+// read aloud. Later steps say nothing, and a reply that needs no tool has no
+// line. The Agent loop picks the step; this only speaks.
 
-/// The quietest a long task gets between two progress lines.
-const PROGRESS_GAP: Duration = Duration::from_secs(12);
-/// A line longer than this is not a status line; it is not read.
-const MAX_PROGRESS_CHARS: usize = 140;
+/// A line longer than this is not a short confirmation; it is not read.
+const MAX_PROGRESS_CHARS: usize = 80;
 
 /// Bumped by [`stop`] only. A progress line keeps talking through a newer
 /// reply (the reply waits for it) but not through a stop.
 static STOPS: AtomicU64 = AtomicU64::new(0);
-/// When the last progress line started; [`stop`] clears it, so each request's
-/// first line is always allowed.
-static PROGRESS_LAST: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// The line to read from a tool round's text, if it is one: its first line,
 /// when short. (The caller leaves out a same-round final reply.)
@@ -563,8 +555,8 @@ pub(crate) fn progress_line(text: &str) -> Option<String> {
 }
 
 /// Read a progress line aloud, when talk-back and progress speech are on and
-/// the ration allows it. Like [`speak`], returns the speech's id when it
-/// started, and only then calls `on_end` once on the worker thread.
+/// the voice is free. Like [`speak`], returns the speech's id when it started,
+/// and only then calls `on_end` once on the worker thread.
 ///
 /// A reply that comes back while the line is still loading drops it; once the
 /// line is audible it finishes and the reply follows.
@@ -581,13 +573,6 @@ pub(crate) fn speak_progress(
     let dir = model_dir(app).ok()?;
     if text.is_empty() || !installed(&dir) {
         return None;
-    }
-    {
-        let mut last = PROGRESS_LAST.lock().unwrap_or_else(|e| e.into_inner());
-        if last.is_some_and(|at| at.elapsed() < PROGRESS_GAP) {
-            return None;
-        }
-        *last = Some(Instant::now());
     }
     let voice = chosen_voice(app, &dir);
     let stops = STOPS.load(Ordering::SeqCst);

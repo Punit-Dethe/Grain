@@ -72,9 +72,21 @@ const FINAL_REPLY_MARKER: &str = "[final]";
 const AGENT_TOOL_GUIDANCE: &str = "Tool-use rules: A tool result that reports success is authoritative; do not search, fetch or re-read an object to verify a change you just made unless the user asked you to check it. Call independent tools together in one message. Continue calling tools until the requested work is complete or the user cancels; Grain imposes no tool-call or round quota. When the tool calls in a message are the last steps the request needs and your reply does not depend on what they return, also write the final reply to the user in that same message, starting with [final]. Grain shows that reply only if every call succeeds; otherwise you receive the results and continue. Do not invent identifiers, numbers or links that only a result would reveal.";
 /// Ends the tool guidance when progress speech is off.
 const AGENT_STEPS_SILENT: &str = " If more steps may remain, leave the message text empty.";
-/// Ends the tool guidance when progress speech is on: the line is read aloud
-/// while the tools run (`grain_tts::speak_progress`).
-const AGENT_STEPS_SPOKEN: &str = " If more steps may remain, the message text is one short sentence (at most ten words) saying what you are doing now, in the first person, for example \"Checking your calendar for tomorrow.\" It is read aloud while you work. Never put results, guesses or the answer in it.";
+/// Ends the tool guidance when progress speech is on: the first tool step's
+/// line is read aloud while the tools run (`first_step_line`).
+const AGENT_STEPS_SPOKEN: &str = " In the first message where you call tools, unless it is already the final reply, the message text is one very short sentence (at most six words) confirming what you are doing, for example \"Checking your calendar.\" It is read aloud. Never put results, guesses or the answer in it. In later messages, if more steps may remain, leave the message text empty.";
+
+/// The line to say aloud for a model round: only the turn's first round, only
+/// when it calls tools, and never a same-round final reply.
+fn first_step_line(first_round: bool, reply: &LlmToolReply) -> Option<String> {
+    if !first_round
+        || reply.tool_calls.is_empty()
+        || same_round_final_reply(&reply.content).is_some()
+    {
+        return None;
+    }
+    crate::grain_tts::progress_line(&reply.content)
+}
 
 /// Strip the same-round marker. Returns the reply only when the marker leads
 /// the text and something follows it.
@@ -1710,8 +1722,8 @@ fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
     }
 }
 
-/// [GRAIN] Read a tool round's progress line aloud (rationed in `grain_tts`).
-/// It shows like any speech: the blue sliver, and Escape stops it.
+/// [GRAIN] Read the first tool step's line aloud. It shows like any speech: the
+/// blue sliver, and Escape stops it.
 fn speak_progress(app: &AppHandle, line: &str) {
     let handle = app.clone();
     if crate::grain_tts::speak_progress(app, line, move |_| voice_ended(&handle)).is_some() {
@@ -3772,6 +3784,32 @@ mod tool_continuation_tests {
     }
 
     #[test]
+    fn only_the_first_tool_round_is_spoken() {
+        let reply = |content: &str, tool_calls| LlmToolReply {
+            content: content.into(),
+            tool_calls,
+        };
+        let line = "Checking your calendar.";
+        assert_eq!(
+            first_step_line(true, &reply(line, vec![call("1", "read")])).as_deref(),
+            Some(line)
+        );
+        assert_eq!(
+            first_step_line(false, &reply(line, vec![call("2", "read")])),
+            None
+        );
+        assert_eq!(first_step_line(true, &reply(line, vec![])), None);
+        assert_eq!(
+            first_step_line(true, &reply("[final] Done.", vec![call("3", "write")])),
+            None
+        );
+        assert_eq!(
+            first_step_line(true, &reply("", vec![call("4", "read")])),
+            None
+        );
+    }
+
+    #[test]
     fn invalid_frames_are_rejected_atomically_and_results_are_utf8_bounded() {
         let mut turn = turn();
         for calls in [
@@ -4109,19 +4147,18 @@ async fn drive_tool_turn(
     run: &AgentRun<'_>,
 ) -> Result<AgentReply, String> {
     let dispatch_app = app.clone();
+    // A turn resumed after an approval has already had its first round.
+    let mut first_round = turn.hops == 0;
     drive_tool_turn_with(
         turn,
         run,
         |session| crate::capability::prune_disabled(app, session),
         |entries, tools| {
+            let first = std::mem::take(&mut first_round);
             Box::pin(async move {
                 let reply = run_messages_with_tools(app, entries, tools, image).await?;
-                // A round that calls tools may say what it is doing.
-                if !reply.tool_calls.is_empty() && same_round_final_reply(&reply.content).is_none()
-                {
-                    if let Some(line) = crate::grain_tts::progress_line(&reply.content) {
-                        speak_progress(app, &line);
-                    }
+                if let Some(line) = first_step_line(first, &reply) {
+                    speak_progress(app, &line);
                 }
                 Ok(reply)
             })
