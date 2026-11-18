@@ -2758,19 +2758,12 @@ pub async fn agent_run(
     // A new turn silences the previous reply's talk-back.
     crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
-    // A short spoken "Got it" while it works (skipped when the reply is quick).
-    let ack = if record {
-        crate::grain_tts::acknowledge(&app)
-    } else {
-        None
-    };
     let mut reply = run
         .wait(
             registration,
             agent_run_owned(&app, messages, context, ui_prompt.as_deref(), &run),
         )
         .await?;
-    drop(ack);
     if let Ok(reply) = &mut reply {
         if ui_prompt.is_some() && reply.confirm_action.is_none() {
             let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);

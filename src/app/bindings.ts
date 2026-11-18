@@ -639,18 +639,6 @@ async changeAgentCompactVoiceSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
- * [GRAIN] Spoken acknowledgement ("Got it") while the Agent works. See
- * `Settings::agent_spoken_ack`.
- */
-async changeAgentSpokenAckSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_agent_spoken_ack_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] The talk-back voice presets, default first.
  */
 async agentVoicePresets() : Promise<AgentVoicePreset[]> {
@@ -2419,12 +2407,6 @@ agent_talk_back?: boolean;
  * talk-back.
  */
 agent_compact_voice?: boolean; 
-/**
- * [GRAIN] Spoken acknowledgement: with talk-back on, the voice says a
- * short "Got it" (picked at random) a moment after an instruction is
- * sent, while the Agent works. ON by default.
- */
-agent_spoken_ack?: boolean; 
 /**
  * [GRAIN] The talk-back voice preset (a name from `grain_tts::VOICES`).
  * Presets other than the default download on first pick (256 KB each).

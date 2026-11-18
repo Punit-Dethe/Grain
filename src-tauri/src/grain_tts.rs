@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 /// The default voice (installed with the model): the file stem under the
-/// model's `voices/` folder. The acknowledgement clips use it.
+/// model's `voices/` folder.
 const VOICE: &str = "Zoey";
 /// Hard cap on what is read aloud; longer replies stop at a sentence end.
 const MAX_SPOKEN_CHARS: usize = 3000;
@@ -333,11 +333,9 @@ pub(crate) fn init_threads() {
     xn::set_num_threads((cores / 2).clamp(1, 4));
 }
 
-/// Stop any speech now (an acknowledgement too). Cheap and safe to call from
-/// any thread.
+/// Stop any speech now. Cheap and safe to call from any thread.
 pub(crate) fn stop() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
-    ACK_GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 
 /// The id of the speech playing right now, if any — for a notch opened while
@@ -450,8 +448,6 @@ fn say(dir: &Path, voice: &str, text: &str, generation: u64) -> Result<(), Strin
 
     let rate = SampleRate::new(tts.sample_rate()).ok_or("the voice model has no sample rate")?;
     let mono = ChannelCount::new(1).expect("1 is non-zero");
-    // An acknowledgement still talking finishes first; the reply follows it.
-    drop(ACK_PLAYING.lock().unwrap_or_else(|e| e.into_inner()));
     let mut device = DeviceSinkBuilder::from_default_device()
         .and_then(DeviceSinkBuilder::open_stream)
         .map_err(|e| format!("no audio output: {e}"))?;
@@ -528,229 +524,7 @@ async fn install(app: &AppHandle) -> Result<(), String> {
         download_verified(&client, file, &path).await?;
     }
     info!("[GRAIN] talk-back: voice installed at {}", dir.display());
-    prepare_acks(app);
     Ok(())
-}
-
-// ── Acknowledgements ────────────────────────────────────────────────────────
-//
-// Right after an instruction is sent, the voice says a short "Got it" while
-// the Agent works. The clips are made once with the same voice (so they sound
-// like the replies) and kept as WAV files beside the model; playing one loads
-// no model. Nothing is resident while idle.
-
-/// What the voice may say; one is picked at random, never the same twice in a
-/// row.
-const ACK_PHRASES: [&str; 8] = [
-    "Got it.",
-    "On it.",
-    "Checking.",
-    "One sec.",
-    "Sure, on it.",
-    "Let me check.",
-    "Okay, one moment.",
-    "Looking into it.",
-];
-/// The clip set's folder. Change it whenever the phrases or the voice change,
-/// so the clips are made again.
-const ACK_SET: &str = "acks-v1-zoey";
-/// A natural pause before answering "Got it"; a reply back sooner skips it.
-const ACK_DELAY: Duration = Duration::from_millis(550);
-
-/// Bumped by [`stop`]: an acknowledgement plays only while it is unchanged.
-/// (A reply's speech does not bump it: the acknowledgement finishes first.)
-static ACK_GENERATION: AtomicU64 = AtomicU64::new(0);
-/// The pending acknowledgement's ticket (0 = none); its [`Ack`] clears it.
-static ACK_PENDING: AtomicU64 = AtomicU64::new(0);
-static ACK_TICKETS: AtomicU64 = AtomicU64::new(0);
-/// Held while an acknowledgement plays; a reply's speech waits for it.
-static ACK_PLAYING: Mutex<()> = Mutex::new(());
-static ACK_BUILDING: AtomicBool = AtomicBool::new(false);
-static ACK_LAST: AtomicU64 = AtomicU64::new(u64::MAX);
-
-fn ack_dir(model: &Path) -> PathBuf {
-    model.join(ACK_SET)
-}
-
-fn ack_clip(dir: &Path, index: usize) -> PathBuf {
-    dir.join(format!("{index}.wav"))
-}
-
-fn acks_ready(dir: &Path) -> bool {
-    (0..ACK_PHRASES.len()).all(|index| ack_clip(dir, index).is_file())
-}
-
-/// A pending acknowledgement. Dropped before its delay is up (the reply came
-/// back quickly), it never plays; once playing, it finishes.
-pub(crate) struct Ack(u64);
-
-impl Drop for Ack {
-    fn drop(&mut self) {
-        let _ = ACK_PENDING.compare_exchange(self.0, 0, Ordering::SeqCst, Ordering::SeqCst);
-    }
-}
-
-/// Say a short acknowledgement after [`ACK_DELAY`], unless the returned guard
-/// is dropped first. Only with talk-back and acknowledgements on, and once the
-/// clips exist (the first call makes them, silently).
-pub(crate) fn acknowledge(app: &AppHandle) -> Option<Ack> {
-    let settings = crate::settings::get_settings(app);
-    if !settings.agent_talk_back || !settings.agent_spoken_ack {
-        return None;
-    }
-    let model = model_dir(app).ok()?;
-    if !installed(&model) {
-        return None;
-    }
-    let dir = ack_dir(&model);
-    if !acks_ready(&dir) {
-        prepare_acks(app);
-        return None;
-    }
-    let ticket = ACK_TICKETS.fetch_add(1, Ordering::SeqCst) + 1;
-    ACK_PENDING.store(ticket, Ordering::SeqCst);
-    let generation = ACK_GENERATION.load(Ordering::SeqCst);
-    let spawned = std::thread::Builder::new()
-        .name("grain-ack".into())
-        .spawn(move || {
-            std::thread::sleep(ACK_DELAY);
-            let _playing = ACK_PLAYING.lock().unwrap_or_else(|e| e.into_inner());
-            if ACK_PENDING.load(Ordering::SeqCst) != ticket
-                || ACK_GENERATION.load(Ordering::SeqCst) != generation
-            {
-                return;
-            }
-            let clip = ack_clip(&dir, pick_ack());
-            if let Err(e) = play_clip(&clip, generation) {
-                warn!("[GRAIN] talk-back: acknowledgement failed: {e}");
-            }
-        });
-    spawned.ok().map(|_| Ack(ticket))
-}
-
-/// A random phrase index, never the last one again.
-fn pick_ack() -> usize {
-    let count = ACK_PHRASES.len() as u64;
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos() as u64);
-    // xorshift: plenty for picking a phrase.
-    let mut x = seed ^ 0x9e37_79b9_7f4a_7c15;
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    let last = ACK_LAST.load(Ordering::SeqCst);
-    let mut index = x % count;
-    if index == last {
-        index = (index + 1 + x / count % (count - 1)) % count;
-    }
-    ACK_LAST.store(index, Ordering::SeqCst);
-    index as usize
-}
-
-fn play_clip(path: &Path, generation: u64) -> Result<(), String> {
-    use rodio::buffer::SamplesBuffer;
-    use rodio::{ChannelCount, DeviceSinkBuilder, Player, SampleRate};
-
-    let mut reader = hound::WavReader::open(path).map_err(|e| e.to_string())?;
-    let rate = SampleRate::new(reader.spec().sample_rate).ok_or("the clip has no sample rate")?;
-    let samples = reader
-        .samples::<f32>()
-        .collect::<Result<Vec<f32>, _>>()
-        .map_err(|e| e.to_string())?;
-    let mut device = DeviceSinkBuilder::from_default_device()
-        .and_then(DeviceSinkBuilder::open_stream)
-        .map_err(|e| format!("no audio output: {e}"))?;
-    device.log_on_drop(false);
-    let player = Player::connect_new(device.mixer());
-    player.append(SamplesBuffer::new(
-        ChannelCount::new(1).expect("1 is non-zero"),
-        rate,
-        samples,
-    ));
-    while !player.empty() {
-        if ACK_GENERATION.load(Ordering::SeqCst) != generation {
-            player.stop();
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(30));
-    }
-    Ok(())
-}
-
-/// Make the acknowledgement clips in the background when they are missing.
-/// Waits its turn behind any speech, so one model is ever loaded at a time.
-pub(crate) fn prepare_acks(app: &AppHandle) {
-    let Ok(model) = model_dir(app) else {
-        return;
-    };
-    if !installed(&model)
-        || acks_ready(&ack_dir(&model))
-        || ACK_BUILDING.swap(true, Ordering::AcqRel)
-    {
-        return;
-    }
-    let _ = std::thread::Builder::new()
-        .name("grain-ack-build".into())
-        .spawn(move || {
-            {
-                let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
-                match build_acks(&model) {
-                    Ok(()) => info!("[GRAIN] talk-back: acknowledgement clips ready"),
-                    Err(e) => warn!("[GRAIN] talk-back: could not make acknowledgements: {e}"),
-                }
-            }
-            ACK_BUILDING.store(false, Ordering::Release);
-        });
-}
-
-fn build_acks(model: &Path) -> Result<(), String> {
-    use ptts::synth::SpeechOptions;
-
-    let tts = load_voice(model, VOICE)?;
-    let rate = tts.sample_rate();
-    let options = SpeechOptions::default().voice(VOICE);
-    // Written to a scratch folder and renamed into place, so a half-made set
-    // is never used.
-    let scratch = model.join(format!("{ACK_SET}.partial"));
-    let _ = std::fs::remove_dir_all(&scratch);
-    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
-    for (index, phrase) in ACK_PHRASES.iter().enumerate() {
-        let mut pcm = Vec::new();
-        for chunk in tts
-            .stream_with(phrase, &options)
-            .map_err(|e| format!("could not speak {phrase:?}: {e}"))?
-        {
-            pcm.extend(chunk.map_err(|e| format!("could not speak {phrase:?}: {e}"))?);
-        }
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: rate,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-        let mut writer =
-            hound::WavWriter::create(ack_clip(&scratch, index), spec).map_err(|e| e.to_string())?;
-        for sample in trim_silence(&pcm, rate) {
-            writer.write_sample(*sample).map_err(|e| e.to_string())?;
-        }
-        writer.finalize().map_err(|e| e.to_string())?;
-    }
-    let dir = ack_dir(model);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::rename(&scratch, &dir).map_err(|e| e.to_string())
-}
-
-/// Cut leading and trailing near-silence (keeping a few ms), so a clip starts
-/// right on the word.
-fn trim_silence(pcm: &[f32], rate: u32) -> &[f32] {
-    const FLOOR: f32 = 0.01;
-    let pad = (rate / 50) as usize; // 20 ms
-    let Some(first) = pcm.iter().position(|s| s.abs() > FLOOR) else {
-        return pcm;
-    };
-    let last = pcm.iter().rposition(|s| s.abs() > FLOOR).unwrap_or(first);
-    &pcm[first.saturating_sub(pad)..(last + pad).min(pcm.len() - 1) + 1]
 }
 
 async fn download_verified(
@@ -950,47 +724,6 @@ mod tests {
     fn long_replies_stop_at_a_sentence() {
         let text = "One two three. Four five six.".to_string();
         assert_eq!(truncate_at_sentence(text, 20), "One two three.");
-    }
-
-    #[test]
-    fn acknowledgements_never_repeat_back_to_back() {
-        let mut last = pick_ack();
-        for _ in 0..200 {
-            let next = pick_ack();
-            assert_ne!(next, last);
-            assert!(next < ACK_PHRASES.len());
-            last = next;
-        }
-    }
-
-    #[test]
-    fn silence_is_trimmed_to_a_short_pad() {
-        let rate = 1000; // pad = 20 samples
-        let mut pcm = vec![0.0; 100];
-        pcm.extend([0.5; 10]);
-        pcm.extend(vec![0.001; 100]);
-        let trimmed = trim_silence(&pcm, rate);
-        assert_eq!(trimmed.len(), 20 + 10 + 20);
-        assert_eq!(trim_silence(&[0.0; 5], rate).len(), 5);
-        assert_eq!(trim_silence(&[0.9], rate), &[0.9]);
-    }
-
-    /// Makes the acknowledgement clips into GRAIN_TTS_MODEL_DIR (as the app
-    /// would) and checks every clip is short and starts on the word:
-    /// `GRAIN_TTS_MODEL_DIR=… cargo test --lib grain_tts::tests::acks -- --ignored --nocapture`
-    #[test]
-    #[ignore]
-    fn acks_build() {
-        let dir = PathBuf::from(std::env::var("GRAIN_TTS_MODEL_DIR").expect("model dir"));
-        build_acks(&dir).unwrap();
-        let acks = ack_dir(&dir);
-        assert!(acks_ready(&acks));
-        for (index, phrase) in ACK_PHRASES.iter().enumerate() {
-            let reader = hound::WavReader::open(ack_clip(&acks, index)).unwrap();
-            let seconds = reader.duration() as f32 / reader.spec().sample_rate as f32;
-            println!("{phrase:<20} {seconds:.2} s");
-            assert!((0.2..2.5).contains(&seconds), "{phrase}: {seconds} s");
-        }
     }
 
     /// Real synthesis benchmark. Needs the model files in GRAIN_TTS_MODEL_DIR:

@@ -687,20 +687,6 @@ pub fn change_agent_voice_setting(app: AppHandle, voice: String) -> Result<(), S
     Ok(())
 }
 
-/// [GRAIN] Spoken acknowledgement ("Got it") while the Agent works. See
-/// `Settings::agent_spoken_ack`.
-#[tauri::command]
-#[specta::specta]
-pub fn change_agent_spoken_ack_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.agent_spoken_ack = enabled;
-    settings::write_settings(&app, settings);
-    if enabled {
-        crate::grain_tts::prepare_acks(&app);
-    }
-    Ok(())
-}
-
 /// [GRAIN] Polished UI: ask the model to design every view properly. See
 /// `Settings::agent_polished_ui`.
 #[tauri::command]

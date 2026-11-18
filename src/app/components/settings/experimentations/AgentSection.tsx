@@ -53,7 +53,6 @@ export function AgentSection() {
   const screenImage = getSetting("agent_screen_image") ?? false;
   const talkBack = getSetting("agent_talk_back") ?? false;
   const compactVoice = getSetting("agent_compact_voice") ?? true;
-  const spokenAck = getSetting("agent_spoken_ack") ?? true;
   const dynamicUi = getSetting("agent_dynamic_ui") ?? true;
   const polishedUi = getSetting("agent_polished_ui") ?? true;
 
@@ -106,18 +105,6 @@ export function AgentSection() {
               checked={compactVoice}
               isUpdating={isUpdating("agent_compact_voice")}
               onChange={(v) => updateSetting("agent_compact_voice", v)}
-            />
-          )}
-
-          {talkBack && (
-            <ToggleSwitch
-              label={t("ui2.settings.agent.spokenAck")}
-              description={t("ui2.settings.agent.spokenAckDescription")}
-              descriptionMode="tooltip"
-              grouped
-              checked={spokenAck}
-              isUpdating={isUpdating("agent_spoken_ack")}
-              onChange={(v) => updateSetting("agent_spoken_ack", v)}
             />
           )}
 
