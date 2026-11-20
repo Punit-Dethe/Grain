@@ -103,7 +103,10 @@ fn rejected_key_message(key: &str, error: ApiError) -> String {
             message,
         } => {
             if key.starts_with("ck_") {
-                format!("That's a Composio Connect key for AI chat apps. {WHERE}")
+                format!(
+                    "That's a key from Composio's \"For You\" app, which Grain can't use. \
+                     Click Switch (top-left in Composio) and pick the developer platform. {WHERE}"
+                )
             } else {
                 format!("Composio didn't accept that key ({message}). {WHERE}")
             }
@@ -1108,7 +1111,7 @@ mod tests {
                 },
             )
         };
-        assert!(rejected("ck_123").contains("Composio Connect key"));
+        assert!(rejected("ck_123").contains("Switch"));
         assert!(rejected("ak_123").contains("Invalid API key"));
         assert!(rejected("ak_123").contains("starts with ak_"));
     }

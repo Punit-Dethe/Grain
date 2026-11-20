@@ -91,8 +91,9 @@ function KeySetup({
             </button>
           </li>
           <li>
-            In Composio, open Settings → Project Settings → API Keys and copy
-            your key.
+            If the top-left corner says “For You”, click Switch and pick the
+            developer platform. Then open Settings → Project Settings → API Keys
+            and copy the key that starts with ak_.
           </li>
           <li>Paste it here.</li>
         </ol>
