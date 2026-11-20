@@ -24,4 +24,5 @@ execution paths are shared with custom MCP servers.
 
 Exa and Grain Pilot are defined in the Rust catalog in
 `src-tauri/src/grain_mcp.rs`. The bundled Exa mark is Exa’s GitHub avatar;
-the Grain Pilot mark is Grain’s own.
+the Grain Pilot mark is Grain’s own. The app marks in the Composio setup
+illustration come from [Simple Icons](https://simpleicons.org/) (CC0).
