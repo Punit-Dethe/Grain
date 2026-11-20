@@ -597,14 +597,15 @@ mod imp {
                     let row = span(py, bar_top, bar_bottom);
                     if row > 0.0 {
                         let eased = 1.0 - (1.0 - progress).powi(2);
-                        let filled = bar_left + (bar_right - bar_left) * eased;
+                        // The fill grows from the centre out to both ends.
+                        let reach = (bar_right - bar_left) / 2.0 * eased;
                         // Over the working line the hover fill alone shows.
                         let track = if work.is_some() {
                             0.0
                         } else {
                             row * span(px, bar_left, bar_right)
                         };
-                        let fill = row * span(px, bar_left, filled);
+                        let fill = row * span(px, cx - reach, cx + reach);
                         for i in 0..3 {
                             color[i] += (TRACK[i] - color[i]) * track;
                             color[i] += (BAR[i] - color[i]) * fill;

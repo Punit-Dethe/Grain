@@ -321,7 +321,7 @@ function SourceCard({
   on: React.ReactNode;
   off: React.ReactNode;
   label: string;
-  /** The icon's colour while the source is on. */
+  /** Which source (a class hook; both share one monochrome look). */
   tone: "mic" | "system";
   enabled: boolean;
   deviceId: string | null;
