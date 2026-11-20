@@ -1,23 +1,45 @@
 /* Extensions page: Built-in, Apps (Composio). Custom MCP keeps mcp-connections.css. */
 
-/* Title block and "Add custom MCP" share one row. */
+/* Fixed head: title and page actions on one line, search right under it. */
 .ext-page-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-height: 36px;
 }
 
-.ext-page-head .page-header {
-  margin-bottom: 0;
+.ext-title {
+  margin: 0;
 }
 
-.ext-page-head > .button {
-  display: inline-flex;
+.ext-head-actions {
+  display: flex;
   flex: none;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+}
+
+.ext-head-actions .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  font-size: 12px;
+}
+
+.ext-search {
+  margin-top: 14px;
+}
+
+.ext-row-error {
+  margin: 0;
+  color: #e06c6c;
+  font-size: 12px;
+}
+
+.ext-section:has(> .ext-list:empty) {
+  display: none;
 }
 
 /* The fixed head is title + search only; keep it short. */
@@ -43,32 +65,7 @@
   text-transform: uppercase;
 }
 
-.ext-group + .ext-group {
-  margin-top: 18px;
-}
-
-.ext-sublabel {
-  margin: 0 0 8px 2px;
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-/* Search and "Remove Composio" ride in the fixed head under the title. */
-.ext-search-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.ext-search-row .search-field {
-  flex: 1;
-}
-
 .ext-remove-key {
-  flex: none;
-  min-height: 36px;
   color: var(--text-3);
   font-size: 12px;
   transition:

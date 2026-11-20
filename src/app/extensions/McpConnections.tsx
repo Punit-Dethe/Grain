@@ -32,11 +32,14 @@ export function McpConnections({
   query,
   header,
   toolbar,
+  actions,
   children,
 }: {
   query: string;
   /** Page title block; it shares a row with "Add custom MCP" and stays fixed while the page scrolls. */
   header?: ReactNode;
+  /** Page-wide actions placed before "Add custom MCP". */
+  actions?: ReactNode;
   /** Fixed row under the title (search and page-wide actions). */
   toolbar?: ReactNode;
   children: (customConnections: ReactNode) => ReactNode;
@@ -237,16 +240,19 @@ export function McpConnections({
       <div className="extensions-head">
         <div className="ext-page-head">
           {header}
-          <button
-            ref={addButton}
-            type="button"
-            className="button"
-            disabled={busy !== null || adding}
-            onClick={(event) => openForm(null, event.currentTarget)}
-          >
-            <Plus size={15} aria-hidden="true" />
-            Add custom MCP
-          </button>
+          <div className="ext-head-actions">
+            {actions}
+            <button
+              ref={addButton}
+              type="button"
+              className="button"
+              disabled={busy !== null || adding}
+              onClick={(event) => openForm(null, event.currentTarget)}
+            >
+              <Plus size={15} aria-hidden="true" />
+              Add custom MCP
+            </button>
+          </div>
         </div>
         {toolbar}
       </div>

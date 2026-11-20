@@ -282,37 +282,34 @@ export function ComposioConnected({
     status.toolkits.map((toolkit) => ({ ...toolkit, id: toolkit.slug })),
     query,
   );
-  if (connected.length === 0) return null;
+  // Rows only: they follow the built-ins in the one Connected list.
   return (
-    <div className="ext-group">
-      <h3 className="ext-sublabel">Apps</h3>
-      <div className="ext-list">
-        {connected.map((toolkit) => (
-          <div key={toolkit.slug} className="ext-row">
-            <Logo src={toolkit.logo} />
-            <div className="ext-row-copy">
-              <h3>{toolkit.name}</h3>
-              {toolkit.description && <p>{toolkit.description}</p>}
-            </div>
-            <button
-              className="button ghost ext-quiet-action"
-              type="button"
-              aria-label={`Disconnect ${toolkit.name}`}
-              disabled={busy !== null}
-              onClick={() => composio.disconnect(toolkit.slug)}
-            >
-              {busy === toolkit.slug ? "Disconnecting…" : "Disconnect"}
-            </button>
-            <Switch
-              checked={toolkit.enabled}
-              disabled={busy !== null}
-              ariaLabel={`Use ${toolkit.name}`}
-              onChange={(enabled) => composio.setEnabled(toolkit.slug, enabled)}
-            />
+    <>
+      {connected.map((toolkit) => (
+        <div key={toolkit.slug} className="ext-row">
+          <Logo src={toolkit.logo} />
+          <div className="ext-row-copy">
+            <h3>{toolkit.name}</h3>
+            {toolkit.description && <p>{toolkit.description}</p>}
           </div>
-        ))}
-      </div>
-    </div>
+          <button
+            className="button ghost ext-quiet-action"
+            type="button"
+            aria-label={`Disconnect ${toolkit.name}`}
+            disabled={busy !== null}
+            onClick={() => composio.disconnect(toolkit.slug)}
+          >
+            {busy === toolkit.slug ? "Disconnecting…" : "Disconnect"}
+          </button>
+          <Switch
+            checked={toolkit.enabled}
+            disabled={busy !== null}
+            ariaLabel={`Use ${toolkit.name}`}
+            onChange={(enabled) => composio.setEnabled(toolkit.slug, enabled)}
+          />
+        </div>
+      ))}
+    </>
   );
 }
 

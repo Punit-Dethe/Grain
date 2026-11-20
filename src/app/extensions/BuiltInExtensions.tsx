@@ -1,4 +1,3 @@
-/* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Extensions surface. */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
@@ -56,37 +55,34 @@ export function BuiltInExtensions({ query }: { query: string }) {
   };
 
   const visible = filterExtensions(rows ?? [], query);
-  if (rows && visible.length === 0 && !error) return null;
 
+  // Rows only: the page puts them first in the one Connected list.
   return (
-    <div className="ext-group">
-      <h3 className="ext-sublabel">Built-in</h3>
+    <>
       {error && (
-        <p className="extension-inline-error" role="alert">
+        <p className="ext-row ext-row-error" role="alert">
           {error}
         </p>
       )}
-      <div className="ext-list">
-        {visible.map((row) => (
-          <div key={row.id} className="ext-row">
-            <span className="ext-logo">
-              {icons.has(row.id) && (
-                <img src={icons.get(row.id)} alt="" width={22} height={22} />
-              )}
-            </span>
-            <div className="ext-row-copy">
-              <h3>{row.name}</h3>
-              <p>{row.description}</p>
-            </div>
-            <Switch
-              checked={row.enabled}
-              disabled={busy !== null}
-              ariaLabel={`Use ${row.name}`}
-              onChange={(on) => void toggle(row, on)}
-            />
+      {visible.map((row) => (
+        <div key={row.id} className="ext-row">
+          <span className="ext-logo">
+            {icons.has(row.id) && (
+              <img src={icons.get(row.id)} alt="" width={22} height={22} />
+            )}
+          </span>
+          <div className="ext-row-copy">
+            <h3>{row.name}</h3>
+            <p>{row.description}</p>
           </div>
-        ))}
-      </div>
-    </div>
+          <Switch
+            checked={row.enabled}
+            disabled={busy !== null}
+            ariaLabel={`Use ${row.name}`}
+            onChange={(on) => void toggle(row, on)}
+          />
+        </div>
+      ))}
+    </>
   );
 }

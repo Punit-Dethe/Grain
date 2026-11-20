@@ -25,31 +25,20 @@ export function ExtensionsPage() {
       <div className="page-wrap extensions-page-wrap">
         <McpConnections
           query={query}
-          header={
-            <header className="page-header">
-              <div>
-                <h1>Extensions</h1>
-                <p className="page-subtitle">
-                  Connect the apps and tools Grain can use.
-                </p>
-              </div>
-            </header>
-          }
+          header={<h1 className="ext-title">Extensions</h1>}
+          actions={<RemoveComposio composio={composio} />}
           toolbar={
-            <div className="ext-search-row">
-              <label className="search-field">
-                <svg className="icon sm" aria-hidden="true">
-                  <use href="#i-search" />
-                </svg>
-                <input
-                  aria-label="Search extensions"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search extensions"
-                />
-              </label>
-              <RemoveComposio composio={composio} />
-            </div>
+            <label className="search-field ext-search">
+              <svg className="icon sm" aria-hidden="true">
+                <use href="#i-search" />
+              </svg>
+              <input
+                aria-label="Search extensions"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search extensions"
+              />
+            </label>
           }
         >
           {(customConnections) => (
@@ -59,8 +48,10 @@ export function ExtensionsPage() {
                 <h2 className="ext-label" id="ext-connected">
                   Connected
                 </h2>
-                <BuiltInExtensions query={query} />
-                <ComposioConnected composio={composio} query={query} />
+                <div className="ext-list">
+                  <BuiltInExtensions query={query} />
+                  <ComposioConnected composio={composio} query={query} />
+                </div>
               </section>
               <ComposioBrowse composio={composio} query={query} />
               {customConnections}
