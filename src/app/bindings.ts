@@ -682,6 +682,18 @@ async changeAgentPolishedUiSetting(enabled: boolean) : Promise<Result<null, stri
 }
 },
 /**
+ * [GRAIN] The chat size the user last settled on (`Settings::agent_chat_width`).
+ */
+async agentChatSize() : Promise<AgentChatSize> {
+    return await TAURI_INVOKE("agent_chat_size");
+},
+/**
+ * [GRAIN] Keep the size the user just dragged the chat to; returns it clamped.
+ */
+async setAgentChatSize(width: number, height: number) : Promise<AgentChatSize> {
+    return await TAURI_INVOKE("set_agent_chat_size", { width, height });
+},
+/**
  * [GRAIN] Turn Grain Pilot on or off. Off removes its tools from the Agent on
  * the next model round and closes the browser link.
  */
@@ -2231,6 +2243,10 @@ export type Activity = { slot: number; start_ns: number; end_ns: number }
  * Every chat (newest first) and the one the notch continues.
  */
 export type AgentChatList = { current: string | null; chats: AgentChatSummary[] }
+/**
+ * [GRAIN] The Agent chat's size, in CSS px.
+ */
+export type AgentChatSize = { width: number; height: number }
 export type AgentChatSummary = { id: string; title: string; updated_unix_ms: number }
 /**
  * [GRAIN] A risky action awaiting the user's approval. Carries the exact
@@ -2523,6 +2539,12 @@ agent_dynamic_ui?: boolean;
  * few more prompt tokens per turn.
  */
 agent_polished_ui?: boolean; 
+/**
+ * [GRAIN] The Agent chat's size in CSS px, as the user last dragged it
+ * (600 x 360 until then). Clamped by `set_agent_chat_size` to what the
+ * notch window holds; generated views size themselves and ignore it.
+ */
+agent_chat_width?: number; agent_chat_height?: number; 
 /**
  * [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
  * the Grain Pilot extension. OFF by default; off removes it from the

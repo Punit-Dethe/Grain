@@ -698,6 +698,72 @@ pub fn change_agent_polished_ui_setting(app: AppHandle, enabled: bool) -> Result
     Ok(())
 }
 
+/// [GRAIN] The Agent chat's size, in CSS px.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct AgentChatSize {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The chat can be dragged between these. The max stays inside the notch
+/// window (`NOTCH_REPLY` in agent.rs, 760 x 620) with its clip slack, like a
+/// generated view's max, so a resize never resizes the window itself.
+const AGENT_CHAT_MIN: AgentChatSize = AgentChatSize {
+    width: 440,
+    height: 260,
+};
+const AGENT_CHAT_MAX: AgentChatSize = AgentChatSize {
+    width: 720,
+    height: 600,
+};
+
+fn clamp_agent_chat_size(width: u32, height: u32) -> AgentChatSize {
+    AgentChatSize {
+        width: width.clamp(AGENT_CHAT_MIN.width, AGENT_CHAT_MAX.width),
+        height: height.clamp(AGENT_CHAT_MIN.height, AGENT_CHAT_MAX.height),
+    }
+}
+
+/// [GRAIN] The chat size the user last settled on (`Settings::agent_chat_width`).
+#[tauri::command]
+#[specta::specta]
+pub fn agent_chat_size(app: AppHandle) -> AgentChatSize {
+    let settings = settings::get_settings(&app);
+    clamp_agent_chat_size(settings.agent_chat_width, settings.agent_chat_height)
+}
+
+/// [GRAIN] Keep the size the user just dragged the chat to; returns it clamped.
+#[tauri::command]
+#[specta::specta]
+pub fn set_agent_chat_size(app: AppHandle, width: u32, height: u32) -> AgentChatSize {
+    let size = clamp_agent_chat_size(width, height);
+    let mut settings = settings::get_settings(&app);
+    if (settings.agent_chat_width, settings.agent_chat_height) != (size.width, size.height) {
+        settings.agent_chat_width = size.width;
+        settings.agent_chat_height = size.height;
+        settings::write_settings(&app, settings);
+    }
+    size
+}
+
+#[cfg(test)]
+mod agent_chat_size_tests {
+    use super::*;
+
+    #[test]
+    fn the_chat_size_stays_inside_the_notch_window() {
+        assert_eq!(
+            clamp_agent_chat_size(600, 360),
+            AgentChatSize {
+                width: 600,
+                height: 360
+            }
+        );
+        assert_eq!(clamp_agent_chat_size(10, 10), AGENT_CHAT_MIN);
+        assert_eq!(clamp_agent_chat_size(5000, 5000), AGENT_CHAT_MAX);
+    }
+}
+
 /// [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
 /// by default; see `Settings::meet_auto_summary`.
 #[tauri::command]

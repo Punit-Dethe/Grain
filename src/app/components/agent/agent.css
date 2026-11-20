@@ -26,8 +26,9 @@ html[data-window="agent-panel"] body {
   /* NOTCH_CLOSE in agent.rs and `dismiss` in AgentPanel wait for this. */
   --notch-close: 300ms;
   --notch-reply-header: 34px;
-  /* The chat shell (CHAT_SIZE in AgentPanel.tsx). The window is larger (room
-     for the Canvas max) and clipped to the shell. */
+  /* The chat shell's default (CHAT_SIZE in AgentPanel.tsx); the shell sets
+     the user's dragged size inline. The window is larger (room for the
+     Canvas max) and clipped to the shell. */
   --chat-w: 600px;
   --chat-h: 360px;
   /* The resting sliver (BASE in grain_notch_sliver.rs). */
@@ -2033,4 +2034,83 @@ html[data-window="agent-panel"] body {
   .agrm-bell svg {
     animation: none;
   }
+}
+
+/* ── Resizable chat ───────────────────────────────────────────────────────
+   Invisible grips on the chat's sides and bottom (AgentPanel's CHAT_GRIPS).
+   While a drag runs the shell follows the pointer with no easing. */
+.agent-notch.is-resizing,
+.agent-notch.is-resizing * {
+  transition: none !important;
+}
+
+.agent-notch.is-resizing {
+  user-select: none;
+}
+
+.agent-chat-grip {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+}
+
+.agent-chat-grip.is-left,
+.agent-chat-grip.is-right {
+  top: var(--notch-reply-header);
+  bottom: 14px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.agent-chat-grip.is-left {
+  left: 0;
+}
+
+.agent-chat-grip.is-right {
+  right: 0;
+}
+
+.agent-chat-grip.is-bottom {
+  right: 14px;
+  bottom: 0;
+  left: 14px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.agent-chat-grip.is-bottom-left,
+.agent-chat-grip.is-bottom-right {
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.agent-chat-grip.is-bottom-left {
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.agent-chat-grip.is-bottom-right {
+  right: 0;
+  cursor: nwse-resize;
+}
+
+/* A quiet hint on the bottom edge while hovering it or dragging. */
+.agent-chat-grip.is-bottom::after {
+  content: "";
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 36px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 160ms ease;
+}
+
+.agent-chat-grip.is-bottom:hover::after,
+.agent-notch.is-resizing .agent-chat-grip.is-bottom::after {
+  opacity: 1;
 }

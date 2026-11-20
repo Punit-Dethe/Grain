@@ -848,6 +848,13 @@ pub struct AppSettings {
     /// few more prompt tokens per turn.
     #[serde(default = "default_true")]
     pub agent_polished_ui: bool,
+    /// [GRAIN] The Agent chat's size in CSS px, as the user last dragged it
+    /// (600 x 360 until then). Clamped by `set_agent_chat_size` to what the
+    /// notch window holds; generated views size themselves and ignore it.
+    #[serde(default = "default_agent_chat_width")]
+    pub agent_chat_width: u32,
+    #[serde(default = "default_agent_chat_height")]
+    pub agent_chat_height: u32,
     /// [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
     /// the Grain Pilot extension. OFF by default; off removes it from the
     /// Agent's tool directory and closes the browser link.
@@ -879,6 +886,14 @@ pub struct AppSettings {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_agent_chat_width() -> u32 {
+    600
+}
+
+fn default_agent_chat_height() -> u32 {
+    360
 }
 
 fn default_agent_voice() -> String {
@@ -1671,6 +1686,8 @@ pub fn get_default_settings() -> AppSettings {
         agent_voice: default_agent_voice(),
         agent_dynamic_ui: true,
         agent_polished_ui: true,
+        agent_chat_width: default_agent_chat_width(),
+        agent_chat_height: default_agent_chat_height(),
         pilot_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,

@@ -100,6 +100,19 @@ const RECALL_WIDTH = 380;
 /** The chat (and chat list) shell, in CSS px. The window is larger (room for
  * a generated view's max, NOTCH_REPLY in agent.rs) and clipped to the shell. */
 const CHAT_SIZE = { w: 600, h: 360 };
+/** How far the user may drag the chat (AGENT_CHAT_MIN/MAX in
+ * grain_commands.rs, which clamps again and keeps the size). */
+const CHAT_MIN = { w: 440, h: 260 };
+const CHAT_MAX = { w: 720, h: 600 };
+/** Resize grips: which way each edge moves the size. The shell is centred
+ * under the notch, so a side edge grows it on both sides (2x the drag). */
+const CHAT_GRIPS = [
+  { edge: "left", x: -1, y: 0 },
+  { edge: "right", x: 1, y: 0 },
+  { edge: "bottom", x: 0, y: 1 },
+  { edge: "bottom-left", x: -1, y: 1 },
+  { edge: "bottom-right", x: 1, y: 1 },
+] as const;
 /** Tab (Shift+Tab) walks the views in this order. */
 const MODES: AgentNotchMode[] = ["recall", "chat"];
 const MODE_LABEL = {
@@ -193,6 +206,16 @@ export function AgentPanel() {
     () => {},
   );
   const [canvasSize, setCanvasSize] = useState(CANVAS_MIN);
+  // The chat's size: the user's last drag, kept by the host. While a drag
+  // runs the window is unclipped and the shell follows the pointer.
+  const [chatSize, setChatSize] = useState(CHAT_SIZE);
+  const [resizing, setResizing] = useState(false);
+  useEffect(() => {
+    void commands
+      .agentChatSize()
+      .then((size) => setChatSize({ w: size.width, h: size.height }))
+      .catch(console.error);
+  }, []);
   const [canvasDraft, setCanvasDraft] = useState(false);
   const canvasComposerRef = useRef<HTMLTextAreaElement>(null);
   const currentStartRef = useRef<HTMLDivElement>(null);
@@ -670,11 +693,15 @@ export function AgentPanel() {
       ? { w: RECALL_WIDTH, h: recallHeight }
       : uiShown
         ? canvasSize
-        : CHAT_SIZE;
+        : chatSize;
+  // The chat (or the chat list) is what the user may resize.
+  const chatSized = shell === chatSize;
   const shellW = shell.w;
   const shellH = shell.h;
   useEffect(() => {
     if (!revealed || closing) return;
+    // A drag lifted the clip; the size it settles on is clipped after.
+    if (resizing) return;
     // An open Recall device menu floats below the shell: no clip under it.
     const fit =
       mode === "recall" && recallMenu && view === "main"
@@ -709,7 +736,70 @@ export function AgentPanel() {
       Math.min(fit.h, window.innerHeight),
       () => apply(fit),
     );
-  }, [revealed, closing, mode, recallMenu, view, shellW, shellH]);
+  }, [revealed, closing, mode, recallMenu, view, shellW, shellH, resizing]);
+
+  /** Drag a grip: lift the clip (pixels outside it are not repainted), let
+   * the shell follow the pointer, then keep the size it settles on. A
+   * double-click puts the default size back. */
+  const startChatResize = (
+    event: React.PointerEvent<HTMLElement>,
+    grip: (typeof CHAT_GRIPS)[number],
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const start = { x: event.clientX, y: event.clientY, ...chatSize };
+    let size = { w: chatSize.w, h: chatSize.h };
+    clipRef.current = null;
+    void commands.agentNotchShape(null).catch(console.error);
+    setResizing(true);
+    const move = (e: PointerEvent) => {
+      size = {
+        w: Math.round(
+          Math.max(
+            CHAT_MIN.w,
+            Math.min(
+              Math.min(CHAT_MAX.w, window.innerWidth),
+              start.w + grip.x * 2 * (e.clientX - start.x),
+            ),
+          ),
+        ),
+        h: Math.round(
+          Math.max(
+            CHAT_MIN.h,
+            Math.min(
+              Math.min(CHAT_MAX.h, window.innerHeight),
+              start.h + grip.y * (e.clientY - start.y),
+            ),
+          ),
+        ),
+      };
+      setChatSize(size);
+    };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      setResizing(false);
+      void commands
+        .setAgentChatSize(size.w, size.h)
+        .then((kept) => setChatSize({ w: kept.width, h: kept.height }))
+        .catch(console.error);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  };
+
+  const resetChatSize = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    unclipThen(() => setChatSize(CHAT_SIZE));
+    void commands
+      .setAgentChatSize(CHAT_SIZE.w, CHAT_SIZE.h)
+      .catch(console.error);
+  };
 
   /** Apply a change that may grow the shell. While the window is clipped to
    * Recall, lift the clip first and wait until it is gone: a growth started
@@ -1163,10 +1253,12 @@ export function AgentPanel() {
         onClick={() => canOpenEarly && openEarly()}
         data-hover={canOpenEarly && hoverOpening ? "" : undefined}
         ref={shellRef}
-        className={`agent-notch${entering ? " is-entering" : ""}${revealed ? " is-reply" : ""}${fitted ? " is-fit" : ""}${closing ? " is-closing" : ""}`}
+        className={`agent-notch${entering ? " is-entering" : ""}${revealed ? " is-reply" : ""}${fitted ? " is-fit" : ""}${closing ? " is-closing" : ""}${resizing ? " is-resizing" : ""}`}
         data-opened={capture?.opened ? "" : undefined}
         style={
           {
+            "--chat-w": `${chatSize.w}px`,
+            "--chat-h": `${chatSize.h}px`,
             "--recall-w": `${RECALL_WIDTH}px`,
             "--recall-h": `${recallHeight}px`,
             "--fit-w": `${shellW}px`,
@@ -1563,6 +1655,19 @@ export function AgentPanel() {
             </div>
           </div>
         )}
+        {revealed &&
+          !closing &&
+          chatSized &&
+          CHAT_GRIPS.map((grip) => (
+            <span
+              key={grip.edge}
+              className={`agent-chat-grip is-${grip.edge}`}
+              aria-hidden
+              onPointerDown={(event) => startChatResize(event, grip)}
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={resetChatSize}
+            />
+          ))}
       </section>
     </div>
   );
