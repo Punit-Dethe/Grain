@@ -15,6 +15,7 @@ import {
   type McpProviderStatus,
 } from "@/bindings";
 import { signInCancelled, unwrapResult } from "./extensionRuntime";
+import "./mcp-presets.css";
 import "./mcp-connections.css";
 
 type Connection = ConnectionView;
@@ -29,14 +30,18 @@ const cancelSignIn = (row: Connection) =>
 
 export function McpConnections({
   query,
-  search,
   header,
+  toolbar,
+  actions,
   children,
 }: {
   query: string;
-  search: ReactNode;
-  /** Shown above the toolbar; the two stay fixed while the page scrolls. */
+  /** Page title block; it shares a row with "Add custom MCP" and stays fixed while the page scrolls. */
   header?: ReactNode;
+  /** Page-wide actions placed before "Add custom MCP". */
+  actions?: ReactNode;
+  /** Fixed row under the title (search and page-wide actions). */
+  toolbar?: ReactNode;
   children: (customConnections: ReactNode) => ReactNode;
 }) {
   const titleId = useId();
@@ -233,20 +238,23 @@ export function McpConnections({
   return (
     <>
       <div className="extensions-head">
-        {header}
-        <div className="extension-toolbar">
-          {search}
-          <button
-            ref={addButton}
-            type="button"
-            className="button"
-            disabled={busy !== null || adding}
-            onClick={(event) => openForm(null, event.currentTarget)}
-          >
-            <Plus size={15} aria-hidden="true" />
-            Add custom MCP
-          </button>
+        <div className="ext-page-head">
+          {header}
+          <div className="ext-head-actions">
+            {actions}
+            <button
+              ref={addButton}
+              type="button"
+              className="button"
+              disabled={busy !== null || adding}
+              onClick={(event) => openForm(null, event.currentTarget)}
+            >
+              <Plus size={15} aria-hidden="true" />
+              Add custom MCP
+            </button>
+          </div>
         </div>
+        {toolbar}
       </div>
       {error && (
         <p className="extension-inline-error mcp-custom-error" role="alert">
@@ -421,7 +429,7 @@ export function McpConnections({
             aria-labelledby={titleId}
           >
             <header className="mcp-connections-heading">
-              <h2 id={titleId}>Your MCP connections</h2>
+              <h2 id={titleId}>Custom MCP servers</h2>
               {error && !adding && (
                 <button
                   className="button ghost"

@@ -977,6 +977,93 @@ async mcpTestProvider(id: string) : Promise<Result<McpDiscoveryResult, string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Saved state; with `refresh`, first drops toolkits whose Composio account
+ * was removed or expired elsewhere (best effort, offline keeps the list).
+ */
+async composioStatus(refresh: boolean) : Promise<Result<ComposioStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_status", { refresh }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Check the key with Composio, then save it. A different key means a
+ * different Composio project, so connections from the old one are forgotten.
+ */
+async composioSetApiKey(key: string) : Promise<Result<ComposioStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_set_api_key", { key }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Forget the key and every Composio connection on this install. Accounts
+ * stay in the user's Composio project, where they can remove them.
+ */
+async composioRemoveApiKey() : Promise<Result<ComposioStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_remove_api_key") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Apps the user can connect, most used first. Fetched when the page asks
+ * and not kept afterwards.
+ */
+async composioCatalog() : Promise<Result<ComposioCatalogEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_catalog") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Connect one app: Composio's sign-in page opens in the browser and Grain
+ * waits for the account to become active. Apps without accounts connect at once.
+ */
+async composioConnect(slug: string) : Promise<Result<ComposioStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_connect", { slug }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async composioCancelConnect(slug: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_cancel_connect", { slug }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove the app from Grain and its account from the user's Composio project.
+ */
+async composioDisconnect(slug: string) : Promise<Result<ComposioStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_disconnect", { slug }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async composioSetEnabled(slug: string, enabled: boolean) : Promise<Result<ComposioStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("composio_set_enabled", { slug, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async mcpConnectionsList() : Promise<Result<ConnectionView[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connections_list") };
@@ -2386,6 +2473,16 @@ mcp_oauth_client_ids?: Partial<{ [key in string]: string }>;
  */
 mcp_no_account_connected?: string[]; 
 /**
+ * [GRAIN] Opaque id this install uses as its Composio `user_id`. Created
+ * with the first Composio key; the key itself lives in the OS vault.
+ */
+composio_user_id?: string; 
+/**
+ * [GRAIN] Composio toolkits connected through the user's own Composio
+ * project. Read by the Agent directory each turn, so it stays local.
+ */
+composio_toolkits?: ComposioToolkit[]; 
+/**
  * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
  * the window you were in and sends that frame with your instruction, so it
  * can answer about what is actually on screen — a chart, a diff, an error
@@ -2482,6 +2579,36 @@ export type BindingResponse = { success: boolean; binding: ShortcutBinding | nul
 export type ChineseScript = "as_transcribed" | "simplified" | "traditional_tw" | "traditional_hk"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type ClipboardOffer = { id: number; expires_at_ms: number }
+export type ComposioCatalogEntry = { slug: string; name: string; description: string; logo: string; 
+/**
+ * Usable without signing in to an account.
+ */
+no_auth: boolean }
+export type ComposioStatus = { 
+/**
+ * A project API key is saved in the OS vault.
+ */
+configured: boolean; toolkits: ComposioToolkit[] }
+/**
+ * [GRAIN] One Composio toolkit (Gmail, Slack, …) connected to this install.
+ */
+export type ComposioToolkit = { 
+/**
+ * Composio toolkit slug, lowercase (`gmail`).
+ */
+slug: string; name: string; description: string; 
+/**
+ * Logo URL served by Composio.
+ */
+logo: string; 
+/**
+ * Connected account id; `None` for toolkits that need no sign-in.
+ */
+connected_account_id: string | null; 
+/**
+ * Agent switch for this toolkit.
+ */
+enabled: boolean }
 /**
  * Host UI projection, deliberately omitting vault/account IDs and numeric u64
  * revisions (JavaScript numbers cannot represent all supported revisions).
@@ -2961,7 +3088,8 @@ export type SourceStatus = { kind: SourceKind;
  */
 name: string; recorded_ms: number; 
 /**
- * Peak audio level since the previous status read, 0 to 1.
+ * Peak audio level of the latest tenth of a second, 0 to 1 (0 while
+ * muted or not delivering audio).
  */
 level: number; 
 /**

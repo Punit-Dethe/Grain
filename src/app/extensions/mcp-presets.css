@@ -1,9 +1,7 @@
-.mcp-integration-section,
 .mcp-custom-connections {
   margin-block: 22px;
 }
 
-.mcp-integration-section h2,
 .mcp-custom-connections h2 {
   margin: 0 0 9px;
   color: var(--text-3);
@@ -13,72 +11,17 @@
   text-transform: uppercase;
 }
 
-.mcp-integration-list {
-  overflow: hidden;
-  border-radius: 14px;
-  background: var(--bg-2);
-}
-
-.mcp-preset-connected,
-.mcp-preset-available {
-  padding: 12px 14px;
-}
-
-.mcp-integration-list > article + article {
-  border-top: 1px solid var(--hairline-soft);
-}
-
-.mcp-preset-connected,
-.mcp-preset-available,
-.mcp-preset-identity,
-.mcp-preset-actions,
 .mcp-custom-heading {
   display: flex;
   align-items: center;
   gap: 11px;
 }
 
-.mcp-preset-identity {
-  flex: 1;
-  min-width: 0;
-}
-
-.mcp-preset-identity h3,
 .mcp-custom-heading h3 {
   margin: 0;
   color: var(--text-1);
   font-size: 14px;
   font-weight: 620;
-}
-
-.mcp-preset-identity p,
-.mcp-integration-feedback {
-  margin: 3px 0 0;
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.mcp-preset-actions,
-.mcp-preset-connect {
-  flex: none;
-}
-
-.mcp-preset-actions .button {
-  min-height: 30px;
-  font-size: 12px;
-}
-
-.mcp-preset-connect {
-  display: grid;
-  justify-items: end;
-}
-
-.mcp-preset-connect .button {
-  min-width: 88px;
-  min-height: 34px;
-  border-radius: 999px;
-  font-size: 12px;
 }
 
 .mcp-preset-settings {
@@ -102,24 +45,4 @@
   height: 24px;
   place-items: center;
   color: var(--text-1);
-}
-
-.mcp-brand-icon {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
-}
-
-html[data-theme="dark"] .mcp-brand-icon[data-provider="github"] {
-  filter: invert(1);
-}
-
-.mcp-brand-icon[data-variant="dark"],
-html[data-theme="dark"] .mcp-brand-icon[data-variant="light"] {
-  display: none;
-}
-
-html[data-theme="dark"] .mcp-brand-icon[data-variant="dark"] {
-  display: block;
 }

@@ -470,7 +470,6 @@ pub async fn mcp_connection_status(
             endpoint: item.endpoint.into(),
             setup_url: item.setup_url.into(),
             requires_client_credentials: super::preregistered(&app, &item)
-                && super::builtin_client(&app, &item).is_none()
                 && super::package_client(&app, &item).is_none(),
             client_id_configured: super::provider_client_id(&app, &item).is_some(),
             connected,

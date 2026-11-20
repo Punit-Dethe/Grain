@@ -4682,12 +4682,7 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   padding-bottom: 72px;
 }
 
-.extensions-workspace-page .page-header {
-  margin-bottom: 20px;
-}
-
-.header-actions,
-.extension-toolbar {
+.header-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -4699,11 +4694,7 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   gap: 6px;
 }
 
-.extension-toolbar {
-  margin-bottom: 20px;
-}
-
-/* The title and the search / Add custom MCP row stay put; only what is below
+/* The title, page actions and search stay put; only what is below
    them scrolls. Sticky offsets begin inside the page's 26px top padding, so the
    block reaches back up by that much and pads itself down again. */
 .extensions-head {
@@ -4714,10 +4705,6 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
   padding-top: 26px;
   padding-bottom: 20px;
   background: var(--meet-page);
-}
-
-.extensions-head .extension-toolbar {
-  margin-bottom: 0;
 }
 
 .extensions-head::after {
@@ -4732,12 +4719,6 @@ html[data-theme="light"] .dictionary-dialog .dictionary-save-button {
     color-mix(in srgb, var(--meet-page) 0%, transparent)
   );
   pointer-events: none;
-}
-
-.extension-toolbar .search-field {
-  width: auto;
-  min-width: 180px;
-  flex: 1 1 auto;
 }
 
 .extension-inline-error {
@@ -4799,13 +4780,6 @@ html[data-theme="light"] .tools-canvas {
   }
   .tools-scroll {
     padding: 28px 22px 60px;
-  }
-  .extension-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-  .extension-toolbar .search-field {
-    width: 100%;
   }
 }
 

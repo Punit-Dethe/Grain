@@ -132,6 +132,21 @@ pub struct ShortcutBinding {
     pub current_binding: String,
 }
 
+/// [GRAIN] One Composio toolkit (Gmail, Slack, …) connected to this install.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
+pub struct ComposioToolkit {
+    /// Composio toolkit slug, lowercase (`gmail`).
+    pub slug: String,
+    pub name: String,
+    pub description: String,
+    /// Logo URL served by Composio.
+    pub logo: String,
+    /// Connected account id; `None` for toolkits that need no sign-in.
+    pub connected_account_id: Option<String>,
+    /// Agent switch for this toolkit.
+    pub enabled: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct LLMPrompt {
     pub id: String,
@@ -790,6 +805,14 @@ pub struct AppSettings {
     /// Their Agent switch stays `mcp_enabled_providers` / `pilot_enabled`.
     #[serde(default)]
     pub mcp_no_account_connected: Vec<String>,
+    /// [GRAIN] Opaque id this install uses as its Composio `user_id`. Created
+    /// with the first Composio key; the key itself lives in the OS vault.
+    #[serde(default)]
+    pub composio_user_id: String,
+    /// [GRAIN] Composio toolkits connected through the user's own Composio
+    /// project. Read by the Agent directory each turn, so it stays local.
+    #[serde(default)]
+    pub composio_toolkits: Vec<ComposioToolkit>,
     /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
     /// the window you were in and sends that frame with your instruction, so it
     /// can answer about what is actually on screen — a chart, a diff, an error
@@ -1640,6 +1663,8 @@ pub fn get_default_settings() -> AppSettings {
         mcp_enabled_providers: Vec::new(),
         mcp_oauth_client_ids: HashMap::new(),
         mcp_no_account_connected: Vec::new(),
+        composio_user_id: String::new(),
+        composio_toolkits: Vec::new(),
         agent_screen_image: false,
         agent_talk_back: false,
         agent_compact_voice: true,

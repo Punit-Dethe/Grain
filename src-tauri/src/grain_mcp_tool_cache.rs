@@ -95,6 +95,13 @@ fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&temporary, path)
 }
 
+/// How long ago the saved catalogue was written; `None` when there is none.
+pub(super) async fn age(app: &AppHandle, account: &str) -> Option<std::time::Duration> {
+    let path = path(app, account)?;
+    let modified = tokio::fs::metadata(&path).await.ok()?.modified().ok()?;
+    Some(modified.elapsed().unwrap_or_default())
+}
+
 /// Forget a connection's saved catalogue (sign-in, disconnect, removal, drift).
 pub(super) async fn clear(app: &AppHandle, account: &str) {
     if let Some(path) = path(app, account) {

@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
-const GITHUB_TEST_ID: &str = "com.grain.github.test";
+const AGENT_TEST_ID: &str = "com.grain.agent.test";
 const MAX_REQUEST_BYTES: u64 = 16 * 1024;
 
 #[derive(Deserialize)]
@@ -36,8 +36,8 @@ fn read_request(path: &Path) -> Result<Request, String> {
 }
 
 pub(crate) fn check_identity(app: &AppHandle) -> Result<(), String> {
-    if app.config().identifier != GITHUB_TEST_ID {
-        return Err("Agent probe requires the isolated GitHub test application identity".into());
+    if app.config().identifier != AGENT_TEST_ID {
+        return Err("Agent probe requires the isolated Agent test application identity".into());
     }
     Ok(())
 }
@@ -94,7 +94,7 @@ async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
         }
     };
     Ok(
-        json!({"schema":1,"profile":GITHUB_TEST_ID,"scope":"MCP/backend-only","elapsed_ms":started.elapsed().as_millis(),"result":result}),
+        json!({"schema":1,"profile":AGENT_TEST_ID,"scope":"MCP/backend-only","elapsed_ms":started.elapsed().as_millis(),"result":result}),
     )
 }
 

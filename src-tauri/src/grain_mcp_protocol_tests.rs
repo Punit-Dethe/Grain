@@ -5,6 +5,18 @@
 use super::*;
 use grain_core::execution::{ActionOutcome, RiskClass, SideEffect};
 use serde_json::{json, Value};
+
+/// A plain OAuth remote server; the shape the retired Linear preset had.
+const TEST_PROVIDER: CatalogProvider = CatalogProvider {
+    id: "linear",
+    name: "Linear",
+    description: "Protocol test server.",
+    endpoint: "https://mcp.linear.app/mcp",
+    registration: Registration::Dynamic,
+    setup_url: "https://linear.app/docs/mcp",
+    bundled_preset: true,
+    ownership: None,
+};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -478,7 +490,7 @@ fn tool_json() -> Value {
 
 fn digest() -> String {
     tool_set_digest(
-        provider("linear").unwrap(),
+        &TEST_PROVIDER,
         &[serde_json::from_value(tool_json()).unwrap()],
     )
     .unwrap()
@@ -777,7 +789,7 @@ async fn execute(
 ) -> Result<McpCallOutput, ExecutionFailure> {
     call_on_service(
         service,
-        provider("linear").unwrap(),
+        &TEST_PROVIDER,
         "write",
         serde_json::Map::new(),
         &digest(),
@@ -950,7 +962,7 @@ async fn schema_change_or_disable_blocks_the_call_after_discovery() {
     for (expected, enabled) in [("old-digest".to_string(), true), (digest(), false)] {
         let failure = call_on_service(
             &service,
-            provider("linear").unwrap(),
+            &TEST_PROVIDER,
             "write",
             serde_json::Map::new(),
             &expected,
@@ -1076,7 +1088,7 @@ async fn nested_invalid_arguments_never_reach_tools_call() {
             "properties": {"count": {"type": "integer", "minimum": 1}},
             "additionalProperties": false}}, "additionalProperties": false});
     let digest = tool_set_digest(
-        provider("linear").unwrap(),
+        &TEST_PROVIDER,
         &[serde_json::from_value(tool.clone()).unwrap()],
     )
     .unwrap();
@@ -1094,7 +1106,7 @@ async fn nested_invalid_arguments_never_reach_tools_call() {
     ] {
         let failure = call_on_service(
             &service,
-            provider("linear").unwrap(),
+            &TEST_PROVIDER,
             "write",
             arguments.as_object().unwrap().clone(),
             &digest,
@@ -1111,7 +1123,7 @@ async fn nested_invalid_arguments_never_reach_tools_call() {
     }
     call_on_service(
         &service,
-        provider("linear").unwrap(),
+        &TEST_PROVIDER,
         "write",
         json!({"request": {"count": 1}})
             .as_object()
@@ -1172,7 +1184,7 @@ async fn unsupported_tools_are_isolated_across_pages_and_cannot_dispatch() {
     .unwrap();
     assert_eq!(tools.len(), 1);
     assert_eq!(tools[0].name.as_ref(), "write");
-    let item = provider("linear").unwrap();
+    let item = &TEST_PROVIDER;
     let digest = tool_set_digest(item, &tools).unwrap();
     let rejected = call_on_service(
         &service,
@@ -1270,7 +1282,7 @@ async fn one_revalidated_service_dispatches_a_frame_concurrently_with_per_call_b
     })))
     .await;
     let service = fixture.service(McpHttpClient::local_test_client()).await;
-    let item = provider("linear").unwrap();
+    let item = &TEST_PROVIDER;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let tools = revalidate_on_service(&service, item, &digest(), deadline)
         .await

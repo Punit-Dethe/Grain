@@ -35,9 +35,6 @@ use zeroize::Zeroize;
 #[path = "grain_mcp_connections.rs"]
 pub mod connections;
 
-#[path = "grain_mcp_builtin.rs"]
-mod builtin;
-
 #[path = "grain_mcp_vault_parts.rs"]
 mod vault_parts;
 
@@ -332,8 +329,6 @@ impl Provider<'_> {
     fn headers(&self) -> grain_sdk::mcp::McpHeaders {
         if let Some(owner) = self.ownership {
             owner.headers().clone()
-        } else if self.id == "github" {
-            [("x-mcp-toolsets".into(), "all".into())].into()
         } else {
             Default::default()
         }
@@ -428,240 +423,6 @@ const CATALOG: &[CatalogProvider] = &[
         ownership: None,
     },
     CatalogProvider {
-        id: "linear",
-        bundled_preset: true,
-        name: "Linear",
-        description: "Issues, projects, cycles, and team workflows.",
-        endpoint: "https://mcp.linear.app/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://linear.app/docs/mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "notion",
-        bundled_preset: true,
-        name: "Notion",
-        description: "Pages, databases, search, and workspace content.",
-        endpoint: "https://mcp.notion.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://developers.notion.com/guides/mcp/get-started-with-mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "atlassian",
-        // Needs an Atlassian Cloud site with Jira or Confluence on the
-        // signed-in account. V2 is the current server; V1 grants do not carry over.
-        bundled_preset: true,
-        name: "Jira & Confluence",
-        description: "Jira and Confluence work across one Atlassian account.",
-        endpoint: "https://mcp.atlassian.com/v2/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://support.atlassian.com/atlassian-ai-gateway/docs/get-started-with-the-atlassian-remote-mcp-server/",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "github",
-        bundled_preset: true,
-        name: "GitHub",
-        description: "Repositories, issues, pull requests, and code workflows.",
-        endpoint: "https://api.githubcopilot.com/mcp/",
-        // GitHub's authorization metadata does not advertise Dynamic Client
-        // Registration. Treating it as DCR made the Connect button fail before
-        // the user ever reached GitHub. A developer OAuth app is required.
-        registration: Registration::PreRegistered,
-        setup_url:
-            "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
-        ownership: None,
-    },
-    // Every listed row passed one real Connect and one real tool call. New rows
-    // are tested the same way before release; a failure is hidden or removed.
-    CatalogProvider {
-        id: "todoist",
-        bundled_preset: true,
-        name: "Todoist",
-        description: "Tasks, projects, due dates, and labels.",
-        endpoint: "https://ai.todoist.net/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://github.com/todoist/todoist-mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "dropbox",
-        bundled_preset: true,
-        name: "Dropbox",
-        description: "Find, read, and share files and folders.",
-        endpoint: "https://mcp.dropbox.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://help.dropbox.com/integrations/connect-dropbox-mcp-server",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "asana",
-        bundled_preset: true,
-        name: "Asana",
-        description: "Tasks, projects, and team work.",
-        endpoint: "https://mcp.asana.com/v2/mcp",
-        // Asana's V2 server does not register clients itself. Grain is
-        // registered once as an "MCP app" with distribution "Any workspace";
-        // the build supplies that registration (GRAIN_ASANA_OAUTH_CLIENT_*).
-        registration: Registration::PreRegistered,
-        setup_url: "https://developers.asana.com/docs/integrating-with-asanas-mcp-server",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "coda",
-        bundled_preset: true,
-        name: "Coda",
-        description: "Docs, pages, and tables.",
-        endpoint: "https://coda.io/apis/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://help.coda.io/hc/en-us/articles/44722661982989",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "readwise",
-        bundled_preset: true,
-        name: "Readwise",
-        description: "Highlights and saved articles.",
-        endpoint: "https://mcp2.readwise.io/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://readwise.io/mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "raindrop",
-        bundled_preset: true,
-        name: "Raindrop.io",
-        description: "Bookmarks, collections, and tags.",
-        endpoint: "https://api.raindrop.io/rest/v2/ai/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://help.raindrop.io/mcp",
-        ownership: None,
-    },
-    // monday.com's token exceeds one Windows credential; see vault_parts.
-    CatalogProvider {
-        id: "monday",
-        bundled_preset: true,
-        name: "monday.com",
-        description: "Boards, items, and updates.",
-        endpoint: "https://mcp.monday.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://developer.monday.com/apps/docs/mondaycom-mcp-integration",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "canva",
-        bundled_preset: true,
-        name: "Canva",
-        description: "Find, create, and export designs.",
-        endpoint: "https://mcp.canva.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://www.canva.dev/docs/connect/canva-mcp-server-setup",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "gamma",
-        bundled_preset: true,
-        name: "Gamma",
-        description: "Generate presentations, documents, and web pages.",
-        endpoint: "https://mcp.gamma.app/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://developers.gamma.app/mcp/gamma-mcp-server",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "miro",
-        bundled_preset: true,
-        name: "Miro",
-        description: "Read and add to boards.",
-        endpoint: "https://mcp.miro.com/",
-        registration: Registration::Dynamic,
-        setup_url: "https://developers.miro.com/docs/miro-mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "zapier",
-        bundled_preset: true,
-        name: "Zapier",
-        description: "Run your Zapier actions across thousands of apps.",
-        endpoint: "https://mcp.zapier.com/api/mcp/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://zapier.com/mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "calcom",
-        bundled_preset: true,
-        name: "Cal.com",
-        description: "Bookings, availability, and event types.",
-        endpoint: "https://mcp.cal.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://cal.com/docs/mcp-server",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "granola",
-        bundled_preset: true,
-        name: "Granola",
-        description: "Search and read your meeting notes.",
-        endpoint: "https://mcp.granola.ai/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://docs.granola.ai/help-center/sharing/integrations/mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "fireflies",
-        bundled_preset: true,
-        name: "Fireflies",
-        description: "Meeting transcripts, summaries, and action items.",
-        endpoint: "https://api.fireflies.ai/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://docs.fireflies.ai/getting-started/mcp-configuration",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "otter",
-        bundled_preset: true,
-        name: "Otter",
-        description: "Search and read your meeting transcripts.",
-        endpoint: "https://mcp.otter.ai/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://help.otter.ai/hc/en-us/search?query=MCP",
-        ownership: None,
-    },
-    // Stripe lets the user pick accounts or sandboxes at sign-in and holds
-    // money movement for Dashboard approval.
-    CatalogProvider {
-        id: "stripe",
-        bundled_preset: true,
-        name: "Stripe",
-        description: "Payments, customers, invoices, and subscriptions.",
-        endpoint: "https://mcp.stripe.com",
-        registration: Registration::Dynamic,
-        setup_url: "https://docs.stripe.com/mcp",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "airtable",
-        bundled_preset: true,
-        name: "Airtable",
-        description: "Read and update bases, tables, and records.",
-        endpoint: "https://mcp.airtable.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://support.airtable.com/using-the-airtable-mcp-server",
-        ownership: None,
-    },
-    CatalogProvider {
-        id: "clickup",
-        bundled_preset: true,
-        name: "ClickUp",
-        description: "Tasks, lists, docs, and comments.",
-        endpoint: "https://mcp.clickup.com/mcp",
-        registration: Registration::Dynamic,
-        setup_url: "https://help.clickup.com/hc/en-us/articles/33335772678423",
-        ownership: None,
-    },
-    CatalogProvider {
         id: "exa",
         // No account: the hosted server serves search and page reads on a
         // free rate limit. Adding it only switches it on.
@@ -681,6 +442,8 @@ pub struct McpHttpClient(pub reqwest_mcp::Client);
 #[path = "grain_mcp_destination.rs"]
 mod destination;
 
+#[path = "grain_mcp_composio.rs"]
+pub mod composio;
 #[path = "grain_mcp_tool_cache.rs"]
 mod tool_cache;
 
@@ -701,6 +464,9 @@ fn tool_cache_identity(
 /// revalidate the live tool set before dispatch, so a stale copy can only
 /// cost a "definitions changed" refusal, never a wrong call.
 pub(crate) async fn cached_tools(app: &AppHandle, provider_id: &str) -> Option<McpToolSet> {
+    if composio::is_provider(provider_id) {
+        return composio::cached_tools(app, provider_id).await;
+    }
     if cfg!(feature = "agent-harness") {
         // Harness scenarios swap fixture catalogues; keep their discovery live.
         return None;
@@ -1252,7 +1018,6 @@ fn client_id(app: &AppHandle, provider_id: &str) -> Option<String> {
 fn provider_client_id(app: &AppHandle, item: &Provider<'_>) -> Option<String> {
     client_id(app, &provider_account(item))
         .or_else(|| item.oauth_client().map(|client| client.client_id.clone()))
-        .or_else(|| builtin_client(app, item).map(|client| client.id.to_owned()))
 }
 
 fn package_client<'a>(
@@ -1287,20 +1052,6 @@ fn public_client_config(
     ))
 }
 
-fn builtin_client(app: &AppHandle, item: &Provider<'_>) -> Option<builtin::Client<'static>> {
-    // Explicit per-connection registrations retain their own issuer/vault binding.
-    if client_id(app, &provider_account(item)).is_some()
-        || item.oauth_client().is_some()
-        || !requires_account(item)
-    {
-        return None;
-    }
-    if item.ownership.is_some() {
-        return None;
-    }
-    builtin::client(item.id, item.endpoint)
-}
-
 fn preregistered(app: &AppHandle, item: &Provider<'_>) -> bool {
     item.registration == Registration::PreRegistered
         || (item.ownership.is_some() && provider_client_id(app, item).is_some())
@@ -1320,20 +1071,6 @@ async fn provider_client_secret(
         public_client_config(client, metadata)?;
         // Public registrations never read another registration's vault secret.
         return Ok(None);
-    }
-    if let Some(client) = builtin_client(app, item) {
-        if client.id != client_id
-            || !builtin::metadata_matches(
-                item.id,
-                item.endpoint,
-                metadata.issuer.as_deref(),
-                &metadata.authorization_endpoint,
-                &metadata.token_endpoint,
-            )
-        {
-            return Err(Recovery::Registration);
-        }
-        return Ok(Some(client.secret.to_owned()));
     }
     client_secret(
         store,
@@ -2191,13 +1928,10 @@ async fn connect_oauth(
     let _operation = ticket.acquire().await?;
     require_provider_access(app, item)?;
     let configured_id = if preregistered(app, item) {
-        Some(provider_client_id(app, item).ok_or_else(|| {
-            if item.id == "github" {
-                "This build is missing the GitHub OAuth registration. Use a build that includes it."
-            } else {
-                "Configure this provider's OAuth client ID in Settings first."
-            }
-        })?)
+        Some(
+            provider_client_id(app, item)
+                .ok_or("Configure this provider's OAuth client ID in Settings first.")?,
+        )
     } else {
         None
     };
@@ -2520,6 +2254,11 @@ pub(crate) async fn list_tools_until(
     provider_id: &str,
     deadline: tokio::time::Instant,
 ) -> Result<McpToolSet, String> {
+    if composio::is_provider(provider_id) {
+        return tokio::time::timeout_at(deadline, composio::list_tools(app, provider_id))
+            .await
+            .map_err(|_| "Composio tool discovery timed out".to_string())?;
+    }
     let started = std::time::Instant::now();
     let owner = runtime_provider(app, provider_id)?;
     let spec = owner.spec();
@@ -2879,6 +2618,9 @@ pub(crate) fn is_enabled_extension(app: &AppHandle, extension_id: &str) -> bool 
     let Some(provider_id) = extension_id.strip_prefix("mcp.") else {
         return false;
     };
+    if composio::is_provider(provider_id) {
+        return composio::is_enabled(app, provider_id);
+    }
     runtime_provider(app, provider_id).is_ok_and(|owner| owner.enabled(app))
 }
 
@@ -2889,6 +2631,9 @@ pub(crate) async fn call_tool(
     arguments: &serde_json::Value,
     expected_digest: &str,
 ) -> Result<McpCallOutput, ExecutionFailure> {
+    if composio::is_provider(provider_id) {
+        return composio::call_tool(app, provider_id, tool_name, arguments, expected_digest).await;
+    }
     let started = std::time::Instant::now();
     let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
     let owner = runtime_provider(app, provider_id)
@@ -2987,6 +2732,7 @@ pub(crate) async fn call_tools(
     calls: &[McpBatchCall],
 ) -> Vec<Result<McpCallOutput, ExecutionFailure>> {
     if calls.len() < 2
+        || composio::is_provider(provider_id)
         || calls
             .iter()
             .any(|call| call.expected_digest != calls[0].expected_digest)
@@ -3502,6 +3248,7 @@ pub(crate) fn directory(
         )
         .collect();
     entries.extend(connections::directory(app));
+    entries.extend(composio::directory(app));
     entries
 }
 
@@ -3510,62 +3257,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_presets_keep_the_expected_oauth_and_github_toolsets() {
-        let notion = provider("notion").unwrap();
-        let github = provider("github").unwrap();
-        let linear = provider("linear").unwrap();
-        assert!(is_preset(notion));
-        assert!(is_preset(github));
-        assert!(is_preset(linear));
+    fn only_exa_is_bundled_since_apps_come_from_composio() {
+        let ids: Vec<_> = production_catalog().map(|item| item.id).collect();
+        assert_eq!(ids, ["exa"]);
+        let exa = provider("exa").unwrap();
+        assert!(is_preset(exa));
+        assert!(exa.registration == Registration::Anonymous);
+        assert!(exa.endpoint.starts_with("https://"));
         assert!(CATALOG
             .iter()
             .filter(|item| item.id.starts_with("grain-harness"))
             .all(|item| !is_preset(item)));
-        assert!(notion.registration == Registration::Dynamic);
-        assert!(linear.registration == Registration::Dynamic);
-        assert_eq!(linear.endpoint, "https://mcp.linear.app/mcp");
-        assert!(github.registration == Registration::PreRegistered);
-        assert_eq!(github.headers()["x-mcp-toolsets"], "all");
-    }
-
-    #[test]
-    fn admitted_rows_are_listed_with_their_sign_in_kind() {
-        for (id, registration) in [
-            ("todoist", Registration::Dynamic),
-            ("dropbox", Registration::Dynamic),
-            ("asana", Registration::PreRegistered),
-            ("coda", Registration::Dynamic),
-            ("readwise", Registration::Dynamic),
-            ("raindrop", Registration::Dynamic),
-            ("monday", Registration::Dynamic),
-            ("canva", Registration::Dynamic),
-            ("gamma", Registration::Dynamic),
-            ("miro", Registration::Dynamic),
-            ("zapier", Registration::Dynamic),
-            ("calcom", Registration::Dynamic),
-            ("granola", Registration::Dynamic),
-            ("fireflies", Registration::Dynamic),
-            ("otter", Registration::Dynamic),
-            ("stripe", Registration::Dynamic),
-            ("atlassian", Registration::Dynamic),
-            ("airtable", Registration::Dynamic),
-            ("clickup", Registration::Dynamic),
-            ("exa", Registration::Anonymous),
-        ] {
-            let item = provider(id).unwrap();
-            assert!(is_preset(item));
-            assert!(item.registration == registration);
-            assert!(item.endpoint.starts_with("https://"));
-        }
-        // A preregistered catalog row is only reachable with a build identity
-        // pinned to that exact resource; GitHub and Asana are the only ones.
-        for item in CATALOG
-            .iter()
-            .filter(|item| item.registration == Registration::PreRegistered)
-            .filter(|item| !item.id.starts_with("grain-harness"))
-        {
-            assert!(matches!(item.id, "github" | "asana"));
-        }
     }
 
     #[test]
@@ -3586,7 +3288,7 @@ mod tests {
             assert_eq!(catalog_account(item.id), item.id);
             assert!(keys.insert(catalog_account(item.id)));
         }
-        assert_eq!(production_catalog().count(), 23);
+        assert_eq!(production_catalog().count(), 1);
     }
 
     #[test]
@@ -3856,39 +3558,6 @@ mod tests {
         );
         assert_eq!(callback_failure_detail("cut 'open"), "cut '…");
         assert!(callback_failure_detail(&"x".repeat(1000)).chars().count() <= 300);
-    }
-
-    #[test]
-    fn zero_setup_providers_register_themselves_on_connect() {
-        let dynamic: Vec<_> = production_catalog()
-            .filter(|item| item.registration == Registration::Dynamic)
-            .map(|item| item.id)
-            .collect();
-        assert_eq!(
-            dynamic,
-            [
-                "linear",
-                "notion",
-                "atlassian",
-                "todoist",
-                "dropbox",
-                "coda",
-                "readwise",
-                "raindrop",
-                "monday",
-                "canva",
-                "gamma",
-                "miro",
-                "zapier",
-                "calcom",
-                "granola",
-                "fireflies",
-                "otter",
-                "stripe",
-                "airtable",
-                "clickup"
-            ]
-        );
     }
 
     #[test]
