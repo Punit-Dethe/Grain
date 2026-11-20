@@ -31,9 +31,9 @@ on:
         description: "Replace an existing public version and move its tag to this verified build"
         type: boolean
         default: false
-  push:
-    tags:
-      - "v*"
+  # No `push: tags` trigger: publishing a draft creates its v* tag, and a
+  # tag-triggered build would rebuild that version from the tag and overwrite
+  # the installer that was just tested (v0.0.14 lost its Pilot host this way).
 
 permissions:
   contents: write
@@ -274,7 +274,7 @@ jobs:
         with:
           tagName: v${{ steps.version.outputs.version }}
           releaseName: v${{ steps.version.outputs.version }}
-          releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
+          releaseDraft: ${{ inputs.draft }}
           prerelease: false
           releaseBody: ${{ steps.release_notes.outputs.body }}
           # NSIS installer only (matches tauri.conf.json windows.nsis).
