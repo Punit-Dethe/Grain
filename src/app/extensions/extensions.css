@@ -1,0 +1,390 @@
+/* Extensions page: Built-in, Apps (Composio). Custom MCP keeps mcp-connections.css. */
+
+.ext-section {
+  margin-block: 28px 8px;
+}
+
+.ext-section + .ext-section {
+  margin-top: 36px;
+}
+
+.ext-section-head {
+  margin-bottom: 12px;
+}
+
+.ext-section-head h2 {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.ext-section-head p {
+  margin: 3px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Rows ------------------------------------------------------------------ */
+
+.ext-list {
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--bg-2);
+}
+
+.ext-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 60px;
+  padding: 10px 14px;
+}
+
+.ext-list > .ext-row + .ext-row {
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.ext-row-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.ext-row-copy h3 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.ext-row-copy p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-logo {
+  display: grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--bg-0);
+  color: var(--text-3);
+}
+
+.ext-logo img {
+  object-fit: contain;
+}
+
+html[data-theme="light"] .ext-logo {
+  background: #ffffff;
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+.ext-quiet-action {
+  min-height: 28px;
+  padding-inline: 10px;
+  color: var(--text-3);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+}
+
+.ext-row:hover .ext-quiet-action,
+.ext-row:focus-within .ext-quiet-action {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .ext-quiet-action {
+    opacity: 1;
+  }
+}
+
+/* Composio account bar -------------------------------------------------- */
+
+.ext-account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-bottom: 18px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+
+.ext-account-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3fb27f;
+  box-shadow: 0 0 0 3px rgba(63, 178, 127, 0.16);
+}
+
+.ext-account-label {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.ext-account-label span {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 450;
+}
+
+.ext-account-actions,
+.ext-account-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ext-account-confirm > span {
+  margin-right: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.ext-account .button {
+  gap: 4px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+/* Groups inside a section ---------------------------------------------- */
+
+.ext-group + .ext-group {
+  margin-top: 22px;
+}
+
+.ext-group-title {
+  margin: 0 0 9px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ext-feedback {
+  margin: 0 0 12px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Browse grid ----------------------------------------------------------- */
+
+.ext-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.ext-tile {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  transition: background-color 140ms ease-out;
+}
+
+.ext-tile:hover {
+  background: var(--bg-3);
+}
+
+.ext-tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ext-tile h4 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-tile p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.ext-tile[data-waiting] p {
+  color: var(--text-2);
+}
+
+.ext-tile-action {
+  min-height: 28px;
+  padding-inline: 12px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.ext-more {
+  margin-top: 10px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+/* First-run setup ------------------------------------------------------- */
+
+.ext-setup {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 14px;
+  background: var(--bg-2);
+}
+
+.ext-setup-copy h3 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 15px;
+  font-weight: 640;
+}
+
+.ext-setup-copy p {
+  max-width: 62ch;
+  margin: 5px 0 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ext-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: ext-step;
+}
+
+.ext-steps li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  counter-increment: ext-step;
+}
+
+.ext-steps li::before {
+  content: counter(ext-step);
+  display: grid;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--text-1);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.ext-steps li > span {
+  flex: 1;
+  min-width: 200px;
+}
+
+.ext-steps b {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.ext-steps code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--bg-3);
+  font-size: 12px;
+}
+
+.ext-inline-action {
+  gap: 4px;
+  min-height: 30px;
+  font-size: 12px;
+}
+
+.ext-key-form {
+  display: flex;
+  gap: 8px;
+  max-width: 520px;
+}
+
+.ext-key-form input {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--bg-0);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+}
+
+.ext-key-form input::placeholder {
+  color: var(--text-4);
+}
+
+.ext-key-form input:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 1px;
+}
+
+.ext-key-form .button {
+  min-width: 96px;
+  min-height: 36px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.ext-fine-print {
+  margin: -6px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ext-quiet-action,
+  .ext-tile {
+    transition: none;
+  }
+}

@@ -15,6 +15,7 @@ import {
   type McpProviderStatus,
 } from "@/bindings";
 import { signInCancelled, unwrapResult } from "./extensionRuntime";
+import "./mcp-presets.css";
 import "./mcp-connections.css";
 
 type Connection = ConnectionView;
@@ -421,7 +422,7 @@ export function McpConnections({
             aria-labelledby={titleId}
           >
             <header className="mcp-connections-heading">
-              <h2 id={titleId}>Your MCP connections</h2>
+              <h2 id={titleId}>Custom MCP servers</h2>
               {error && !adding && (
                 <button
                   className="button ghost"

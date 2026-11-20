@@ -1,12 +1,11 @@
 /* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Extensions surface. */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box } from "lucide-react";
+import { ArrowUpRight, Box } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   commands,
   type ComposioCatalogEntry,
   type ComposioStatus,
-  type ComposioToolkit,
 } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
 import {
@@ -14,51 +13,30 @@ import {
   signInCancelled,
   unwrapResult,
 } from "./extensionRuntime";
-import "./composio.css";
+import "./extensions.css";
 
 const DASHBOARD_URL = "https://dashboard.composio.dev";
-/** Apps shown before "Show all"; the full list is long. */
-const FIRST_PAGE = 24;
+/** Apps shown before "Show all"; Composio lists hundreds. */
+const FIRST_PAGE = 18;
 
-function Logo({ src }: { src: string }) {
+function Logo({ src, size = 22 }: { src: string; size?: number }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed)
-    return (
-      <span className="mcp-preset-icon" aria-hidden="true">
-        <Box size={17} />
-      </span>
-    );
   return (
-    <img
-      className="mcp-brand-icon"
-      src={src}
-      alt=""
-      width={24}
-      height={24}
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-    />
-  );
-}
-
-function Identity({
-  logo,
-  name,
-  description,
-}: {
-  logo: string;
-  name: string;
-  description: string;
-}) {
-  return (
-    <div className="mcp-preset-identity">
-      <Logo src={logo} />
-      <div>
-        <h3>{name}</h3>
-        {description && <p>{description}</p>}
-      </div>
-    </div>
+    <span className="ext-logo" style={{ width: size + 10, height: size + 10 }}>
+      {src && !failed ? (
+        <img
+          src={src}
+          alt=""
+          width={size}
+          height={size}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Box size={size - 6} aria-hidden="true" />
+      )}
+    </span>
   );
 }
 
@@ -67,48 +45,55 @@ function KeySetup({
   onSave,
 }: {
   busy: boolean;
-  onSave: (key: string) => Promise<void>;
+  onSave: (key: string) => Promise<boolean>;
 }) {
   const [key, setKey] = useState("");
   return (
-    <div className="composio-setup">
-      <div className="composio-setup-copy">
-        <h3>Connect your apps with Composio</h3>
+    <div className="ext-setup">
+      <div className="ext-setup-copy">
+        <h3>Connect your apps</h3>
         <p>
           Gmail, Google Calendar, Slack, Notion, GitHub and hundreds more, each
-          one click to connect. Composio's free plan covers 20,000 app actions a
-          month.
+          one click away. Grain reaches them through your own free Composio
+          account, which covers 20,000 app actions a month.
         </p>
-        <ol>
-          <li>
-            Create a free Composio account.{" "}
-            <button
-              type="button"
-              className="composio-link"
-              onClick={() => void openUrl(DASHBOARD_URL)}
-            >
-              Open Composio
-            </button>
-          </li>
-          <li>
-            If the top-left corner says “For You”, click Switch and pick the
-            developer platform. Then open Settings → Project Settings → API Keys
-            and copy the key that starts with ak_.
-          </li>
-          <li>Paste it here.</li>
-        </ol>
       </div>
+      <ol className="ext-steps">
+        <li>
+          <span>
+            Create a free account at Composio. If the top-left corner says “For
+            You”, click <b>Switch</b> and pick the developer platform.
+          </span>
+          <button
+            type="button"
+            className="button ghost ext-inline-action"
+            onClick={() => void openUrl(DASHBOARD_URL)}
+          >
+            Open Composio
+            <ArrowUpRight size={14} aria-hidden="true" />
+          </button>
+        </li>
+        <li>
+          <span>
+            Open <b>Settings → Project Settings → API Keys</b> and copy the key
+            that starts with <code>ak_</code>.
+          </span>
+        </li>
+        <li>
+          <span>Paste it here.</span>
+        </li>
+      </ol>
       <form
-        className="composio-key-form"
+        className="ext-key-form"
         onSubmit={(event) => {
           event.preventDefault();
-          void onSave(key).then(() => setKey(""));
+          void onSave(key).then((saved) => saved && setKey(""));
         }}
       >
         <input
           type="password"
           aria-label="Composio API key"
-          placeholder="Composio API key"
+          placeholder="ak_…"
           autoComplete="off"
           spellCheck={false}
           value={key}
@@ -120,11 +105,11 @@ function KeySetup({
           type="submit"
           disabled={busy || !key.trim()}
         >
-          {busy ? "Checking…" : "Save"}
+          {busy ? "Checking…" : "Connect"}
         </button>
       </form>
-      <p className="mcp-integration-feedback">
-        The key is kept in your system's credential store and only sent to
+      <p className="ext-fine-print">
+        The key stays in your system’s credential store and is only ever sent to
         Composio.
       </p>
     </div>
@@ -137,6 +122,7 @@ export function ComposioExtensions({ query }: { query: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -168,15 +154,17 @@ export function ComposioExtensions({ query }: { query: string }) {
   }, [loadCatalog]);
 
   const run = async (id: string, action: () => Promise<void>) => {
-    if (operation.current) return;
+    if (operation.current) return false;
     operation.current = true;
     setBusy(id);
     setError(null);
     setMessage(null);
     try {
       await action();
+      return true;
     } catch (reason) {
       if (mounted.current) setError(String(reason));
+      return false;
     } finally {
       if (mounted.current) setBusy(null);
       operation.current = false;
@@ -191,33 +179,32 @@ export function ComposioExtensions({ query }: { query: string }) {
     run("key", async () => {
       apply(unwrapResult(await commands.composioSetApiKey(key)));
       await loadCatalog();
-      if (mounted.current) setMessage("Composio is connected.");
     });
 
   const removeKey = () =>
-    run("key", async () => {
+    void run("key", async () => {
       apply(unwrapResult(await commands.composioRemoveApiKey()));
-      if (mounted.current) setCatalog(null);
+      if (!mounted.current) return;
+      setCatalog(null);
+      setConfirmRemove(false);
     });
 
   const connect = (entry: ComposioCatalogEntry) =>
-    run(entry.slug, async () => {
+    void run(entry.slug, async () => {
       if (!entry.no_auth) {
         pending.current = entry.slug;
         setSigningIn(entry.slug);
-        setMessage("Finish signing in in your browser…");
       }
       try {
         apply(unwrapResult(await commands.composioConnect(entry.slug)));
       } catch (reason) {
-        if (mounted.current) setMessage(null);
         if (signInCancelled(reason)) return;
         throw reason;
       } finally {
         pending.current = null;
         if (mounted.current) setSigningIn(null);
       }
-      if (mounted.current) setMessage(`${entry.name} connected.`);
+      if (mounted.current) setMessage(`${entry.name} is connected.`);
     });
 
   const cancel = (slug: string) =>
@@ -226,42 +213,50 @@ export function ComposioExtensions({ query }: { query: string }) {
       .then(unwrapResult)
       .catch((reason) => mounted.current && setError(String(reason)));
 
-  if (!status)
-    return error ? (
-      <div className="extension-inline-error" role="alert">
-        {error}
-      </div>
-    ) : null;
-
   const feedback = (
     <>
       {message && (
-        <p className="mcp-integration-feedback" role="status">
+        <p className="ext-feedback" role="status">
           {message}
         </p>
       )}
       {error && (
-        <div className="extension-inline-error" role="alert">
+        <p className="extension-inline-error" role="alert">
           {error}
-        </div>
+        </p>
       )}
     </>
   );
 
+  const head = (
+    <header className="ext-section-head">
+      <h2 id="ext-apps">Apps</h2>
+      <p>Your accounts in other apps, connected through Composio.</p>
+    </header>
+  );
+
+  if (!status)
+    return error ? (
+      <section className="ext-section" aria-labelledby="ext-apps">
+        {head}
+        {feedback}
+      </section>
+    ) : null;
+
   if (!status.configured)
     return (
-      <section className="mcp-integration-section" aria-label="Composio apps">
-        <h2>Apps</h2>
+      <section className="ext-section" aria-labelledby="ext-apps">
+        {head}
         {feedback}
         <KeySetup busy={busy === "key"} onSave={saveKey} />
       </section>
     );
 
-  const asRow = (toolkit: ComposioToolkit) => ({
-    ...toolkit,
-    id: toolkit.slug,
-  });
-  const connected = filterExtensions(status.toolkits.map(asRow), query);
+  const searching = query.trim() !== "";
+  const connected = filterExtensions(
+    status.toolkits.map((toolkit) => ({ ...toolkit, id: toolkit.slug })),
+    query,
+  );
   const connectedSlugs = new Set(
     status.toolkits.map((toolkit) => toolkit.slug),
   );
@@ -272,126 +267,185 @@ export function ComposioExtensions({ query }: { query: string }) {
     query,
   );
   const shown =
-    showAll || query.trim() ? available : available.slice(0, FIRST_PAGE);
+    showAll || searching ? available : available.slice(0, FIRST_PAGE);
 
   return (
-    <>
-      {feedback}
-      {connected.length > 0 && (
-        <section
-          className="mcp-integration-section"
-          aria-label="Connected apps"
-        >
-          <h2>Connected apps</h2>
-          <div className="mcp-integration-list">
-            {connected.map((toolkit) => (
-              <article key={toolkit.slug} className="mcp-preset-connected">
-                <Identity {...toolkit} />
-                <div className="mcp-preset-actions">
-                  <button
-                    className="button ghost"
-                    type="button"
-                    aria-label={`Disconnect ${toolkit.name}`}
-                    disabled={busy !== null}
-                    onClick={() =>
-                      void run(toolkit.slug, async () => {
-                        apply(
-                          unwrapResult(
-                            await commands.composioDisconnect(toolkit.slug),
-                          ),
-                        );
-                      })
-                    }
-                  >
-                    Disconnect
-                  </button>
-                  <Switch
-                    checked={toolkit.enabled}
-                    disabled={busy !== null}
-                    ariaLabel={`Enable ${toolkit.name}`}
-                    onChange={(enabled) =>
-                      void run(toolkit.slug, async () => {
-                        apply(
-                          unwrapResult(
-                            await commands.composioSetEnabled(
-                              toolkit.slug,
-                              enabled,
-                            ),
-                          ),
-                        );
-                      })
-                    }
-                  />
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-      <section className="mcp-integration-section" aria-label="Apps">
-        <div className="composio-heading">
-          <h2>Apps</h2>
-          <span className="composio-account">
-            via Composio ·{" "}
+    <section className="ext-section" aria-labelledby="ext-apps">
+      {head}
+      <div className="ext-account">
+        <span className="ext-account-dot" aria-hidden="true" />
+        <span className="ext-account-label">
+          Composio account connected
+          <span>
+            {status.toolkits.length === 1
+              ? "1 app"
+              : `${status.toolkits.length} apps`}{" "}
+            in use
+          </span>
+        </span>
+        {confirmRemove ? (
+          <span className="ext-account-confirm">
+            <span>
+              Grain forgets every app here. They stay in your Composio account.
+            </span>
             <button
               type="button"
-              className="composio-link"
+              className="button danger"
               disabled={busy !== null}
-              onClick={() => void removeKey()}
+              onClick={removeKey}
+            >
+              {busy === "key" ? "Removing…" : "Remove key"}
+            </button>
+            <button
+              type="button"
+              className="button ghost"
+              disabled={busy !== null}
+              onClick={() => setConfirmRemove(false)}
+            >
+              Keep
+            </button>
+          </span>
+        ) : (
+          <span className="ext-account-actions">
+            <button
+              type="button"
+              className="button ghost"
+              onClick={() => void openUrl(DASHBOARD_URL)}
+            >
+              Open Composio
+              <ArrowUpRight size={14} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="button ghost"
+              disabled={busy !== null}
+              onClick={() => setConfirmRemove(true)}
             >
               Remove key
             </button>
           </span>
+        )}
+      </div>
+      {feedback}
+
+      {connected.length > 0 && (
+        <div className="ext-group">
+          <h3 className="ext-group-title">Connected</h3>
+          <div className="ext-list">
+            {connected.map((toolkit) => (
+              <div key={toolkit.slug} className="ext-row">
+                <Logo src={toolkit.logo} />
+                <div className="ext-row-copy">
+                  <h3>{toolkit.name}</h3>
+                  {toolkit.description && <p>{toolkit.description}</p>}
+                </div>
+                <button
+                  className="button ghost ext-quiet-action"
+                  type="button"
+                  aria-label={`Disconnect ${toolkit.name}`}
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void run(toolkit.slug, async () => {
+                      apply(
+                        unwrapResult(
+                          await commands.composioDisconnect(toolkit.slug),
+                        ),
+                      );
+                    })
+                  }
+                >
+                  {busy === toolkit.slug ? "Disconnecting…" : "Disconnect"}
+                </button>
+                <Switch
+                  checked={toolkit.enabled}
+                  disabled={busy !== null}
+                  ariaLabel={`Use ${toolkit.name}`}
+                  onChange={(enabled) =>
+                    void run(toolkit.slug, async () => {
+                      apply(
+                        unwrapResult(
+                          await commands.composioSetEnabled(
+                            toolkit.slug,
+                            enabled,
+                          ),
+                        ),
+                      );
+                    })
+                  }
+                />
+              </div>
+            ))}
+          </div>
         </div>
+      )}
+
+      <div className="ext-group">
+        <h3 className="ext-group-title">
+          {searching ? "Matching apps" : "Browse apps"}
+        </h3>
         {catalog === null ? (
-          <p className="mcp-integration-feedback" role="status">
+          <p className="ext-feedback" role="status">
             Loading apps…
           </p>
         ) : shown.length === 0 ? (
-          <p className="mcp-integration-feedback">
-            {query.trim()
+          <p className="ext-feedback">
+            {searching
               ? "No apps match your search."
-              : "Every app is connected."}
+              : "Every available app is connected."}
           </p>
         ) : (
-          <div className="mcp-integration-list">
-            {shown.map((entry) => (
-              <article key={entry.slug} className="mcp-preset-available">
-                <Identity {...entry} />
-                <div className="mcp-preset-connect">
-                  {signingIn === entry.slug ? (
-                    <button
-                      className="button"
-                      type="button"
-                      onClick={() => cancel(entry.slug)}
-                    >
-                      Cancel sign-in
-                    </button>
-                  ) : (
-                    <button
-                      className="button primary"
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() => void connect(entry)}
-                    >
-                      {busy === entry.slug ? "Connecting…" : "Connect"}
-                    </button>
-                  )}
+          <div className="ext-grid">
+            {shown.map((entry) => {
+              const waiting = signingIn === entry.slug;
+              return (
+                <div
+                  key={entry.slug}
+                  className="ext-tile"
+                  data-waiting={waiting || undefined}
+                >
+                  <div className="ext-tile-top">
+                    <Logo src={entry.logo} size={24} />
+                    {waiting ? (
+                      <button
+                        className="button ext-tile-action"
+                        type="button"
+                        onClick={() => cancel(entry.slug)}
+                      >
+                        Cancel
+                      </button>
+                    ) : (
+                      <button
+                        className="button ext-tile-action"
+                        type="button"
+                        aria-label={`Connect ${entry.name}`}
+                        disabled={busy !== null}
+                        onClick={() => connect(entry)}
+                      >
+                        {busy === entry.slug ? "Connecting…" : "Connect"}
+                      </button>
+                    )}
+                  </div>
+                  <h4>{entry.name}</h4>
+                  <p>
+                    {waiting
+                      ? "Finish signing in in your browser…"
+                      : entry.description || "No description from Composio."}
+                  </p>
                 </div>
-              </article>
-            ))}
+              );
+            })}
           </div>
         )}
-        {!showAll && !query.trim() && available.length > FIRST_PAGE && (
+        {!showAll && !searching && available.length > FIRST_PAGE && (
           <button
-            className="button ghost composio-more"
+            className="button ghost ext-more"
             type="button"
             onClick={() => setShowAll(true)}
           >
             Show all {available.length} apps
           </button>
         )}
-      </section>
-    </>
+      </div>
+    </section>
   );
 }

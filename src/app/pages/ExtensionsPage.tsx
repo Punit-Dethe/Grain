@@ -1,7 +1,7 @@
 /* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Extensions surface. */
 import { useState } from "react";
 import { McpConnections } from "../extensions/McpConnections";
-import { McpPresets } from "../extensions/McpPresets";
+import { BuiltInExtensions } from "../extensions/BuiltInExtensions";
 import { ComposioExtensions } from "../extensions/ComposioExtensions";
 
 export function ExtensionsPage() {
@@ -44,7 +44,7 @@ export function ExtensionsPage() {
         >
           {(customConnections) => (
             <>
-              <McpPresets query={query} customConnections={null} />
+              <BuiltInExtensions query={query} />
               <ComposioExtensions query={query} />
               {customConnections}
             </>
