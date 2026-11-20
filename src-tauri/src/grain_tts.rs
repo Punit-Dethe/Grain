@@ -5,10 +5,11 @@
 //! phonemizer. Voice: Zoey, the first US-English female voice in Gradium's
 //! catalog and the one its 31m demos use.
 //!
-//! Nothing is resident while idle. Each reply loads the model on one worker
-//! thread, streams PCM into the default output device, then drops the model
-//! and the device. A newer reply, a new dictation, a summon or closing the
-//! notch bumps [`GENERATION`], which stops speech within one audio chunk.
+//! Nothing is resident while idle. Each reply (or first-step line, see
+//! [`speak_step`]) loads the model on one worker thread, streams PCM into the
+//! default output device, then drops the model and the device. A newer reply,
+//! a new dictation, a summon or closing the notch bumps [`GENERATION`], which
+//! stops speech within one audio chunk.
 
 use log::{info, warn};
 use std::path::{Path, PathBuf};
@@ -333,9 +334,11 @@ pub(crate) fn init_threads() {
     xn::set_num_threads((cores / 2).clamp(1, 4));
 }
 
-/// Stop any speech now. Cheap and safe to call from any thread.
+/// Stop any speech now (a first-step line too). Cheap and safe to call from
+/// any thread.
 pub(crate) fn stop() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
+    STOPS.fetch_add(1, Ordering::SeqCst);
 }
 
 /// The id of the speech playing right now, if any — for a notch opened while
@@ -390,7 +393,9 @@ pub(crate) fn speak(
                 let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
                 if GENERATION.load(Ordering::SeqCst) != generation {
                     info!("[GRAIN] talk-back: replaced before it started");
-                } else if let Err(e) = say(&dir, voice, &text, generation) {
+                } else if let Err(e) = say(&dir, voice, &text, move |_| {
+                    GENERATION.load(Ordering::SeqCst) == generation
+                }) {
                     warn!("[GRAIN] talk-back failed: {e}");
                 }
             }
@@ -432,16 +437,17 @@ fn load_voice(dir: &Path, voice: &str) -> Result<ptts::synth::Synth, String> {
     Ok(tts)
 }
 
-fn say(dir: &Path, voice: &str, text: &str, generation: u64) -> Result<(), String> {
+/// Speak `text` while `keep(audible)` holds; `audible` says whether any of it
+/// has been heard yet.
+fn say(dir: &Path, voice: &str, text: &str, keep: impl Fn(bool) -> bool) -> Result<(), String> {
     use ptts::synth::SpeechOptions;
     use rodio::buffer::SamplesBuffer;
     use rodio::{ChannelCount, DeviceSinkBuilder, Player, SampleRate};
 
-    let current = || GENERATION.load(Ordering::SeqCst) == generation;
     let started = Instant::now();
     let tts = load_voice(dir, voice)?;
     let loaded = started.elapsed();
-    if !current() {
+    if !keep(false) {
         info!("[GRAIN] talk-back: stopped while loading");
         return Ok(());
     }
@@ -462,7 +468,7 @@ fn say(dir: &Path, voice: &str, text: &str, generation: u64) -> Result<(), Strin
     let mut seconds = 0.0f32;
     // Dropping `stream` on an early return stops and joins its workers.
     for chunk in stream {
-        if !current() {
+        if !keep(first_audio.is_some()) {
             player.stop();
             info!(
                 "[GRAIN] talk-back: stopped after {} ms ({:.1} s spoken)",
@@ -484,7 +490,7 @@ fn say(dir: &Path, voice: &str, text: &str, generation: u64) -> Result<(), Strin
         started.elapsed().as_millis()
     );
     while !player.empty() {
-        if !current() {
+        if !keep(true) {
             player.stop();
             break;
         }
@@ -525,6 +531,83 @@ async fn install(app: &AppHandle) -> Result<(), String> {
     }
     info!("[GRAIN] talk-back: voice installed at {}", dir.display());
     Ok(())
+}
+
+// ── First-step line ─────────────────────────────────────────────────────────
+//
+// The AI's first tool step carries a few words confirming what it is doing
+// ("Checking your calendar."), and talk-back reads them aloud. Later steps say
+// nothing, and a reply that needs no tool has no line. The Agent loop picks
+// the step; this only speaks.
+
+/// A line longer than this is not a short confirmation; it is not read.
+const MAX_STEP_CHARS: usize = 80;
+
+/// Bumped by [`stop`] only. A first-step line keeps talking through a newer
+/// reply (the reply waits for it) but not through a stop.
+static STOPS: AtomicU64 = AtomicU64::new(0);
+
+/// The line to read from a tool round's text, if it is one: its first line,
+/// when short. (The caller leaves out a same-round final reply.)
+pub(crate) fn step_line(text: &str) -> Option<String> {
+    let line = text.trim().lines().next()?.trim();
+    let count = line.chars().count();
+    (count > 0 && count <= MAX_STEP_CHARS).then(|| line.to_string())
+}
+
+/// Read a first-step line aloud, when talk-back is on and the voice is free.
+/// Like [`speak`], returns the speech's id when it started, and only then
+/// calls `on_end` once on the worker thread.
+///
+/// A reply that comes back while the line is still loading drops it; once the
+/// line is audible it finishes and the reply follows.
+pub(crate) fn speak_step(
+    app: &AppHandle,
+    line: &str,
+    on_end: impl FnOnce(u64) + Send + 'static,
+) -> Option<u64> {
+    if !crate::settings::get_settings(app).agent_talk_back || current_speech().is_some() {
+        return None;
+    }
+    let text = speakable(line);
+    let dir = model_dir(app).ok()?;
+    if text.is_empty() || !installed(&dir) {
+        return None;
+    }
+    let voice = chosen_voice(app, &dir);
+    let stops = STOPS.load(Ordering::SeqCst);
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    info!(
+        "[GRAIN] talk-back: first-step line, {} chars",
+        text.chars().count()
+    );
+    LIVE.store(generation, Ordering::SeqCst);
+    let keep = move |audible: bool| {
+        STOPS.load(Ordering::SeqCst) == stops
+            && (audible || GENERATION.load(Ordering::SeqCst) == generation)
+    };
+    let spawned = std::thread::Builder::new()
+        .name("grain-tts-step".into())
+        .spawn(move || {
+            {
+                let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
+                if !keep(false) {
+                    info!("[GRAIN] talk-back: first-step line dropped");
+                } else if let Err(e) = say(&dir, voice, &text, keep) {
+                    warn!("[GRAIN] talk-back: first-step line failed: {e}");
+                }
+            }
+            let _ = LIVE.compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
+            on_end(generation);
+        });
+    match spawned {
+        Ok(_) => Some(generation),
+        Err(e) => {
+            let _ = LIVE.compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
+            warn!("[GRAIN] talk-back: could not start a first-step line: {e}");
+            None
+        }
+    }
 }
 
 async fn download_verified(
@@ -724,6 +807,16 @@ mod tests {
     fn long_replies_stop_at_a_sentence() {
         let text = "One two three. Four five six.".to_string();
         assert_eq!(truncate_at_sentence(text, 20), "One two three.");
+    }
+
+    #[test]
+    fn only_a_short_first_line_is_spoken() {
+        assert_eq!(
+            step_line("  Checking your calendar.\nThen more.").as_deref(),
+            Some("Checking your calendar.")
+        );
+        assert_eq!(step_line("   \n"), None);
+        assert_eq!(step_line(&"word ".repeat(40)), None);
     }
 
     /// Real synthesis benchmark. Needs the model files in GRAIN_TTS_MODEL_DIR:
