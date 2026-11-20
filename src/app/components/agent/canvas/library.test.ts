@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createParser } from "@openuidev/react-lang";
-import { CANVAS_EXAMPLES, canvasLibrary, canvasSpec } from "./library";
+import {
+  CANVAS_EXAMPLES,
+  canvasLibrary,
+  canvasSpec,
+  statLayout,
+} from "./library";
 import { canvasProgram, viewSummary, withoutSpeech } from "./program";
 
 const parse = (text: string) =>
@@ -44,9 +49,9 @@ describe("canvas library", () => {
     const result = parse(
       [
         "root = Canvas([rate, pic, card, row])",
-        'rate = Hero("USD to INR", "₹83.42", "Up 0.3% today", "Updated now", "up", "dollar")',
+        'rate = Hero("USD to INR", "₹83.42", "Up 0.3% today", "good", "Updated now", null, "up", "dollar")',
         'pic = Image("https://upload.wikimedia.org/x.jpg", "Beach", "Goa", "wide")',
-        'card = Card([Icon("sun", "l"), Stat("High", "31°", "warmer", "up"), Badge("Open", "good")])',
+        'card = Card([Header("Goa", "Beach day"), Stats([Stat("High", "31°", "warmer", "warn", "up"), Stat("UV", "9")]), Badge("Open", "good")])',
         'row = List([ListItem("Baga", "Beach", "4 km", "map-pin", @ToAssistant("More on Baga"), "https://upload.wikimedia.org/y.jpg")])',
       ].join("\n"),
     );
@@ -106,6 +111,35 @@ list = List([ListItem("Blinding Lights", "The Weeknd", "1", null, null, "https:/
     expect(viewSummary("root = Canvas([])")).toEqual({
       kind: "view",
       title: null,
+    });
+  });
+
+  it("fits every stat value on one line at one size", () => {
+    // Short figures stay large, all in one row.
+    expect(statLayout(["61", "65", "128"], 440)).toEqual({
+      cols: 3,
+      size: "l",
+    });
+    // Longer ones shrink together rather than wrap.
+    expect(statLayout(["Monthly", "20K", "50K/mo", "2K/min"], 400).cols).toBe(
+      4,
+    );
+    // Four long values go two by two before getting tiny.
+    expect(
+      statLayout(
+        ["Resets monthly", "20K of 100K", "50K a month", "2K/min"],
+        440,
+      ),
+    ).toEqual({ cols: 2, size: "m" });
+  });
+
+  it("caps a view at a few blocks and keeps its buttons", () => {
+    const spec = canvasSpec();
+    expect(spec).toContain("ONE IDEA PER VIEW");
+    expect(spec).not.toMatch(/\bIcon\(/);
+    expect(viewSummary(CANVAS_EXAMPLES[5])).toEqual({
+      kind: "view",
+      title: "Ramayana · IMAX 3D",
     });
   });
 

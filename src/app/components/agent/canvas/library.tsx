@@ -53,7 +53,7 @@ import {
   Wind,
   type LucideIcon,
 } from "lucide-react";
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { AgentMarkdown } from "../../markdown/Markdown";
 
 /** Only https images; anything else (or a broken link) renders nothing. */
@@ -118,6 +118,7 @@ const LIMITS = {
   steps: 6,
   pairs: 6,
   buttons: 3,
+  stats: 4,
 };
 
 /** What a wide (landscape) Canvas fits instead (also in the prompt). */
@@ -126,17 +127,35 @@ const WIDE_LIMITS = { places: 6, hours: 8 };
 /** Whether the view is the wide (landscape) layout: views re-arrange for it. */
 const WideLayout = createContext(false);
 
-/** Meaning-only colour the model may pick: status and the odd icon. */
+/** Meaning-only colour the model may pick: real status. */
 const STATUS = ["good", "warn", "bad", "muted"] as const;
 const status = z.enum(STATUS).optional();
-const ICON_TONES = [
-  "neutral",
-  "blue",
-  "amber",
-  "green",
-  "red",
-  "purple",
-] as const;
+/** What a number means for the user (bad air is "bad" even as it rises):
+ * colours a Hero line or Stat detail. Direction is `trend`, never colour. */
+const tone = z.enum(["good", "warn", "bad"]).optional();
+const trend = z.enum(["up", "down", "flat"]).optional();
+
+/** The most top-level blocks a view shows (besides its Buttons row): more
+ * reads as a crowded dump, never as a designed panel. */
+const MAX_BLOCKS = 4;
+
+/** The props of an element node the parser resolved (or `{}`). */
+const nodeProps = (node: unknown): Record<string, unknown> =>
+  (node as { props?: Record<string, unknown> } | null)?.props ?? {};
+
+/** How a list's rows show their leading slot. A photo row keeps an icon tile
+ * when its photo is missing; with no photo in the list at all the tiles go
+ * (a column of identical placeholder tiles is noise), and icons stay only,
+ * bare, when they actually tell the rows apart. */
+type RowLead = "photo" | "icon" | "none";
+const RowLeadContext = createContext<RowLead | null>(null);
+
+function rowLead(nodes: unknown[]): RowLead {
+  const rows = nodes.map(nodeProps);
+  if (rows.some((row) => safeImage(row.image))) return "photo";
+  const icons = new Set(rows.map((row) => row.icon).filter(Boolean));
+  return icons.size > 1 ? "icon" : "none";
+}
 
 function Glyph({
   name,
@@ -191,6 +210,36 @@ function Thumb({
     <span className={`${className} is-empty`} aria-hidden>
       <Glyph name={fallback} size={small ? 15 : 19} />
     </span>
+  );
+}
+
+/** A row's leading slot, per its list's RowLead (a row outside a list
+ * shows whatever it has). */
+function RowLeadSlot({
+  image,
+  icon: rowIcon,
+  fallback,
+  small = false,
+  tall = false,
+}: {
+  image: unknown;
+  icon?: IconName;
+  fallback: IconName;
+  small?: boolean;
+  tall?: boolean;
+}) {
+  const listLead = useContext(RowLeadContext);
+  const lead =
+    listLead ?? (safeImage(image) ? "photo" : rowIcon ? "icon" : "none");
+  if (lead === "none") return null;
+  if (lead === "icon")
+    return (
+      <span className="gui-row-glyph" aria-hidden>
+        {rowIcon && <Glyph name={rowIcon} size={17} />}
+      </span>
+    );
+  return (
+    <Thumb src={image} icon={rowIcon ?? fallback} small={small} tall={tall} />
   );
 }
 
@@ -321,7 +370,7 @@ const Weather = defineComponent({
 const Place = defineComponent({
   name: "Place",
   description:
-    'One row of Places: name, detail ("42 runs · 30 cm fresh"), meta (right, "38 km"), status (under meta, "Open"), statusTone (good | warn | bad | muted), image (real https photo URL from a tool result), action (when tapped), icon (shown in the thumbnail when there is no photo; default map-pin).',
+    'One row of Places: name (just the name, "Snowpeak"), detail (one short line, "42 runs · 30 cm fresh"), meta (right, very short: "38 km", "₹430"), status (under meta, a real status only: "Open", "Sold out", "Delayed"; a feature such as "Recliners" belongs in detail), statusTone (good | warn | bad | muted), image (real https photo URL from a tool result), action (when tapped), icon (only when it tells rows apart; a list with no photos shows no tiles).',
   props: z.object({
     name: z.string(),
     detail: z.string().optional(),
@@ -336,7 +385,7 @@ const Place = defineComponent({
     const run = useRun(props.name, props.action);
     const body = (
       <>
-        <Thumb src={props.image} icon={props.icon ?? "map-pin"} />
+        <RowLeadSlot image={props.image} icon={props.icon} fallback="map-pin" />
         <span className="gui-place-main">
           <span className="gui-place-name">{props.name}</span>
           {props.detail && (
@@ -367,7 +416,7 @@ const Place = defineComponent({
 
 const Places = defineComponent({
   name: "Places",
-  description: `A titled list of places, venues, shops or results with photos. title ("Ski areas near you"), note (right of the title, "3 open today"), places: up to ${LIMITS.places} Place rows (${WIDE_LIMITS.places}, in two columns, in a wide Canvas).`,
+  description: `A titled list of places, venues, shops, cinemas or results. title ("Ski areas near you"), note (right of the title, "3 open today"), places: up to ${LIMITS.places} Place rows (${WIDE_LIMITS.places}, in two columns, in a wide Canvas).`,
   props: z.object({
     title: z.string(),
     note: z.string().optional(),
@@ -375,17 +424,19 @@ const Places = defineComponent({
   }),
   component: function PlacesView({ props, renderNode }) {
     const wide = useContext(WideLayout);
+    const places = props.places.slice(
+      0,
+      wide ? WIDE_LIMITS.places : LIMITS.places,
+    );
     return (
       <div className="gui-view gui-places">
         <div className="gui-view-head">
           <span className="gui-view-title">{props.title}</span>
           {props.note && <span className="gui-t3">{props.note}</span>}
         </div>
-        <div className="gui-rows">
-          {renderNode(
-            props.places.slice(0, wide ? WIDE_LIMITS.places : LIMITS.places),
-          )}
-        </div>
+        <RowLeadContext.Provider value={rowLead(places)}>
+          <div className="gui-rows">{renderNode(places)}</div>
+        </RowLeadContext.Provider>
       </div>
     );
   },
@@ -492,63 +543,218 @@ const Journey = defineComponent({
   },
 });
 
+/** Value sizes, largest first, as [class, px]. */
+const STAT_SIZES = [
+  ["l", 26],
+  ["m", 20],
+  ["s", 16],
+  ["xs", 14],
+] as const;
+type StatSize = (typeof STAT_SIZES)[number][0];
+const StatSizeContext = createContext<StatSize>("m");
+/** Rough width of a figure glyph per px of font size (tabular, light). */
+const GLYPH_W = 0.58;
+/** Gap + hairline between stat columns (`.gui-stats-cell` in canvas.css). */
+const STAT_GUTTER = 16;
+
+function TrendArrow({ trend: dir }: { trend?: string }) {
+  const Arrow =
+    dir === "up"
+      ? ArrowUpRight
+      : dir === "down"
+        ? ArrowDownRight
+        : dir === "flat"
+          ? ArrowRight
+          : null;
+  return Arrow ? <Arrow size={13} strokeWidth={2} aria-hidden /> : null;
+}
+
+const Stat = defineComponent({
+  name: "Stat",
+  description:
+    'One figure in a Stats group or a Hero. label ("PM10"), value (short, ≤ 8 characters: "65", "₹430", "3h 15m"; a unit goes in the label, "PM10 · µg/m³"), detail (optional, a few words, "Day 14 advance"), tone (good | warn | bad: what the figure means for the user, colours the detail), trend (up | down | flat: an arrow for the direction only).',
+  props: z.object({
+    label: z.string(),
+    value: z.string(),
+    detail: z.string().optional(),
+    tone,
+    trend,
+  }),
+  component: ({ props }) => {
+    const size = useContext(StatSizeContext);
+    return (
+      <div className="gui-stat">
+        <span className="gui-stat-label gui-t3">{props.label}</span>
+        <span className={`gui-stat-value is-${size}`}>{props.value}</span>
+        {(props.detail || props.trend) && (
+          <span className={`gui-stat-detail is-${props.tone ?? "none"}`}>
+            <TrendArrow trend={props.trend} />
+            <span>{props.detail}</span>
+          </span>
+        )}
+      </div>
+    );
+  },
+});
+
+/** Columns and value size for a group of stats in `room` px: every value on
+ * one line, all the same size (the longest decides), as large as fits, with
+ * two rows of two before anything gets small. */
+export function statLayout(
+  values: string[],
+  room: number,
+): { cols: number; size: StatSize } {
+  const longest = Math.max(1, ...values.map((value) => [...value].length));
+  const fits = (cols: number) =>
+    STAT_SIZES.find(
+      ([, px]) =>
+        longest * px * GLYPH_W <= room / cols - (cols > 1 ? STAT_GUTTER : 0),
+    )?.[0];
+  const all = Math.max(1, values.length);
+  const inOne = fits(all);
+  if (inOne && (inOne !== "xs" || all <= 2)) return { cols: all, size: inOne };
+  if (all === 4) {
+    const inTwo = fits(2);
+    if (inTwo) return { cols: 2, size: inTwo };
+  }
+  return { cols: all, size: inOne ?? "xs" };
+}
+
+/** A stats grid laid out for `room` px (see statLayout). */
+function StatsGrid({
+  nodes,
+  room,
+  renderNode,
+}: {
+  nodes: unknown[];
+  room: number;
+  renderNode: (node: unknown) => ReactNode;
+}) {
+  const stats = nodes
+    .filter((node) => typeof nodeProps(node).value === "string")
+    .slice(0, LIMITS.stats);
+  if (!stats.length) return null;
+  const { cols, size } = statLayout(
+    stats.map((node) => String(nodeProps(node).value)),
+    room,
+  );
+  return (
+    <StatSizeContext.Provider value={size}>
+      <div
+        className="gui-stats"
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      >
+        {stats.map((node, i) => (
+          <div
+            key={i}
+            className={`gui-stats-cell${i % cols === 0 ? " is-first" : ""}`}
+          >
+            {renderNode(node)}
+          </div>
+        ))}
+      </div>
+    </StatSizeContext.Provider>
+  );
+}
+
+/** Width the stats get: a tall view, a wide one, and beside a wide Hero. */
+const STATS_ROOM = { tall: 440, wide: 660, besideHero: 400 };
+
+const Stats = defineComponent({
+  name: "Stats",
+  description: `A row of 2-${LIMITS.stats} Stat figures of equal weight (key numbers, a mini dashboard). It picks its own columns and number size so values never wrap. Never lay Stats out yourself with a Stack.`,
+  props: z.object({ stats: z.array(Stat.ref) }),
+  component: function StatsView({ props, renderNode }) {
+    const wide = useContext(WideLayout);
+    return (
+      <div className="gui-view">
+        <StatsGrid
+          nodes={props.stats}
+          room={wide ? STATS_ROOM.wide : STATS_ROOM.tall}
+          renderNode={renderNode}
+        />
+      </div>
+    );
+  },
+});
+
 const Hero = defineComponent({
   name: "Hero",
-  description:
-    'One big answer: a price, rate, score, time, count or conversion. label ("USD to INR"), value ("₹83.42"), line (one short sentence, "Up 0.3% today"), detail (smaller, "Updated 2 min ago"), trend (up | down colours the line green/red), icon (optional, right).',
+  description: `One big answer: a price, rate, score, AQI, time, count or plan. label ("Thane · US AQI"), value (short: "165", "₹83.42", "100K"), line (a few words under it, "Unhealthy", "Up 0.3% today"), tone (good | warn | bad: what the answer means for the user, colours the line; bad air is bad even when the number goes up), detail (smaller, "PM2.5 main pollutant · 1 am"), stats (optional, 2-${LIMITS.stats} Stat figures shown with it: below, or beside it in a wide Canvas), trend (up | down: an arrow for the direction only), icon (optional, right; not with stats).`,
   props: z.object({
     label: z.string(),
     value: z.string(),
     line: z.string().optional(),
+    tone,
     detail: z.string().optional(),
+    stats: z.array(Stat.ref).optional(),
     trend: z.enum(["up", "down"]).optional(),
     icon: icon.optional(),
   }),
-  component: ({ props }) => (
-    <div className="gui-view gui-hero">
-      <div className="gui-t3 gui-hero-label">{props.label}</div>
-      <div className="gui-wx-hero">
-        <div>
-          <div className="gui-hero-value">{props.value}</div>
-          {props.line && (
-            <div
-              className={`gui-hero-line${props.trend ? ` is-${props.trend}` : ""}`}
-            >
-              {props.trend === "up" && <ArrowUpRight size={14} aria-hidden />}
-              {props.trend === "down" && (
-                <ArrowDownRight size={14} aria-hidden />
+  component: function HeroView({ props, renderNode }) {
+    const wide = useContext(WideLayout);
+    const stats = (props.stats ?? []) as unknown[];
+    const withStats = stats.length > 0;
+    return (
+      <div className={`gui-view gui-hero${withStats ? " has-stats" : ""}`}>
+        <div className="gui-hero-main">
+          <div className="gui-t3 gui-hero-label">{props.label}</div>
+          <div className="gui-wx-hero">
+            <div>
+              <div className="gui-hero-value">{props.value}</div>
+              {props.line && (
+                <div
+                  className={`gui-hero-line${props.tone ? ` is-${props.tone}` : ""}`}
+                >
+                  <TrendArrow trend={props.trend} />
+                  {props.line}
+                </div>
               )}
-              {props.line}
+              {props.detail && (
+                <div className="gui-t2 gui-hero-detail">{props.detail}</div>
+              )}
             </div>
-          )}
-          {props.detail && (
-            <div className="gui-t2 gui-hero-detail">{props.detail}</div>
-          )}
+            {props.icon && !withStats && (
+              <Glyph name={props.icon} size={36} className="gui-wx-glyph" />
+            )}
+          </div>
         </div>
-        {props.icon && (
-          <Glyph name={props.icon} size={36} className="gui-wx-glyph" />
+        {withStats && (
+          <div className="gui-hero-stats">
+            {!wide && <div className="gui-hairline" />}
+            <StatsGrid
+              nodes={stats}
+              room={wide ? STATS_ROOM.besideHero : STATS_ROOM.tall}
+              renderNode={renderNode}
+            />
+          </div>
         )}
       </div>
-    </div>
-  ),
+    );
+  },
 });
 
 // ── Building blocks (for anything the views do not cover) ────────────────
 
-const Icon = defineComponent({
-  name: "Icon",
-  description: `An icon. Weather icons colour themselves. name: ${iconNames.join("|")}. size: s|m|l. tone (rare, for meaning only): ${ICON_TONES.join("|")}.`,
+const Header = defineComponent({
+  name: "Header",
+  description:
+    'The top of a composed view (not needed above a designed view, which has its own title): title (2-5 words, "Ramayana · IMAX 3D"), subtitle (one short grey line, "Cinepolis Lake Shore · Thane West"), note (right, very short, "Tonight").',
   props: z.object({
-    name: icon,
-    size: z.enum(["s", "m", "l"]).optional(),
-    tone: z.enum(ICON_TONES).optional(),
+    title: z.string(),
+    subtitle: z.string().optional(),
+    note: z.string().optional(),
   }),
   component: ({ props }) => (
-    <Glyph
-      name={props.name}
-      size={props.size === "l" ? 28 : props.size === "s" ? 13 : 18}
-      tone={props.tone}
-    />
+    <div className="gui-header">
+      <div className="gui-view-head">
+        <span className="gui-view-title">{props.title}</span>
+        {props.note && <span className="gui-t3">{props.note}</span>}
+      </div>
+      {props.subtitle && (
+        <div className="gui-t2 gui-header-sub">{props.subtitle}</div>
+      )}
+    </div>
   ),
 });
 
@@ -599,40 +805,6 @@ const Badge = defineComponent({
       {props.text}
     </span>
   ),
-});
-
-const Stat = defineComponent({
-  name: "Stat",
-  description:
-    "A labelled number in a row of stats. trend: up (green) | down (red) | flat.",
-  props: z.object({
-    label: z.string(),
-    value: z.string(),
-    detail: z.string().optional(),
-    trend: z.enum(["up", "down", "flat"]).optional(),
-  }),
-  component: ({ props }) => {
-    const Arrow =
-      props.trend === "up"
-        ? ArrowUpRight
-        : props.trend === "down"
-          ? ArrowDownRight
-          : props.trend === "flat"
-            ? ArrowRight
-            : null;
-    return (
-      <div className="gui-stat">
-        <span className="gui-t3">{props.label}</span>
-        <span className="gui-stat-value">{props.value}</span>
-        {(props.detail || Arrow) && (
-          <span className={`gui-stat-detail is-${props.trend ?? "none"}`}>
-            {Arrow && <Arrow size={12} strokeWidth={2} aria-hidden />}
-            {props.detail}
-          </span>
-        )}
-      </div>
-    );
-  },
 });
 
 const Progress = defineComponent({
@@ -743,14 +915,13 @@ const ListItem = defineComponent({
     const run = useRun(props.title, props.action);
     const body = (
       <>
-        {(props.image || props.icon) && (
-          <Thumb
-            src={props.image}
-            icon={props.icon ?? "image"}
-            small
-            tall={props.shape === "tall"}
-          />
-        )}
+        <RowLeadSlot
+          image={props.image}
+          icon={props.icon}
+          fallback="image"
+          small
+          tall={props.shape === "tall"}
+        />
         <span className="gui-place-main">
           <span className="gui-place-name">{props.title}</span>
           {props.subtitle && (
@@ -772,13 +943,16 @@ const ListItem = defineComponent({
 
 const List = defineComponent({
   name: "List",
-  description: `Up to ${LIMITS.list} rows of ListItem, divided by hairlines.`,
+  description: `Up to ${LIMITS.list} rows of ListItem, divided by hairlines. Rows show icons only when the icons differ (never the same icon on every row) and tiles only when some row has a photo.`,
   props: z.object({ items: z.array(ListItem.ref) }),
-  component: ({ props, renderNode }) => (
-    <div className="gui-rows">
-      {renderNode(props.items.slice(0, LIMITS.list))}
-    </div>
-  ),
+  component: ({ props, renderNode }) => {
+    const items = props.items.slice(0, LIMITS.list);
+    return (
+      <RowLeadContext.Provider value={rowLead(items)}>
+        <div className="gui-rows">{renderNode(items)}</div>
+      </RowLeadContext.Provider>
+    );
+  },
 });
 
 const Image = defineComponent({
@@ -942,7 +1116,7 @@ const Card = defineComponent({
 const Stack = defineComponent({
   name: "Stack",
   description:
-    "Lays children out. direction: column (default) | row (side by side, wraps). gap: s | m (default) | l. align: start | center | end.",
+    "Groups blocks. direction: column (default) | row: only for 2-3 Cards or Images side by side (never Stats, Heroes or loose text; use Stats or Hero stats for numbers). gap: s | m (default) | l. align: start | center | end.",
   props: z.object({
     children: z.array(z.any()),
     direction: z.enum(["column", "row"]).optional(),
@@ -968,10 +1142,18 @@ const Canvas = defineComponent({
   }),
   component: ({ props, renderNode }) => {
     const wide = props.layout === "wide";
+    const children = props.children as unknown[];
+    const isButtons = (node: unknown) =>
+      (node as { typeName?: string } | null)?.typeName === "Buttons";
+    const blocks = children
+      .filter((node) => !isButtons(node))
+      .slice(0, MAX_BLOCKS);
+    const buttons = children.filter(isButtons).slice(-1);
     return (
       <WideLayout.Provider value={wide}>
         <div className={`gui-canvas${wide ? " is-wide" : ""}`}>
-          {renderNode(props.children)}
+          {renderNode(blocks)}
+          {renderNode(buttons)}
         </div>
       </WideLayout.Provider>
     );
@@ -988,15 +1170,16 @@ export const canvasLibrary = createLibrary({
     Place,
     Journey,
     Hero,
+    Stats,
+    Stat,
+    Header,
     Stack,
     Card,
     Heading,
     Text,
     Markdown,
     Badge,
-    Icon,
     Image,
-    Stat,
     Progress,
     Divider,
     Details,
@@ -1025,11 +1208,17 @@ s2 = Place("Cold Hollow", "9 runs · night skiing", "71 km", "Opens 4 pm", "mute
 more = Buttons([Button("Compare lift prices", @ToAssistant("Compare lift ticket prices for Snowpeak and Cold Hollow"))])`,
   `root = Canvas([trip])
 trip = Journey("AI 864 · Air India", "BOM", "14:20", "DEL", "16:35", "On time", "good", 62, "T2", "T3", [Pair("Lands in", "48 min"), Pair("Gate", "42B"), Pair("Belt", "7")])`,
-  `root = Canvas([top, more], "wide")
-top = Stack([price, stats], "row", "l", "center")
-price = Hero("ACME · Nasdaq", "$182.40", "Up 2.1% today", "At close, 4:00 pm", "up")
-stats = Stack([Stat("Open", "$178.60"), Stat("Day range", "$177.90–183.20"), Stat("Volume", "21.2M")], "row", "l")
+  `root = Canvas([price, more], "wide")
+price = Hero("ACME · Nasdaq", "$182.40", "2.1% today", "good", "At close, 4:00 pm", [Stat("Open", "$178.60"), Stat("Day high", "$183.20"), Stat("Volume", "21.2M")], "up")
 more = Buttons([Button("Five-year chart", @ToAssistant("Show ACME's five-year price chart"))])`,
+  `root = Canvas([air, more])
+air = Hero("Thane · US AQI", "165", "Unhealthy", "bad", "PM2.5 main pollutant · keep outdoor time short", [Stat("PM2.5 · µg/m³", "61", "24× WHO limit", "bad"), Stat("PM10 · µg/m³", "65"), Stat("Ozone · µg/m³", "128")])
+more = Buttons([Button("Health tips", @ToAssistant("How do I protect myself from AQI 165 in Thane?")), Button("This week", @ToAssistant("Thane air quality forecast for this week"))])`,
+  `root = Canvas([head, facts, shows, more])
+head = Header("Ramayana · IMAX 3D", "Cinepolis Lake Shore · Thane West", "Tonight")
+facts = Details([Pair("Ticket", "From ₹430"), Pair("Runtime", "3h 15m · U · Hindi")])
+shows = List([ListItem("7:30 pm", "IMAX 3D · ends 10:45 pm", "Filling fast"), ListItem("11:45 pm", "IMAX 3D · ends 3 am", "Available")])
+more = Buttons([Button("Seat map", @ToAssistant("Show the seat map for Ramayana IMAX 3D at 7:30 pm at Cinepolis Lake Shore"))])`,
 ];
 
 let spec: string | null = null;
@@ -1041,10 +1230,12 @@ export function canvasSpec(): string {
       "A view is a small, calm, premium panel written in OpenUI Lang for Grain's Agent notch. It should feel like one of Apple's own apps: quiet, precise, nothing extra.",
     additionalRules: [
       "The root statement is always `root = Canvas([...])`.",
-      "Use a designed view whenever it fits: Weather for weather, Places for places, venues, shops or any list of results with photos, Journey for flights, trains, buses and drives, Hero for one big number or short answer. Add at most a Buttons row after it. Use the building blocks only when no view fits.",
-      `The view never scrolls. Pick its shape with Canvas's layout. "tall" (default): about 440 px wide (a Table may use up to 680) and 480 px tall, for lists and anything read top to bottom. "wide": a short landscape panel about 660 px wide and 300 px tall, for content that reads across: hourly or daily strips, timelines, routes, side-by-side comparisons, a big number with its stats beside it, dashboards of 3-4 Stats, or two columns of places. In a wide Canvas put blocks side by side with Stack(..., "row") and keep it to about two rows; Places shows ${WIDE_LIMITS.places} in two columns, Weather ${WIDE_LIMITS.hours} hours beside the current conditions. Either way: one designed view, or a few small blocks, plus at most one Buttons row. Limits (tall): Places ${LIMITS.places} rows, Weather 6 hours, List ${LIMITS.list} rows, Table ${LIMITS.rows} rows x ${LIMITS.columns} columns, Steps ${LIMITS.steps}, Details ${LIMITS.pairs} pairs, Journey 3 facts. Need more? Show the top ones and add a follow-up button such as "Show more".`,
-      "Keep words few: titles of 2-5 words, details as short fragments joined with ' · ', no sentences where a fragment will do. Never repeat what the view already shows.",
-      "Colour is not yours to decorate with: weather icons colour themselves; use status tones (good, warn, bad) only for real status such as Open, Closed, On time, Delayed.",
+      "Use a designed view whenever it fits: Weather for weather, Places for places, venues, cinemas, shops or any list of results, Journey for flights, trains, buses and drives, Hero for one big number or short answer (give it stats for its 2-4 key figures). Add at most a Buttons row after it. Use the building blocks only when no view fits.",
+      `ONE IDEA PER VIEW: a designed view alone, or a Header plus at most two blocks (e.g. Details and a List), plus at most one Buttons row. Never stack four sections; anything past ${MAX_BLOCKS} blocks is dropped. If two things compete, show the one asked about and offer the other as a follow-up button.`,
+      `The view never scrolls. Pick its shape with Canvas's layout. "tall" (default): about 440 px wide (a Table may use up to 680) and 480 px tall, for lists and anything read top to bottom. "wide": a short landscape panel about 660 px wide and 300 px tall, for content that reads across: hourly or daily strips, a Hero with its stats beside it, a Stats dashboard, or two columns of places. Places shows ${WIDE_LIMITS.places} in two columns there, Weather ${WIDE_LIMITS.hours} hours beside the current conditions. Limits (tall): Places ${LIMITS.places} rows, Weather 6 hours, List ${LIMITS.list} rows, Table ${LIMITS.rows} rows x ${LIMITS.columns} columns, Steps ${LIMITS.steps}, Details ${LIMITS.pairs} pairs, Stats ${LIMITS.stats}, Journey 3 facts. Need more? Show the top ones and add a follow-up button such as "Show more".`,
+      "Layout is the components' job, not yours: numbers go in Stats or a Hero's stats (they size themselves), facts in Details, choices in a List or Places. Use Stack rows only for 2-3 Cards or Images side by side.",
+      'Keep words few: titles of 2-5 words, details as short fragments joined with " · ", no sentences where a fragment will do. Figures are short (≤ 8 characters: "65", "₹430", "20K", "3h 15m"); a unit or explanation goes in the label or detail, never in the value. Never repeat what the view already shows (a Header title does not repeat a Places title).',
+      "Colour is not yours to decorate with: weather icons colour themselves. tone (good, warn, bad) says what a figure means for the user (AQI 165 is bad, a price drop for a buyer is good), and trend is only the arrow's direction. A Place status is only a real status (Open, Sold out, On time, Delayed), never a feature or a recommendation.",
       "Use photos (Place/ListItem image, Image) only with image URLs that appeared in tool results in this conversation; search the web for one when it clearly helps. Never invent or guess an image URL — leave the image out instead (a place without a photo shows its icon in a tile). The example image URL is a placeholder: never copy it.",
       "Use @OpenUrl only for real, well-known URLs or search URLs; never invent links.",
       "Follow-up buttons send a complete, standalone request with @ToAssistant. Offer 1-3 at most, or none.",

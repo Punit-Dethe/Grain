@@ -66,7 +66,18 @@ Windows-only clip (as today).
 
 ## Components
 
-Designed views carry the look; the model only fills in data: `Weather` (+ `Hour` columns, temperature curve), `Places` (+ `Place` rows with photo thumbnails and status), `Journey` (flight/train/bus/drive with progress and facts), `Hero` (one big number). Building blocks for anything else: `Canvas` (root), `Stack`, `Card`, `Heading`, `Text`, `Markdown`, `Badge`, `Icon`, `Image`, `Stat`, `Progress`, `Divider`, `Details`/`Pair`, `Table`, `Steps`, `List`/`ListItem`, `Buttons`/`Button`, `Form`/`Input`/`Select`. No maps: real map tiles need a map library and network tiles; a place list with "Open in Maps" links (`open_url`) covers the example for now.
+Designed views carry the look; the model only fills in data: `Weather` (+ `Hour` columns, temperature curve), `Places` (+ `Place` rows with photo thumbnails and status), `Journey` (flight/train/bus/drive with progress and facts), `Hero` (one big number, optionally with its key figures as `stats`). Building blocks for anything else: `Canvas` (root), `Header`, `Stats`/`Stat`, `Stack`, `Card`, `Heading`, `Text`, `Markdown`, `Badge`, `Image`, `Progress`, `Divider`, `Details`/`Pair`, `Table`, `Steps`, `List`/`ListItem`, `Buttons`/`Button`, `Form`/`Input`/`Select`.
+
+### Polish pass (2026-11-21, branch `ui/dynamic-ui-polish`)
+
+Real views came out crowded: stat values wrapping ("20K of / it"), a green "Unhealthy ↗", a clipped second column, columns of identical star/clock tiles, four or five stacked sections. Fix follows OpenUI's own chat library: fixed-slot components so the model fills values and never builds layout.
+
+- **`Stats`** (2-4 `Stat`) and **`Hero` stats**: `statLayout` picks columns and one value size from the longest value so every figure sits on one line; four long values go 2×2. The model is told figures are ≤ 8 characters with units in the label.
+- **`tone` vs `trend`**: colour is what a figure means for the user (good/warn/bad); the arrow is only direction. AQI rising is red.
+- **Row lead**: a list shows tiles only when some row has a photo; bare icons only when they differ per row; otherwise nothing.
+- **`Header`** (title, subtitle, note) for composed views; the standalone `Icon` is gone (it floated in rows).
+- **Block cap**: `Canvas` renders at most 4 blocks plus its last Buttons row; the prompt asks for one idea per view (a designed view, or a Header plus up to two blocks).
+- **Wide Places**: `minmax(0, 1fr)` columns, so the right column can no longer outgrow the view and get clipped. No maps: real map tiles need a map library and network tiles; a place list with "Open in Maps" links (`open_url`) covers the example for now.
 
 ### Look (2026-11-15, user picked "Calm Apple-style" from chat mockups)
 

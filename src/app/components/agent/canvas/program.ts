@@ -33,6 +33,6 @@ export function viewSummary(program: string): {
       kind: view[1].toLowerCase() as ViewKind,
       title: unquote(view[2]),
     };
-  const heading = new RegExp(`\\bHeading\\(\\s*${quoted}`).exec(program);
+  const heading = new RegExp(`\\bHead(?:er|ing)\\(\\s*${quoted}`).exec(program);
   return { kind: "view", title: heading ? unquote(heading[1]) : null };
 }

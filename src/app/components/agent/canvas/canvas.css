@@ -106,7 +106,12 @@
 .gui-canvas {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+}
+
+/* Follow-ups sit a touch closer to what they follow up on. */
+.gui-canvas > .gui-pills {
+  margin-top: -2px;
 }
 
 /* Wide: a short landscape panel, up to 660 px. Like any view it is only as
@@ -148,10 +153,32 @@
   display: none;
 }
 
+/* minmax(0, …): a column must never grow to its longest unwrapped row, or
+   the right column runs past the view and gets clipped. */
 .gui-canvas.is-wide .gui-places .gui-rows {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: 28px;
+}
+
+/* A Hero with its stats beside it. */
+.gui-canvas.is-wide .gui-hero.has-stats {
+  flex-direction: row;
+  align-items: center;
+  gap: 28px;
+}
+
+.gui-canvas.is-wide .gui-hero.has-stats .gui-hero-main {
+  flex: 0 0 auto;
+  max-width: 220px;
+}
+
+.gui-canvas.is-wide .gui-hero.has-stats .gui-hero-stats {
+  flex: 1 1 0;
+  align-self: stretch;
+  justify-content: center;
+  padding-left: 28px;
+  border-left: 1px solid var(--g-line);
 }
 
 /* The second place starts the first row's right column: no separator. */
@@ -355,6 +382,23 @@
   left: 58px;
 }
 
+.gui-place + .gui-place:has(.gui-row-glyph)::before {
+  left: 32px;
+}
+
+/* A bare row icon (no tile): only when the icons tell the rows apart. */
+.gui-row-glyph {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.gui-row-glyph .gui-icon:not([class*="hue-"]) {
+  color: var(--g-3);
+}
+
 .gui-place.is-action {
   cursor: pointer;
   border-radius: 10px;
@@ -552,17 +596,68 @@
   font-weight: 500;
 }
 
-.gui-hero-line.is-up {
+/* Colour is the meaning (tone), never the arrow's direction. */
+.gui-hero-line.is-good {
   color: var(--g-good);
 }
 
-.gui-hero-line.is-down {
+.gui-hero-line.is-warn {
+  color: var(--g-warn);
+}
+
+.gui-hero-line.is-bad {
   color: var(--g-bad);
 }
 
 .gui-hero-detail {
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 12px;
+  line-height: 1.4;
+}
+
+.gui-hero.has-stats {
+  gap: 14px;
+}
+
+.gui-hero-main,
+.gui-hero-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.gui-hero-stats {
+  gap: 14px;
+}
+
+/* ── Stats: columns and number size chosen in code (statLayout) so every
+   value sits on one line at one size. ──────────────────────────────────── */
+.gui-stats {
+  display: grid;
+  row-gap: 14px;
+}
+
+.gui-stats-cell {
+  min-width: 0;
+  padding-left: 15px;
+  border-left: 1px solid var(--g-line);
+}
+
+.gui-stats-cell.is-first {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.gui-header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: var(--g-view);
+}
+
+.gui-header-sub {
+  font-size: 12.5px;
 }
 
 /* ── Building blocks ─────────────────────────────────────────────────── */
@@ -668,30 +763,69 @@
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
   font-size: 11.5px;
 }
 
+/* One line, always: the group sized the value to fit; ellipsis is only the
+   last resort for a value far past the prompt's length limit. */
+.gui-stat-label,
+.gui-stat-value,
+.gui-stat-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gui-stat-value {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 400;
   line-height: 1.15;
   letter-spacing: -0.025em;
 }
 
+.gui-stat-value.is-l {
+  font-size: 26px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+}
+
+.gui-stat-value.is-s {
+  font-size: 16px;
+  letter-spacing: -0.015em;
+}
+
+.gui-stat-value.is-xs {
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
 .gui-stat-detail {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 3px;
   color: var(--g-2);
 }
 
-.gui-stat-detail.is-up {
+.gui-stat-detail svg {
+  flex-shrink: 0;
+}
+
+.gui-stat-detail > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gui-stat-detail.is-good {
   color: var(--g-good);
 }
 
-.gui-stat-detail.is-down {
+.gui-stat-detail.is-warn {
+  color: var(--g-warn);
+}
+
+.gui-stat-detail.is-bad {
   color: var(--g-bad);
 }
 
@@ -728,10 +862,22 @@
 
 .gui-pair {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
   gap: 24px;
   padding: 7px 0;
   font-size: 13px;
+}
+
+.gui-pair > :first-child {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* A long value wraps against the right edge instead of shoving the label. */
+.gui-pair > :last-child {
+  min-width: 0;
+  text-align: right;
 }
 
 .gui-pair + .gui-pair {
