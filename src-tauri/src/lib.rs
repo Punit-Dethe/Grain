@@ -1486,6 +1486,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_panel_voice_start, // [GRAIN] dictate into the open chat
             agent::agent_panel_voice_stop,
             agent::agent_input_submit,
+            agent::agent_collapse_to_listening,
+            agent::agent_reopen_listening,
             agent::agent_copy,
             agent::agent_run,
             agent::agent_confirm_action,

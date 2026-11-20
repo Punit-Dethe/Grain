@@ -1360,6 +1360,29 @@ async agentInputSubmit() : Promise<void> {
     await TAURI_INVOKE("agent_input_submit");
 },
 /**
+ * [GRAIN] Shrink the open chat back to the listening notch (its Escape).
+ */
+async agentCollapseToListening() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_collapse_to_listening") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Reopen a chat shrunk to the listening notch (hover or click); the
+ * recording carries on in the composer's waveform.
+ */
+async agentReopenListening() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_reopen_listening") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Copy a reply on explicit user request.
  */
 async agentCopy(text: string) : Promise<Result<null, string>> {

@@ -381,6 +381,9 @@ pub struct AgentState {
     /// while the chat is open): its own capture, never the summon's. Released
     /// when it is sent, cancelled, or the notch closes.
     panel_voice: Mutex<Option<AgentCapture>>,
+    /// The composer's dictation registered global Enter/Escape (it was
+    /// collapsed to the compact notch); released when it ends.
+    panel_voice_keys: AtomicBool,
     /// First turn executing behind the pill, before a reply/error is rendered.
     waiting_for_reply: AtomicBool,
     /// Dictation can target a focused notch once it shows a reply.
@@ -487,6 +490,12 @@ fn route_summon_to_open_chat(app: &AppHandle) -> bool {
     let Some(state) = app.try_state::<AgentState>() else {
         return false;
     };
+    // Shrunk to the listening notch while the composer dictates: Alt+A
+    // sends, as Enter does.
+    if !state.reply_visible.load(Ordering::SeqCst) && panel_voice_live(app) {
+        send_panel_voice(app);
+        return true;
+    }
     if !state.reply_visible.load(Ordering::SeqCst) || state.input_active.load(Ordering::SeqCst) {
         return false;
     }
@@ -543,6 +552,7 @@ pub async fn agent_panel_voice_stop(app: AppHandle, keep: bool) -> Result<Option
     let Some(capture) = app.state::<AgentState>().panel_voice.lock().unwrap().take() else {
         return Ok(None);
     };
+    release_panel_voice_keys(&app);
     tauri::async_runtime::spawn_blocking(move || {
         let samples = {
             let _start = crate::grain_actions::capture_start_guard();
@@ -571,11 +581,148 @@ pub async fn agent_panel_voice_stop(app: AppHandle, keep: bool) -> Result<Option
     .map_err(|error| error.to_string())?
 }
 
+fn panel_voice_live(app: &AppHandle) -> bool {
+    app.try_state::<AgentState>()
+        .is_some_and(|state| state.panel_voice.lock().unwrap().is_some())
+}
+
+/// Something is listening for the notch: a summon's capture (possibly opened
+/// early) or the composer's dictation.
+fn notch_listening(app: &AppHandle) -> bool {
+    blocks_dictation(app) || panel_voice_live(app)
+}
+
+/// [GRAIN] Escape on the open chat while it listens: shrink back to the
+/// compact listening notch and keep recording (people talk on while they
+/// glance at the chat). Enter then sends, Escape closes, hover reopens.
+/// Main thread only.
+fn collapse_to_listening(app: &AppHandle) -> bool {
+    let state = app.state::<AgentState>();
+    if !state.reply_visible.load(Ordering::SeqCst) || !notch_listening(app) {
+        return false;
+    }
+    let Some(window) = app.get_webview_window(PANEL_LABEL) else {
+        return false;
+    };
+    state.reply_visible.store(false, Ordering::SeqCst);
+    #[cfg(windows)]
+    set_compact_notch_region(&window, true);
+    #[cfg(not(windows))]
+    let _ = &window;
+    // Typing goes back to whatever the user was in.
+    let _ = window.set_focusable(false);
+    let _ = app.emit_to(PANEL_LABEL, "agent-collapse", ());
+    // The composer's dictation now needs global Enter/Escape (a summon holds
+    // them already). Never registered inside a shortcut's own callback.
+    if panel_voice_live(app) {
+        state.panel_voice_keys.store(true, Ordering::SeqCst);
+        let app = app.clone();
+        std::thread::spawn(move || register_transient_shortcuts(&app));
+    }
+    true
+}
+
+/// [GRAIN] Shrink the open chat back to the listening notch (its Escape).
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_collapse_to_listening(app: AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        collapse_to_listening(&handle);
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// [GRAIN] Reopen a chat shrunk to the listening notch (hover or click); the
+/// recording carries on in the composer's waveform.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_reopen_listening(app: AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        if !reply_shown(&handle) && notch_listening(&handle) {
+            expand_notch(&handle);
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
+/// Grow the compact notch to the full chat (the user opened it, or sent the
+/// composer's dictation from the compact notch). Main thread only.
+fn expand_notch(app: &AppHandle) {
+    let state = app.state::<AgentState>();
+    let Some(window) = app.get_webview_window(PANEL_LABEL) else {
+        return;
+    };
+    #[cfg(windows)]
+    set_compact_notch_region(&window, false);
+    #[cfg(not(windows))]
+    place_notch_at_text_scale(&window, NOTCH_REPLY);
+    state.reply_visible.store(true, Ordering::SeqCst);
+    // Collapsing made it non-focusable; the open chat takes typing again.
+    let _ = window.set_focusable(true);
+    let _ = app.emit_to(PANEL_LABEL, "agent-reveal", ());
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(NOTCH_GROW).await;
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if !reply_shown(&handle) {
+                return;
+            }
+            if let Some(window) = handle.get_webview_window(PANEL_LABEL) {
+                let _ = window.set_focus();
+            }
+        });
+    });
+}
+
+/// Enter on the compact notch while the composer dictates: open the chat and
+/// send what was said there.
+fn send_panel_voice(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if !panel_voice_live(&handle) {
+            return;
+        }
+        if !reply_shown(&handle) {
+            expand_notch(&handle);
+        }
+        let _ = handle.emit_to(PANEL_LABEL, "agent-panel-voice-send", ());
+    });
+}
+
+/// The composer's dictation ended: give Enter back to the chat (and Escape,
+/// for a hand-opened chat, which closes on its own keydown).
+fn release_panel_voice_keys(app: &AppHandle) {
+    let state = app.state::<AgentState>();
+    if !state.panel_voice_keys.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<AgentState>();
+        state.transient_shortcuts.claim(|| {
+            if state.input_active.load(Ordering::SeqCst)
+                || state.waiting_for_reply.load(Ordering::SeqCst)
+                || state.panel_voice.lock().unwrap().is_some()
+            {
+                return;
+            }
+            let _ = crate::shortcut::unregister_shortcut(&app, submit_binding());
+            if hand_opened(&app) {
+                let _ = crate::shortcut::unregister_shortcut(&app, close_binding());
+            }
+        });
+    });
+}
+
 /// [GRAIN] The notch is going: release the composer's microphone, if held.
 fn cancel_panel_voice(app: &AppHandle) {
     let Some(capture) = app.state::<AgentState>().panel_voice.lock().unwrap().take() else {
         return;
     };
+    release_panel_voice_keys(app);
     let _start = crate::grain_actions::capture_start_guard();
     let rm = app.state::<Arc<AudioRecordingManager>>();
     if rm.is_recording_readiness_current(capture.readiness_generation) {
@@ -1962,7 +2109,7 @@ pub async fn agent_open_summon(app: AppHandle, generation: u64) -> Result<(), St
         if state.summon_gen.load(Ordering::SeqCst) != generation
             || state.notch_generation.load(Ordering::SeqCst) != generation
             || state.reply_visible.load(Ordering::SeqCst)
-            || !(blocks_dictation(&handle) || waiting_for_reply(&handle) || speaking)
+            || !(notch_listening(&handle) || waiting_for_reply(&handle) || speaking)
         {
             return;
         }
@@ -2307,6 +2454,8 @@ pub fn global_submit(app: &AppHandle) {
         .unwrap_or(false);
     if input_live {
         input_submit_voice(app);
+    } else if panel_voice_live(app) {
+        send_panel_voice(app);
     }
 }
 
@@ -2370,6 +2519,24 @@ pub fn global_close(app: &AppHandle) {
         .try_state::<AgentState>()
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
+    // [GRAIN] The open chat while something listens: Escape shrinks it back
+    // to the listening notch and the recording carries on; Escape there
+    // (below) ends it.
+    if reply_shown(app) && notch_listening(app) {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            collapse_to_listening(&handle);
+        });
+        return;
+    }
+    // The composer's dictation on the compact notch: Escape drops it and
+    // closes the notch.
+    if !reply_shown(app) && panel_voice_live(app) {
+        cancel_panel_voice(app);
+        let generation = app.state::<AgentState>().summon_gen.load(Ordering::SeqCst);
+        close_panel_animated(app, generation);
+        return;
+    }
     let dictation_live = ordinary_dictation_live(app);
     // Opened early, Escape closes the notch and the request carries on.
     let waiting = waiting_for_reply(app) && !reply_shown(app);

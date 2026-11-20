@@ -218,6 +218,13 @@ export function AgentPanel() {
   const voiceRef = useRef(voice);
   const voiceToggleRef = useRef<() => void>(() => {});
   const summonListeningRef = useRef(false);
+  const voiceSendRef = useRef<() => void>(() => {});
+  // Shrunk to the listening notch by Escape: what the capture state was, put
+  // back when the chat reopens. `null` while open.
+  const collapsedRef = useRef<Pick<
+    AgentNotchStatus,
+    "opened" | "listening"
+  > | null>(null);
   const [resizing, setResizing] = useState(false);
   useEffect(() => {
     void commands
@@ -272,6 +279,32 @@ export function AgentPanel() {
   const reveal = useCallback(() => {
     revealedRef.current = true;
     setRevealed(true);
+    // Reopened after Escape shrank it to the listening notch.
+    const saved = collapsedRef.current;
+    if (saved) {
+      collapsedRef.current = null;
+      setCapture((current) => current && { ...current, ...saved });
+    }
+  }, []);
+
+  /** Escape shrank the open chat to the listening notch (the host already
+   * clipped it): show the compact listening state; the recording goes on. */
+  const collapse = useCallback(() => {
+    revealedRef.current = false;
+    setRevealed(false);
+    setGrown(false);
+    setHoverOpening(false);
+    // The host holds the compact clip now; the shape effect starts over.
+    clipRef.current = undefined;
+    setCapture((current) => {
+      if (!current) return current;
+      collapsedRef.current ??= {
+        opened: current.opened,
+        listening: current.listening,
+      };
+      // Not "opened": hover and click reopen it, as for a summon.
+      return { ...current, opened: false, listening: true };
+    });
   }, []);
 
   /** The hand-opened notch is on screen: grow from the sliver to full size. */
@@ -523,6 +556,12 @@ export function AgentPanel() {
       win
         .listen("agent-panel-voice", () => voiceToggleRef.current())
         .then(track),
+      // Escape (or the host) shrank the chat to the listening notch.
+      win.listen("agent-collapse", () => collapse()).then(track),
+      // Enter or Alt+A on that notch: the host reopened it; send the words.
+      win
+        .listen("agent-panel-voice-send", () => voiceSendRef.current())
+        .then(track),
       win
         .listen<string>("agent-panel-dictation", ({ payload }) => {
           const dictated = payload.trim();
@@ -591,7 +630,7 @@ export function AgentPanel() {
       dead = true;
       unlisten.forEach((release) => release());
     };
-  }, [reveal, open, startFirstIfQueued, loadHistory, win]);
+  }, [reveal, open, collapse, startFirstIfQueued, loadHistory, win]);
 
   // Reveal only after reply/error state has committed. The host verifies that
   // this first turn still owns the waiting pill, so Stop cannot reopen a card.
@@ -616,7 +655,10 @@ export function AgentPanel() {
   const canOpenEarly = !revealed && !closing && !!capture && !capture.opened;
   const openEarly = useCallback(() => {
     setHoverOpening(false);
-    if (capture)
+    // Shrunk by Escape while listening: reopen the same chat.
+    if (collapsedRef.current)
+      void commands.agentReopenListening().catch(console.error);
+    else if (capture)
       void commands.agentOpenSummon(capture.generation).catch(console.error);
   }, [capture]);
   useEffect(() => {
@@ -670,6 +712,11 @@ export function AgentPanel() {
       }
       if (event.key !== "Escape") return;
       event.preventDefault();
+      // Still listening: shrink to the listening notch, the voice goes on.
+      if (voiceRef.current === "listening" || summonListeningRef.current) {
+        void commands.agentCollapseToListening().catch(console.error);
+        return;
+      }
       // The chat list and an open view step back to the chat first; a
       // reminder counts as done.
       if (view === "history") setView("main");
@@ -1139,14 +1186,8 @@ export function AgentPanel() {
     [runFollowup, sendDraft],
   );
 
-  /** Drop the dictation without a transcript. */
-  const cancelVoice = useCallback(() => {
-    if (voiceRef.current !== "listening") return;
-    voiceRef.current = "off";
-    setVoice("off");
-    void commands.agentPanelVoiceStop(false).catch(console.error);
-  }, []);
-
+  // Enter or Alt+A on the listening notch: the host reopened the chat.
+  voiceSendRef.current = () => void finishVoice(true);
   // Alt+A while the chat is open: start, or finish and send.
   voiceToggleRef.current = () => {
     if (voiceRef.current === "listening") void finishVoice(true);
@@ -1165,12 +1206,13 @@ export function AgentPanel() {
   const onComposerKey = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (voiceRef.current !== "off") {
-        // Dictating: Enter sends what was said, Escape drops it (and must not
-        // reach the window's Escape, which closes the notch).
+        // Dictating: Enter sends what was said; Escape shrinks the chat to
+        // the listening notch and the voice goes on (Escape there drops it).
         if (event.key === "Escape") {
           event.preventDefault();
           event.stopPropagation();
-          cancelVoice();
+          if (voiceRef.current === "listening")
+            void commands.agentCollapseToListening().catch(console.error);
         } else if (event.key === "Enter" && !event.nativeEvent.isComposing) {
           event.preventDefault();
           void finishVoice(true);
@@ -1191,7 +1233,7 @@ export function AgentPanel() {
       }
       sendDraft();
     },
-    [sendDraft, finishVoice, cancelVoice],
+    [sendDraft, finishVoice],
   );
 
   /** Copy one specific answer (the per-reply copy affordance). Only the copied
@@ -1291,7 +1333,11 @@ export function AgentPanel() {
   // Opened while the summon still listens: its recording shows as a live
   // waveform in the composer, and Enter (or send) sends it.
   const summonListening =
-    busy && !messages.length && !!capture?.listening && !capture.working;
+    voice === "off" &&
+    busy &&
+    !messages.length &&
+    !!capture?.listening &&
+    !capture.working;
   summonListeningRef.current = summonListening;
   const voiceShown = voice !== "off" || summonListening;
   // Selected source text is separate from the submitted message below.
