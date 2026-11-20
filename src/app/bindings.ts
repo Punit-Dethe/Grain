@@ -1342,9 +1342,9 @@ async agentRun(messages: AgentMessage[], context: string | null, generation: num
 }
 },
 /**
- * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, Â§2.5). The
+ * [GRAIN] Resume a host-gated action confirmation (PLAN Amendment A, §2.5). The
  * user approved (or declined) the exact prepared call named by `token`; the host
- * revalidates and replays *that* call â€” the model is never re-consulted, so its
+ * revalidates and replays *that* call — the model is never re-consulted, so its
  * nondeterminism cannot change what runs. Returns the receipt/result (or the
  * decline) rendered for the chat.
  */
