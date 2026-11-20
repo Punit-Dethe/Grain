@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "pilot-host/grain-browser-host.exe": "grain-browser-host.exe"
+    }
+  }
+}

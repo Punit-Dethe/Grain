@@ -28,6 +28,8 @@ PKG = ROOT / "package.json"
 CONF = ROOT / "src-tauri" / "tauri.conf.json"
 CARGO = ROOT / "src-tauri" / "Cargo.toml"
 CAPS = ROOT / "src-tauri" / "capabilities" / "default.json"
+PILOT_HOST_CONF = ROOT / "src-tauri" / "tauri.pilot-host.conf.json"
+RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "grain-release.yml"
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -102,6 +104,27 @@ def main() -> int:
         problems.append(
             "capabilities/default.json: no `updater:` permission -- the update "
             "check would be denied at runtime"
+        )
+
+    # 5. Grain Pilot only works with its native messaging host installed beside
+    #    the exe. Dev builds have it lying around, so a release without it looks
+    #    fine until a user connects Pilot: "The browser host is missing".
+    pilot_conf = read_json(PILOT_HOST_CONF)
+    pilot_resources = (pilot_conf.get("bundle") or {}).get("resources") or {}
+    if "grain-browser-host.exe" not in pilot_resources.values():
+        problems.append(
+            f"{PILOT_HOST_CONF.name}: does not bundle grain-browser-host.exe -- "
+            "Grain Pilot would fail with 'The browser host is missing'"
+        )
+    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    if (
+        f"--config src-tauri/{PILOT_HOST_CONF.name}" not in workflow
+        or "-p grain-browser-host" not in workflow
+    ):
+        problems.append(
+            f"{RELEASE_WORKFLOW.name}: does not build grain-browser-host and pass "
+            f"--config src-tauri/{PILOT_HOST_CONF.name} -- Grain Pilot would fail "
+            "with 'The browser host is missing'"
         )
 
     if problems:
