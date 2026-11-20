@@ -260,7 +260,7 @@ html[data-theme="light"] .ext-setup {
 .ext-setup-head {
   display: grid;
   justify-items: center;
-  padding: 34px 32px 26px;
+  padding: 52px 32px 34px;
   text-align: center;
   background: radial-gradient(
     60% 90% at 50% 0%,
@@ -273,7 +273,7 @@ html[data-theme="light"] .ext-setup {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 26px;
+  margin-bottom: 38px;
 }
 
 /* Bare marks, no tiles: short hairlines join each app to the next. */
