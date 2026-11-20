@@ -19,11 +19,6 @@ name: "Grain Release (Windows)"
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.grain-keys/grain.updater.key
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  contents of ~/.grain-keys/grain.updater.key.password
-#   GRAIN_GITHUB_OAUTH_CLIENT_ID / GRAIN_GITHUB_OAUTH_CLIENT_SECRET
-#     existing desktop registration for the bundled GitHub MCP connection
-#   GRAIN_ASANA_OAUTH_CLIENT_ID / GRAIN_ASANA_OAUTH_CLIENT_SECRET
-#     Asana "MCP app" registration, distribution "Any workspace". Without
-#     them the build hides Asana from Extensions.
 
 on:
   workflow_dispatch:
@@ -63,22 +58,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-
-      - name: Validate supported GitHub extension registration
-        shell: pwsh
-        env:
-          GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID }}
-          GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          foreach ($name in @('GRAIN_GITHUB_OAUTH_CLIENT_ID', 'GRAIN_GITHUB_OAUTH_CLIENT_SECRET')) {
-            $value = [Environment]::GetEnvironmentVariable($name)
-            $limit = if ($name.EndsWith('_ID')) { 512 } else { 4096 }
-            if ([string]::IsNullOrWhiteSpace($value) -or $value.Length -gt $limit -or $value -ne $value.Trim() -or $value -match '[\x00-\x1f\x7f-\x9f]') {
-              throw "$name is missing or malformed"
-            }
-          }
-          Write-Host 'Supported GitHub registration is configured; values are not logged'
 
       # Fails the release before anything is built if the manifests disagree or
       # the updater feed could not be verified -- both are invisible locally and
@@ -269,13 +248,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Public/extractable desktop OAuth registration, never account tokens
-          # or the GitHub App private key. Used by the bundled GitHub MCP connection.
-          GRAIN_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_ID }}
-          GRAIN_GITHUB_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_GITHUB_OAUTH_CLIENT_SECRET }}
-          # Asana MCP app registration; Asana is hidden in builds without it.
-          GRAIN_ASANA_OAUTH_CLIENT_ID: ${{ secrets.GRAIN_ASANA_OAUTH_CLIENT_ID }}
-          GRAIN_ASANA_OAUTH_CLIENT_SECRET: ${{ secrets.GRAIN_ASANA_OAUTH_CLIENT_SECRET }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # CPU-compat: disable AVX/FMA/etc so CPUs lacking them don't SIGILL.
           # The Vulkan backend does the heavy compute, so the perf impact is negligible.

@@ -68,17 +68,12 @@ For detailed platform-specific setup instructions, see [BUILD.md](BUILD.md).
 
 ### MCP connections
 
-Grain bundles its supported remote MCP presets. Their endpoints and OAuth
-profiles are maintained in `src-tauri/src/grain_mcp.rs`. The Extensions page
-also supports user-configured remote MCP servers. See the [retirement
-plan](docs/Extensions%202.0/STORE-RETIREMENT.md) for the remaining cleanup.
+Apps reach the Agent through Composio (`src-tauri/src/grain_mcp_composio.rs`):
+each user pastes their own Composio project API key on the Extensions page.
+Exa and Grain Pilot ship built in (`src-tauri/src/grain_mcp.rs`), and users
+can still add their own remote MCP servers.
 
-Run the normal app with `bun run tauri dev --no-watch`. GitHub sign-in
-requires the dedicated desktop registration at compile time. Use the
-**Build Test** workflow with `github-mcp-test=true` for an isolated Windows
-installer. For local development with GitHub, launch Cargo through the same
-terminal that supplies `GRAIN_GITHUB_OAUTH_CLIENT_ID` and
-`GRAIN_GITHUB_OAUTH_CLIENT_SECRET`. Notion uses dynamic registration.
+Run the normal app with `bun run tauri dev --no-watch`.
 
 Run scoped frontend tests and `cargo test --locked --lib grain_mcp::` from
 `src-tauri/`. On Windows, set the Cargo test runner to the absolute path of

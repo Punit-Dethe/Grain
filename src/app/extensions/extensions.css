@@ -1,4 +1,5 @@
-/* Extensions page: Built-in, Apps (Composio). Custom MCP keeps mcp-connections.css. */
+/* Extensions page: one Connected list (built-ins, then Composio apps), Browse apps.
+   Custom MCP keeps mcp-connections.css. */
 
 /* Fixed head: title and page actions on one line, search right under it. */
 .ext-page-head {

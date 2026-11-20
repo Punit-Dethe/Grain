@@ -53,25 +53,14 @@ failure, and 2 for a blocked prerequisite. A failure leaves later scenarios
 unrun. Use the [interruption inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory)
 before cleaning up an interrupted run.
 
-### Terminal-only MCP probe (GitHub test profile)
-
-**15 October mixed-provider acceptance:** seven real Harbor journeys passed with
-GitHub and Notion enabled, including combined reads and disposable writes/fresh
-verification. Reused this probe; no new maintained runner/scenario was introduced.
-Ignored `.runs/toolcalling-mixed-20261015/` retains the disposable staging adapter,
-reports/fixtures and independent GitHub checks. Resolve diagnostic action names
-from each task's offered/loaded canonical IDs: a previous exported catalogue can
-be stale. Nonempty replies alone are not acceptance. All temporary model/key
-fields were restored; ordinary settings/credentials were unchanged and owned
-processes exited. Retire the adapter after review. Hints remain debug opt-in:
-the matched ordinary read was slower with hints. See progress for exact verdicts.
+### Terminal-only MCP probe (Agent test profile)
 
 The debug app recognizes `GRAIN_AGENT_PROBE_FILE` as a one-shot request file.
 This reuses its headless setup and production MCP/Agent functions. It creates no
 browser, microphone, native worker server or testing service. Release builds and
 the separate `agent-harness` binary do not contain this entry point. It refuses
-the ordinary app identity: use a debug build with the GitHub test configuration.
-Close the GitHub test app first; the probe borrows its saved accounts/model without changing
+the ordinary app identity: use a debug build with the Agent test configuration.
+Close the Agent test app first; the probe borrows its saved accounts/model without changing
 provider selection. Keep request/output files in ignored `.runs/` evidence; never
 commit account-bound catalogue snapshots or credentials.
 Validate the JSON report/error and trace, not only the parent GUI process exit
@@ -87,7 +76,7 @@ $taskOldConfig = $env:TAURI_CONFIG
 try {
   $env:LOCALAPPDATA = $null
   $env:TEMP = $null
-  $env:TAURI_CONFIG = Get-Content tauri.github-test.conf.json -Raw
+  $env:TAURI_CONFIG = Get-Content tauri.agent-test.conf.json -Raw
   cargo build --bin handy
 } finally {
   $env:LOCALAPPDATA = $taskOldLocal
@@ -165,27 +154,6 @@ $env:GRAIN_LEXICAL_CASES = 'C:\absolute\owned-run\cases.json'
 $env:GRAIN_LEXICAL_REPORT = 'C:\absolute\owned-run\retrieval.json'
 cargo --config 'target.x86_64-pc-windows-msvc.runner=["powershell.exe","-NoProfile","-File","C:/absolute/repo/scripts/run-rust-test.ps1"]' test --lib exported_catalogue_required_sets_under_schema_budget -- --ignored
 ```
-
-## Installed GitHub MCP checkpoint
-
-Use the **Build Test** workflow with `github-mcp-test=true`. Open **Grain GitHub
-Test**, connect GitHub under **Extensions**, and make sure its switch is on. Close that
-app before running these discovery-only commands on Windows.
-
-```powershell
-node tests/agent-harness/github-alpha.mjs --preflight
-node tests/agent-harness/github-alpha.mjs --catalogue
-node --test tests/agent-harness/github-alpha.test.mjs
-```
-
-The script verifies the bundled preset and OAuth registration, then records
-the tool catalogue from the installed app. Reports go in
-`.runs/github-alpha-*/evidence/`. Only the owned test process is stopped.
-
-For live Agent acceptance, open the test app yourself and ask Agent to read the
-first line of a known README in a disposable repository. Compare the reply with
-the file. Use a non-owner account for GitHub consent acceptance. The controlled
-`mcp-agent-workflows` suite covers writes and replay protection.
 
 ### Linear consent preflight (opt-in, no account)
 

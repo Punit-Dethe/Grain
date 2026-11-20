@@ -1,43 +1,27 @@
-# Bundled MCP catalog
+# Extensions
 
-Extensions is one searchable list with connected presets first, custom MCP
-connections next, and available presets below. Custom connectors are added
-inline. Turning a preset off keeps its account signed in and removes its tools
-from Agent discovery and execution. An in-progress turn drops those tools on
-its next model round. Disconnect removes the saved account.
+The Extensions page has one search field and three areas:
 
-Keep the first 30–40 presets in the Grain repository and ship them with the
-desktop app. The Rust catalog owns the provider name, description, endpoint,
-authentication mode and release eligibility. Set `bundled_preset` on a reviewed
-catalog entry to include it in Extensions. The UI uses small provider marks
-where bundled and a generic icon otherwise.
-The catalog renders without fetching catalog data from the network.
+- **Connected:** the built-ins (Exa web search, Grain Pilot) always first, then
+  every connected Composio app. Each has a switch; turning one off keeps its
+  account signed in and hides its tools from the Agent. An in-progress turn
+  drops those tools on its next model round.
+- **Browse apps:** Composio's toolkit directory. Connect opens Composio's
+  managed sign-in in the browser and returns to Grain when it completes.
+- **Custom MCP servers:** remote MCP servers the user adds themselves.
 
-### Admission rule
+## Composio
 
-Presets are remote MCP servers hosted by the service. A preset ships only when
-Connect → browser sign-in → back in Grain works with no setup by the user. A
-one-time registration of Grain on the service's developer page is acceptable
-only when it is instant (no review, verification, waiting period or user cap).
-Services that need those stay out of the catalog.
+Each user brings their own Composio project API key (`ak_…`, from the
+developer platform, not the "For You" app). Grain keeps it in the OS
+credential store and sends it only to Composio. Apps use Composio-managed
+auth, so there is nothing to register per service. The backend lives in
+`src-tauri/src/grain_mcp_composio.rs`; connected toolkits reach the Agent as
+MCP-shaped providers (`composio-<slug>`), so the Agent's discovery and
+execution paths are shared with custom MCP servers.
 
-### Catalog maintenance
+## Built-ins
 
-Publishing another preset requires a Grain release. The review for a new
-preset includes sign-in on a release build and tool discovery.
-Account credentials remain in the existing runtime credential storage.
-
-Revisit remote delivery if catalog changes need to ship faster than app
-updates. A future Grain-owned feed can serve versioned presentation metadata
-with a bundled fallback. Endpoint and authentication definitions
-stay in the application so a catalog update cannot change where credentials
-are sent.
-
-Bundled marks are sourced from [GitHub’s Primer Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-24.svg),
-[Linear’s Brand Guidelines](https://linear.app/brand), the
-[Notion website favicon](https://www.notion.com/front-static/favicon.ico),
-[Simple Icons](https://simpleicons.org/) (CC0; Todoist, Dropbox, Asana, Coda,
-Atlassian and Zapier, filled with each brand colour), and the Readwise,
-Raindrop.io, monday.com, Canva, Gamma, Miro, Granola, Fireflies, Otter, Cal.com,
-Stripe, Airtable and ClickUp website icons, and Exa’s GitHub avatar.
-Brand colours are allowed.
+Exa and Grain Pilot are defined in the Rust catalog in
+`src-tauri/src/grain_mcp.rs`. The bundled Exa mark is Exa’s GitHub avatar;
+the Grain Pilot mark is Grain’s own.
