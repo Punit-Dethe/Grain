@@ -1,6 +1,24 @@
 /* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Extensions surface. */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Box } from "lucide-react";
+import {
+  ArrowUpRight,
+  Box,
+  CalendarDays,
+  ChevronRight,
+  ClipboardPaste,
+  Clock3,
+  Figma,
+  Gift,
+  Github,
+  KeyRound,
+  Lock,
+  Mail,
+  NotebookText,
+  Slack,
+  Sparkles,
+  UserPlus,
+  type LucideIcon,
+} from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   commands,
@@ -42,6 +60,51 @@ export function Logo({ src, size = 22 }: { src: string; size?: number }) {
   );
 }
 
+/** Apps orbiting the Agent in the setup illustration; brand tints only. */
+const ORBIT: {
+  icon: LucideIcon;
+  label: string;
+  tint: string;
+  x: number;
+  y: number;
+}[] = [
+  { icon: Mail, label: "Gmail", tint: "#ea4335", x: 14, y: 22 },
+  { icon: Slack, label: "Slack", tint: "#c26bd6", x: 50, y: 6 },
+  { icon: CalendarDays, label: "Calendar", tint: "#4f8df5", x: 86, y: 22 },
+  { icon: Github, label: "GitHub", tint: "currentColor", x: 88, y: 76 },
+  { icon: NotebookText, label: "Notion", tint: "currentColor", x: 50, y: 94 },
+  { icon: Figma, label: "Figma", tint: "#f2784b", x: 12, y: 76 },
+];
+
+function SetupArt() {
+  return (
+    <div className="ext-setup-art" aria-hidden="true">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        {ORBIT.map((app) => (
+          <line key={app.label} x1="50" y1="50" x2={app.x} y2={app.y} />
+        ))}
+      </svg>
+      <span className="ext-orbit-hub">
+        <Sparkles size={22} strokeWidth={1.75} />
+      </span>
+      {ORBIT.map(({ icon: Icon, label, tint, x, y }, index) => (
+        <span
+          key={label}
+          className="ext-orbit-app"
+          style={{
+            left: `${x}%`,
+            top: `${y}%`,
+            color: tint,
+            animationDelay: `${index * -1.1}s`,
+          }}
+        >
+          <Icon size={17} strokeWidth={1.9} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function KeySetup({
   busy,
   onSave,
@@ -52,68 +115,106 @@ function KeySetup({
   const [key, setKey] = useState("");
   return (
     <div className="ext-setup">
-      <div className="ext-setup-copy">
-        <h3>Connect your apps</h3>
-        <p>
-          Gmail, Google Calendar, Slack, Notion, GitHub and hundreds more, each
-          one click away. Grain reaches them through your own free Composio
-          account, which covers 20,000 app actions a month.
-        </p>
+      <div className="ext-setup-hero">
+        <div className="ext-setup-copy">
+          <span className="ext-eyebrow">Apps, through Composio</span>
+          <h3 id="ext-apps">Let the Agent work in your apps</h3>
+          <p>
+            Gmail, Calendar, Slack, Notion, GitHub and hundreds more. Set up
+            Composio once, then connect any app with a single click.
+          </p>
+          <ul className="ext-setup-facts">
+            <li>
+              <Gift size={13} aria-hidden="true" />
+              Free, 20,000 actions a month
+            </li>
+            <li>
+              <Clock3 size={13} aria-hidden="true" />
+              About two minutes
+            </li>
+          </ul>
+        </div>
+        <SetupArt />
       </div>
+
       <ol className="ext-steps">
         <li>
-          <span>
-            Create a free account at Composio. If the top-left corner says “For
-            You”, click <b>Switch</b> and pick the developer platform.
+          <span className="ext-step-badge">
+            <UserPlus size={15} aria-hidden="true" />
           </span>
-          <button
-            type="button"
-            className="button ghost ext-inline-action"
-            onClick={() => void openUrl(DASHBOARD_URL)}
-          >
-            Open Composio
-            <ArrowUpRight size={14} aria-hidden="true" />
-          </button>
+          <div className="ext-step-body">
+            <h4>Create a free Composio account</h4>
+            <p>
+              If the top-left corner says <b>For You</b>, click <b>Switch</b>{" "}
+              and choose the developer platform.
+            </p>
+            <button
+              type="button"
+              className="button ghost ext-inline-action"
+              onClick={() => void openUrl(DASHBOARD_URL)}
+            >
+              Open Composio
+              <ArrowUpRight size={14} aria-hidden="true" />
+            </button>
+          </div>
         </li>
         <li>
-          <span>
-            Open <b>Settings → Project Settings → API Keys</b> and copy the key
-            that starts with <code>ak_</code>.
+          <span className="ext-step-badge">
+            <KeyRound size={15} aria-hidden="true" />
           </span>
+          <div className="ext-step-body">
+            <h4>Copy your project API key</h4>
+            <p className="ext-path">
+              <span>Settings</span>
+              <ChevronRight size={12} aria-hidden="true" />
+              <span>Project Settings</span>
+              <ChevronRight size={12} aria-hidden="true" />
+              <span>API Keys</span>
+            </p>
+            <p>
+              It starts with <code>ak_</code>.
+            </p>
+          </div>
         </li>
         <li>
-          <span>Paste it here.</span>
+          <span className="ext-step-badge">
+            <ClipboardPaste size={15} aria-hidden="true" />
+          </span>
+          <div className="ext-step-body">
+            <h4>Paste it here</h4>
+            <form
+              className="ext-key-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onSave(key).then((saved) => saved && setKey(""));
+              }}
+            >
+              <input
+                type="password"
+                aria-label="Composio API key"
+                placeholder="ak_…"
+                autoComplete="off"
+                spellCheck={false}
+                value={key}
+                disabled={busy}
+                onChange={(event) => setKey(event.target.value)}
+              />
+              <button
+                className="button primary"
+                type="submit"
+                disabled={busy || !key.trim()}
+              >
+                {busy ? "Checking…" : "Connect"}
+              </button>
+            </form>
+            <p className="ext-fine-print">
+              <Lock size={12} aria-hidden="true" />
+              Kept in your system’s credential store and only ever sent to
+              Composio.
+            </p>
+          </div>
         </li>
       </ol>
-      <form
-        className="ext-key-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void onSave(key).then((saved) => saved && setKey(""));
-        }}
-      >
-        <input
-          type="password"
-          aria-label="Composio API key"
-          placeholder="ak_…"
-          autoComplete="off"
-          spellCheck={false}
-          value={key}
-          disabled={busy}
-          onChange={(event) => setKey(event.target.value)}
-        />
-        <button
-          className="button primary"
-          type="submit"
-          disabled={busy || !key.trim()}
-        >
-          {busy ? "Checking…" : "Connect"}
-        </button>
-      </form>
-      <p className="ext-fine-print">
-        The key stays in your system’s credential store and is only ever sent to
-        Composio.
-      </p>
     </div>
   );
 }
@@ -327,9 +428,6 @@ export function ComposioBrowse({
   if (!status.configured)
     return (
       <section className="ext-section" aria-labelledby="ext-apps">
-        <h2 className="ext-label" id="ext-apps">
-          Apps
-        </h2>
         <KeySetup busy={busy === "key"} onSave={composio.saveKey} />
       </section>
     );
