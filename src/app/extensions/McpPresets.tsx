@@ -14,60 +14,13 @@ import {
   signInCancelled,
   unwrapResult,
 } from "./extensionRuntime";
-import airtableIcon from "./icons/airtable.png";
-import asanaIcon from "./icons/asana.svg";
-import calcomIcon from "./icons/calcom.png";
-import atlassianIcon from "./icons/atlassian.svg";
-import atlassianDarkIcon from "./icons/atlassian-light.svg";
-import canvaIcon from "./icons/canva.png";
-import clickupIcon from "./icons/clickup.png";
-import codaIcon from "./icons/coda.svg";
-import dropboxIcon from "./icons/dropbox.svg";
 import exaIcon from "./icons/exa.png";
-import firefliesIcon from "./icons/fireflies.png";
-import gammaIcon from "./icons/gamma.svg";
-import gammaDarkIcon from "./icons/gamma-light.svg";
-import githubIcon from "./icons/github.svg";
-import granolaIcon from "./icons/granola.png";
-import linearIcon from "./icons/linear.svg";
-import linearDarkIcon from "./icons/linear-light.svg";
-import miroIcon from "./icons/miro.png";
-import mondayIcon from "./icons/monday.png";
-import notionIcon from "./icons/notion.png";
-import otterIcon from "./icons/otter.png";
 import pilotIcon from "./icons/pilot.svg";
-import raindropIcon from "./icons/raindrop.png";
-import readwiseIcon from "./icons/readwise.png";
-import stripeIcon from "./icons/stripe.png";
-import todoistIcon from "./icons/todoist.svg";
-import zapierIcon from "./icons/zapier.svg";
 import "./mcp-presets.css";
 
 const presetIcons = new Map<string, { src: string; darkSrc?: string }>([
-  ["airtable", { src: airtableIcon }],
-  ["asana", { src: asanaIcon }],
-  ["atlassian", { src: atlassianIcon, darkSrc: atlassianDarkIcon }],
-  ["calcom", { src: calcomIcon }],
-  ["canva", { src: canvaIcon }],
-  ["clickup", { src: clickupIcon }],
-  ["coda", { src: codaIcon }],
-  ["dropbox", { src: dropboxIcon }],
   ["exa", { src: exaIcon }],
-  ["fireflies", { src: firefliesIcon }],
-  ["gamma", { src: gammaIcon, darkSrc: gammaDarkIcon }],
-  ["github", { src: githubIcon }],
-  ["granola", { src: granolaIcon }],
-  ["linear", { src: linearIcon, darkSrc: linearDarkIcon }],
-  ["miro", { src: miroIcon }],
-  ["monday", { src: mondayIcon }],
-  ["notion", { src: notionIcon }],
-  ["otter", { src: otterIcon }],
   ["pilot", { src: pilotIcon }],
-  ["raindrop", { src: raindropIcon }],
-  ["readwise", { src: readwiseIcon }],
-  ["stripe", { src: stripeIcon }],
-  ["todoist", { src: todoistIcon }],
-  ["zapier", { src: zapierIcon }],
 ]);
 
 /** Extensions without an account (Exa, Grain Pilot) connect without a sign-in. */
@@ -310,7 +263,7 @@ export function McpPresets({
             <p className="mcp-integration-feedback">
               {query.trim()
                 ? "No available extensions match your search."
-                : "All bundled extensions are connected."}
+                : "All built-in extensions are connected."}
             </p>
           ) : (
             <div className="mcp-integration-list">

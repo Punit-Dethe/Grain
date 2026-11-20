@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { McpConnections } from "../extensions/McpConnections";
 import { McpPresets } from "../extensions/McpPresets";
+import { ComposioExtensions } from "../extensions/ComposioExtensions";
 
 export function ExtensionsPage() {
   const [query, setQuery] = useState(() => {
@@ -42,7 +43,11 @@ export function ExtensionsPage() {
           }
         >
           {(customConnections) => (
-            <McpPresets query={query} customConnections={customConnections} />
+            <>
+              <McpPresets query={query} customConnections={null} />
+              <ComposioExtensions query={query} />
+              {customConnections}
+            </>
           )}
         </McpConnections>
       </div>
