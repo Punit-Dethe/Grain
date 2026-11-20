@@ -2107,3 +2107,96 @@ html[data-window="agent-panel"] body {
 .agent-notch.is-resizing .agent-chat-grip.is-bottom::after {
   opacity: 1;
 }
+
+/* ── Dictating into the chat ──────────────────────────────────────────────
+   The composer's mic (left) and, while it listens, the pill's waveform in
+   place of the text. Enter sends what was said; Escape drops it. */
+.agc-c-field:has(.agc-c-mic) {
+  padding-left: 4px;
+}
+
+.agc-c-mic {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--agc-faint);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.agc-c-mic:hover:not(:disabled),
+.agc-c-mic:focus-visible {
+  outline: none;
+  background: #ffffff12;
+  color: var(--agc-ink);
+}
+
+.agc-c-mic.is-on {
+  background: #ffffff1a;
+  color: var(--agc-ink);
+}
+
+.agent-notch .agc-c-mic:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.agc-c-mic:disabled:not(.is-on) {
+  opacity: 0.45;
+}
+
+/* The text field stays (focused, read-only) under the waveform so Enter and
+   Escape still reach it; it just takes no room. */
+.agc-c-field.is-voice .agc-c-textarea {
+  flex: 0 0 0;
+  width: 0;
+  padding-inline: 0;
+  opacity: 0;
+}
+
+.agc-c-voice {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 28px;
+  color: var(--agc-ink);
+  animation: agent-notch-fade-in 180ms ease backwards;
+}
+
+.agc-c-voice .grain-wave {
+  display: flex;
+  flex: none;
+}
+
+.agc-c-voice-hint {
+  overflow: hidden;
+  color: var(--agc-faint);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agc-c-voice-hint.is-working {
+  animation: agc-voice-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes agc-voice-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agc-c-voice-hint.is-working {
+    animation: none;
+  }
+}

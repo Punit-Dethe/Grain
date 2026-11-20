@@ -1329,6 +1329,37 @@ async agentOpenSummon(generation: number) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Start dictating into the open chat's composer: one utterance with
+ * the selected dictation model, like a summon, but the chat stays open.
+ */
+async agentPanelVoiceStart() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_panel_voice_start") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] End the composer's dictation. `keep`: stop and return the
+ * transcript (`None` when nothing was heard); otherwise drop the audio.
+ */
+async agentPanelVoiceStop(keep: boolean) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_panel_voice_stop", { keep }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Send the summon's recording from the open chat (its composer's
+ * send button while the notch was opened mid-listening), as Enter does.
+ */
+async agentInputSubmit() : Promise<void> {
+    await TAURI_INVOKE("agent_input_submit");
+},
+/**
  * Copy a reply on explicit user request.
  */
 async agentCopy(text: string) : Promise<Result<null, string>> {

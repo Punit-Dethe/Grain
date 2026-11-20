@@ -377,6 +377,10 @@ pub struct AgentState {
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
     dictation_capture: Mutex<Option<AgentCapture>>,
+    /// [GRAIN] Voice typed into the open chat (its composer's mic, or Alt+A
+    /// while the chat is open): its own capture, never the summon's. Released
+    /// when it is sent, cancelled, or the notch closes.
+    panel_voice: Mutex<Option<AgentCapture>>,
     /// First turn executing behind the pill, before a reply/error is rendered.
     waiting_for_reply: AtomicBool,
     /// Dictation can target a focused notch once it shows a reply.
@@ -470,7 +474,121 @@ pub fn summon(app: &AppHandle) {
         log::debug!("[GRAIN] summon ignored — Agent extension is disabled");
         return;
     }
+    if route_summon_to_open_chat(app) {
+        return;
+    }
     summon_inner(app);
+}
+
+/// [GRAIN] Alt+A while the full chat is open: dictate into its composer
+/// instead of closing the chat for a new capture. The panel toggles the
+/// voice: start it, or finish it and send (`agent_panel_voice_*`).
+fn route_summon_to_open_chat(app: &AppHandle) -> bool {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return false;
+    };
+    if !state.reply_visible.load(Ordering::SeqCst) || state.input_active.load(Ordering::SeqCst) {
+        return false;
+    }
+    let Some(panel) = app.get_webview_window(PANEL_LABEL) else {
+        return false;
+    };
+    let _ = panel.emit("agent-panel-voice", ());
+    true
+}
+
+/// [GRAIN] Start dictating into the open chat's composer: one utterance with
+/// the selected dictation model, like a summon, but the chat stays open.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_panel_voice_start(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AgentState>();
+        if !state.reply_visible.load(Ordering::SeqCst) {
+            return Err("The chat is not open.".to_string());
+        }
+        let _start = crate::grain_actions::capture_start_guard();
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        if blocks_dictation(&app) || rm.is_recording() {
+            return Err("The microphone is already in use.".to_string());
+        }
+        let model = get_settings(&app).selected_model;
+        crate::grain_capture::require_transcribable_model(&app, &model)?;
+        app.state::<Arc<TranscriptionManager>>()
+            .initiate_model_load_for(model.clone());
+        {
+            let rm = Arc::clone(&rm);
+            std::thread::spawn(move || {
+                let _ = rm.preload_vad();
+            });
+        }
+        let readiness = rm
+            .try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline)
+            .map_err(|error| error.to_string())?;
+        *state.panel_voice.lock().unwrap() = Some(AgentCapture {
+            model,
+            readiness_generation: readiness.generation(),
+        });
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// [GRAIN] End the composer's dictation. `keep`: stop and return the
+/// transcript (`None` when nothing was heard); otherwise drop the audio.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_panel_voice_stop(app: AppHandle, keep: bool) -> Result<Option<String>, String> {
+    let Some(capture) = app.state::<AgentState>().panel_voice.lock().unwrap().take() else {
+        return Ok(None);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let samples = {
+            let _start = crate::grain_actions::capture_start_guard();
+            let rm = app.state::<Arc<AudioRecordingManager>>();
+            // Never stop a newer capture that reuses the binding.
+            if !rm.is_recording_readiness_current(capture.readiness_generation) {
+                return Ok(None);
+            }
+            if !keep {
+                rm.cancel_recording();
+                return Ok(None);
+            }
+            rm.stop_recording(AGENT_BINDING, rm.cancel_generation())
+        };
+        let Some(samples) = samples.filter(|samples| !samples.is_empty()) else {
+            return Ok(None);
+        };
+        let text = app
+            .state::<Arc<TranscriptionManager>>()
+            .grain_transcribe_with_model(samples, &capture.model)
+            .map_err(|error| error.to_string())?;
+        let text = text.trim();
+        Ok((!text.is_empty()).then(|| text.to_owned()))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// [GRAIN] The notch is going: release the composer's microphone, if held.
+fn cancel_panel_voice(app: &AppHandle) {
+    let Some(capture) = app.state::<AgentState>().panel_voice.lock().unwrap().take() else {
+        return;
+    };
+    let _start = crate::grain_actions::capture_start_guard();
+    let rm = app.state::<Arc<AudioRecordingManager>>();
+    if rm.is_recording_readiness_current(capture.readiness_generation) {
+        rm.cancel_recording();
+    }
+}
+
+/// [GRAIN] Send the summon's recording from the open chat (its composer's
+/// send button while the notch was opened mid-listening), as Enter does.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_input_submit(app: AppHandle) {
+    global_submit(&app);
 }
 
 /// Capture foreground context and present the Agent off the hotkey thread.
@@ -735,6 +853,7 @@ fn build_window(
                 return;
             }
             unregister_transient_shortcuts_deferred(&app);
+            cancel_panel_voice(&app);
             // [GRAIN] The notch is gone; the resting sliver takes its place.
             crate::grain_notch_sliver::set_hidden(&app, false);
             if generation == built_for {

@@ -9,6 +9,7 @@ import {
   Gauge,
   LayoutGrid,
   MapPin,
+  Mic,
   Plane,
   Copy,
   RotateCcw,
@@ -39,6 +40,7 @@ import { AgentHistory } from "./AgentHistory";
 import { AgentRecall } from "./AgentRecall";
 import { AgentReminder, REMINDER_WIDTH } from "./AgentReminder";
 import { AgentVoiceFade } from "./AgentVoiceFade";
+import { CaptureWaveform } from "../../overlay/CaptureWaveform";
 import { AgentWorkingLabel } from "./AgentWorkingLabel";
 
 type Role = "user" | "assistant";
@@ -209,6 +211,13 @@ export function AgentPanel() {
   // The chat's size: the user's last drag, kept by the host. While a drag
   // runs the window is unclipped and the shell follows the pointer.
   const [chatSize, setChatSize] = useState(CHAT_SIZE);
+  // Dictation into the open chat's composer (see startVoice).
+  const [voice, setVoice] = useState<"off" | "listening" | "transcribing">(
+    "off",
+  );
+  const voiceRef = useRef(voice);
+  const voiceToggleRef = useRef<() => void>(() => {});
+  const summonListeningRef = useRef(false);
   const [resizing, setResizing] = useState(false);
   useEffect(() => {
     void commands
@@ -509,6 +518,10 @@ export function AgentPanel() {
             });
           });
         })
+        .then(track),
+      // Alt+A while the chat is open: dictate into the composer.
+      win
+        .listen("agent-panel-voice", () => voiceToggleRef.current())
         .then(track),
       win
         .listen<string>("agent-panel-dictation", ({ payload }) => {
@@ -1069,8 +1082,101 @@ export function AgentPanel() {
     void runFollowup(text);
   }, [runFollowup]);
 
+  /** Start dictating into the composer (its mic, or Alt+A while open). */
+  const startVoice = useCallback(async () => {
+    if (voiceRef.current !== "off" || busyRef.current) return;
+    // A generated view is open: dictate into the chat behind it.
+    if (shownUiRef.current) presentUiRef.current(null);
+    voiceRef.current = "listening";
+    setVoice("listening");
+    setError(null);
+    composerRef.current?.focus();
+    const res = await commands.agentPanelVoiceStart().catch((e: unknown) => ({
+      status: "error" as const,
+      error: String(e),
+    }));
+    if (res.status === "error" && voiceRef.current === "listening") {
+      voiceRef.current = "off";
+      setVoice("off");
+      setError(res.error);
+    }
+  }, []);
+
+  /** Stop dictating. `send`: straight into the chat; otherwise the words
+   * land in the composer to edit. */
+  const finishVoice = useCallback(
+    async (send: boolean) => {
+      if (voiceRef.current !== "listening") return;
+      voiceRef.current = "transcribing";
+      setVoice("transcribing");
+      const res = await commands
+        .agentPanelVoiceStop(true)
+        .catch((e: unknown) => ({
+          status: "error" as const,
+          error: String(e),
+        }));
+      voiceRef.current = "off";
+      setVoice("off");
+      if (res.status === "error") {
+        setError(res.error);
+        return;
+      }
+      const text = res.data?.trim();
+      if (!text) return;
+      const input = composerRef.current;
+      const draft = input?.value.trim();
+      if (send && !draft && !busyRef.current) {
+        void runFollowup(text);
+        return;
+      }
+      if (!input) return;
+      input.value = draft ? `${draft} ${text}` : text;
+      resizeComposer(input);
+      setHasDraft(true);
+      input.focus();
+      if (send) sendDraft();
+    },
+    [runFollowup, sendDraft],
+  );
+
+  /** Drop the dictation without a transcript. */
+  const cancelVoice = useCallback(() => {
+    if (voiceRef.current !== "listening") return;
+    voiceRef.current = "off";
+    setVoice("off");
+    void commands.agentPanelVoiceStop(false).catch(console.error);
+  }, []);
+
+  // Alt+A while the chat is open: start, or finish and send.
+  voiceToggleRef.current = () => {
+    if (voiceRef.current === "listening") void finishVoice(true);
+    else if (voiceRef.current === "off") void startVoice();
+  };
+
+  // The microphone never outlives the notch (the host also releases it).
+  useEffect(
+    () => () => {
+      if (voiceRef.current === "listening")
+        void commands.agentPanelVoiceStop(false).catch(console.error);
+    },
+    [],
+  );
+
   const onComposerKey = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (voiceRef.current !== "off") {
+        // Dictating: Enter sends what was said, Escape drops it (and must not
+        // reach the window's Escape, which closes the notch).
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          cancelVoice();
+        } else if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          void finishVoice(true);
+        }
+        return;
+      }
       if (
         event.key !== "Enter" ||
         event.shiftKey ||
@@ -1078,9 +1184,14 @@ export function AgentPanel() {
       )
         return;
       event.preventDefault();
+      // Opened while the summon still listens: Enter sends that recording.
+      if (summonListeningRef.current) {
+        void commands.agentInputSubmit().catch(console.error);
+        return;
+      }
       sendDraft();
     },
-    [sendDraft],
+    [sendDraft, finishVoice, cancelVoice],
   );
 
   /** Copy one specific answer (the per-reply copy affordance). Only the copied
@@ -1177,6 +1288,12 @@ export function AgentPanel() {
     </div>
   );
 
+  // Opened while the summon still listens: its recording shows as a live
+  // waveform in the composer, and Enter (or send) sends it.
+  const summonListening =
+    busy && !messages.length && !!capture?.listening && !capture.working;
+  summonListeningRef.current = summonListening;
+  const voiceShown = voice !== "off" || summonListening;
   // Selected source text is separate from the submitted message below.
   const quoteText = contextRef.current?.trim() || "";
   const thread: ChatMessage[] = hasFollowups
@@ -1596,15 +1713,7 @@ export function AgentPanel() {
                 </div>
               ))}
 
-              {busy &&
-                !thread.length &&
-                capture?.listening &&
-                !capture.working && (
-                  <div className="agc-c-pending" role="status">
-                    {t("agent.notchListening")}
-                  </div>
-                )}
-              {busy && (
+              {busy && !summonListening && (
                 <div className="agent-typing" aria-hidden="true">
                   <span />
                   <span />
@@ -1616,20 +1725,70 @@ export function AgentPanel() {
             </div>
 
             <div className="agc-c-compose">
-              <div className="agc-c-field">
+              <div className={`agc-c-field${voiceShown ? " is-voice" : ""}`}>
+                <button
+                  type="button"
+                  className={`agc-c-mic${voiceShown ? " is-on" : ""}`}
+                  disabled={
+                    voice === "transcribing" ||
+                    summonListening ||
+                    (busy && voice === "off")
+                  }
+                  onClick={() =>
+                    voice === "listening"
+                      ? void finishVoice(false)
+                      : void startVoice()
+                  }
+                  aria-pressed={voiceShown}
+                  aria-label={t("agent.voiceDictate")}
+                  title={t("agent.voiceDictate")}
+                >
+                  <Mic size={15} strokeWidth={2} />
+                </button>
+                {voiceShown && (
+                  <div className="agc-c-voice" role="status">
+                    {voice === "transcribing" ? (
+                      <span className="agc-c-voice-hint is-working">
+                        {t("agent.voiceTranscribing")}
+                      </span>
+                    ) : (
+                      <>
+                        <CaptureWaveform ready session={0} />
+                        <span className="agc-c-voice-hint">
+                          {t("agent.voiceSendHint")}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
                 <textarea
                   ref={composerRef}
                   rows={1}
                   className="agc-c-textarea"
                   aria-label={t("agent.placeholderAsk")}
-                  placeholder={t("agent.placeholderAsk")}
+                  placeholder={voiceShown ? "" : t("agent.placeholderAsk")}
+                  readOnly={voiceShown}
                   onInput={(event) => {
                     resizeComposer(event.currentTarget);
                     setHasDraft(!!event.currentTarget.value.trim());
                   }}
                   onKeyDown={onComposerKey}
                 />
-                {busy ? (
+                {voice === "listening" || summonListening ? (
+                  <button
+                    type="button"
+                    className="agc-c-send"
+                    onClick={() =>
+                      summonListening
+                        ? void commands.agentInputSubmit().catch(console.error)
+                        : void finishVoice(true)
+                    }
+                    aria-label={t("agent.send")}
+                    title={t("agent.send")}
+                  >
+                    <ArrowUp size={15} strokeWidth={2.25} />
+                  </button>
+                ) : busy ? (
                   <button
                     type="button"
                     className="agc-c-send agc-c-stop"
