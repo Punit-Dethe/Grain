@@ -1,5 +1,5 @@
 /* eslint-disable i18next/no-literal-string -- copy follows the current untranslated Extensions surface. */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -91,8 +91,8 @@ function Mark({ label, tint, d }: (typeof MARKS)[number]) {
     <svg
       className="ext-mark"
       viewBox="0 0 24 24"
-      width={22}
-      height={22}
+      width={30}
+      height={30}
       style={{ color: tint }}
       aria-label={label}
     >
@@ -102,6 +102,8 @@ function Mark({ label, tint, d }: (typeof MARKS)[number]) {
 }
 
 function SetupMarks() {
+  // Every app gets a short thread to its neighbour, so all six lead to the Agent.
+  const thread = <span className="ext-thread" />;
   return (
     <div
       className="ext-marks"
@@ -109,11 +111,17 @@ function SetupMarks() {
       aria-label="Your apps, connected to the Agent"
     >
       {MARKS.slice(0, 3).map((mark) => (
-        <Mark key={mark.label} {...mark} />
+        <Fragment key={mark.label}>
+          <Mark {...mark} />
+          {thread}
+        </Fragment>
       ))}
-      <Sparkles className="ext-marks-hub" size={30} strokeWidth={1.5} />
+      <Sparkles className="ext-marks-hub" size={46} strokeWidth={1.4} />
       {MARKS.slice(3).map((mark) => (
-        <Mark key={mark.label} {...mark} />
+        <Fragment key={mark.label}>
+          {thread}
+          <Mark {...mark} />
+        </Fragment>
       ))}
     </div>
   );
