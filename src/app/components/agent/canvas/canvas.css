@@ -155,7 +155,11 @@
 
 /* minmax(0, …): a column must never grow to its longest unwrapped row, or
    the right column runs past the view and gets clipped. */
-.gui-canvas.is-wide .gui-places .gui-rows {
+.gui-canvas.is-wide .gui-places.is-single {
+  --g-view: 440px;
+}
+
+.gui-canvas.is-wide .gui-places:not(.is-single) .gui-rows {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   column-gap: 28px;
@@ -182,7 +186,9 @@
 }
 
 /* The second place starts the first row's right column: no separator. */
-.gui-canvas.is-wide .gui-places .gui-place:nth-child(2)::before {
+.gui-canvas.is-wide
+  .gui-places:not(.is-single)
+  .gui-place:nth-child(2)::before {
   content: none;
 }
 
@@ -884,14 +890,25 @@
   border-top: 1px solid var(--g-line);
 }
 
+/* At least the view's width (a few short columns must not leave the right
+   of the view empty), wider only when the table needs it (up to the max). */
 .gui-table-wrap {
+  min-width: var(--g-view);
   max-width: 100%;
   overflow-x: auto;
 }
 
 .gui-table {
+  width: 100%;
   border-collapse: collapse;
   font-size: 12.5px;
+}
+
+/* The last column (a status, a total) sits against the right edge. */
+.gui-table th:last-child,
+.gui-table td:last-child {
+  padding-right: 0;
+  text-align: right;
 }
 
 .gui-table th {

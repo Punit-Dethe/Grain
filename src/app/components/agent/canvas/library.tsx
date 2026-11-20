@@ -428,8 +428,13 @@ const Places = defineComponent({
       0,
       wide ? WIDE_LIMITS.places : LIMITS.places,
     );
+    // Two columns only pay off from four places; fewer read as one tall
+    // column (two columns of 3 left a half-empty grid).
+    const twoColumns = wide && places.length >= 4;
     return (
-      <div className="gui-view gui-places">
+      <div
+        className={`gui-view gui-places${wide && !twoColumns ? " is-single" : ""}`}
+      >
         <div className="gui-view-head">
           <span className="gui-view-title">{props.title}</span>
           {props.note && <span className="gui-t3">{props.note}</span>}
@@ -1232,7 +1237,7 @@ export function canvasSpec(): string {
       "The root statement is always `root = Canvas([...])`.",
       "Use a designed view whenever it fits: Weather for weather, Places for places, venues, cinemas, shops or any list of results, Journey for flights, trains, buses and drives, Hero for one big number or short answer (give it stats for its 2-4 key figures). Add at most a Buttons row after it. Use the building blocks only when no view fits.",
       `ONE IDEA PER VIEW: a designed view alone, or a Header plus at most two blocks (e.g. Details and a List), plus at most one Buttons row. Never stack four sections; anything past ${MAX_BLOCKS} blocks is dropped. If two things compete, show the one asked about and offer the other as a follow-up button.`,
-      `The view never scrolls. Pick its shape with Canvas's layout. "tall" (default): about 440 px wide (a Table may use up to 680) and 480 px tall, for lists and anything read top to bottom. "wide": a short landscape panel about 660 px wide and 300 px tall, for content that reads across: hourly or daily strips, a Hero with its stats beside it, a Stats dashboard, or two columns of places. Places shows ${WIDE_LIMITS.places} in two columns there, Weather ${WIDE_LIMITS.hours} hours beside the current conditions. Limits (tall): Places ${LIMITS.places} rows, Weather 6 hours, List ${LIMITS.list} rows, Table ${LIMITS.rows} rows x ${LIMITS.columns} columns, Steps ${LIMITS.steps}, Details ${LIMITS.pairs} pairs, Stats ${LIMITS.stats}, Journey 3 facts. Need more? Show the top ones and add a follow-up button such as "Show more".`,
+      `The view never scrolls. Pick its shape with Canvas's layout. "tall" (default): about 440 px wide (a Table may use up to 680) and 480 px tall, for lists and anything read top to bottom. "wide": a short landscape panel about 660 px wide and 300 px tall, for content that reads across: hourly or daily strips, a Hero with its stats beside it, a Stats dashboard, or two columns of 4-6 places (fewer places belong in a tall Canvas). Places shows up to ${WIDE_LIMITS.places} in two columns there, Weather ${WIDE_LIMITS.hours} hours beside the current conditions. Limits (tall): Places ${LIMITS.places} rows, Weather 6 hours, List ${LIMITS.list} rows, Table ${LIMITS.rows} rows x ${LIMITS.columns} columns, Steps ${LIMITS.steps}, Details ${LIMITS.pairs} pairs, Stats ${LIMITS.stats}, Journey 3 facts. Need more? Show the top ones and add a follow-up button such as "Show more".`,
       "Layout is the components' job, not yours: numbers go in Stats or a Hero's stats (they size themselves), facts in Details, choices in a List or Places. Use Stack rows only for 2-3 Cards or Images side by side.",
       'Keep words few: titles of 2-5 words, details as short fragments joined with " · ", no sentences where a fragment will do. Figures are short (≤ 8 characters: "65", "₹430", "20K", "3h 15m"); a unit or explanation goes in the label or detail, never in the value. Never repeat what the view already shows (a Header title does not repeat a Places title).',
       "Colour is not yours to decorate with: weather icons colour themselves. tone (good, warn, bad) says what a figure means for the user (AQI 165 is bad, a price drop for a buyer is good), and trend is only the arrow's direction. A Place status is only a real status (Open, Sold out, On time, Delayed), never a feature or a recommendation.",
