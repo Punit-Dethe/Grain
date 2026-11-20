@@ -31,11 +31,14 @@ const cancelSignIn = (row: Connection) =>
 export function McpConnections({
   query,
   header,
+  toolbar,
   children,
 }: {
   query: string;
   /** Page title block; it shares a row with "Add custom MCP" and stays fixed while the page scrolls. */
   header?: ReactNode;
+  /** Fixed row under the title (search and page-wide actions). */
+  toolbar?: ReactNode;
   children: (customConnections: ReactNode) => ReactNode;
 }) {
   const titleId = useId();
@@ -245,6 +248,7 @@ export function McpConnections({
             Add custom MCP
           </button>
         </div>
+        {toolbar}
       </div>
       {error && (
         <p className="extension-inline-error mcp-custom-error" role="alert">

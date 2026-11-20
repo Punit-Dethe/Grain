@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
-import { unwrapResult } from "./extensionRuntime";
+import { filterExtensions, unwrapResult } from "./extensionRuntime";
 import exaIcon from "./icons/exa.png";
 import pilotIcon from "./icons/pilot.svg";
 import "./extensions.css";
@@ -13,7 +13,7 @@ const icons = new Map<string, string>([
 ]);
 
 /** Extensions that ship with Grain. They need no account, so a switch is the whole control. */
-export function BuiltInExtensions() {
+export function BuiltInExtensions({ query }: { query: string }) {
   const [rows, setRows] = useState<McpProviderStatus[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,14 +55,12 @@ export function BuiltInExtensions() {
     }
   };
 
-  const visible = rows ?? [];
+  const visible = filterExtensions(rows ?? [], query);
   if (rows && visible.length === 0 && !error) return null;
 
   return (
-    <section className="ext-section" aria-labelledby="ext-built-in">
-      <h2 className="ext-label" id="ext-built-in">
-        Built-in
-      </h2>
+    <div className="ext-group">
+      <h3 className="ext-sublabel">Built-in</h3>
       {error && (
         <p className="extension-inline-error" role="alert">
           {error}
@@ -89,6 +87,6 @@ export function BuiltInExtensions() {
           </div>
         ))}
       </div>
-    </section>
+    </div>
   );
 }

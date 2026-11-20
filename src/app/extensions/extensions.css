@@ -20,12 +20,22 @@
   margin-top: 4px;
 }
 
+/* The fixed head is title + search only; keep it short. */
+.extensions-workspace-page .extensions-head {
+  padding-bottom: 14px;
+}
+
 .ext-section {
   margin-top: 36px;
 }
 
+.extensions-head ~ .ext-section:first-of-type,
+.ext-error + .ext-section {
+  margin-top: 14px;
+}
+
 .ext-label {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   color: var(--text-3);
   font-size: 11px;
   font-weight: 650;
@@ -33,12 +43,23 @@
   text-transform: uppercase;
 }
 
-/* Search sits between Built-in and the apps it filters. */
+.ext-group + .ext-group {
+  margin-top: 18px;
+}
+
+.ext-sublabel {
+  margin: 0 0 8px 2px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Search and "Remove Composio" ride in the fixed head under the title. */
 .ext-search-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 44px;
+  margin-top: 16px;
 }
 
 .ext-search-row .search-field {

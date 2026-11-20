@@ -2,13 +2,20 @@
 import { useState } from "react";
 import { McpConnections } from "../extensions/McpConnections";
 import { BuiltInExtensions } from "../extensions/BuiltInExtensions";
-import { ComposioExtensions } from "../extensions/ComposioExtensions";
+import {
+  ComposioBrowse,
+  ComposioConnected,
+  ComposioError,
+  RemoveComposio,
+  useComposio,
+} from "../extensions/Composio";
 
 export function ExtensionsPage() {
   const [query, setQuery] = useState(() => {
     const raw = window.location.hash.split("?", 2)[1] ?? "";
     return new URLSearchParams(raw).get("q") ?? "";
   });
+  const composio = useComposio();
 
   return (
     <section
@@ -28,11 +35,34 @@ export function ExtensionsPage() {
               </div>
             </header>
           }
+          toolbar={
+            <div className="ext-search-row">
+              <label className="search-field">
+                <svg className="icon sm" aria-hidden="true">
+                  <use href="#i-search" />
+                </svg>
+                <input
+                  aria-label="Search extensions"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search extensions"
+                />
+              </label>
+              <RemoveComposio composio={composio} />
+            </div>
+          }
         >
           {(customConnections) => (
             <>
-              <BuiltInExtensions />
-              <ComposioExtensions query={query} onQuery={setQuery} />
+              <ComposioError composio={composio} />
+              <section className="ext-section" aria-labelledby="ext-connected">
+                <h2 className="ext-label" id="ext-connected">
+                  Connected
+                </h2>
+                <BuiltInExtensions query={query} />
+                <ComposioConnected composio={composio} query={query} />
+              </section>
+              <ComposioBrowse composio={composio} query={query} />
               {customConnections}
             </>
           )}
