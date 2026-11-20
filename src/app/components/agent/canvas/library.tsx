@@ -562,6 +562,45 @@ const GLYPH_W = 0.58;
 /** Gap + hairline between stat columns (`.gui-stats-cell` in canvas.css). */
 const STAT_GUTTER = 16;
 
+/** A figure's number (with any currency sign or K/M/B magnitude) and the
+ * unit after it: "41 ms" → ["41", "ms"], "1.2M/min" → ["1.2M", "/min"].
+ * Degrees, percentages and anything with more digits stay whole. */
+export function splitFigure(value: string): [string, string] {
+  const match =
+    /^([^\d\s]{0,2}[+\-−]?\d[\d.,]*(?:[KMB](?![a-z]))?[%°]?)\s*([^\d\s][^\d]{0,9})$/.exec(
+      value.trim(),
+    );
+  // A lone K/M/B is the magnitude, not a unit ("21.2M").
+  if (!match || /^([%°]|[KMB]$)/.test(match[2])) return [value, ""];
+  return [match[1], match[2]];
+}
+
+/** Whether a table column holds figures (every filled cell starts with one). */
+export function isFigureColumn(cells: unknown[]): boolean {
+  const filled = cells
+    .map((cell) => String(cell ?? "").trim())
+    .filter((cell) => cell && cell !== "—" && cell !== "-");
+  return (
+    filled.length > 0 &&
+    filled.every((cell) =>
+      /^[^\d\s]{0,2}[+\-−]?\d[\d.,:]*\s?[^\d\s]{0,6}$/.test(cell),
+    )
+  );
+}
+
+/** A figure with its unit set smaller and quieter, as Apple Health does. */
+function Figure({ value }: { value: string }) {
+  const [number, unit] = splitFigure(value);
+  return unit ? (
+    <>
+      {number}
+      <span className="gui-unit">{unit}</span>
+    </>
+  ) : (
+    <>{value}</>
+  );
+}
+
 function TrendArrow({ trend: dir }: { trend?: string }) {
   const Arrow =
     dir === "up"
@@ -590,7 +629,9 @@ const Stat = defineComponent({
     return (
       <div className="gui-stat">
         <span className="gui-stat-label gui-t3">{props.label}</span>
-        <span className={`gui-stat-value is-${size}`}>{props.value}</span>
+        <span className={`gui-stat-value is-${size}`}>
+          <Figure value={props.value} />
+        </span>
         {(props.detail || props.trend) && (
           <span className={`gui-stat-detail is-${props.tone ?? "none"}`}>
             <TrendArrow trend={props.trend} />
@@ -706,7 +747,9 @@ const Hero = defineComponent({
           <div className="gui-t3 gui-hero-label">{props.label}</div>
           <div className="gui-wx-hero">
             <div>
-              <div className="gui-hero-value">{props.value}</div>
+              <div className="gui-hero-value">
+                <Figure value={props.value} />
+              </div>
               {props.line && (
                 <div
                   className={`gui-hero-line${props.tone ? ` is-${props.tone}` : ""}`}
@@ -863,28 +906,41 @@ const Table = defineComponent({
     columns: z.array(z.string()),
     rows: z.array(z.array(z.union([z.string(), z.number()]))),
   }),
-  component: ({ props }) => (
-    <div className="gui-table-wrap">
-      <table className="gui-table">
-        <thead>
-          <tr>
-            {props.columns.slice(0, LIMITS.columns).map((column, i) => (
-              <th key={i}>{column}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {props.rows.slice(0, LIMITS.rows).map((row, r) => (
-            <tr key={r}>
-              {row.slice(0, LIMITS.columns).map((cell, c) => (
-                <td key={c}>{String(cell)}</td>
+  component: ({ props }) => {
+    const columns = props.columns.slice(0, LIMITS.columns);
+    const rows = props.rows.slice(0, LIMITS.rows);
+    // Figure columns align right, so digits line up (tabular numerals).
+    const numeric = columns.map((_, c) =>
+      isFigureColumn(rows.map((row) => row[c])),
+    );
+    const align = (c: number) => (numeric[c] ? "is-num" : undefined);
+    return (
+      <div className="gui-table-wrap">
+        <table className="gui-table">
+          <thead>
+            <tr>
+              {columns.map((column, i) => (
+                <th key={i} className={align(i)}>
+                  {column}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  ),
+          </thead>
+          <tbody>
+            {rows.map((row, r) => (
+              <tr key={r}>
+                {row.slice(0, LIMITS.columns).map((cell, c) => (
+                  <td key={c} className={align(c)}>
+                    {String(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  },
 });
 
 const Steps = defineComponent({

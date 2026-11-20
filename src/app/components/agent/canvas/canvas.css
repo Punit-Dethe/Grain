@@ -1163,3 +1163,91 @@
     transition: none;
   }
 }
+
+/* ── Final polish ────────────────────────────────────────────────────── */
+
+/* A unit sits smaller and quieter than its number ("41 ms"). */
+.gui-unit {
+  margin-left: 0.14em;
+  color: var(--g-2);
+  font-size: 0.6em;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* Figure columns line up on the right, like Numbers. */
+.gui-table .is-num {
+  text-align: right;
+}
+
+.gui-table td.is-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* No lone last word under a title; prose avoids orphans. */
+.gui-view-title,
+.gui-heading,
+.gui-header-sub,
+.gui-hero-detail {
+  text-wrap: balance;
+}
+
+.gui-text,
+.gui-markdown {
+  text-wrap: pretty;
+}
+
+/* A view settles in: each block fades up a few px, one after another.
+   Transform/opacity only, so the shell's measurement never sees it. */
+@keyframes gui-settle {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.gui-canvas > * {
+  animation: gui-settle 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.gui-canvas > :nth-child(2) {
+  animation-delay: 50ms;
+}
+.gui-canvas > :nth-child(3) {
+  animation-delay: 100ms;
+}
+.gui-canvas > :nth-child(4) {
+  animation-delay: 150ms;
+}
+.gui-canvas > :nth-child(n + 5) {
+  animation-delay: 200ms;
+}
+
+/* Tactile press on anything tappable. */
+.gui-pill,
+.gui-place.is-action {
+  transition:
+    background-color 140ms ease,
+    opacity 140ms ease,
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gui-pill:active:not(:disabled),
+.gui-place.is-action:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.gui-place.is-action:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gui-canvas > * {
+    animation: none;
+  }
+
+  .gui-pill:active:not(:disabled),
+  .gui-place.is-action:active:not(:disabled) {
+    transform: none;
+  }
+}

@@ -4,6 +4,8 @@ import {
   CANVAS_EXAMPLES,
   canvasLibrary,
   canvasSpec,
+  isFigureColumn,
+  splitFigure,
   statLayout,
 } from "./library";
 import { canvasProgram, viewSummary, withoutSpeech } from "./program";
@@ -141,6 +143,16 @@ list = List([ListItem("Blinding Lights", "The Weeknd", "1", null, null, "https:/
       kind: "view",
       title: "Ramayana · IMAX 3D",
     });
+  });
+
+  it("sets a figure's unit apart from its number", () => {
+    expect(splitFigure("41 ms")).toEqual(["41", "ms"]);
+    expect(splitFigure("128 µg/m³")).toEqual(["128", "µg/m³"]);
+    expect(splitFigure("1.2M/min")).toEqual(["1.2M", "/min"]);
+    for (const whole of ["99.94%", "24°", "₹430", "3h 15m", "Monthly", "21.2M"])
+      expect(splitFigure(whole)).toEqual([whole, ""]);
+    expect(isFigureColumn(["188 ms", "0.02%", "₹430", "—"])).toBe(true);
+    expect(isFigureColumn(["edge-01", "Mumbai"])).toBe(false);
   });
 
   it("keeps decoration out of the model's hands", () => {
