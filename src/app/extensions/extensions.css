@@ -1,19 +1,31 @@
 /* Extensions page: Built-in, Apps (Composio). Custom MCP keeps mcp-connections.css. */
 
-.ext-section {
-  margin-block: 28px 8px;
+/* Title block and "Add custom MCP" share one row. */
+.ext-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.ext-section + .ext-section {
+.ext-page-head .page-header {
+  margin-bottom: 0;
+}
+
+.ext-page-head > .button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ext-section {
   margin-top: 36px;
 }
 
-.ext-section-head {
-  margin-bottom: 12px;
-}
-
-.ext-section-head h2 {
-  margin: 0;
+.ext-label {
+  margin: 0 0 10px;
   color: var(--text-3);
   font-size: 11px;
   font-weight: 650;
@@ -21,11 +33,39 @@
   text-transform: uppercase;
 }
 
-.ext-section-head p {
-  margin: 3px 0 0;
+/* Search sits between Built-in and the apps it filters. */
+.ext-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 44px;
+}
+
+.ext-search-row .search-field {
+  flex: 1;
+}
+
+.ext-remove-key {
+  flex: none;
+  min-height: 36px;
   color: var(--text-3);
   font-size: 12px;
-  line-height: 1.45;
+  transition:
+    color 140ms ease-out,
+    background-color 140ms ease-out;
+}
+
+.ext-remove-key[data-armed] {
+  background: rgba(201, 70, 70, 0.12);
+  color: #e06c6c;
+}
+
+html[data-theme="light"] .ext-remove-key[data-armed] {
+  color: #b23a3a;
+}
+
+.ext-error {
+  margin-top: 12px;
 }
 
 /* Rows ------------------------------------------------------------------ */
@@ -108,85 +148,6 @@ html[data-theme="light"] .ext-logo {
   .ext-quiet-action {
     opacity: 1;
   }
-}
-
-/* Composio account bar -------------------------------------------------- */
-
-.ext-account {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 12px;
-  margin-bottom: 18px;
-  padding: 10px 10px 10px 14px;
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
-}
-
-.ext-account-dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #3fb27f;
-  box-shadow: 0 0 0 3px rgba(63, 178, 127, 0.16);
-}
-
-.ext-account-label {
-  display: flex;
-  flex: 1;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  color: var(--text-1);
-  font-size: 13px;
-  font-weight: 560;
-}
-
-.ext-account-label span {
-  color: var(--text-3);
-  font-size: 12px;
-  font-weight: 450;
-}
-
-.ext-account-actions,
-.ext-account-confirm {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.ext-account-confirm > span {
-  margin-right: 4px;
-  color: var(--text-2);
-  font-size: 12px;
-}
-
-.ext-account .button {
-  gap: 4px;
-  min-height: 30px;
-  font-size: 12px;
-}
-
-/* Groups inside a section ---------------------------------------------- */
-
-.ext-group + .ext-group {
-  margin-top: 22px;
-}
-
-.ext-group-title {
-  margin: 0 0 9px;
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.ext-feedback {
-  margin: 0 0 12px;
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.45;
 }
 
 /* Browse grid ----------------------------------------------------------- */
@@ -384,7 +345,19 @@ html[data-theme="light"] .ext-logo {
 
 @media (prefers-reduced-motion: reduce) {
   .ext-quiet-action,
+  .ext-remove-key,
   .ext-tile {
     transition: none;
   }
+}
+
+.ext-feedback {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ext-section ~ .mcp-custom-connections {
+  margin-top: 36px;
 }

@@ -30,13 +30,11 @@ const cancelSignIn = (row: Connection) =>
 
 export function McpConnections({
   query,
-  search,
   header,
   children,
 }: {
   query: string;
-  search: ReactNode;
-  /** Shown above the toolbar; the two stay fixed while the page scrolls. */
+  /** Page title block; it shares a row with "Add custom MCP" and stays fixed while the page scrolls. */
   header?: ReactNode;
   children: (customConnections: ReactNode) => ReactNode;
 }) {
@@ -234,9 +232,8 @@ export function McpConnections({
   return (
     <>
       <div className="extensions-head">
-        {header}
-        <div className="extension-toolbar">
-          {search}
+        <div className="ext-page-head">
+          {header}
           <button
             ref={addButton}
             type="button"

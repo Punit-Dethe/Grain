@@ -18,6 +18,8 @@ import "./extensions.css";
 const DASHBOARD_URL = "https://dashboard.composio.dev";
 /** Apps shown before "Show all"; Composio lists hundreds. */
 const FIRST_PAGE = 18;
+/** An armed "Remove key" falls back to safe after this long. */
+const DISARM_MS = 4000;
 
 function Logo({ src, size = 22 }: { src: string; size?: number }) {
   const [failed, setFailed] = useState(false);
@@ -116,14 +118,19 @@ function KeySetup({
   );
 }
 
-export function ComposioExtensions({ query }: { query: string }) {
+export function ComposioExtensions({
+  query,
+  onQuery,
+}: {
+  query: string;
+  onQuery: (query: string) => void;
+}) {
   const [status, setStatus] = useState<ComposioStatus | null>(null);
   const [catalog, setCatalog] = useState<ComposioCatalogEntry[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [confirmRemove, setConfirmRemove] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
   const operation = useRef(false);
@@ -153,12 +160,17 @@ export function ComposioExtensions({ query }: { query: string }) {
     };
   }, [loadCatalog]);
 
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(false), DISARM_MS);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
+
   const run = async (id: string, action: () => Promise<void>) => {
     if (operation.current) return false;
     operation.current = true;
     setBusy(id);
     setError(null);
-    setMessage(null);
     try {
       await action();
       return true;
@@ -181,13 +193,17 @@ export function ComposioExtensions({ query }: { query: string }) {
       await loadCatalog();
     });
 
-  const removeKey = () =>
+  const removeKey = () => {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setArmed(false);
     void run("key", async () => {
       apply(unwrapResult(await commands.composioRemoveApiKey()));
-      if (!mounted.current) return;
-      setCatalog(null);
-      setConfirmRemove(false);
+      if (mounted.current) setCatalog(null);
     });
+  };
 
   const connect = (entry: ComposioCatalogEntry) =>
     void run(entry.slug, async () => {
@@ -204,7 +220,6 @@ export function ComposioExtensions({ query }: { query: string }) {
         pending.current = null;
         if (mounted.current) setSigningIn(null);
       }
-      if (mounted.current) setMessage(`${entry.name} is connected.`);
     });
 
   const cancel = (slug: string) =>
@@ -213,43 +228,66 @@ export function ComposioExtensions({ query }: { query: string }) {
       .then(unwrapResult)
       .catch((reason) => mounted.current && setError(String(reason)));
 
-  const feedback = (
-    <>
-      {message && (
-        <p className="ext-feedback" role="status">
-          {message}
-        </p>
+  const configured = status?.configured === true;
+
+  const searchRow = (
+    <div className="ext-search-row">
+      <label className="search-field">
+        <svg className="icon sm" aria-hidden="true">
+          <use href="#i-search" />
+        </svg>
+        <input
+          aria-label="Search apps"
+          value={query}
+          onChange={(event) => onQuery(event.target.value)}
+          placeholder={configured ? "Search apps" : "Search extensions"}
+        />
+      </label>
+      {configured && (
+        <button
+          type="button"
+          className="button ghost ext-remove-key"
+          data-armed={armed || undefined}
+          disabled={busy !== null}
+          onClick={removeKey}
+          onBlur={() => setArmed(false)}
+        >
+          {busy === "key"
+            ? "Removing…"
+            : armed
+              ? "Click again to remove"
+              : "Remove key"}
+        </button>
       )}
-      {error && (
-        <p className="extension-inline-error" role="alert">
-          {error}
-        </p>
-      )}
-    </>
+    </div>
   );
 
-  const head = (
-    <header className="ext-section-head">
-      <h2 id="ext-apps">Apps</h2>
-      <p>Your accounts in other apps, connected through Composio.</p>
-    </header>
+  const errorLine = error && (
+    <p className="extension-inline-error ext-error" role="alert">
+      {error}
+    </p>
   );
 
   if (!status)
-    return error ? (
-      <section className="ext-section" aria-labelledby="ext-apps">
-        {head}
-        {feedback}
-      </section>
-    ) : null;
-
-  if (!status.configured)
     return (
-      <section className="ext-section" aria-labelledby="ext-apps">
-        {head}
-        {feedback}
-        <KeySetup busy={busy === "key"} onSave={saveKey} />
-      </section>
+      <>
+        {searchRow}
+        {errorLine}
+      </>
+    );
+
+  if (!configured)
+    return (
+      <>
+        {searchRow}
+        <section className="ext-section" aria-labelledby="ext-apps">
+          <h2 className="ext-label" id="ext-apps">
+            Apps
+          </h2>
+          {errorLine}
+          <KeySetup busy={busy === "key"} onSave={saveKey} />
+        </section>
+      </>
     );
 
   const searching = query.trim() !== "";
@@ -270,67 +308,15 @@ export function ComposioExtensions({ query }: { query: string }) {
     showAll || searching ? available : available.slice(0, FIRST_PAGE);
 
   return (
-    <section className="ext-section" aria-labelledby="ext-apps">
-      {head}
-      <div className="ext-account">
-        <span className="ext-account-dot" aria-hidden="true" />
-        <span className="ext-account-label">
-          Composio account connected
-          <span>
-            {status.toolkits.length === 1
-              ? "1 app"
-              : `${status.toolkits.length} apps`}{" "}
-            in use
-          </span>
-        </span>
-        {confirmRemove ? (
-          <span className="ext-account-confirm">
-            <span>
-              Grain forgets every app here. They stay in your Composio account.
-            </span>
-            <button
-              type="button"
-              className="button danger"
-              disabled={busy !== null}
-              onClick={removeKey}
-            >
-              {busy === "key" ? "Removing…" : "Remove key"}
-            </button>
-            <button
-              type="button"
-              className="button ghost"
-              disabled={busy !== null}
-              onClick={() => setConfirmRemove(false)}
-            >
-              Keep
-            </button>
-          </span>
-        ) : (
-          <span className="ext-account-actions">
-            <button
-              type="button"
-              className="button ghost"
-              onClick={() => void openUrl(DASHBOARD_URL)}
-            >
-              Open Composio
-              <ArrowUpRight size={14} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="button ghost"
-              disabled={busy !== null}
-              onClick={() => setConfirmRemove(true)}
-            >
-              Remove key
-            </button>
-          </span>
-        )}
-      </div>
-      {feedback}
+    <>
+      {searchRow}
+      {errorLine}
 
       {connected.length > 0 && (
-        <div className="ext-group">
-          <h3 className="ext-group-title">Connected</h3>
+        <section className="ext-section" aria-labelledby="ext-connected">
+          <h2 className="ext-label" id="ext-connected">
+            Connected
+          </h2>
           <div className="ext-list">
             {connected.map((toolkit) => (
               <div key={toolkit.slug} className="ext-row">
@@ -376,13 +362,13 @@ export function ComposioExtensions({ query }: { query: string }) {
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      <div className="ext-group">
-        <h3 className="ext-group-title">
-          {searching ? "Matching apps" : "Browse apps"}
-        </h3>
+      <section className="ext-section" aria-labelledby="ext-browse">
+        <h2 className="ext-label" id="ext-browse">
+          Browse apps
+        </h2>
         {catalog === null ? (
           <p className="ext-feedback" role="status">
             Loading apps…
@@ -445,7 +431,7 @@ export function ComposioExtensions({ query }: { query: string }) {
             Show all {available.length} apps
           </button>
         )}
-      </div>
-    </section>
+      </section>
+    </>
   );
 }

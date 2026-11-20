@@ -28,24 +28,11 @@ export function ExtensionsPage() {
               </div>
             </header>
           }
-          search={
-            <label className="search-field">
-              <svg className="icon sm" aria-hidden="true">
-                <use href="#i-search" />
-              </svg>
-              <input
-                aria-label="Search extensions"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search extensions"
-              />
-            </label>
-          }
         >
           {(customConnections) => (
             <>
-              <BuiltInExtensions query={query} />
-              <ComposioExtensions query={query} />
+              <BuiltInExtensions />
+              <ComposioExtensions query={query} onQuery={setQuery} />
               {customConnections}
             </>
           )}
