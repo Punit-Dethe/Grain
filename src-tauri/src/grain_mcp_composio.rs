@@ -83,6 +83,35 @@ async fn write_key(key: Option<String>) -> Result<(), String> {
     .map_err(|error| error.to_string())?
 }
 
+/// Composio reads each kind of key from its own header: project keys
+/// (`ak_…`) from `x-api-key`, user keys (`uak_…`) from `x-user-api-key`.
+fn key_header(key: &str) -> &'static str {
+    if key.starts_with("uak_") {
+        "x-user-api-key"
+    } else {
+        "x-api-key"
+    }
+}
+
+/// Why a pasted key failed, naming the key Grain needs instead.
+fn rejected_key_message(key: &str, error: ApiError) -> String {
+    const WHERE: &str = "Grain needs a project API key: in the Composio dashboard open \
+        Settings → Project Settings → API Keys and copy the key that starts with ak_.";
+    match error {
+        ApiError::Status {
+            status: 401 | 403,
+            message,
+        } => {
+            if key.starts_with("ck_") {
+                format!("That's a Composio Connect key for AI chat apps. {WHERE}")
+            } else {
+                format!("Composio didn't accept that key ({message}). {WHERE}")
+            }
+        }
+        other => other.message(),
+    }
+}
+
 /// A project key is short printable ASCII; anything else is a paste mistake.
 fn normalize_key(raw: &str) -> Result<String, String> {
     let key = raw.trim();
@@ -163,7 +192,7 @@ async fn send(
     let client = http_client(timeout)?;
     let mut request = client
         .request(method, format!("{API}{path}"))
-        .header("x-api-key", key)
+        .header(key_header(key), key)
         .header("accept", "application/json")
         .query(query);
     if let Some(body) = body {
@@ -404,15 +433,16 @@ pub async fn composio_set_api_key(
 ) -> Result<ComposioStatus, String> {
     crate::grain_commands::require_main_window(&window)?;
     let key = normalize_key(&key)?;
-    get(&key, "/toolkits", &[("limit", "1")])
-        .await
-        .map_err(|error| {
-            if error.contains("didn't accept") {
-                "Composio didn't accept that key. Copy it again from Settings → API Keys.".into()
-            } else {
-                error
-            }
-        })?;
+    send(
+        &key,
+        reqwest::Method::GET,
+        "/toolkits",
+        &[("limit", "1")],
+        None,
+        REQUEST_TIMEOUT,
+    )
+    .await
+    .map_err(|error| rejected_key_message(&key, error))?;
     if read_key().await?.as_deref() != Some(key.as_str()) {
         forget_all(&app).await?;
     }
@@ -1063,6 +1093,24 @@ mod tests {
         assert_eq!(normalize_key("  ak_abc123 \n").unwrap(), "ak_abc123");
         assert!(normalize_key("").is_err());
         assert!(normalize_key("ak abc").is_err());
+    }
+
+    #[test]
+    fn each_key_kind_goes_in_its_own_header_and_wrong_kinds_are_named() {
+        assert_eq!(key_header("ak_123"), "x-api-key");
+        assert_eq!(key_header("uak_123"), "x-user-api-key");
+        let rejected = |key| {
+            rejected_key_message(
+                key,
+                ApiError::Status {
+                    status: 401,
+                    message: "Composio: Invalid API key".into(),
+                },
+            )
+        };
+        assert!(rejected("ck_123").contains("Composio Connect key"));
+        assert!(rejected("ak_123").contains("Invalid API key"));
+        assert!(rejected("ak_123").contains("starts with ak_"));
     }
 
     #[test]
