@@ -1,5 +1,10 @@
 use super::*;
-use crate::fixture::Fixture;
+use serde_json::json;
+use grain_recall::fixture::Fixture;
+
+fn server(f: &Fixture) -> RecallServer {
+    RecallServer::new(Recall::new(f.data_dir()))
+}
 
 fn args(value: Value) -> Option<JsonObject> {
     value.as_object().cloned()
@@ -30,7 +35,7 @@ fn tools_are_read_only_with_object_schemas() {
 fn switch_off_refuses_every_tool_and_resource() {
     let f = Fixture::new();
     let id = f.meeting("Sync", 1, 10, Some(&[(0, 0, "hello")]));
-    let server = RecallServer::new(f.recall());
+    let server = server(&f);
     let ok = server.call("list_meetings", None).unwrap();
     assert_ne!(ok.is_error, Some(true));
     assert_eq!(ok.structured_content.unwrap()["total"], 1);
@@ -51,7 +56,7 @@ fn switch_off_refuses_every_tool_and_resource() {
 #[test]
 fn bad_arguments_are_tool_errors_and_unknown_tools_protocol_errors() {
     let f = Fixture::new();
-    let server = RecallServer::new(f.recall());
+    let server = server(&f);
     let bad = server
         .call("get_meeting", args(json!({ "meeting_id": 5 })))
         .unwrap();
@@ -63,7 +68,7 @@ fn bad_arguments_are_tool_errors_and_unknown_tools_protocol_errors() {
 fn resources_resolve_by_uri() {
     let f = Fixture::new();
     let id = f.meeting("Sync", 1, 10, Some(&[(0, 0, "hello there")]));
-    let server = RecallServer::new(f.recall());
+    let server = server(&f);
     assert!(server
         .read(&format!("{RESOURCE_PREFIX}{id}"))
         .unwrap()

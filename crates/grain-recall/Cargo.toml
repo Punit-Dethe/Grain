@@ -9,13 +9,18 @@ authors.workspace = true
 [features]
 # Frontend type reflection, used by the app only; the MCP sidecar leaves it off.
 specta = ["dep:specta"]
+# Test meetings on disk (`grain_recall::fixture`) for other crates' tests.
+fixtures = ["dep:tempfile", "uuid/v4"]
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = "0.4"
 uuid = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tempfile = { version = "3", optional = true }
 specta = { version = "=2.0.0-rc.22", features = ["derive"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+uuid = { version = "1", features = ["v4"] }

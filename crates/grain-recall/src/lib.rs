@@ -7,10 +7,16 @@
 //! ```
 //!
 //! The app (`src-tauri/src/grain_meet`) records and writes these files; this
-//! crate holds the formats and the read side, so the Recall MCP sidecar can
-//! read meetings without linking the app. Nothing here writes.
+//! crate holds the formats and the read side (`query`), shared by the Recall
+//! MCP sidecar and Grain's Agent so both give the same answers. Nothing
+//! here writes.
 
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixture;
 pub mod manifest;
+pub mod query;
+pub mod render;
+pub mod spec;
 pub mod summary;
 pub mod text;
 pub mod transcript;

@@ -1,23 +1,19 @@
-//! The four Recall tools and the two resource readers, as plain functions over
-//! the meetings folder. `server` wraps them in MCP; tests call them directly.
+//! Recall queries (list / search / get meeting / get transcript) and the two
+//! resource readers, over a meetings folder. The MCP sidecar and Grain's Agent
+//! both call these, so they always give the same answers.
 //!
 //! Results are bounded: listings page at 50, search returns at most 30
 //! passages, a transcript page holds at most 500 lines and ~40k characters.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use crate::manifest::{self, Manifest, SessionState, SessionSummary, TrackSource};
+use crate::summary;
+use crate::text::{self, Line};
+use crate::transcript::{self, TrackStatus, TranscriptRevision};
 use chrono::{DateTime, Days, Local, NaiveDate, SecondsFormat, TimeZone};
-use grain_recall::manifest::{self, Manifest, SessionState, SessionSummary, TrackSource};
-use grain_recall::summary;
-use grain_recall::text::{self, Line};
-use grain_recall::transcript::{self, TrackStatus, TranscriptRevision};
 use serde::Deserialize;
 use serde_json::{json, Value};
-
-use crate::Recall;
-
-pub const OFF: &str = "Recall access is turned off in Grain. The user can turn it on in \
-Grain > Recall > Settings > \"Use your meetings in AI apps\".";
 
 const LIST_DEFAULT: usize = 20;
 const LIST_MAX: usize = 50;
@@ -172,9 +168,9 @@ struct Opened {
     manifest: Manifest,
 }
 
-fn open(recall: &Recall, id: &str) -> Result<Opened, String> {
+fn open(root: &Path, id: &str) -> Result<Opened, String> {
     let id = id.trim();
-    let dir = manifest::session_dir(recall.meetings_root(), id).map_err(|_| unknown(id))?;
+    let dir = manifest::session_dir(root, id).map_err(|_| unknown(id))?;
     if !dir.is_dir() {
         return Err(unknown(id));
     }
@@ -192,8 +188,8 @@ fn transcript_of(opened: &Opened) -> Result<TranscriptRevision, String> {
     }
 }
 
-fn sessions(recall: &Recall, range: Range) -> Result<Vec<SessionSummary>, String> {
-    Ok(manifest::list_sessions(recall.meetings_root())?
+fn sessions(root: &Path, range: Range) -> Result<Vec<SessionSummary>, String> {
+    Ok(manifest::list_sessions(root)?
         .into_iter()
         .filter(|s| range.contains(s.created_unix_ms))
         .collect())
@@ -225,7 +221,7 @@ fn has_word(hay: &str, term: &str) -> bool {
 
 // --- Tools ----------------------------------------------------------------------
 
-pub fn list_meetings(recall: &Recall, args: ListArgs) -> ToolResult {
+pub fn list_meetings(root: &Path, args: ListArgs) -> ToolResult {
     let range = Range::parse(args.from.as_deref(), args.to.as_deref())?;
     let query = args
         .query
@@ -233,7 +229,7 @@ pub fn list_meetings(recall: &Recall, args: ListArgs) -> ToolResult {
         .filter(|q| !q.is_empty());
     let limit = args.limit.unwrap_or(LIST_DEFAULT).clamp(1, LIST_MAX);
     let offset = args.offset.unwrap_or(0);
-    let matching: Vec<SessionSummary> = sessions(recall, range)?
+    let matching: Vec<SessionSummary> = sessions(root, range)?
         .into_iter()
         .filter(|s| {
             query
@@ -246,7 +242,7 @@ pub fn list_meetings(recall: &Recall, args: ListArgs) -> ToolResult {
         .skip(offset)
         .take(limit)
         .map(|s| {
-            let dir = recall.meetings_root().join(&s.id);
+            let dir = root.join(&s.id);
             let revision = transcript::latest_revision(&dir).ok().flatten();
             json!({
                 "id": s.id,
@@ -266,7 +262,7 @@ pub fn list_meetings(recall: &Recall, args: ListArgs) -> ToolResult {
     }))
 }
 
-pub fn search_meetings(recall: &Recall, args: SearchArgs) -> ToolResult {
+pub fn search_meetings(root: &Path, args: SearchArgs) -> ToolResult {
     let terms = terms(&args.query);
     if terms.is_empty() {
         return Err("Give a word or phrase to search for.".into());
@@ -274,7 +270,7 @@ pub fn search_meetings(recall: &Recall, args: SearchArgs) -> ToolResult {
     let limit = args.limit.unwrap_or(SEARCH_DEFAULT).clamp(1, SEARCH_MAX);
     let candidates: Vec<(String, String, u64)> = match args.meeting_id.as_deref() {
         Some(id) => {
-            let opened = open(recall, id)?;
+            let opened = open(root, id)?;
             vec![(
                 opened.manifest.id.clone(),
                 opened.manifest.title.clone(),
@@ -282,7 +278,7 @@ pub fn search_meetings(recall: &Recall, args: SearchArgs) -> ToolResult {
             )]
         }
         None => sessions(
-            recall,
+            root,
             Range::parse(args.from.as_deref(), args.to.as_deref())?,
         )?
         .into_iter()
@@ -298,7 +294,7 @@ pub fn search_meetings(recall: &Recall, args: SearchArgs) -> ToolResult {
         if terms.iter().all(|t| has_word(&lower_title, t)) {
             title_matches.push(json!({ "id": id, "title": title, "started_at": iso(*created) }));
         }
-        let dir = recall.meetings_root().join(id);
+        let dir = root.join(id);
         let Ok(Some(revision)) = transcript::latest(&dir) else {
             continue;
         };
@@ -372,8 +368,8 @@ fn track_note(track: u32, status: &TrackStatus) -> Option<String> {
     }
 }
 
-pub fn get_meeting(recall: &Recall, args: MeetingArgs) -> ToolResult {
-    let opened = open(recall, &args.meeting_id)?;
+pub fn get_meeting(root: &Path, args: MeetingArgs) -> ToolResult {
+    let opened = open(root, &args.meeting_id)?;
     let m = &opened.manifest;
     let revision = transcript::latest(&opened.dir)?;
     let duration_ms = m.duration_ns() / 1_000_000;
@@ -415,8 +411,8 @@ pub fn get_meeting(recall: &Recall, args: MeetingArgs) -> ToolResult {
     }))
 }
 
-pub fn get_transcript(recall: &Recall, args: TranscriptArgs) -> ToolResult {
-    let opened = open(recall, &args.meeting_id)?;
+pub fn get_transcript(root: &Path, args: TranscriptArgs) -> ToolResult {
+    let opened = open(root, &args.meeting_id)?;
     let revision = transcript_of(&opened)?;
     let from = args.from.as_deref().map(clock_ms).transpose()?;
     let to = args.to.as_deref().map(clock_ms).transpose()?;
@@ -454,15 +450,15 @@ pub fn get_transcript(recall: &Recall, args: TranscriptArgs) -> ToolResult {
 // --- Resources ------------------------------------------------------------------
 
 /// Meetings offered as attachable resources, newest first.
-pub fn recent(recall: &Recall, max: usize) -> Result<Vec<SessionSummary>, String> {
-    let mut all = sessions(recall, Range::default())?;
+pub fn recent(root: &Path, max: usize) -> Result<Vec<SessionSummary>, String> {
+    let mut all = sessions(root, Range::default())?;
     all.truncate(max);
     Ok(all)
 }
 
 /// A meeting as Markdown: header facts plus its summary.
-pub fn meeting_markdown(recall: &Recall, id: &str) -> Result<String, String> {
-    let opened = open(recall, id)?;
+pub fn meeting_markdown(root: &Path, id: &str) -> Result<String, String> {
+    let opened = open(root, id)?;
     let m = &opened.manifest;
     let revision = transcript::latest_revision(&opened.dir)?;
     let mut out = format!(
@@ -482,11 +478,11 @@ pub fn meeting_markdown(recall: &Recall, id: &str) -> Result<String, String> {
 }
 
 /// The full transcript as "[mm:ss] Speaker N: text" lines.
-pub fn transcript_text(recall: &Recall, id: &str) -> Result<String, String> {
-    let opened = open(recall, id)?;
+pub fn transcript_text(root: &Path, id: &str) -> Result<String, String> {
+    let opened = open(root, id)?;
     Ok(text::transcript_text(&transcript_of(&opened)?))
 }
 
 #[cfg(test)]
-#[path = "tools_tests.rs"]
+#[path = "query_tests.rs"]
 mod tests;

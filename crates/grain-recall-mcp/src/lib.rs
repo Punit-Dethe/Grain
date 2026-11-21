@@ -8,15 +8,14 @@
 //! cuts access at once, even for a running session.
 
 pub mod server;
-pub mod tools;
-
-#[cfg(test)]
-mod fixture;
 
 use std::path::{Path, PathBuf};
 
 /// Present while the user allows AI apps to read Recall. Grain owns it.
 pub use grain_recall::GATE_FILE;
+
+/// What every tool and resource answers while the switch is off.
+pub const OFF: &str = "Recall access is turned off in Grain. The user can turn it on in \nGrain > Recall > Settings > \"Use your meetings in AI apps\".";
 
 /// Where one Grain install keeps its meetings.
 #[derive(Debug, Clone)]

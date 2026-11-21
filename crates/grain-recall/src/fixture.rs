@@ -1,22 +1,24 @@
-//! Test meetings on disk, written in the app's own formats.
+//! Test meetings on disk, written in the app's own formats. Built for this
+//! crate's tests and, through the `fixtures` feature, for the sidecar's and
+//! the app's tests.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 
-use grain_recall::manifest::{
+use crate::manifest::{
     Chunk, Manifest, SessionState, Track, TrackSource, MANIFEST, MANIFEST_VERSION,
 };
-use grain_recall::summary::{MeetSummaryDoc, SUMMARY_FILE};
-use grain_recall::transcript::{
+use crate::summary::{MeetSummaryDoc, SUMMARY_FILE};
+use crate::transcript::{
     self, revision_path, Attribution, TrackStatus, TrackTranscript, TranscriptRevision, Word,
     TRANSCRIPTS, TRANSCRIPT_VERSION,
 };
-
-use crate::Recall;
 
 pub struct Fixture {
     pub dir: tempfile::TempDir,
 }
 
+#[allow(clippy::new_without_default)]
 impl Fixture {
     /// An empty meetings folder with the switch on.
     pub fn new() -> Self {
@@ -27,8 +29,14 @@ impl Fixture {
         fixture
     }
 
-    pub fn recall(&self) -> Recall {
-        Recall::new(self.dir.path())
+    /// Grain's app data folder (holds `meetings/`).
+    pub fn data_dir(&self) -> &Path {
+        self.dir.path()
+    }
+
+    /// The meetings folder the queries read.
+    pub fn root(&self) -> PathBuf {
+        self.dir.path().join("meetings")
     }
 
     pub fn set_enabled(&self, on: bool) {

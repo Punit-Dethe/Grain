@@ -1,4 +1,4 @@
-//! MCP glue: tool and resource declarations over [`crate::tools`].
+//! MCP glue: tool and resource declarations over `grain_recall::spec`.
 
 use std::sync::Arc;
 
@@ -11,19 +11,11 @@ use rmcp::model::{
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};
-use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use crate::tools::{self, ToolResult};
-use crate::Recall;
-
-const INSTRUCTIONS: &str = "Grain Recall holds the user's recorded meetings, \
-transcribed on their own computer. Find meetings with search_meetings (by what \
-was said) or list_meetings (by date or title), then read one with get_meeting \
-(summary and facts) and get_transcript (what was said, paged). Never invent \
-meeting ids: use ids these tools return. Speakers are anonymous (\"Speaker 1\", \
-\"Speaker 2\"); never guess a real name for a speaker. Dates are in the user's \
-local time zone. Quote times (mm:ss) when they help the user find a moment.";
+use crate::{Recall, OFF};
+use grain_recall::query::{self, ToolResult};
+use grain_recall::spec;
 
 const RESOURCE_PREFIX: &str = "grain://recall/meetings/";
 const TRANSCRIPT_SUFFIX: &str = "/transcript";
@@ -46,18 +38,19 @@ impl RecallServer {
         name: &str,
         arguments: Option<JsonObject>,
     ) -> Result<CallToolResult, McpError> {
-        let args = Value::Object(arguments.unwrap_or_default());
-        let result = match name {
-            "list_meetings" => self.run(args, tools::list_meetings),
-            "search_meetings" => self.run(args, tools::search_meetings),
-            "get_meeting" => self.run(args, tools::get_meeting),
-            "get_transcript" => self.run(args, tools::get_transcript),
-            other => {
-                return Err(McpError::invalid_params(
-                    format!("unknown tool `{other}`"),
-                    None,
-                ))
-            }
+        let known = spec::tools().iter().any(|t| t.name == name);
+        if !known {
+            return Err(McpError::invalid_params(
+                format!("unknown tool `{name}`"),
+                None,
+            ));
+        }
+        let result: ToolResult = if self.recall.enabled() {
+            let args = Value::Object(arguments.unwrap_or_default());
+            spec::call(self.recall.meetings_root(), name, args)
+                .unwrap_or_else(|| Err(format!("unknown tool `{name}`")))
+        } else {
+            Err(OFF.into())
         };
         Ok(match result {
             Ok(value) => CallToolResult::structured(value),
@@ -65,29 +58,16 @@ impl RecallServer {
         })
     }
 
-    fn run<A: DeserializeOwned>(
-        &self,
-        args: Value,
-        tool: fn(&Recall, A) -> ToolResult,
-    ) -> ToolResult {
-        if !self.recall.enabled() {
-            return Err(tools::OFF.into());
-        }
-        let args: A =
-            serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {e}"))?;
-        tool(&self.recall, args)
-    }
-
     fn read(&self, uri: &str) -> Result<String, McpError> {
         if !self.recall.enabled() {
-            return Err(McpError::invalid_request(tools::OFF, None));
+            return Err(McpError::invalid_request(OFF, None));
         }
         let rest = uri.strip_prefix(RESOURCE_PREFIX).ok_or_else(|| {
             McpError::resource_not_found(format!("unknown resource `{uri}`"), None)
         })?;
         let read = match rest.strip_suffix(TRANSCRIPT_SUFFIX) {
-            Some(id) => tools::transcript_text(&self.recall, id),
-            None => tools::meeting_markdown(&self.recall, rest),
+            Some(id) => query::transcript_text(self.recall.meetings_root(), id),
+            None => query::meeting_markdown(self.recall.meetings_root(), rest),
         };
         read.map_err(|message| McpError::resource_not_found(message, None))
     }
@@ -110,70 +90,10 @@ fn read_only(title: &str) -> ToolAnnotations {
 
 /// The tool list, also used by tests and docs.
 pub fn tools() -> Vec<Tool> {
-    let date = |what: &str| json!({ "type": "string", "description": format!("{what}: YYYY-MM-DD (whole day, user's time zone) or an RFC 3339 time.") });
-    let meeting_id = json!({ "type": "string", "description": "Meeting id from list_meetings or search_meetings." });
-    vec![
-        Tool::new(
-            "search_meetings",
-            "Search what was said across meetings. Returns matching passages with the meeting, time (mm:ss), speaker and the lines around it. All words must appear close together; word starts match (\"decid\" finds \"decided\"). Also lists meetings whose title matches.",
-            schema(json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Words to find." },
-                    "from": date("Earliest meeting start"),
-                    "to": date("Latest meeting start"),
-                    "meeting_id": { "type": "string", "description": "Search only this meeting." },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 30, "default": 10 }
-                },
-                "required": ["query"]
-            })),
-        )
-        .annotate(read_only("Search meetings")),
-        Tool::new(
-            "list_meetings",
-            "List recorded meetings, newest first, with id, title, start time, duration, transcript status and whether a summary exists. Filter by date range or title words; page with offset.",
-            schema(json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Only meetings whose title contains this." },
-                    "from": date("Earliest meeting start"),
-                    "to": date("Latest meeting start"),
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
-                    "offset": { "type": "integer", "minimum": 0, "default": 0 }
-                }
-            })),
-        )
-        .annotate(read_only("List meetings")),
-        Tool::new(
-            "get_meeting",
-            "One meeting's facts (start, end, duration, audio sources, speakers, transcript size) and its AI summary in Markdown when one was written.",
-            schema(json!({
-                "type": "object",
-                "properties": {
-                    "meeting_id": meeting_id,
-                    "include_summary": { "type": "boolean", "default": true }
-                },
-                "required": ["meeting_id"]
-            })),
-        )
-        .annotate(read_only("Get meeting")),
-        Tool::new(
-            "get_transcript",
-            "Read a meeting's transcript as \"[mm:ss] Speaker N: text\" lines, a page at a time (up to 500 lines). Use from/to to read around a moment, and next_offset to continue.",
-            schema(json!({
-                "type": "object",
-                "properties": {
-                    "meeting_id": meeting_id,
-                    "from": { "type": "string", "description": "Start at this meeting time (mm:ss or h:mm:ss)." },
-                    "to": { "type": "string", "description": "Stop at this meeting time (mm:ss or h:mm:ss)." },
-                    "offset": { "type": "integer", "minimum": 0, "default": 0 },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 500, "default": 200 }
-                },
-                "required": ["meeting_id"]
-            })),
-        )
-        .annotate(read_only("Get transcript")),
-    ]
+    spec::tools()
+        .into_iter()
+        .map(|t| Tool::new(t.name, t.description, schema(t.schema)).annotate(read_only(t.title)))
+        .collect()
 }
 
 impl ServerHandler for RecallServer {
@@ -188,7 +108,7 @@ impl ServerHandler for RecallServer {
             Implementation::new("grain-recall", env!("CARGO_PKG_VERSION"))
                 .with_title("Grain Recall"),
         )
-        .with_instructions(INSTRUCTIONS)
+        .with_instructions(spec::INSTRUCTIONS)
     }
 
     async fn list_tools(
@@ -215,7 +135,7 @@ impl ServerHandler for RecallServer {
         if !self.recall.enabled() {
             return Ok(ListResourcesResult::default());
         }
-        let meetings = tools::recent(&self.recall, LISTED_RESOURCES)
+        let meetings = query::recent(self.recall.meetings_root(), LISTED_RESOURCES)
             .map_err(|message| McpError::internal_error(message, None))?;
         Ok(ListResourcesResult::with_all_items(
             meetings

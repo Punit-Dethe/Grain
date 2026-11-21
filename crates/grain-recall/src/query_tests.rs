@@ -19,11 +19,11 @@ fn standup(f: &Fixture) -> String {
     )
 }
 
-fn list(r: &Recall, args: ListArgs) -> Value {
+fn list(r: &Path, args: ListArgs) -> Value {
     list_meetings(r, args).unwrap()
 }
 
-fn search(r: &Recall, query: &str) -> Value {
+fn search(r: &Path, query: &str) -> Value {
     search_meetings(
         r,
         SearchArgs {
@@ -37,7 +37,7 @@ fn search(r: &Recall, query: &str) -> Value {
 #[test]
 fn list_pages_newest_first_and_filters_by_title_and_day() {
     let f = Fixture::new();
-    let r = f.recall();
+    let r = f.root();
     standup(&f);
     f.meeting("Design review", NOV_10 + DAY, 120, None);
     f.meeting("Budget call", NOV_10 + 2 * DAY, 60, None);
@@ -102,7 +102,7 @@ fn list_pages_newest_first_and_filters_by_title_and_day() {
 #[test]
 fn search_finds_passages_with_context_and_word_starts() {
     let f = Fixture::new();
-    let r = f.recall();
+    let r = f.root();
     let id = standup(&f);
     f.meeting(
         "Release planning",
@@ -156,7 +156,7 @@ fn search_finds_passages_with_context_and_word_starts() {
 #[test]
 fn get_meeting_reports_facts_and_summary_freshness() {
     let f = Fixture::new();
-    let r = f.recall();
+    let r = f.root();
     let id = standup(&f);
     f.summary(&id, 1, "## Overview\nShip Friday.");
     let get = |include: Option<bool>| {
@@ -195,7 +195,7 @@ fn get_meeting_reports_facts_and_summary_freshness() {
 #[test]
 fn transcript_pages_and_time_windows() {
     let f = Fixture::new();
-    let r = f.recall();
+    let r = f.root();
     let id = standup(&f);
     let read = |args: TranscriptArgs| get_transcript(&r, args);
 
@@ -245,7 +245,7 @@ fn transcript_pages_and_time_windows() {
 #[test]
 fn ids_are_validated_before_touching_the_disk() {
     let f = Fixture::new();
-    let r = f.recall();
+    let r = f.root();
     let missing = uuid::Uuid::new_v4().to_string();
     for bad in ["../meetings", "..\\..\\x", "not-a-uuid", missing.as_str()] {
         let err = get_meeting(
@@ -263,7 +263,7 @@ fn ids_are_validated_before_touching_the_disk() {
 #[test]
 fn resources_render_summary_and_transcript() {
     let f = Fixture::new();
-    let r = f.recall();
+    let r = f.root();
     let id = standup(&f);
     let md = meeting_markdown(&r, &id).unwrap();
     assert!(md.starts_with("# Weekly standup"));

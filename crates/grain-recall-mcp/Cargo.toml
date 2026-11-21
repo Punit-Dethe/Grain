@@ -20,8 +20,7 @@ rmcp = { version = "=3.5.0", default-features = false, features = ["server", "tr
 tokio = { version = "1.43.0", features = ["rt", "io-std", "time"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
+grain-recall = { path = "../grain-recall", features = ["fixtures"] }
 tempfile = "3"
-uuid = { version = "1", features = ["v4"] }

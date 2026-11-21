@@ -436,6 +436,7 @@ dependencies = [
 name = "grain-recall"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "log",
  "serde",
  "serde_json",
@@ -448,14 +449,12 @@ dependencies = [
 name = "grain-recall-mcp"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "grain-recall",
  "rmcp",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
- "uuid",
 ]
 
 [[package]]
