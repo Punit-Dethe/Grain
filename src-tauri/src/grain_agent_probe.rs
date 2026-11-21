@@ -84,6 +84,7 @@ async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
                     content: prompt,
                     ui: None,
                     result: None,
+                    said: None,
                 }],
                 None,
                 None,

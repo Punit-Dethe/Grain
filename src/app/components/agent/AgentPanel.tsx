@@ -64,11 +64,25 @@ interface ChatMessage {
   ui?: string | null;
   // Text the user asked to get back, changed (shown with Copy).
   result?: AgentResult | null;
+  // The reply's spoken part, shown as its own message before `content`.
+  said?: string | null;
 }
 
 /** What Copy copies for a reply: its result text when it has one (an
  * email's subject has its own copy button in the card). */
 const copyTextOf = (m: ChatMessage) => m.result?.body ?? m.content;
+
+/** Messages as shown: a reply's spoken part becomes its own message, so the
+ * assistant reads as having sent two (the short spoken one, then the rest). */
+const withSaid = (messages: ChatMessage[]): ChatMessage[] =>
+  messages.flatMap((m) =>
+    m.said?.trim()
+      ? [
+          { id: `${m.id}:said`, role: m.role, content: m.said },
+          { ...m, said: null },
+        ]
+      : [m],
+  );
 
 const RESULT_ICON: Record<string, typeof MapPin> = {
   email: Mail,
@@ -155,6 +169,7 @@ const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
     content: m.content,
     ui: m.ui ?? null,
     result: m.result ?? null,
+    said: m.said ?? null,
   }));
 
 const toChat = (messages: AgentHistoryMessage[]): ChatMessage[] =>
@@ -164,6 +179,7 @@ const toChat = (messages: AgentHistoryMessage[]): ChatMessage[] =>
     content: message.content,
     ui: message.ui ?? null,
     result: message.result ?? null,
+    said: message.said ?? null,
   }));
 
 /** Store what was said in a finished turn; a reply still awaiting approval
@@ -177,6 +193,7 @@ function remember(user: string | null, reply: AgentReply | null) {
       content: reply.text,
       ui: reply.ui,
       result: reply.result,
+      said: reply.said,
     });
   if (turn.length) void commands.agentHistoryAppend(turn).catch(console.error);
 }
@@ -198,8 +215,12 @@ export function AgentPanel() {
   const [busy, setBusy] = useState(true);
   // EXPERIMENT: the streaming reply, shown until the finished one lands.
   const [streamText, setStreamText] = useState("");
+  // The streaming reply's finished spoken part, once more follows it.
+  const [streamSaid, setStreamSaid] = useState("");
   useEffect(() => {
-    if (!busy) setStreamText("");
+    if (busy) return;
+    setStreamText("");
+    setStreamSaid("");
   }, [busy]);
   const [error, setError] = useState<string | null>(null);
   const [flashedId, setFlashedId] = useState<string | null>(null);
@@ -462,6 +483,7 @@ export function AgentPanel() {
               confirmAction: reply.confirm_action,
               ui: reply.ui,
               result: reply.result,
+              said: reply.said,
             },
           ]);
         } else {
@@ -560,9 +582,15 @@ export function AgentPanel() {
           );
         })
         .then(track),
-      // EXPERIMENT: the reply so far, while it streams ("" clears it).
+      // EXPERIMENT: the reply so far, while it streams (empty clears it).
       win
-        .listen<string>("agent-stream", ({ payload }) => setStreamText(payload))
+        .listen<{ said: string; text: string }>(
+          "agent-stream",
+          ({ payload }) => {
+            setStreamSaid(payload.said);
+            setStreamText(payload.text);
+          },
+        )
         .then(track),
       // Talk-back started or ended: the reply's Stop button follows it.
       win
@@ -1208,6 +1236,7 @@ export function AgentPanel() {
             confirmAction: reply.confirm_action,
             ui: reply.ui,
             result: reply.result,
+            said: reply.said,
           });
         }
         base = seed;
@@ -1399,6 +1428,9 @@ export function AgentPanel() {
                   ...message,
                   content: reply.text,
                   confirmAction: reply.confirm_action,
+                  ui: reply.ui,
+                  result: reply.result,
+                  said: reply.said,
                 }
               : message,
           ),
@@ -1461,6 +1493,7 @@ export function AgentPanel() {
                 confirmAction: firstReply.confirm_action,
                 ui: firstReply.ui,
                 result: firstReply.result,
+                said: firstReply.said,
               },
             ]
           : []),
@@ -1788,7 +1821,7 @@ export function AgentPanel() {
             }
           >
             <div className="agc-c-scroll">
-              {history.map((m) => (
+              {withSaid(history).map((m) => (
                 <div
                   key={m.id}
                   className={`agc-c-turn is-${m.role}${speakingId === m.id ? " is-speaking" : ""}`}
@@ -1850,7 +1883,7 @@ export function AgentPanel() {
                 </button>
               )}
 
-              {thread.map((m) => (
+              {withSaid(thread).map((m) => (
                 <div
                   key={m.id}
                   className={`agc-c-turn is-${m.role}${speakingId === m.id ? " is-speaking" : ""}`}
@@ -1911,8 +1944,21 @@ export function AgentPanel() {
                 </div>
               ))}
 
+              {busy && !summonListening && streamSaid && (
+                // The spoken part, done: its own message above the rest.
+                <div className="agc-c-turn is-assistant">
+                  <div className="agc-c-answer">
+                    <AgentMarkdown markdown={streamSaid} />
+                  </div>
+                </div>
+              )}
               {busy && !summonListening && streamText && (
-                <StreamingReply text={streamText} capAtStart={!hasFollowups} />
+                <StreamingReply
+                  // The rest starts a new message: its reveal starts over.
+                  key={streamSaid ? "rest" : "said"}
+                  text={streamText}
+                  capAtStart={!hasFollowups}
+                />
               )}
               {busy && !summonListening && !streamText && (
                 <div className="agent-typing" aria-hidden="true">

@@ -420,6 +420,10 @@ pub struct AgentMessage {
     /// [GRAIN] The result text an assistant turn carried (`grain_agent_reply`).
     #[serde(default)]
     pub result: Option<crate::grain_agent_reply::AgentResult>,
+    /// [GRAIN] The spoken part of an assistant turn, shown as its own message
+    /// before `content` (`grain_agent_reply::split_say`).
+    #[serde(default)]
+    pub said: Option<String>,
 }
 
 /// The panel's per-turn reply, optionally carrying a host-held action confirmation.
@@ -433,6 +437,10 @@ pub struct AgentReply {
     /// [GRAIN] Text the user asked to get back, changed: shown in a result
     /// card with Copy (`grain_agent_reply`). Never together with `ui`.
     pub result: Option<crate::grain_agent_reply::AgentResult>,
+    /// [GRAIN] The spoken part, shown as its own message before `text`. Only
+    /// when more follows it; a reply that is all spoken part is just `text`.
+    #[serde(default)]
+    pub said: Option<String>,
 }
 
 /// [GRAIN] One material argument of a pending action, for the confirmation panel.
@@ -466,6 +474,7 @@ impl AgentReply {
             confirm_action: None,
             ui: None,
             result: None,
+            said: None,
         }
     }
 }
@@ -2018,7 +2027,15 @@ fn start_reply_speech(
 // ── Streamed turn (EXPERIMENT, revertable) ──────────────────────────────────
 //
 // The reply streams into the chat as it arrives (`agent-stream`, the visible
-// text so far; "" clears it), and talk-back starts once enough has landed.
+// text so far; empty clears it), and talk-back starts once enough has landed.
+
+/// [GRAIN] `agent-stream` payload: the finished spoken part once more of the
+/// reply follows it (shown as its own message), and the text still arriving.
+#[derive(Clone, Default, Serialize)]
+struct AgentStream {
+    said: String,
+    text: String,
+}
 
 /// Start talking at a sentence end past this many characters...
 const STREAM_SPEAK_AT: usize = 80;
@@ -2060,11 +2077,13 @@ impl StreamTurn {
                 feed.cancel();
             }
             state.last_emit = None;
-            let _ = self.app.emit_to(PANEL_LABEL, "agent-stream", "");
+            let _ = self
+                .app
+                .emit_to(PANEL_LABEL, "agent-stream", AgentStream::default());
             return;
         };
         // [GRAIN] A reply leads with its spoken part (`<say>…</say>`): only
-        // that is read; the chat shows it and the rest of the reply.
+        // that is read; the chat shows it as its own message, then the rest.
         use crate::grain_agent_reply::StreamSay;
         let (speech, said_all, body) = match crate::grain_agent_reply::stream_say(text) {
             StreamSay::Undecided => return,
@@ -2083,9 +2102,19 @@ impl StreamTurn {
         } else {
             plain.clone()
         };
-        let visible = match speech {
-            Some(line) => crate::grain_agent_reply::stream_shown(line, &rest),
-            None => rest,
+        let shown = match speech {
+            Some(line) if said_all && !rest.is_empty() => AgentStream {
+                said: line.trim().to_owned(),
+                text: rest,
+            },
+            Some(line) => AgentStream {
+                said: String::new(),
+                text: line.trim_end().to_owned(),
+            },
+            None => AgentStream {
+                said: String::new(),
+                text: rest,
+            },
         };
         let spoken = speech.unwrap_or(&plain);
         if let Some(feed) = &state.speech {
@@ -2108,13 +2137,13 @@ impl StreamTurn {
                 state.speech = Some(feed);
             }
         }
-        if !visible.is_empty()
+        if !shown.text.is_empty()
             && state
                 .last_emit
                 .is_none_or(|at| at.elapsed() >= STREAM_EMIT_EVERY)
         {
             state.last_emit = Some(Instant::now());
-            let _ = self.app.emit_to(PANEL_LABEL, "agent-stream", visible);
+            let _ = self.app.emit_to(PANEL_LABEL, "agent-stream", shown);
         }
     }
 
@@ -3110,18 +3139,21 @@ mod agent_routing_tests {
                 content: "rewrite it".into(),
                 ui: None,
                 result: None,
+                said: None,
             },
             AgentMessage {
                 role: "assistant".into(),
                 content: "first reply".into(),
                 ui: None,
                 result: None,
+                said: None,
             },
             AgentMessage {
                 role: "system".into(),
                 content: "follow-up".into(),
                 ui: None,
                 result: None,
+                said: None,
             },
         ];
         let full = build_messages(&messages, Some("  explicitly selected subject  "));
@@ -3157,6 +3189,7 @@ mod agent_routing_tests {
             content: content.into(),
             ui: None,
             result,
+            said: None,
         };
         let messages = vec![
             turn("user", "turn this into an email", None),
@@ -3171,6 +3204,56 @@ mod agent_routing_tests {
             .1
             .starts_with("Made it formal.\n<result kind=\"email\">"));
         assert!(full[4].1.contains("Formal draft"));
+    }
+
+    #[test]
+    fn a_spoken_part_goes_back_to_the_model_in_its_tags() {
+        let messages = vec![
+            AgentMessage {
+                role: "user".into(),
+                content: "write me a story".into(),
+                ui: None,
+                result: None,
+                said: None,
+            },
+            AgentMessage {
+                role: "assistant".into(),
+                content: "The storm came in at dusk.".into(),
+                ui: None,
+                result: None,
+                said: Some("I wrote you a story.".into()),
+            },
+        ];
+        let full = build_messages(&messages, None);
+        assert_eq!(
+            full[2].1,
+            "<say>I wrote you a story.</say>\n\nThe storm came in at dusk."
+        );
+    }
+
+    #[test]
+    fn a_spoken_part_is_its_own_message_only_when_more_follows() {
+        let mut long = AgentReply::plain("The storm came in at dusk.".into());
+        place_said(&mut long, Some("I wrote you a story.".into()));
+        assert_eq!(long.said.as_deref(), Some("I wrote you a story."));
+        assert_eq!(long.text, "The storm came in at dusk.");
+        // All spoken part (a short reply, or a view's explanation): one message.
+        let mut short = AgentReply::plain(String::new());
+        place_said(&mut short, Some("It's 12 degrees.".into()));
+        assert_eq!(
+            (short.said, short.text.as_str()),
+            (None, "It's 12 degrees.")
+        );
+        // A result with no words around it.
+        let mut result = AgentReply::plain(String::new());
+        result.result = Some(crate::grain_agent_reply::AgentResult {
+            kind: "email".into(),
+            subject: None,
+            body: "Hi.".into(),
+            format: crate::grain_agent_reply::PLAIN.into(),
+        });
+        place_said(&mut result, None);
+        assert_eq!(result.text, "Done.");
     }
 
     #[test]
@@ -3288,18 +3371,15 @@ pub async fn agent_run(
         .await?;
     if let Ok(reply) = &mut reply {
         // [GRAIN] The reply's spoken part (`grain_agent_reply`): read aloud in
-        // full; the chat shows it and the rest of the reply.
+        // full; the chat shows it as its own message, then the rest.
         let mut say = None;
         if reply.confirm_action.is_none() {
-            let (line, body) = crate::grain_agent_reply::split_say(&reply.text);
+            let (line, rest) = crate::grain_agent_reply::split_say(&reply.text);
             say = line;
             // A text transform: the new text goes to the result card; the
             // chat says (and the voice reads) only that it is done.
-            let (text, mut result) = crate::grain_agent_reply::split_result(&body);
+            let (text, mut result) = crate::grain_agent_reply::split_result(&rest);
             reply.text = text;
-            if result.is_some() && reply.text.is_empty() {
-                reply.text = say.clone().unwrap_or_else(|| "Done.".into());
-            }
             // Markdown in, Markdown out; otherwise plain text that pastes
             // cleanly anywhere.
             if let Some(result) = &mut result {
@@ -3312,6 +3392,7 @@ pub async fn agent_run(
             reply.text = text;
             reply.ui = ui;
         }
+        place_said(reply, say.clone());
         // An approval is said in short; its details stay on screen.
         let spoken = match &reply.confirm_action {
             Some(confirm) => {
@@ -3358,6 +3439,7 @@ pub async fn agent_run(
                         content: reply.text.clone(),
                         ui: reply.ui.clone(),
                         result: reply.result.clone(),
+                        said: reply.said.clone(),
                     }],
                 );
             }
@@ -3495,16 +3577,32 @@ pub async fn agent_confirm_action(
             resume_pending_turn(&app, &run, &token, approve).await
         })
         .await?;
-    // [GRAIN] Approved from the panel: show the reply without its spoken line.
+    // [GRAIN] Approved from the panel: the spoken part as its own message,
+    // then the rest, as for any reply.
     if let Ok(reply) = &mut reply {
         if reply.confirm_action.is_none() {
-            let body = crate::grain_agent_reply::split_say(&reply.text).1;
-            let (text, result) = crate::grain_agent_reply::split_result(&body);
+            let (said, rest) = crate::grain_agent_reply::split_say(&reply.text);
+            let (text, result) = crate::grain_agent_reply::split_result(&rest);
             reply.text = text;
             reply.result = result;
+            place_said(reply, said);
         }
     }
     reply
+}
+
+/// [GRAIN] Where a reply's spoken part goes: its own message before the
+/// text, or the text itself when nothing else follows it. A result with
+/// neither says it is done.
+fn place_said(reply: &mut AgentReply, said: Option<String>) {
+    match said {
+        Some(said) if reply.text.trim().is_empty() => reply.text = said,
+        Some(said) => reply.said = Some(said),
+        None if reply.result.is_some() && reply.text.trim().is_empty() => {
+            reply.text = "Done.".into();
+        }
+        None => {}
+    }
 }
 
 /// Render an execution outcome as a plain chat reply (the receipt/result/notice).
@@ -4713,6 +4811,7 @@ mod tool_continuation_tests {
                 confirm_action: Some(confirm),
                 ui: None,
                 result: None,
+                said: None,
             }),
         )
         .unwrap();
@@ -4957,6 +5056,7 @@ async fn drive_tool_turn_with<'a>(
                 confirm_action: Some(confirm),
                 ui: None,
                 result: None,
+                said: None,
             });
         }
         if let Some(final_reply) = same_round_reply.filter(|_| all_succeeded) {
@@ -5085,6 +5185,11 @@ fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(Stri
                 format!("{}\n{ui}", m.content)
             }
             _ => m.content.clone(),
+        };
+        // [GRAIN] The spoken part goes back in its tags, as it was written.
+        let content = match &m.said {
+            Some(said) if role == "assistant" => format!("<say>{said}</say>\n\n{content}"),
+            _ => content,
         };
         let content = match &m.result {
             Some(result) if Some(index) == latest_result => format!(

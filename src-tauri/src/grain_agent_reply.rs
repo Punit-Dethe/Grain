@@ -177,27 +177,19 @@ fn split_close(rest: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// The spoken part and the rest of the reply as one text to show.
-fn joined(said: &str, rest: &str) -> String {
-    let (said, rest) = (said.trim(), rest.trim());
-    match (said.is_empty(), rest.is_empty()) {
-        (_, true) => said.to_owned(),
-        (true, false) => rest.to_owned(),
-        (false, false) => format!("{said}\n\n{rest}"),
-    }
-}
-
 /// Split a finished reply into its spoken part (`None` when it has none)
-/// and the reply to show: the spoken part, then the rest, without tags. A
-/// missing closing tag makes the whole reply the spoken part.
+/// and the rest of the reply, without tags (the whole reply when it has no
+/// spoken part). A missing closing tag makes the whole reply the spoken part.
 pub(crate) fn split_say(reply: &str) -> (Option<String>, String) {
     let Some(rest) = after_open(reply) else {
         return (None, reply.trim().to_owned());
     };
     let (said, after) = split_close(rest);
-    let shown = joined(said, after.unwrap_or(""));
-    let said = said.trim();
-    ((!said.is_empty()).then(|| said.to_owned()), shown)
+    let (said, after) = (said.trim(), after.unwrap_or("").trim());
+    (
+        (!said.is_empty()).then(|| said.to_owned()),
+        after.to_owned(),
+    )
 }
 
 /// Put `text` right after a reply's spoken part (or in front of a reply
@@ -258,11 +250,6 @@ pub(crate) fn stream_say(text: &str) -> StreamSay<'_> {
         complete: after.is_some(),
         rest: after.unwrap_or(""),
     }
-}
-
-/// The text to show for a streaming reply with a spoken part.
-pub(crate) fn stream_shown(line: &str, rest_shown: &str) -> String {
-    joined(line, rest_shown)
 }
 
 const OPEN: &str = "<result";
@@ -429,13 +416,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_long_reply_speaks_its_short_version_and_shows_both() {
+    fn a_long_reply_splits_into_its_short_version_and_the_rest() {
         let reply = "<say>I've written you a story about a lighthouse keeper.</say>\n\nThe storm came in at dusk...\n\nThe end.";
         assert_eq!(
             split_say(reply),
             (
                 Some("I've written you a story about a lighthouse keeper.".into()),
-                "I've written you a story about a lighthouse keeper.\n\nThe storm came in at dusk...\n\nThe end.".into()
+                "The storm came in at dusk...\n\nThe end.".into()
             )
         );
     }
@@ -445,18 +432,12 @@ mod tests {
         let reply = "  <SAY>It's 12.\n\nAnd it rains at 3.</Say>";
         assert_eq!(
             split_say(reply),
-            (
-                Some("It's 12.\n\nAnd it rains at 3.".into()),
-                "It's 12.\n\nAnd it rains at 3.".into()
-            )
+            (Some("It's 12.\n\nAnd it rains at 3.".into()), String::new())
         );
         // A missing closing tag: the whole reply is the spoken part.
         assert_eq!(
             split_say("<say>Done, I'll remind you at 5."),
-            (
-                Some("Done, I'll remind you at 5.".into()),
-                "Done, I'll remind you at 5.".into()
-            )
+            (Some("Done, I'll remind you at 5.".into()), String::new())
         );
     }
 
@@ -487,7 +468,7 @@ mod tests {
         );
         assert_eq!(
             split_say(&insert_after_say("<say>All done.</say>", "Receipt")),
-            (Some("All done.".into()), "All done.\n\nReceipt".into())
+            (Some("All done.".into()), "Receipt".into())
         );
         assert_eq!(insert_after_say("Done.", "Receipt"), "Receipt\n\nDone.");
     }
@@ -523,10 +504,6 @@ mod tests {
                 complete: true,
                 rest: "\nRoses"
             }
-        );
-        assert_eq!(
-            stream_shown("I've written you a poem.", "Roses"),
-            "I've written you a poem.\n\nRoses"
         );
     }
 

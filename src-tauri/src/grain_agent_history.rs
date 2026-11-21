@@ -53,6 +53,9 @@ pub struct AgentHistoryMessage {
     /// The result text an assistant reply carried (the result card).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<crate::grain_agent_reply::AgentResult>,
+    /// The spoken part of an assistant reply, shown as its own message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub said: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -164,6 +167,10 @@ fn spoken(messages: Vec<AgentMessage>, at_unix_ms: u64) -> Vec<AgentHistoryMessa
                     ..result
                 })
                 .filter(|result| !result.body.is_empty()),
+            said: message
+                .said
+                .map(|said| said.trim().chars().take(MAX_CHARS).collect::<String>())
+                .filter(|said| !said.is_empty()),
         })
         .collect()
 }
@@ -366,6 +373,7 @@ mod tests {
             content: content.into(),
             ui: None,
             result: None,
+            said: None,
         }
     }
 

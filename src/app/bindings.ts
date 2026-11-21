@@ -2385,7 +2385,11 @@ ui?: string | null;
 /**
  * The result text an assistant reply carried (the result card).
  */
-result?: AgentResult | null }
+result?: AgentResult | null; 
+/**
+ * The spoken part of an assistant reply, shown as its own message.
+ */
+said?: string | null }
 /**
  * Consume the first instruction (the panel calls this on mount).
  */
@@ -2405,7 +2409,12 @@ ui?: string | null;
 /**
  * [GRAIN] The result text an assistant turn carried (`grain_agent_reply`).
  */
-result?: AgentResult | null }
+result?: AgentResult | null; 
+/**
+ * [GRAIN] The spoken part of an assistant turn, shown as its own message
+ * before `content` (`grain_agent_reply::split_say`).
+ */
+said?: string | null }
 /**
  * What the notch opens with: its mode and the chat it continues.
  */
@@ -2453,7 +2462,12 @@ ui: string | null;
  * [GRAIN] Text the user asked to get back, changed: shown in a result
  * card with Copy (`grain_agent_reply`). Never together with `ui`.
  */
-result: AgentResult | null }
+result: AgentResult | null; 
+/**
+ * [GRAIN] The spoken part, shown as its own message before `text`. Only
+ * when more follows it; a reply that is all spoken part is just `text`.
+ */
+said?: string | null }
 /**
  * [GRAIN] Text the user asked to get back, changed: shown in a result card.
  */
