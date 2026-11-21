@@ -2642,6 +2642,13 @@ agent_chat_width?: number; agent_chat_height?: number;
  */
 pilot_enabled?: boolean; 
 /**
+ * [GRAIN] Recall for the Agent: the Agent may search and read the user's
+ * recorded meetings (in-process, read-only). OFF by default because the
+ * Agent's AI provider may be a cloud model; off removes Recall from the
+ * Agent's tool directory. Separate from the AI-apps (MCP) switch.
+ */
+recall_agent_enabled?: boolean; 
+/**
  * [GRAIN] Recall: write a summary of each meeting as soon as its transcript
  * is published, through the configured AI provider. OFF by default while
  * the feature is in development; off costs nothing.

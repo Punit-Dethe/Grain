@@ -1215,7 +1215,7 @@
         "aiMissing": "No AI provider is set up yet, so these have nothing to run on.",
         "mcp": {
           "title": "AI apps",
-          "info": "Connects Recall to apps like Claude through MCP. Grain runs nothing in the background for this: an app starts Recall's reader only while it uses it.",
+          "info": "Connects Recall to apps like Claude through MCP. Grain runs nothing in the background for this: an app starts Recall's reader only while it uses it. Grain's own Agent has a separate switch in Extensions > Grain Recall.",
           "enable": "Use your meetings in AI apps",
           "enableDescription": "Lets apps you connect below search and read your meeting transcripts and summaries. What they read is sent to that app's AI provider. Turning this off disconnects them all.",
           "other": "Other apps",

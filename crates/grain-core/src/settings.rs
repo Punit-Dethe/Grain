@@ -860,6 +860,12 @@ pub struct AppSettings {
     /// Agent's tool directory and closes the browser link.
     #[serde(default)]
     pub pilot_enabled: bool,
+    /// [GRAIN] Recall for the Agent: the Agent may search and read the user's
+    /// recorded meetings (in-process, read-only). OFF by default because the
+    /// Agent's AI provider may be a cloud model; off removes Recall from the
+    /// Agent's tool directory. Separate from the AI-apps (MCP) switch.
+    #[serde(default)]
+    pub recall_agent_enabled: bool,
     /// [GRAIN] Recall: write a summary of each meeting as soon as its transcript
     /// is published, through the configured AI provider. OFF by default while
     /// the feature is in development; off costs nothing.
@@ -1689,6 +1695,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_chat_width: default_agent_chat_width(),
         agent_chat_height: default_agent_chat_height(),
         pilot_enabled: false,
+        recall_agent_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,
         meet_auto_title: false,

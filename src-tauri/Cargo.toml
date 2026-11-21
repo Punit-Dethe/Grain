@@ -274,6 +274,7 @@ tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 
 [dev-dependencies]
+grain-recall = { path = "../crates/grain-recall", features = ["specta", "fixtures"] }
 handy-recorder = { version = "0.1", features = ["test-backend"] }
 # Test-only tokio features for the local socket servers exercising the
 # resumable HTTP downloader; normal builds keep the leaner feature set.

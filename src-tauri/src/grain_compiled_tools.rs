@@ -1,5 +1,5 @@
 //! [GRAIN] Agent tool providers compiled into Grain, beside MCP connections:
-//! Grain Pilot and Reminders.
+//! Grain Pilot, Reminders and Grain Recall.
 //!
 //! One place answers, for every compiled provider, the questions the Agent
 //! loop asks of a tool provider: is it on, what is its directory entry, its
@@ -13,6 +13,7 @@ use grain_sdk::action::ActionRisk;
 use tauri::AppHandle;
 
 use crate::grain_pilot as pilot;
+use crate::grain_recall_agent as recall;
 use crate::grain_reminders as reminders;
 
 /// One catalogue row: the retrieval record plus the model-facing definition.
@@ -76,7 +77,9 @@ pub(crate) fn catalog_tool(
 
 /// Whether `extension_id` names a compiled provider (rather than `mcp.*`).
 pub(crate) fn is_compiled(extension_id: &str) -> bool {
-    extension_id == pilot::EXTENSION_ID || extension_id == reminders::EXTENSION_ID
+    extension_id == pilot::EXTENSION_ID
+        || extension_id == reminders::EXTENSION_ID
+        || extension_id == recall::EXTENSION_ID
 }
 
 /// Whether a compiled provider is on. `None` for an id that is not compiled.
@@ -86,6 +89,8 @@ pub(crate) fn enabled(app: &AppHandle, extension_id: &str) -> Option<bool> {
     } else if extension_id == reminders::EXTENSION_ID {
         // Always on: it only writes Grain's own reminder list.
         Some(true)
+    } else if extension_id == recall::EXTENSION_ID {
+        Some(recall::is_enabled(app))
     } else {
         None
     }
@@ -93,9 +98,10 @@ pub(crate) fn enabled(app: &AppHandle, extension_id: &str) -> Option<bool> {
 
 /// Directory entries of the compiled providers that are on.
 pub(crate) fn directory(app: &AppHandle) -> Vec<ExtensionDirectoryEntry> {
-    let mut entries = Vec::with_capacity(2);
+    let mut entries = Vec::with_capacity(3);
     entries.extend(pilot::directory(app));
     entries.push(reminders::directory());
+    entries.extend(recall::directory(app));
     entries
 }
 
@@ -106,6 +112,8 @@ pub(crate) fn catalog(extension_id: &str) -> Option<(String, Vec<CatalogTool>)> 
         Some(pilot::catalog())
     } else if extension_id == reminders::EXTENSION_ID {
         Some(reminders::catalog())
+    } else if extension_id == recall::EXTENSION_ID {
+        Some(recall::catalog())
     } else {
         None
     }
@@ -119,6 +127,8 @@ pub(crate) fn current_digest(app: &AppHandle, extension_id: &str) -> Option<Stri
         pilot::is_enabled(app).then(grain_core::pilot::catalog_digest)
     } else if extension_id == reminders::EXTENSION_ID {
         Some(grain_core::reminders::catalog_digest())
+    } else if extension_id == recall::EXTENSION_ID {
+        recall::is_enabled(app).then(recall::catalog_digest)
     } else {
         None
     }
@@ -135,6 +145,8 @@ pub(crate) async fn call(
         pilot::call(app, action_id, arguments).await
     } else if extension_id == reminders::EXTENSION_ID {
         reminders::call(app, action_id, arguments).await
+    } else if extension_id == recall::EXTENSION_ID {
+        recall::call(app, action_id, arguments).await
     } else {
         ActionOutcome::Failed {
             class: grain_core::execution::FailureClass::NotFound,
