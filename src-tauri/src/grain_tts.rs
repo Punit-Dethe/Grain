@@ -554,17 +554,16 @@ fn say_feed(
             return Ok(());
         }
         let text = speakable(&piece);
-        let budget = MAX_SPOKEN_CHARS;
-        if text.is_empty() || spoken >= budget {
+        if text.is_empty() || spoken >= MAX_SPOKEN_CHARS {
             if piece.is_empty() {
                 std::thread::sleep(Duration::from_millis(40));
             }
             continue;
         }
-        let (text, trimmed) = fit_sentences(&text, budget - spoken, spoken == 0);
+        let (text, trimmed) = fit_sentences(&text, MAX_SPOKEN_CHARS - spoken, spoken == 0);
         if trimmed {
             info!("[GRAIN] talk-back: streamed reply reached the spoken cap");
-            spoken = budget;
+            spoken = MAX_SPOKEN_CHARS;
         } else {
             spoken += text.chars().count();
         }

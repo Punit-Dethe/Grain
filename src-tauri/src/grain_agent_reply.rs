@@ -3,7 +3,8 @@
 //! its spoken part in `<say>…</say>`, written by the model in the same call:
 //! a short reply whole, a long one as a short spoken version with the full
 //! reply after the tag. The spoken part is read aloud in full; the chat shows
-//! it and the rest, without tags. A reply without the tag is read whole.
+//! it as its own message, then the rest. A reply without the tag is read
+//! whole.
 //!
 //! A text transform ("turn this into an email", "more formal") comes back as
 //! a result: the new text in a `<result kind="…">…</result>` block, shown in
@@ -147,7 +148,7 @@ const SAY_CLOSE: &str = "</say>";
 const FINAL: &str = "[final]";
 
 /// The text after a leading `[final]` marker, if any.
-fn skip_final(text: &str) -> &str {
+pub(crate) fn skip_final(text: &str) -> &str {
     let text = text.trim_start();
     match text.get(..FINAL.len()) {
         Some(head) if head.eq_ignore_ascii_case(FINAL) => text[FINAL.len()..].trim_start(),
@@ -505,6 +506,13 @@ mod tests {
                 rest: "\nRoses"
             }
         );
+    }
+
+    #[test]
+    fn the_same_round_marker_is_never_shown() {
+        assert_eq!(stream_say("[final] Done, it is filed."), StreamSay::Plain);
+        assert_eq!(skip_final("  [FINAL] Done."), "Done.");
+        assert_eq!(skip_final("Done."), "Done.");
     }
 
     #[test]

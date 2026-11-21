@@ -66,7 +66,7 @@ mod grain_recall_mcp; // [GRAIN] Recall MCP: AI app access switch + one-click co
 mod grain_app_route; // [GRAIN] open the main window on a page from the backend (Agent meeting links)
 mod grain_recall_agent; // [GRAIN] Recall for the Agent: read-only meeting tools, in-process
 mod grain_agent_canvas; // [GRAIN] generated views in the Agent chat (experiment)
-mod grain_agent_reply; // [GRAIN] a long reply's short spoken version
+mod grain_agent_reply; // [GRAIN] a reply's spoken part and its result card
 mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
 mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the host
 mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebView)

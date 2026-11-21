@@ -2087,7 +2087,8 @@ impl StreamTurn {
         use crate::grain_agent_reply::StreamSay;
         let (speech, said_all, body) = match crate::grain_agent_reply::stream_say(text) {
             StreamSay::Undecided => return,
-            StreamSay::Plain => (None, false, text),
+            // Never show or read the same-round marker.
+            StreamSay::Plain => (None, false, crate::grain_agent_reply::skip_final(text)),
             StreamSay::Say {
                 line,
                 complete,
