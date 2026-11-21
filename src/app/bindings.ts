@@ -2221,8 +2221,9 @@ async recallMcpStatus() : Promise<Result<RecallMcpStatus, string>> {
 },
 /**
  * Turn AI app access on or off. Off also removes Grain from every AI app it
- * was added to. The returned status is current even when that partly failed;
- * the error then names what is left to remove.
+ * was added to. On a partial failure the error names what is left to remove.
+ * Like Connect and Disconnect, only the main window may call it: these edit
+ * other apps' config files.
  */
 async recallMcpSetEnabled(enabled: boolean) : Promise<Result<RecallMcpStatus, string>> {
     try {
@@ -2905,11 +2906,7 @@ export type McpClientState =
  * The app's config file exists but could not be parsed; Grain leaves it alone.
  */
 "unreadable"
-export type McpClientStatus = { client: McpClient; name: string; state: McpClientState; 
-/**
- * The config file Grain edits, or `None` when a CLI does it.
- */
-config_path: string | null }
+export type McpClientStatus = { client: McpClient; name: string; state: McpClientState }
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
 export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean; 
 /**
@@ -3110,11 +3107,7 @@ server_path: string | null; clients: McpClientStatus[];
 /**
  * Config for any other MCP app, as JSON.
  */
-setup_json: string; 
-/**
- * The Claude Code command, for when its CLI is not on PATH.
- */
-claude_code_command: string }
+setup_json: string }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.

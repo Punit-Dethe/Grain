@@ -19,7 +19,7 @@ use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use specta::Type;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 /// The server's name in every AI app's config.
 const SERVER_NAME: &str = "grain-recall";
@@ -76,8 +76,6 @@ pub struct McpClientStatus {
     pub client: McpClient,
     pub name: String,
     pub state: McpClientState,
-    /// The config file Grain edits, or `None` when a CLI does it.
-    pub config_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -88,8 +86,6 @@ pub struct RecallMcpStatus {
     pub clients: Vec<McpClientStatus>,
     /// Config for any other MCP app, as JSON.
     pub setup_json: String,
-    /// The Claude Code command, for when its CLI is not on PATH.
-    pub claude_code_command: String,
 }
 
 // --- What an entry looks like --------------------------------------------------
@@ -243,11 +239,15 @@ fn read_json(path: &Path) -> Result<Map<String, Value>, String> {
     }
     match serde_json::from_str(text) {
         Ok(Value::Object(map)) => Ok(map),
-        _ => Err(format!(
-            "{} is not plain JSON, so Grain left it unchanged. Add the setup by hand.",
-            path.display()
-        )),
+        _ => Err(not_plain_json(path)),
     }
+}
+
+fn not_plain_json(path: &Path) -> String {
+    format!(
+        "{} is not plain JSON, so Grain left it unchanged. Add the setup by hand.",
+        path.display()
+    )
 }
 
 fn json_state(path: &Path, launch: &Launch) -> McpClientState {
@@ -354,15 +354,18 @@ impl Ordered {
     /// The file's top-level object (absent or empty file: an empty one),
     /// refused on the same terms as [`read_json`].
     fn read(path: &Path) -> Result<Vec<(String, Ordered)>, String> {
-        read_json(path)?;
-        let text = fs::read_to_string(path).unwrap_or_default();
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(format!("Could not read {}: {e}", path.display())),
+        };
         let text = text.trim_start_matches('\u{feff}');
         if text.trim().is_empty() {
             return Ok(Vec::new());
         }
-        match serde_json::from_str(text).map_err(|e| e.to_string())? {
-            Ordered::Object(entries) => Ok(entries),
-            _ => Err(format!("{} is not a JSON object", path.display())),
+        match serde_json::from_str(text) {
+            Ok(Ordered::Object(entries)) => Ok(entries),
+            _ => Err(not_plain_json(path)),
         }
     }
 
@@ -592,37 +595,22 @@ fn claude_code_disconnect(places: &Places) -> Result<bool, String> {
 
 // --- Per-client dispatch ---------------------------------------------------------
 
-fn installed(dir: &Path) -> bool {
-    dir.is_dir()
-}
-
 fn client_status(places: &Places, client: McpClient, launch: &Launch) -> McpClientStatus {
-    let (state, config_path) = match client {
-        McpClient::ClaudeCode => (claude_code_state(places, launch), None),
-        McpClient::Codex => {
-            let (file, dir) = places.codex_config();
-            let state = if installed(&dir) {
-                toml_state(&file, launch)
-            } else {
-                McpClientState::NotInstalled
-            };
-            (state, Some(file))
-        }
-        _ => {
-            let (file, dir) = places.json_config(client).expect("JSON-config client");
-            let state = if installed(&dir) {
-                json_state(&file, launch)
-            } else {
-                McpClientState::NotInstalled
-            };
-            (state, Some(file))
-        }
+    let state = match client {
+        McpClient::ClaudeCode => claude_code_state(places, launch),
+        McpClient::Codex => match places.codex_config() {
+            (file, dir) if dir.is_dir() => toml_state(&file, launch),
+            _ => McpClientState::NotInstalled,
+        },
+        _ => match places.json_config(client).expect("JSON-config client") {
+            (file, dir) if dir.is_dir() => json_state(&file, launch),
+            _ => McpClientState::NotInstalled,
+        },
     };
     McpClientStatus {
         client,
         name: client.name().into(),
         state,
-        config_path: config_path.map(|p| p.to_string_lossy().into_owned()),
     }
 }
 
@@ -665,7 +653,7 @@ impl Context {
         Ok(Self {
             places: Places::detect(app)?,
             data_dir: crate::portable::app_data_dir(app).map_err(|e| e.to_string())?,
-            server: server_path(app),
+            server: server_path(),
         })
     }
 
@@ -700,7 +688,6 @@ impl Context {
                 .map(|&c| client_status(&self.places, c, &launch))
                 .collect(),
             setup_json: serde_json::to_string_pretty(&setup).unwrap_or_default(),
-            claude_code_command: claude_code_command(&launch),
         }
     }
 
@@ -741,7 +728,7 @@ impl Context {
 
 /// The bundled server: `GRAIN_RECALL_MCP` when set (development), otherwise
 /// next to Grain's own executable, where the installer puts it.
-fn server_path(_app: &AppHandle) -> Option<PathBuf> {
+fn server_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("GRAIN_RECALL_MCP") {
         return Some(PathBuf::from(path)).filter(|p| p.is_file());
     }
@@ -768,14 +755,17 @@ pub async fn recall_mcp_status(app: AppHandle) -> Result<RecallMcpStatus, String
 }
 
 /// Turn AI app access on or off. Off also removes Grain from every AI app it
-/// was added to. The returned status is current even when that partly failed;
-/// the error then names what is left to remove.
+/// was added to. On a partial failure the error names what is left to remove.
+/// Like Connect and Disconnect, only the main window may call it: these edit
+/// other apps' config files.
 #[tauri::command]
 #[specta::specta]
 pub async fn recall_mcp_set_enabled(
     app: AppHandle,
+    window: WebviewWindow,
     enabled: bool,
 ) -> Result<RecallMcpStatus, String> {
+    crate::grain_commands::require_main_window(&window)?;
     blocking(app, move |ctx| {
         ctx.set_enabled(enabled)?;
         Ok(ctx.status())
@@ -789,8 +779,10 @@ pub async fn recall_mcp_set_enabled(
 #[specta::specta]
 pub async fn recall_mcp_connect(
     app: AppHandle,
+    window: WebviewWindow,
     client: McpClient,
 ) -> Result<RecallMcpStatus, String> {
+    crate::grain_commands::require_main_window(&window)?;
     blocking(app, move |ctx| {
         if !ctx.gate().is_file() {
             return Err("Turn on \"Use your meetings in AI apps\" first.".into());
@@ -810,8 +802,10 @@ pub async fn recall_mcp_connect(
 #[specta::specta]
 pub async fn recall_mcp_disconnect(
     app: AppHandle,
+    window: WebviewWindow,
     client: McpClient,
 ) -> Result<RecallMcpStatus, String> {
+    crate::grain_commands::require_main_window(&window)?;
     blocking(app, move |ctx| {
         disconnect(&ctx.places, client)?;
         info!("Recall MCP disconnected from {}", client.name());
