@@ -2368,7 +2368,11 @@ role: string; content: string; at_unix_ms: number;
 /**
  * The generated view an assistant reply carried (OpenUI Lang).
  */
-ui?: string | null }
+ui?: string | null; 
+/**
+ * The result text an assistant reply carried (the result card).
+ */
+result?: AgentResult | null }
 /**
  * Consume the first instruction (the panel calls this on mount).
  */
@@ -2384,7 +2388,11 @@ role: string; content: string;
 /**
  * [GRAIN] The generated view an assistant turn carried (OpenUI Lang).
  */
-ui?: string | null }
+ui?: string | null; 
+/**
+ * [GRAIN] The result text an assistant turn carried (`grain_agent_reply`).
+ */
+result?: AgentResult | null }
 /**
  * What the notch opens with: its mode and the chat it continues.
  */
@@ -2427,7 +2435,24 @@ export type AgentReply = { text: string; confirm_action: AgentConfirm | null;
  * [GRAIN] A generated view shown with the text (OpenUI Lang program,
  * see `grain_agent_canvas`).
  */
-ui: string | null }
+ui: string | null; 
+/**
+ * [GRAIN] Text the user asked to get back, changed: shown in a result
+ * card with Copy (`grain_agent_reply`). Never together with `ui`.
+ */
+result: AgentResult | null }
+/**
+ * [GRAIN] Text the user asked to get back, changed: shown in a result card.
+ */
+export type AgentResult = { 
+/**
+ * One of [`RESULT_KINDS`]; picks the card's layout and refine chips.
+ */
+kind: string; 
+/**
+ * The subject line of an email result.
+ */
+subject?: string | null; body: string }
 /**
  * [GRAIN] A talk-back voice preset, for the settings picker.
  */

@@ -50,6 +50,9 @@ pub struct AgentHistoryMessage {
     /// The generated view an assistant reply carried (OpenUI Lang).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<String>,
+    /// The result text an assistant reply carried (the result card).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<crate::grain_agent_reply::AgentResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -154,6 +157,13 @@ fn spoken(messages: Vec<AgentMessage>, at_unix_ms: u64) -> Vec<AgentHistoryMessa
                 .ui
                 .map(|ui| ui.trim().chars().take(MAX_UI_CHARS).collect::<String>())
                 .filter(|ui| !ui.is_empty()),
+            result: message
+                .result
+                .map(|result| crate::grain_agent_reply::AgentResult {
+                    body: result.body.trim().chars().take(MAX_UI_CHARS).collect(),
+                    ..result
+                })
+                .filter(|result| !result.body.is_empty()),
         })
         .collect()
 }
@@ -355,6 +365,7 @@ mod tests {
             role: role.into(),
             content: content.into(),
             ui: None,
+            result: None,
         }
     }
 

@@ -417,6 +417,9 @@ pub struct AgentMessage {
     /// [GRAIN] The generated view an assistant turn carried (OpenUI Lang).
     #[serde(default)]
     pub ui: Option<String>,
+    /// [GRAIN] The result text an assistant turn carried (`grain_agent_reply`).
+    #[serde(default)]
+    pub result: Option<crate::grain_agent_reply::AgentResult>,
 }
 
 /// The panel's per-turn reply, optionally carrying a host-held action confirmation.
@@ -427,6 +430,9 @@ pub struct AgentReply {
     /// [GRAIN] A generated view shown with the text (OpenUI Lang program,
     /// see `grain_agent_canvas`).
     pub ui: Option<String>,
+    /// [GRAIN] Text the user asked to get back, changed: shown in a result
+    /// card with Copy (`grain_agent_reply`). Never together with `ui`.
+    pub result: Option<crate::grain_agent_reply::AgentResult>,
 }
 
 /// [GRAIN] One material argument of a pending action, for the confirmation panel.
@@ -459,6 +465,7 @@ impl AgentReply {
             text,
             confirm_action: None,
             ui: None,
+            result: None,
         }
     }
 }
@@ -2068,8 +2075,15 @@ impl StreamTurn {
                 body,
             } => (Some(line), complete, body),
         };
-        let (visible, _) = crate::grain_agent_canvas::split_ui(body);
-        let spoken = speech.as_deref().unwrap_or(&visible);
+        // A result's text is shown as it streams but never read aloud.
+        let (outside, shown) = crate::grain_agent_reply::stream_result(body);
+        let (plain, _) = crate::grain_agent_canvas::split_ui(outside);
+        let visible = if body.to_ascii_lowercase().contains("<result") {
+            shown
+        } else {
+            plain.clone()
+        };
+        let spoken = speech.as_deref().unwrap_or(&plain);
         if let Some(feed) = &state.speech {
             if said_all {
                 feed.finish(spoken);
@@ -3091,16 +3105,19 @@ mod agent_routing_tests {
                 role: "user".into(),
                 content: "rewrite it".into(),
                 ui: None,
+                result: None,
             },
             AgentMessage {
                 role: "assistant".into(),
                 content: "first reply".into(),
                 ui: None,
+                result: None,
             },
             AgentMessage {
                 role: "system".into(),
                 content: "follow-up".into(),
                 ui: None,
+                result: None,
             },
         ];
         let full = build_messages(&messages, Some("  explicitly selected subject  "));
@@ -3119,6 +3136,36 @@ mod agent_routing_tests {
             assert_eq!(without.len(), messages.len() + 1);
             assert_eq!(without[1].1, "rewrite it");
         }
+    }
+
+    #[test]
+    fn only_the_latest_result_is_sent_back() {
+        let result = |body: &str| {
+            Some(crate::grain_agent_reply::AgentResult {
+                kind: "email".into(),
+                subject: None,
+                body: body.into(),
+            })
+        };
+        let turn = |role: &str, content: &str, result| AgentMessage {
+            role: role.into(),
+            content: content.into(),
+            ui: None,
+            result,
+        };
+        let messages = vec![
+            turn("user", "turn this into an email", None),
+            turn("assistant", "Done.", result("First draft")),
+            turn("user", "more formal", None),
+            turn("assistant", "Made it formal.", result("Formal draft")),
+            turn("user", "shorter", None),
+        ];
+        let full = build_messages(&messages, None);
+        assert_eq!(full[2].1, "Done.");
+        assert!(full[4]
+            .1
+            .starts_with("Made it formal.\n<result kind=\"email\">"));
+        assert!(full[4].1.contains("Formal draft"));
     }
 
     #[test]
@@ -3228,9 +3275,16 @@ pub async fn agent_run(
         if reply.confirm_action.is_none() {
             let (line, body) = crate::grain_agent_reply::split_say(&reply.text);
             say = line;
-            reply.text = body;
+            // A text transform: the new text goes to the result card; the
+            // chat says (and the voice reads) only that it is done.
+            let (text, result) = crate::grain_agent_reply::split_result(&body);
+            reply.text = text;
+            if result.is_some() && reply.text.is_empty() {
+                reply.text = say.clone().unwrap_or_else(|| "Done.".into());
+            }
+            reply.result = result;
         }
-        if ui_prompt.is_some() && reply.confirm_action.is_none() {
+        if ui_prompt.is_some() && reply.confirm_action.is_none() && reply.result.is_none() {
             let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);
             reply.text = text;
             reply.ui = ui;
@@ -3242,9 +3296,14 @@ pub async fn agent_run(
             }
             None => crate::grain_tts::reply_speech(say.as_deref(), &reply.text),
         };
-        // A reply with a view always opens the notch to show it: never the
-        // compact spoken presentation, even with `agent_compact_voice`.
-        let first_turn = if reply.ui.is_some() { None } else { generation };
+        // A reply with a view or a result always opens the notch to show it:
+        // never the compact spoken presentation, even with
+        // `agent_compact_voice`.
+        let first_turn = if reply.ui.is_some() || reply.result.is_some() {
+            None
+        } else {
+            generation
+        };
         match stream.take_speech() {
             // Already talking: hand it the finished text. A view opens the
             // notch, so the spoken reply is not presented compact after all.
@@ -3275,6 +3334,7 @@ pub async fn agent_run(
                         role: "assistant".into(),
                         content: reply.text.clone(),
                         ui: reply.ui.clone(),
+                        result: reply.result.clone(),
                     }],
                 );
             }
@@ -3375,6 +3435,14 @@ async fn agent_run_owned(
             ),
         );
     }
+    // [GRAIN] Changed text comes back as a result block (the result card).
+    full.insert(
+        1,
+        (
+            "system".to_string(),
+            crate::grain_agent_reply::RESULT_RULE.to_owned(),
+        ),
+    );
     let image = screen_attachment(app);
     run_with_tools(app, full, image.as_ref(), run).await
 }
@@ -3403,7 +3471,10 @@ pub async fn agent_confirm_action(
     // [GRAIN] Approved from the panel: show the reply without its spoken line.
     if let Ok(reply) = &mut reply {
         if reply.confirm_action.is_none() {
-            reply.text = crate::grain_agent_reply::split_say(&reply.text).1;
+            let body = crate::grain_agent_reply::split_say(&reply.text).1;
+            let (text, result) = crate::grain_agent_reply::split_result(&body);
+            reply.text = text;
+            reply.result = result;
         }
     }
     reply
@@ -4615,6 +4686,7 @@ mod tool_continuation_tests {
                 text: "Approve second operation".into(),
                 confirm_action: Some(confirm),
                 ui: None,
+                result: None,
             }),
         )
         .unwrap();
@@ -4858,6 +4930,7 @@ async fn drive_tool_turn_with<'a>(
                 text,
                 confirm_action: Some(confirm),
                 ui: None,
+                result: None,
             });
         }
         if let Some(final_reply) = same_round_reply.filter(|_| all_succeeded) {
@@ -4951,7 +5024,7 @@ fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(Stri
         full.push((
             "system".to_string(),
             format!(
-                "The user has SELECTED the following text. It is the subject of their instruction — operate on it (and reply with only the transformed result) unless they say otherwise:\n\n{ctx}"
+                "The user has SELECTED the following text. It is the subject of their instruction — operate on it (a changed version of it is a result block) unless they say otherwise:\n\n{ctx}"
             ),
         ));
     }
@@ -4961,6 +5034,10 @@ fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(Stri
     let latest_ui = messages
         .iter()
         .rposition(|m| m.role == "assistant" && m.ui.is_some());
+    // [GRAIN] Likewise only the latest result text, so "more formal" refines it.
+    let latest_result = messages
+        .iter()
+        .rposition(|m| m.role == "assistant" && m.result.is_some());
     for (index, m) in messages.iter().enumerate() {
         let role = if m.role == "assistant" {
             "assistant"
@@ -4976,6 +5053,13 @@ fn build_messages(messages: &[AgentMessage], context: Option<&str>) -> Vec<(Stri
                 format!("{}\n{ui}", m.content)
             }
             _ => m.content.clone(),
+        };
+        let content = match &m.result {
+            Some(result) if Some(index) == latest_result => format!(
+                "{content}\n{}",
+                crate::grain_agent_reply::result_block(result)
+            ),
+            _ => content,
         };
         full.push((role.to_string(), content));
     }

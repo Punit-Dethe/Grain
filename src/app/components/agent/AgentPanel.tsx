@@ -31,6 +31,7 @@ import {
   type AgentMessage,
   type AgentConfirm,
   type AgentReply,
+  type AgentResult,
 } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
 import { StreamingReply } from "./StreamingReply";
@@ -54,7 +55,17 @@ interface ChatMessage {
   // A generated view the reply carries (OpenUI Lang): a card in the chat that
   // opens it full in the notch.
   ui?: string | null;
+  // Text the user asked to get back, changed (shown with Copy).
+  result?: AgentResult | null;
 }
+
+/** What Copy copies for a reply: its result text when it has one. */
+const copyTextOf = (m: ChatMessage) =>
+  m.result
+    ? m.result.subject
+      ? `${m.result.subject}\n\n${m.result.body}`
+      : m.result.body
+    : m.content;
 
 const VIEW_ICON: Record<ViewKind, typeof MapPin> = {
   weather: CloudSun,
@@ -127,7 +138,12 @@ const MODE_LABEL = {
 const HOVER_OPEN_MS = 650;
 
 const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
-  messages.map((m) => ({ role: m.role, content: m.content, ui: m.ui ?? null }));
+  messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+    ui: m.ui ?? null,
+    result: m.result ?? null,
+  }));
 
 const toChat = (messages: AgentHistoryMessage[]): ChatMessage[] =>
   messages.map((message, index) => ({
@@ -135,6 +151,7 @@ const toChat = (messages: AgentHistoryMessage[]): ChatMessage[] =>
     role: message.role === "assistant" ? "assistant" : "user",
     content: message.content,
     ui: message.ui ?? null,
+    result: message.result ?? null,
   }));
 
 /** Store what was said in a finished turn; a reply still awaiting approval
@@ -143,7 +160,12 @@ function remember(user: string | null, reply: AgentReply | null) {
   const turn: AgentMessage[] = [];
   if (user?.trim()) turn.push({ role: "user", content: user });
   if ((reply?.text.trim() || reply?.ui) && !reply.confirm_action)
-    turn.push({ role: "assistant", content: reply.text, ui: reply.ui });
+    turn.push({
+      role: "assistant",
+      content: reply.text,
+      ui: reply.ui,
+      result: reply.result,
+    });
   if (turn.length) void commands.agentHistoryAppend(turn).catch(console.error);
 }
 
@@ -412,6 +434,7 @@ export function AgentPanel() {
               content: reply.text,
               confirmAction: reply.confirm_action,
               ui: reply.ui,
+              result: reply.result,
             },
           ]);
         } else {
@@ -1113,6 +1136,7 @@ export function AgentPanel() {
             content: reply.text,
             confirmAction: reply.confirm_action,
             ui: reply.ui,
+            result: reply.result,
           });
         }
         base = seed;
@@ -1364,6 +1388,7 @@ export function AgentPanel() {
                 content: firstReply.text,
                 confirmAction: firstReply.confirm_action,
                 ui: firstReply.ui,
+                result: firstReply.result,
               },
             ]
           : []),
@@ -1663,6 +1688,17 @@ export function AgentPanel() {
                         </div>
                       )}
                       {m.ui && renderViewCard(m.ui)}
+                      {m.result && (
+                        // Interim (Phase 2): the result card replaces this.
+                        <div className="agc-c-result">
+                          {m.result.subject && (
+                            <div className="agc-c-result-subject">
+                              {m.result.subject}
+                            </div>
+                          )}
+                          {m.result.body}
+                        </div>
+                      )}
                       <div className="agc-c-tools">
                         {speakingId === m.id && (
                           <button
@@ -1678,7 +1714,7 @@ export function AgentPanel() {
                         <button
                           type="button"
                           className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                          onClick={() => copyOne(m.id, m.content)}
+                          onClick={() => copyOne(m.id, copyTextOf(m))}
                           aria-label={t("agent.copyReply")}
                           title={t("agent.copyReply")}
                         >
@@ -1724,6 +1760,17 @@ export function AgentPanel() {
                         </div>
                       )}
                       {m.ui && renderViewCard(m.ui)}
+                      {m.result && (
+                        // Interim (Phase 2): the result card replaces this.
+                        <div className="agc-c-result">
+                          {m.result.subject && (
+                            <div className="agc-c-result-subject">
+                              {m.result.subject}
+                            </div>
+                          )}
+                          {m.result.body}
+                        </div>
+                      )}
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
                       {m.content.trim() && (
                         <div className="agc-c-tools">
@@ -1741,7 +1788,7 @@ export function AgentPanel() {
                           <button
                             type="button"
                             className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                            onClick={() => copyOne(m.id, m.content)}
+                            onClick={() => copyOne(m.id, copyTextOf(m))}
                             aria-label={t("agent.copyReply")}
                             title={t("agent.copyReply")}
                           >

@@ -83,6 +83,7 @@ async fn run(app: &AppHandle, request: Request) -> Result<Value, String> {
                     role: "user".into(),
                     content: prompt,
                     ui: None,
+                    result: None,
                 }],
                 None,
                 None,

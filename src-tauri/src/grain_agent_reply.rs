@@ -3,6 +3,30 @@
 //! one `SAY:` line: a short spoken version written by the model in the same
 //! call. That line is read aloud in full; the rest is the reply shown in the
 //! chat. Short replies carry no line and are read as they are.
+//!
+//! A text transform ("turn this into an email", "more formal") comes back as
+//! a result: the new text in a `<result kind="…">…</result>` block, shown in
+//! its own card with a Copy button rather than read aloud.
+
+use serde::{Deserialize, Serialize};
+use specta::Type;
+
+/// [GRAIN] Text the user asked to get back, changed: shown in a result card.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct AgentResult {
+    /// One of [`RESULT_KINDS`]; picks the card's layout and refine chips.
+    pub kind: String,
+    /// The subject line of an email result.
+    #[serde(default)]
+    pub subject: Option<String>,
+    pub body: String,
+}
+
+pub(crate) const RESULT_KINDS: [&str; 6] =
+    ["email", "message", "rewrite", "list", "code", "translation"];
+
+/// Sent with every notch chat turn.
+pub(crate) const RESULT_RULE: &str = "RESULT TEXT: when the user asks you to change, rewrite, reformat or translate text and wants that text back (\"turn this into an email\", \"make it more formal\", \"fix the grammar\"), put only the new text in one block: <result kind=\"email|message|rewrite|list|code|translation\"> … </result>, with subject=\"…\" added for an email. No preamble or comment inside the block; a short line before it may say what you did. Summaries, answers and actions about the text are not results: reply normally. To refine an earlier result, write the whole new text in a new block.";
 
 /// Sent as a system message only while talk-back is on.
 pub(crate) const SAY_RULE: &str = "SPOKEN VERSION: your reply is read aloud. When it is long (more than about three sentences, or it has a list, table, code or a piece of writing), begin with one line `SAY: ` followed by one or two natural sentences that tell the user what you did or found, the way you would tell a friend; never read the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions briefly (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Then the full reply from the next line, unchanged. If the user asked to hear something read out, put all of it in the SAY line. Short replies need no SAY line.";
@@ -91,6 +115,124 @@ pub(crate) fn stream_say(text: &str) -> StreamSay<'_> {
             body: "",
         },
     }
+}
+
+const OPEN: &str = "<result";
+const CLOSE: &str = "</result>";
+
+/// The value of `name="…"` in a tag's attributes.
+fn attribute(attrs: &str, name: &str) -> Option<String> {
+    let lower = attrs.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(at) = lower[from..].find(name).map(|i| from + i) {
+        let before_ok = at == 0 || !lower.as_bytes()[at - 1].is_ascii_alphanumeric();
+        let rest = attrs[at + name.len()..].trim_start();
+        if let Some(rest) = rest.strip_prefix('=').filter(|_| before_ok) {
+            let rest = rest.trim_start();
+            let quote = rest.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+            let value = &rest[1..];
+            let end = value.find(quote)?;
+            return Some(value[..end].trim().to_owned());
+        }
+        from = at + name.len();
+    }
+    None
+}
+
+/// A body wrapped in one code fence loses the fence.
+fn unfence(body: &str) -> &str {
+    let body = body.trim();
+    let Some(inner) = body
+        .strip_prefix("```")
+        .and_then(|rest| rest.strip_suffix("```"))
+    else {
+        return body;
+    };
+    // The first line is the fence's language tag (possibly empty).
+    match inner.split_once('\n') {
+        Some((_, text)) => text.trim(),
+        None => body,
+    }
+}
+
+/// Split a reply into the text around its result block and the result
+/// (`None` when there is no block or it is empty). A missing closing tag
+/// takes the rest of the reply.
+pub(crate) fn split_result(reply: &str) -> (String, Option<AgentResult>) {
+    let lower = reply.to_ascii_lowercase();
+    let Some(open) = lower.find(OPEN) else {
+        return (reply.trim().to_owned(), None);
+    };
+    let Some(tag_end) = lower[open..].find('>').map(|i| open + i) else {
+        return (reply.trim().to_owned(), None);
+    };
+    let attrs = &reply[open + OPEN.len()..tag_end];
+    let body_start = tag_end + 1;
+    let (body_end, after) = match lower[body_start..].find(CLOSE) {
+        Some(i) => (body_start + i, body_start + i + CLOSE.len()),
+        None => (reply.len(), reply.len()),
+    };
+    let body = unfence(&reply[body_start..body_end]);
+    if body.is_empty() {
+        return (reply.trim().to_owned(), None);
+    }
+    let kind = attribute(attrs, "kind")
+        .map(|kind| kind.to_ascii_lowercase())
+        .filter(|kind| RESULT_KINDS.contains(&kind.as_str()))
+        .unwrap_or_else(|| "rewrite".into());
+    let subject =
+        attribute(attrs, "subject").filter(|subject| kind == "email" && !subject.is_empty());
+    let text = format!("{}\n{}", reply[..open].trim(), reply[after..].trim());
+    (
+        text.trim().to_owned(),
+        Some(AgentResult {
+            kind,
+            subject,
+            body: body.to_owned(),
+        }),
+    )
+}
+
+/// A streaming reply so far, outside its result block: the text before the
+/// block (the only part that may be spoken), and what to show (that text
+/// plus the result's body so far, without tags).
+pub(crate) fn stream_result(text: &str) -> (&str, String) {
+    let lower = text.to_ascii_lowercase();
+    let Some(open) = lower.find(OPEN) else {
+        // Hold back a tag still arriving ("<res").
+        let outside = match text.rfind('<') {
+            Some(at) if OPEN.starts_with(&lower[at..]) => &text[..at],
+            _ => text,
+        };
+        return (outside, outside.trim_end().to_owned());
+    };
+    let outside = &text[..open];
+    let body = lower[open..]
+        .find('>')
+        .map(|i| {
+            let body = &text[open + i + 1..];
+            let body = match body.to_ascii_lowercase().find(CLOSE) {
+                Some(end) => &body[..end],
+                None => body,
+            };
+            body.trim()
+        })
+        .unwrap_or("");
+    let shown = format!("{}\n\n{body}", outside.trim());
+    (outside, shown.trim().to_owned())
+}
+
+/// A result as the model wrote it, to send back with the next turn.
+pub(crate) fn result_block(result: &AgentResult) -> String {
+    let subject = result
+        .subject
+        .as_deref()
+        .map(|subject| format!(" subject=\"{}\"", subject.replace('"', "'")))
+        .unwrap_or_default();
+    format!(
+        "<result kind=\"{}\"{subject}>\n{}\n</result>",
+        result.kind, result.body
+    )
 }
 
 /// What is said for a host-gated approval: the action in short, never the
@@ -190,6 +332,92 @@ mod tests {
                 line: "I've written you a poem.".into(),
                 complete: true,
                 body: "Roses"
+            }
+        );
+    }
+
+    #[test]
+    fn a_transform_splits_into_text_and_result() {
+        let reply = "Here's your email.\n<result kind=\"email\" subject=\"Thursday follow-up\">\nHi Sam,\n\nThanks for the call.\n</result>";
+        assert_eq!(
+            split_result(reply),
+            (
+                "Here's your email.".into(),
+                Some(AgentResult {
+                    kind: "email".into(),
+                    subject: Some("Thursday follow-up".into()),
+                    body: "Hi Sam,\n\nThanks for the call.".into(),
+                })
+            )
+        );
+    }
+
+    #[test]
+    fn result_blocks_are_parsed_tolerantly() {
+        // Unknown kind, no closing tag, a fence inside, single quotes.
+        let (text, result) = split_result("<RESULT kind='poem'>```\nRoses\n```");
+        assert_eq!(text, "");
+        let result = result.unwrap();
+        assert_eq!(
+            (result.kind.as_str(), result.body.as_str()),
+            ("rewrite", "Roses")
+        );
+        // A subject only belongs to an email; code keeps its lines.
+        let (_, result) =
+            split_result("<result kind=\"code\" subject=\"x\">```rust\nfn main() {}\n```</result>");
+        let result = result.unwrap();
+        assert_eq!(result.subject, None);
+        assert_eq!(result.body, "fn main() {}");
+        // `subkind=` is not `kind=`.
+        let (_, result) = split_result("<result subkind=\"email\" kind=\"list\">- a</result>");
+        assert_eq!(result.unwrap().kind, "list");
+    }
+
+    #[test]
+    fn plain_and_empty_results_stay_plain() {
+        assert_eq!(
+            split_result("Just an answer."),
+            ("Just an answer.".into(), None)
+        );
+        assert_eq!(
+            split_result("<result kind=\"email\"> </result>"),
+            ("<result kind=\"email\"> </result>".into(), None)
+        );
+        // Mid-tag (no `>` yet) is not a result.
+        assert_eq!(
+            split_result("a <result kind"),
+            ("a <result kind".into(), None)
+        );
+    }
+
+    #[test]
+    fn streaming_never_speaks_or_shows_the_tags() {
+        assert_eq!(stream_result("Done.\n<res"), ("Done.\n", "Done.".into()));
+        assert_eq!(
+            stream_result("Done.\n<result kind=\"email\">\nHi Sam,"),
+            ("Done.\n", "Done.\n\nHi Sam,".into())
+        );
+        assert_eq!(
+            stream_result("<result kind=\"rewrite\">Better text</result>"),
+            ("", "Better text".into())
+        );
+        // "<" that is not a tag stays.
+        assert_eq!(stream_result("a < b"), ("a < b", "a < b".into()));
+    }
+
+    #[test]
+    fn a_result_round_trips_as_its_block() {
+        let result = AgentResult {
+            kind: "email".into(),
+            subject: Some("Hello \"there\"".into()),
+            body: "Hi.".into(),
+        };
+        let block = result_block(&result);
+        assert_eq!(
+            split_result(&block).1.unwrap(),
+            AgentResult {
+                subject: Some("Hello 'there'".into()),
+                ..result
             }
         );
     }
