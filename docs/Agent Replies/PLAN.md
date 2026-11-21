@@ -2,9 +2,11 @@
 
 Branch: `feat/agent-reply-voice-and-result-card` (from `main`, 2026-11-21).
 
-**Status:** Phases 1 and 2 built, not yet tried in the real app. Phases 3–4 not started.
+**Status:** Phases 1–3 built, not yet tried in the real app (Phase 3 awaits the user's visual approval). Phase 4 not started.
 
-Phase 2 as built: `AgentResult { kind, subject, body }` and `RESULT_RULE` (sent every notch turn) in `grain_agent_reply.rs`, with `split_result`, `stream_result` (result text shown while streaming, never spoken) and `result_block` (latest result sent back for refines). `AgentReply`, `AgentMessage` and `AgentHistoryMessage` carry `result`; a result opens the notch; no result + view together; text is the SAY line or "Done.". The panel shows the result as an interim plain block (`.agc-c-result`), and Copy copies the result text. Phase 3 replaces that block with the card.
+Phase 2 as built: `AgentResult { kind, subject, body }` and `RESULT_RULE` (sent every notch turn) in `grain_agent_reply.rs`, with `split_result`, `stream_result` (result text shown while streaming, never spoken) and `result_block` (latest result sent back for refines). `AgentReply`, `AgentMessage` and `AgentHistoryMessage` carry `result`; a result opens the notch; no result + view together; text is the SAY line or "Done.".
+
+Phase 3 as built: `ResultCard.tsx` opens over the chat like a view (`shownResult` / `presentResultRef` in `AgentPanel.tsx`; opening a view or going back closes it). Widths 440 short / 560 document / 600 code, height fits 170–560, body scrolls past that. Kind label, email subject with its own copy, chips per kind (sent as follow-ups; the card stays open and updates), Copy focused on open (Enter copies), check for 420 ms, then the notch closes. In the chat, a result shows as a card (like a view card) that reopens it. Escape and "‹ Chat" go back to the chat. Styles: `.agent-notch-result-pane` / `.ars-*` in `agent.css`.
 
 Phase 1 as built: `grain_agent_reply.rs` (`SAY_RULE`, `split_say`, `stream_say`, `confirm_line`); `grain_tts::reply_speech` + `fit_sentences` (fallback 500 chars, whole sentences only; the feed reads all of a SAY line); `agent.rs` sends `SAY_RULE` only with talk-back on, speaks the SAY line or the approval line, keeps the SAY line out of the chat and the stream, keeps it in front through approval continuations, and strips it from first-step lines.
 

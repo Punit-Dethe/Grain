@@ -228,6 +228,7 @@ html[data-window="agent-panel"] body {
 .agent-notch.is-closing .agent-notch-reply,
 .agent-notch.is-closing .agent-notch-recall,
 .agent-notch.is-closing .agent-notch-canvas-pane,
+.agent-notch.is-closing .agent-notch-result-pane,
 .agent-notch.is-closing .agent-notch-reminder {
   opacity: 0;
   animation: none;
@@ -1013,22 +1014,217 @@ html[data-window="agent-panel"] body {
   box-shadow: inset 0 1px 0 #ffffff08;
 }
 
-/* Interim result text (Phase 2); the result card replaces it. */
-.agc-c-result {
-  max-width: 94%;
-  box-sizing: border-box;
-  padding: 10px 13px;
-  border: 1px solid #ffffff14;
-  border-radius: 12px;
-  background: #15151bdd;
-  white-space: pre-wrap;
+/* ── Result card (docs/Agent Replies/PLAN.md) ───────────────────────────────
+   Changed text the user asked to get back, opened full like a view. Laid out
+   at a fixed width per layout (ResultCard.tsx WIDTH) so its height never
+   depends on the shell; unlike a view, the body scrolls past the max. */
+.agent-notch-result-pane {
+  position: absolute;
+  top: var(--notch-reply-header);
+  left: 50%;
+  width: calc(min(var(--fit-w), 100vw) - 2px);
+  height: max(
+    0px,
+    calc(min(var(--fit-h), 100vh) - var(--notch-reply-header) - 1px)
+  );
+  transform: translateX(-50%);
+  visibility: hidden;
+  opacity: 0;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s linear 340ms;
+}
+
+.is-reply .agent-notch-result-pane {
+  visibility: visible;
+  opacity: 1;
+  transition:
+    opacity 260ms ease 80ms,
+    visibility 0s;
+}
+
+.agent-notch-result {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.ars-head {
+  flex: 0 0 auto;
+  padding: 2px 18px 4px;
+}
+
+.ars-kind {
+  color: var(--agc-faint);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ars-subject {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--notch-line);
+}
+
+.ars-subject-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--agc-ink);
+  font-size: 13.5px;
+  font-weight: 600;
   overflow-wrap: anywhere;
   user-select: text;
 }
 
-.agc-c-result-subject {
-  margin-bottom: 8px;
+.ars-subject-copy {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--agc-faint);
+  cursor: pointer;
+}
+
+.ars-subject-copy:hover,
+.ars-subject-copy:focus-visible {
+  outline: none;
+  background: var(--agc-raise);
+  color: var(--agc-ink);
+}
+
+.ars-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff26 transparent;
+}
+
+.ars-text {
+  box-sizing: border-box;
+  padding: 8px 18px 14px;
+  color: var(--agc-ink);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  transition: opacity 200ms ease;
+}
+
+.ars-text.is-code {
+  overflow-x: auto;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.ars-text.is-stale {
+  opacity: 0.45;
+}
+
+.ars-foot {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 12px 14px;
+  border-top: 1px solid var(--notch-line);
+}
+
+.ars-chips {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ars-chip {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--agc-raise);
+  box-shadow: inset 0 0 0 1px #ffffff12;
+  color: var(--agc-muted);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.ars-chip:hover:not(:disabled),
+.ars-chip:focus-visible {
+  outline: none;
+  background: #ffffff16;
+  color: var(--agc-ink);
+}
+
+.ars-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ars-copy {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--agc-fill);
+  color: #0a0a0e;
+  font: inherit;
+  font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 120ms ease,
+    filter 140ms ease,
+    background 200ms ease;
+}
+
+.ars-copy:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.ars-copy:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.ars-copy:focus-visible {
+  outline: 2px solid #ffffff59;
+  outline-offset: 2px;
+}
+
+.ars-copy:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ars-copy.is-done {
+  background: #e3f4e8;
+  color: #1d6b37;
 }
 
 .agc-c-tools {
@@ -1306,6 +1502,10 @@ html[data-window="agent-panel"] body {
   .agent-notch-header > *,
   .agent-notch-recall,
   .agent-notch-canvas-pane,
+  .agent-notch-result-pane,
+  .ars-text,
+  .ars-chip,
+  .ars-copy,
   .agent-notch-mode,
   .agr-menu,
   .agr-menu-trigger > svg,

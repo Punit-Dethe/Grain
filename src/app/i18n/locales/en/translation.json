@@ -32,6 +32,28 @@
       "hero": "Answer",
       "view": "View"
     },
+    "resultKind": {
+      "email": "Email",
+      "message": "Message",
+      "rewrite": "Rewrite",
+      "list": "List",
+      "code": "Code",
+      "translation": "Translation"
+    },
+    "resultChip": {
+      "moreFormal": "More formal",
+      "shorter": "Shorter",
+      "friendlier": "Friendlier",
+      "simpler": "Simpler",
+      "moreDetail": "More detail",
+      "addComments": "Add comments",
+      "simplify": "Simplify",
+      "moreNatural": "More natural"
+    },
+    "resultCopy": "Copy",
+    "resultCopied": "Copied",
+    "resultCopySubject": "Copy subject",
+    "resultOpen": "Open result",
     "modeSwitchHint": "Press Tab to switch",
     "newChat": "New chat",
     "history": "History",

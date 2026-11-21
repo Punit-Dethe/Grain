@@ -6,9 +6,15 @@ import {
   ChevronLeft,
   ChevronRight,
   CloudSun,
+  Code,
   Gauge,
+  Languages,
   LayoutGrid,
+  List,
+  Mail,
   MapPin,
+  MessageSquare,
+  PenLine,
   Mic,
   Plane,
   Copy,
@@ -36,6 +42,7 @@ import {
 import { AgentMarkdown } from "../markdown/Markdown";
 import { StreamingReply } from "./StreamingReply";
 import { AgentCanvas, CANVAS_MIN } from "./canvas/AgentCanvas";
+import { ResultCard, resultStartSize } from "./ResultCard";
 import { canvasSpec } from "./canvas/library";
 import { viewSummary, type ViewKind } from "./canvas/program";
 import { AgentHistory } from "./AgentHistory";
@@ -59,13 +66,18 @@ interface ChatMessage {
   result?: AgentResult | null;
 }
 
-/** What Copy copies for a reply: its result text when it has one. */
-const copyTextOf = (m: ChatMessage) =>
-  m.result
-    ? m.result.subject
-      ? `${m.result.subject}\n\n${m.result.body}`
-      : m.result.body
-    : m.content;
+/** What Copy copies for a reply: its result text when it has one (an
+ * email's subject has its own copy button in the card). */
+const copyTextOf = (m: ChatMessage) => m.result?.body ?? m.content;
+
+const RESULT_ICON: Record<string, typeof MapPin> = {
+  email: Mail,
+  message: MessageSquare,
+  rewrite: PenLine,
+  list: List,
+  code: Code,
+  translation: Languages,
+};
 
 const VIEW_ICON: Record<ViewKind, typeof MapPin> = {
   weather: CloudSun,
@@ -236,6 +248,21 @@ export function AgentPanel() {
     () => {},
   );
   const [canvasSize, setCanvasSize] = useState(CANVAS_MIN);
+  // The result card open over the chat (changed text with Copy), like a
+  // view: a reply's result opens on its own, its card in the chat reopens it.
+  const [shownResult, setShownResult] = useState<AgentResult | null>(null);
+  const shownResultRef = useRef<AgentResult | null>(null);
+  shownResultRef.current = shownResult;
+  const presentResultRef = useRef<(result: AgentResult) => void>(() => {});
+  const [resultSize, setResultSize] = useState({ w: 560, h: 170 });
+  /** Open what a reply carries: its result card, its view, or the chat. */
+  const presentReply = useCallback(
+    (reply: AgentReply) =>
+      reply.result
+        ? presentResultRef.current(reply.result)
+        : presentUiRef.current(reply.ui),
+    [],
+  );
   // The chat's size: the user's last drag, kept by the host. While a drag
   // runs the window is unclipped and the shell follows the pointer.
   const [chatSize, setChatSize] = useState(CHAT_SIZE);
@@ -383,7 +410,7 @@ export function AgentPanel() {
           setFirstReply(res.data);
           // Its view opens with it (before the reveal, so the shell grows
           // straight to the view's size).
-          presentUiRef.current(res.data.ui);
+          presentReply(res.data);
           if (!record) remember(null, res.data);
         } else {
           setError(runError(res.error));
@@ -394,7 +421,7 @@ export function AgentPanel() {
         setBusy(false);
       }
     },
-    [runError],
+    [runError, presentReply],
   );
 
   /** Run the conversation with its existing turns. */
@@ -417,8 +444,8 @@ export function AgentPanel() {
         );
         if (res.status === "ok") {
           const reply = res.data;
-          // A view opens; a reply without one shows in the chat.
-          presentUiRef.current(reply.ui);
+          // A result or a view opens; a reply without one shows in the chat.
+          presentReply(reply);
           setMessages((prev) => [
             // Any new turn after a pending action either resolved or cancelled
             // that host token. Keep historical text, but never leave a stale
@@ -448,7 +475,7 @@ export function AgentPanel() {
         setBusy(false);
       }
     },
-    [runError],
+    [runError, presentReply],
   );
 
   const retry = useCallback(() => {
@@ -756,7 +783,7 @@ export function AgentPanel() {
       else if (
         view === "main" &&
         modeRef.current === "chat" &&
-        shownUiRef.current
+        (shownUiRef.current || shownResultRef.current)
       )
         presentUiRef.current(null);
       else if (view === "reminder" && ringing[0])
@@ -777,16 +804,24 @@ export function AgentPanel() {
   // A generated view open over the chat.
   const uiShown =
     mode === "chat" && view === "main" && !reminderShown && !!shownUi;
-  // The shell every view settles to: Recall, a reminder and a generated view
-  // fit their content; the chat and the chat list keep a fixed size. The
-  // window is larger than all but a view's max, so it is clipped to the shell.
+  // A result card open over the chat (never together with a view).
+  const resultShown =
+    mode === "chat" && view === "main" && !reminderShown && !!shownResult;
+  // Either one hides the chat behind it.
+  const overChat = uiShown || resultShown;
+  // The shell every view settles to: Recall, a reminder, a generated view and
+  // a result card fit their content; the chat and the chat list keep a fixed
+  // size. The window is larger than all but a view's max, so it is clipped to
+  // the shell.
   const shell = reminderShown
     ? { w: REMINDER_WIDTH, h: reminderHeight }
     : view === "main" && mode === "recall"
       ? { w: RECALL_WIDTH, h: recallHeight }
       : uiShown
         ? canvasSize
-        : chatSize;
+        : resultShown
+          ? resultSize
+          : chatSize;
   // The chat (or the chat list) is what the user may resize.
   const chatSized = shell === chatSize;
   const shellW = shell.w;
@@ -909,30 +944,60 @@ export function AgentPanel() {
       .finally(() => requestAnimationFrame(change));
   }, []);
 
-  /** Focus the chat's composer, or the open view's. */
+  /** Focus the chat's composer, or the open view's. An open result card
+   * focuses its own Copy button. */
   const focusChat = useCallback(
     () =>
-      requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (shownResultRef.current) return;
         (shownUiRef.current
           ? canvasComposerRef.current
           : composerRef.current
-        )?.focus(),
-      ),
+        )?.focus();
+      }),
     [],
   );
 
+  // Opening a view (or going back to the chat, `null`) closes a result card.
   presentUiRef.current = (ui) => {
     const next = ui ?? null;
-    if (next === shownUiRef.current) return;
+    if (next === shownUiRef.current && !shownResultRef.current) return;
     shownUiRef.current = next;
+    shownResultRef.current = null;
     const change = () => {
       setShownUi(next);
+      setShownResult(null);
       if (revealedRef.current) focusChat();
     };
     // Before the reveal nothing is clipped yet: the shell grows to the view.
     if (revealedRef.current) unclipThen(change);
     else change();
   };
+
+  presentResultRef.current = (result) => {
+    if (result === shownResultRef.current) return;
+    const opening = !shownResultRef.current;
+    shownResultRef.current = result;
+    shownUiRef.current = null;
+    const change = () => {
+      // A newly opened card starts at its layout's size until it measures.
+      if (opening) setResultSize(resultStartSize(result));
+      setShownUi(null);
+      setShownResult(result);
+    };
+    if (revealedRef.current) unclipThen(change);
+    else change();
+  };
+
+  /** Copy a result's text; Copy in the card then closes the notch. */
+  const copyResult = useCallback(
+    (text: string) =>
+      commands
+        .agentCopy(text)
+        .then((res) => res.status === "ok")
+        .catch(() => false),
+    [],
+  );
 
   const switchMode = (next: AgentNotchMode) =>
     unclipThen(() => {
@@ -1167,7 +1232,8 @@ export function AgentPanel() {
   const startVoice = useCallback(async () => {
     if (voiceRef.current !== "off" || busyRef.current) return;
     // A generated view is open: dictate into the chat behind it.
-    if (shownUiRef.current) presentUiRef.current(null);
+    if (shownUiRef.current || shownResultRef.current)
+      presentUiRef.current(null);
     voiceRef.current = "listening";
     setVoice("listening");
     setError(null);
@@ -1411,8 +1477,9 @@ export function AgentPanel() {
   // An open view is mounted only while it shows (the renderer goes with it).
   // A summon's view is mounted before the reveal, as the chat's reply is.
   const uiMounted = uiShown && (revealed || !busy);
+  const resultMounted = resultShown && (revealed || !busy);
   // Recall, a reminder and a view settle into a shell fitted to their content.
-  const fitted = recall || reminding || (revealed && uiShown);
+  const fitted = recall || reminding || (revealed && overChat);
   const canClear = !busy && (history.length > 0 || thread.length > 0);
 
   /** A reply's view, as a card that opens it full. */
@@ -1434,6 +1501,35 @@ export function AgentPanel() {
           </span>
           <span className="agc-ui-card-kind">
             {t(`agent.viewKind.${kind}`)}
+          </span>
+        </span>
+        <ChevronRight className="agc-ui-card-go" size={16} aria-hidden />
+      </button>
+    );
+  };
+
+  /** A reply's result, as a card that reopens it with Copy. */
+  const renderResultCard = (result: AgentResult) => {
+    const Icon = RESULT_ICON[result.kind] ?? PenLine;
+    const title =
+      result.subject || result.body.split("\n").find((line) => line.trim());
+    return (
+      <button
+        type="button"
+        className="agc-ui-card"
+        onClick={() => presentResultRef.current(result)}
+      >
+        <span className="agc-ui-card-icon" aria-hidden>
+          <Icon size={17} strokeWidth={1.8} />
+        </span>
+        <span className="agc-ui-card-text">
+          <span className="agc-ui-card-title">
+            {title?.trim() || t("agent.resultOpen")}
+          </span>
+          <span className="agc-ui-card-kind">
+            {t(`agent.resultKind.${result.kind}`, {
+              defaultValue: t("agent.resultKind.rewrite"),
+            })}
           </span>
         </span>
         <ChevronRight className="agc-ui-card-go" size={16} aria-hidden />
@@ -1523,7 +1619,7 @@ export function AgentPanel() {
                   <ChevronLeft size={14} strokeWidth={2.2} />
                   <span>{t(MODE_LABEL[mode])}</span>
                 </button>
-              ) : uiShown && revealed ? (
+              ) : overChat && revealed ? (
                 // Back from the open view to the chat it belongs to.
                 <button
                   type="button"
@@ -1565,7 +1661,7 @@ export function AgentPanel() {
             </span>
           )}
           {revealed &&
-            ((mode === "chat" && !reminding && !uiShown) || listing) && (
+            ((mode === "chat" && !reminding && !overChat) || listing) && (
               <button
                 type="button"
                 className="agent-notch-control agent-notch-history"
@@ -1578,7 +1674,7 @@ export function AgentPanel() {
               </button>
             )}
           {revealed &&
-            ((mode === "chat" && !reminding && !uiShown) || listing) && (
+            ((mode === "chat" && !reminding && !overChat) || listing) && (
               <button
                 type="button"
                 className="agent-notch-control agent-notch-close"
@@ -1662,14 +1758,27 @@ export function AgentPanel() {
           </div>
         )}
 
+        {resultMounted && shownResult && (
+          <div className="agent-notch-result-pane" aria-hidden={!revealed}>
+            <ResultCard
+              result={shownResult}
+              busy={busy}
+              onCopy={copyResult}
+              onDone={dismiss}
+              onAsk={(request) => void runFollowup(request)}
+              onSize={setResultSize}
+            />
+          </div>
+        )}
+
         {/* Stays mounted (hidden) under Recall, the chat list and an open
             view, so a draft and the scroll position survive switching. */}
         {(revealed ||
           (mode === "chat" && !busy && (!!firstReply || !!error))) && (
           <div
-            className={`agent-notch-reply${view !== "main" || mode !== "chat" || uiShown ? " is-away" : ""}`}
+            className={`agent-notch-reply${view !== "main" || mode !== "chat" || overChat ? " is-away" : ""}`}
             aria-hidden={
-              !revealed || view !== "main" || mode !== "chat" || uiShown
+              !revealed || view !== "main" || mode !== "chat" || overChat
             }
           >
             <div className="agc-c-scroll">
@@ -1688,17 +1797,7 @@ export function AgentPanel() {
                         </div>
                       )}
                       {m.ui && renderViewCard(m.ui)}
-                      {m.result && (
-                        // Interim (Phase 2): the result card replaces this.
-                        <div className="agc-c-result">
-                          {m.result.subject && (
-                            <div className="agc-c-result-subject">
-                              {m.result.subject}
-                            </div>
-                          )}
-                          {m.result.body}
-                        </div>
-                      )}
+                      {m.result && renderResultCard(m.result)}
                       <div className="agc-c-tools">
                         {speakingId === m.id && (
                           <button
@@ -1760,17 +1859,7 @@ export function AgentPanel() {
                         </div>
                       )}
                       {m.ui && renderViewCard(m.ui)}
-                      {m.result && (
-                        // Interim (Phase 2): the result card replaces this.
-                        <div className="agc-c-result">
-                          {m.result.subject && (
-                            <div className="agc-c-result-subject">
-                              {m.result.subject}
-                            </div>
-                          )}
-                          {m.result.body}
-                        </div>
-                      )}
+                      {m.result && renderResultCard(m.result)}
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
                       {m.content.trim() && (
                         <div className="agc-c-tools">
