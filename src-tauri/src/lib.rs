@@ -62,6 +62,7 @@ mod grain_tool_schema; // [GRAIN] tool schemas a provider will accept (wire copy
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
+mod grain_recall_mcp; // [GRAIN] Recall MCP: AI app access switch + one-click connect
 mod grain_agent_canvas; // [GRAIN] generated views in the Agent chat (experiment)
 mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
 mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the host
@@ -1585,6 +1586,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::ai::meet_ai_available,    // [GRAIN]
             grain_meet::ai::meet_summary,         // [GRAIN]
             grain_meet::ai::meet_generate_summary, // [GRAIN]
+            grain_recall_mcp::recall_mcp_status,      // [GRAIN]
+            grain_recall_mcp::recall_mcp_set_enabled, // [GRAIN]
+            grain_recall_mcp::recall_mcp_connect,     // [GRAIN]
+            grain_recall_mcp::recall_mcp_disconnect,  // [GRAIN]
         ])
         .events(collect_events![
             grain_update::UpdateAvailable,

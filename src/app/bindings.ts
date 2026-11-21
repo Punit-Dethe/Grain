@@ -2206,6 +2206,53 @@ async meetGenerateSummary(sessionId: string) : Promise<Result<MeetSummaryDoc, st
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * The switch, the bundled server and each AI app's connection.
+ */
+async recallMcpStatus() : Promise<Result<RecallMcpStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recall_mcp_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Turn AI app access on or off. Off also removes Grain from every AI app it
+ * was added to. The returned status is current even when that partly failed;
+ * the error then names what is left to remove.
+ */
+async recallMcpSetEnabled(enabled: boolean) : Promise<Result<RecallMcpStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recall_mcp_set_enabled", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Add Grain Recall to one AI app's MCP config. The app must be restarted
+ * (or reload its MCP servers) to see it.
+ */
+async recallMcpConnect(client: McpClient) : Promise<Result<RecallMcpStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recall_mcp_connect", { client }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove Grain Recall from one AI app's MCP config.
+ */
+async recallMcpDisconnect(client: McpClient) : Promise<Result<RecallMcpStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("recall_mcp_disconnect", { client }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -2824,6 +2871,25 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+export type McpClient = "claude_desktop" | "claude_code" | "gemini_cli" | "codex" | "cursor"
+export type McpClientState = 
+/**
+ * The app does not seem to be installed for this user.
+ */
+"not_installed" | "not_connected" | "connected" | 
+/**
+ * Our entry exists but points at an old server path or data folder.
+ */
+"needs_update" | 
+/**
+ * The app's config file exists but could not be parsed; Grain leaves it alone.
+ */
+"unreadable"
+export type McpClientStatus = { client: McpClient; name: string; state: McpClientState; 
+/**
+ * The config file Grain edits, or `None` when a CLI does it.
+ */
+config_path: string | null }
 export type McpDiscoveryResult = { provider_id: string; provider_name: string; tool_count: number; tools: string[]; tool_set_digest: string }
 export type McpProviderStatus = { id: string; name: string; description: string; endpoint: string; setup_url: string; requires_client_credentials: boolean; client_id_configured: boolean; connected: boolean; enabled: boolean; 
 /**
@@ -3016,6 +3082,19 @@ enabled?: boolean }
  */
 export type PpPoolView = { fallback_enabled: boolean; providers: PostProcessProvider[]; selected_provider_id: string; configured_provider_ids: string[]; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
 export type ProcessingStatus = { session_id: string; stage: Stage }
+export type RecallMcpStatus = { enabled: boolean; 
+/**
+ * The bundled server; `None` when it is missing from this install.
+ */
+server_path: string | null; clients: McpClientStatus[]; 
+/**
+ * Config for any other MCP app, as JSON.
+ */
+setup_json: string; 
+/**
+ * The Claude Code command, for when its CLI is not on PATH.
+ */
+claude_code_command: string }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.

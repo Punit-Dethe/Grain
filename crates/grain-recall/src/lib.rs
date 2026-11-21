@@ -14,3 +14,8 @@ pub mod manifest;
 pub mod summary;
 pub mod text;
 pub mod transcript;
+
+/// Present in the meetings folder while the user lets AI apps read Recall
+/// (Grain's "Use your meetings in AI apps" switch). The app creates and
+/// deletes it; the MCP sidecar refuses every request while it is absent.
+pub const GATE_FILE: &str = ".mcp-enabled";

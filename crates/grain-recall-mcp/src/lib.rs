@@ -16,7 +16,7 @@ mod fixture;
 use std::path::{Path, PathBuf};
 
 /// Present while the user allows AI apps to read Recall. Grain owns it.
-pub const GATE_FILE: &str = ".mcp-enabled";
+pub use grain_recall::GATE_FILE;
 
 /// Where one Grain install keeps its meetings.
 #[derive(Debug, Clone)]
