@@ -6775,6 +6775,31 @@ html[data-theme="light"] .meet-info-card {
   margin-block-start: 28px;
 }
 
+.meet-settings-group {
+  margin-block-start: 28px;
+}
+
+.meet-settings-note {
+  margin: 10px 4px 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Errors can carry a command to run (Claude Code without its CLI). */
+.meet-settings-error {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.meet-mcp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 /* --- Player dock: pinned to the bottom edge across the whole panel, fading
    from the page colour into the transcript above it. */
 

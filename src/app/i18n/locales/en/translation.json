@@ -1212,7 +1212,30 @@
         "autoSummaryDescription": "Write a summary of every meeting as soon as it is transcribed, using your AI provider.",
         "autoTitle": "Auto title",
         "autoTitleDescription": "Name new meetings from what was said. Only replaces the default title, never one you chose.",
-        "aiMissing": "No AI provider is set up yet, so these have nothing to run on."
+        "aiMissing": "No AI provider is set up yet, so these have nothing to run on.",
+        "mcp": {
+          "title": "AI apps",
+          "info": "Connects Recall to apps like Claude through MCP. Grain runs nothing in the background for this: an app starts Recall's reader only while it uses it.",
+          "enable": "Use your meetings in AI apps",
+          "enableDescription": "Lets apps you connect below search and read your meeting transcripts and summaries. What they read is sent to that app's AI provider. Turning this off disconnects them all.",
+          "other": "Other apps",
+          "otherDescription": "Paste this into any app that supports MCP servers.",
+          "copySetup": "Copy setup",
+          "copied": "Copied",
+          "connect": "Connect",
+          "disconnect": "Disconnect",
+          "update": "Update",
+          "working": "Working…",
+          "restartNote": "Restart an app after connecting it so it picks up Recall.",
+          "missingServer": "Recall's MCP reader is missing from this Grain install, so apps can't be connected. Reinstall Grain to restore it.",
+          "state": {
+            "not_installed": "Not found on this computer",
+            "not_connected": "Not connected",
+            "connected": "Connected",
+            "needs_update": "Set up for an older Grain location",
+            "unreadable": "Its settings file has comments or errors, so Grain won't edit it. Use Copy setup instead."
+          }
+        }
       },
       "list": {
         "heading": "Recordings",

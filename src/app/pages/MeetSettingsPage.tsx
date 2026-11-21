@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { SettingsGroup } from "../components/ui/SettingsGroup";
 import { ToggleSwitch } from "../components/ui/ToggleSwitch";
 import { useSettings } from "../hooks/useSettings";
+import { RecallMcpSettings } from "../meet/RecallMcpSettings";
 import { useMeetAiAvailable } from "../meet/useMeetController";
 import { hashForRoute } from "../navigation";
 
@@ -77,6 +78,7 @@ export function MeetSettingsPage() {
               onChange={(value) => updateSetting("meet_auto_title", value)}
             />
           </SettingsGroup>
+          <RecallMcpSettings />
         </div>
       </div>
     </section>
