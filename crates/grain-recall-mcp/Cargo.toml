@@ -1,0 +1,27 @@
+[package]
+name = "grain-recall-mcp"
+version = "0.1.0"
+description = "Read-only MCP server over stdio that lets AI apps read Grain Recall meetings"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "grain-recall-mcp"
+path = "src/main.rs"
+
+[dependencies]
+grain-recall = { path = "../grain-recall" }
+# Same pin as the app's MCP client; server side only, no macros.
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-io"] }
+tokio = { version = "1.43.0", features = ["rt", "io-std", "time"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }
