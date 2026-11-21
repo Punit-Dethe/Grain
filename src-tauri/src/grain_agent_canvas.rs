@@ -9,11 +9,11 @@ pub(crate) const MAX_SPEC_BYTES: usize = 96 * 1024;
 
 /// How the model answers when the chat can show a view. `spec` (the
 /// component reference) follows it, then [`UI_FORMAT_RULE`].
-pub(crate) const UI_RULE: &str = "GENERATIVE UI: a reply in this chat can carry an interactive view, drawn in a small panel at the top of the screen. Prefer a view in most replies: whenever the answer has something worth seeing (weather, places, travel, prices, numbers, comparisons, lists, steps, options). Skip it only for pure conversation, a short fact one sentence fully covers, changed text the user wants back (that goes in a result block, never a view), or a question back to the user. Use tools first whenever the answer needs live or external data, then build the view from their results; never invent live data. The view never scrolls: it must fit the space and the limits given in the component reference; show the top items and offer a follow-up button for the rest instead of going long. Earlier assistant turns may include the view you showed; a follow-up may refine or replace it.";
+pub(crate) const UI_RULE: &str = "GENERATIVE UI: a reply in this chat can carry an interactive view, drawn in a small panel at the top of the screen. Prefer a view in most replies: whenever the answer has something worth seeing (weather, places, travel, prices, numbers, comparisons, lists, steps, options). Skip it only for pure conversation, a short fact one sentence fully covers, changed text the user wants back (that goes in a result block, never a view), or a question back to the user. ONE FORM PER REPLY: if most of the answer fits in a view, show the view with only a short explanation; if it needs a long written explanation a view cannot carry, write that text and show no view. Never both. Use tools first whenever the answer needs live or external data, then build the view from their results; never invent live data. The view never scrolls: it must fit the space and the limits given in the component reference; show the top items and offer a follow-up button for the rest instead of going long. Earlier assistant turns may include the view you showed; a follow-up may refine or replace it.";
 
 /// Last in the prompt, so it wins over the component reference's own
 /// "start with root" rule.
-pub(crate) const UI_FORMAT_RULE: &str = "REPLY FORMAT WITH A VIEW: first your chat reply, which is shown in the chat and read aloud: one or two short, warm, conversational sentences that give the answer straight away, like a friend telling you (\"It's 14 degrees with light rain until 3, then it clears up nicely.\"). Never describe the view or say you opened, showed or made something; no lists, URLs, symbols or markdown in it. Then, on a new line, the OpenUI Lang program starting with `root = Canvas(`: no code fences and nothing after it. WITHOUT A VIEW: reply normally and write no program.";
+pub(crate) const UI_FORMAT_RULE: &str = "REPLY FORMAT WITH A VIEW: first your chat reply, which is shown in the chat and read aloud: one or two short, warm, conversational sentences that give the answer straight away, like a friend telling you (\"It's 14 degrees with light rain until 3, then it clears up nicely.\"). Never describe the view or say you opened, showed or made something; no lists, URLs, symbols or markdown in it. Then, on a new line, the OpenUI Lang program starting with `root = Canvas(`: no code fences and nothing after it; no SAY line and no longer text anywhere. WITHOUT A VIEW: reply normally and write no program.";
 
 /// With Polished UI on (`Settings::agent_polished_ui`): design every view
 /// instead of dumping the answer into the plainest blocks.
@@ -107,6 +107,13 @@ mod tests {
         let plain = ui_prompt("SPEC", false);
         assert!(!plain.contains("POLISHED UI"));
         assert!(plain.contains("SPEC") && plain.ends_with(UI_FORMAT_RULE));
+    }
+
+    #[test]
+    fn a_reply_is_a_view_or_a_long_text_never_both() {
+        // The model picks one form; a view carries no SAY line or long text.
+        assert!(UI_RULE.contains("ONE FORM PER REPLY") && UI_RULE.contains("Never both"));
+        assert!(UI_FORMAT_RULE.contains("no SAY line"));
     }
 
     #[test]

@@ -127,7 +127,17 @@ fn unlink(line: &str) -> String {
 }
 
 /// Sent as a system message only while talk-back is on.
-pub(crate) const SAY_RULE: &str = "SPOKEN VERSION: your reply is read aloud. When it is long (more than about three sentences, or it has a list, table, code or a piece of writing), begin with one line `SAY: ` followed by one or two natural sentences that tell the user what you did or found, the way you would tell a friend; never read the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions briefly (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Then the full reply from the next line, unchanged. If the user asked to hear something read out, put all of it in the SAY line. Short replies need no SAY line.";
+const SAY_RULE: &str = "SPOKEN VERSION: your reply is read aloud. When it is long (more than about three sentences, or it has a list, table, code or a piece of writing), begin with one line `SAY: ` followed by one or two natural sentences that tell the user what you did or found, the way you would tell a friend; never read the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions briefly (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Then the full reply from the next line, unchanged. If the user asked to hear something read out, put all of it in the SAY line. Short replies need no SAY line.";
+
+/// The spoken-version rule, sent only while talk-back is on. With views
+/// possible, a view reply speaks its own short explanation instead.
+pub(crate) fn say_rule(views: bool) -> String {
+    if views {
+        format!("{SAY_RULE} This applies only to a reply without a view: a reply with a view has no SAY line, its short explanation is what is read aloud.")
+    } else {
+        SAY_RULE.to_owned()
+    }
+}
 
 const TAG: &str = "SAY:";
 
@@ -605,6 +615,14 @@ mod tests {
         };
         settle_format(&mut code, false);
         assert_eq!(code.body, "let x = **y;");
+    }
+
+    #[test]
+    fn a_view_reply_speaks_its_own_explanation() {
+        assert_eq!(say_rule(false), SAY_RULE);
+        let with_views = say_rule(true);
+        assert!(with_views.starts_with(SAY_RULE));
+        assert!(with_views.contains("a reply with a view has no SAY line"));
     }
 
     #[test]

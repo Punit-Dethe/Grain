@@ -3444,13 +3444,14 @@ async fn agent_run_owned(
     if let Some(prompt) = ui_prompt {
         full.insert(1, ("system".to_string(), prompt.to_owned()));
     }
-    // [GRAIN] Read aloud: a long reply leads with its short spoken version.
+    // [GRAIN] Read aloud: a long text reply leads with its short spoken
+    // version; a view reply speaks its own short explanation.
     if crate::settings::get_settings(app).agent_talk_back {
         full.insert(
             1,
             (
                 "system".to_string(),
-                crate::grain_agent_reply::SAY_RULE.to_owned(),
+                crate::grain_agent_reply::say_rule(ui_prompt.is_some()),
             ),
         );
     }
