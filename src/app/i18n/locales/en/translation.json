@@ -1183,12 +1183,11 @@
         "label": "Meeting views",
         "transcript": "Transcript",
         "summary": "Summary",
-        "ask": "Ask AI",
         "needsTranscript": "Transcribe this recording to use this view."
       },
       "ai": {
         "requiredTitle": "Connect an AI provider",
-        "requiredBody": "Summaries and questions use the AI provider you set up for cleanup. Add one with a model in AI settings.",
+        "requiredBody": "Summaries use the AI provider you set up for cleanup. Add one with a model in AI settings.",
         "openSettings": "Open AI settings"
       },
       "summary": {
@@ -1203,18 +1202,6 @@
         "copy": "Copy summary",
         "copied": "Summary copied",
         "automatic": "Write summaries automatically in Recall settings"
-      },
-      "ask": {
-        "title": "Ask about this meeting",
-        "body": "Answers come from the transcript only. Speakers are Speaker 1, Speaker 2 and so on.",
-        "placeholder": "Ask a question…",
-        "send": "Send",
-        "thinking": "Reading the transcript…",
-        "suggestions": {
-          "decisions": "What were the main decisions?",
-          "actions": "List the action items.",
-          "wants": "What did each speaker want?"
-        }
       },
       "settings": {
         "title": "Recall settings",

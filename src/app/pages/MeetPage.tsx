@@ -35,7 +35,6 @@ import type {
   TranscriptRevision,
 } from "@/bindings";
 import { Dropdown } from "../components/ui/Dropdown";
-import { AskTab } from "../meet/AskTab";
 import { SummaryTab } from "../meet/SummaryTab";
 import { MeetSettingsPage } from "./MeetSettingsPage";
 import { hashForRoute } from "../navigation";
@@ -81,7 +80,7 @@ const STAGES: Stage[] = [
   "Publishing",
 ];
 const PLAYBACK_RATES = [1, 1.25, 1.5, 2] as const;
-const MEET_TABS = ["transcript", "summary", "ask"] as const;
+const MEET_TABS = ["transcript", "summary"] as const;
 type MeetTab = (typeof MEET_TABS)[number];
 const SKIP_MS = 10_000;
 
@@ -1454,7 +1453,7 @@ function MeetingView({
     });
   }, [heardKey, playback.playing]);
   const hasTranscript = meeting.transcript_revision != null;
-  // Summary and Ask AI read the transcript, so they wait for one.
+  // The summary reads the transcript, so it waits for one.
   const activeTab: MeetTab = hasTranscript ? tab : "transcript";
   const multiSource = new Set(meeting.sources).size > 1;
   const { seek, audioRef } = playback;
@@ -1821,8 +1820,6 @@ function MeetingView({
         >
           {!isRecording && activeTab === "summary" ? (
             <SummaryTab meet={meet} meeting={meeting} />
-          ) : !isRecording && activeTab === "ask" ? (
-            <AskTab meet={meet} meeting={meeting} />
           ) : (
             body
           )}

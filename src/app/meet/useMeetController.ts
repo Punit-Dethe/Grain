@@ -4,7 +4,6 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import {
   commands,
   events,
-  type AskTurn,
   type MeetSources,
   type MeetSummaryDoc,
   type MeetStatus,
@@ -60,11 +59,6 @@ export interface MeetController {
   warmPlayback: (sessionId: string) => Promise<void>;
   loadSummary: (sessionId: string) => Promise<MeetSummaryDoc | null>;
   generateSummary: (sessionId: string) => Promise<MeetSummaryDoc>;
-  ask: (
-    sessionId: string,
-    question: string,
-    history: AskTurn[],
-  ) => Promise<string>;
 }
 
 /** Whether an AI provider and model are set up for Recall to use. Re-checked
@@ -267,12 +261,6 @@ export function useMeetController(): MeetController {
     [],
   );
 
-  const ask = useCallback(
-    async (sessionId: string, question: string, history: AskTurn[]) =>
-      unwrap(await commands.meetAsk(sessionId, question, history)),
-    [],
-  );
-
   const loadPlayback = useCallback(
     async (sessionId: string) => {
       const path = unwrap(await commands.meetPlaybackAudio(sessionId));
@@ -320,7 +308,6 @@ export function useMeetController(): MeetController {
     setSourceMuted,
     loadSummary,
     generateSummary,
-    ask,
   };
 }
 

@@ -1,5 +1,5 @@
-//! [GRAIN] Recall AI: a summary, an automatic title and questions about one
-//! meeting, written through the provider the user already configured for AI
+//! [GRAIN] Recall AI: a summary and an automatic title for one meeting,
+//! written through the provider the user already configured for AI
 //! cleanup (`post_process_*`).
 //!
 //! Nothing here runs on its own. The summary and title only run after a
@@ -32,8 +32,6 @@ const KEEP_HEAD_CHARS: usize = 40_000;
 const TITLE_CONTEXT_CHARS: usize = 12_000;
 /// A pause this long starts a new line even for the same speaker.
 const LINE_GAP_MS: u64 = 1_500;
-const MAX_QUESTION_CHARS: usize = 4_000;
-const MAX_HISTORY_TURNS: usize = 12;
 const MAX_TITLE_CHARS: usize = 80;
 /// Titles Recall itself assigns; anything else was chosen by the user.
 const DEFAULT_TITLES: [&str; 2] = ["Meeting", "Recording"];
@@ -60,13 +58,6 @@ const TITLE_PROMPT: &str = "Write a title for this meeting transcript: at most \
 six words, specific to what was discussed, in the language of the transcript. \
 Reply with the title only: no quotes, no trailing punctuation, no Markdown.";
 
-const ASK_PROMPT: &str = "You answer questions about one meeting using only its \
-transcript below. Each line is \"[time] Speaker N: text\". Speakers are \
-anonymous: refer to them only as \"Speaker 1\", \"Speaker 2\" and so on, and \
-never guess a real name. If the transcript does not contain the answer, say so \
-plainly. Be concise, quote times when they help, and reply in the language of \
-the question.";
-
 /// A saved AI summary, tied to the transcript revision it was written from.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct MeetSummaryDoc {
@@ -74,14 +65,6 @@ pub struct MeetSummaryDoc {
     pub created_unix_ms: u64,
     /// Markdown.
     pub text: String,
-}
-
-/// One earlier message in an "ask" conversation.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct AskTurn {
-    /// `user` or `assistant`.
-    pub role: String,
-    pub content: String,
 }
 
 // --- Transcript as plain text ----------------------------------------------
@@ -413,35 +396,6 @@ pub async fn meet_generate_summary(
     let dir = storage::session_dir(&meetings_root(&app)?, &session_id)?;
     let _busy = Busy::begin(&app, &session_id)?;
     write_summary_for(&app, &dir).await
-}
-
-/// Answer a question about one meeting from its transcript.
-#[tauri::command]
-#[specta::specta]
-pub async fn meet_ask(
-    app: AppHandle,
-    session_id: String,
-    question: String,
-    history: Vec<AskTurn>,
-) -> Result<String, String> {
-    let question: String = question.trim().chars().take(MAX_QUESTION_CHARS).collect();
-    if question.is_empty() {
-        return Err("Type a question first".into());
-    }
-    let dir = storage::session_dir(&meetings_root(&app)?, &session_id)?;
-    let (_, text) = load_transcript_text(&dir)?;
-    let mut messages = vec![(
-        "system".to_string(),
-        format!("{ASK_PROMPT}\n\nTranscript:\n{}", bounded(text)),
-    )];
-    let start = history.len().saturating_sub(MAX_HISTORY_TURNS);
-    for turn in &history[start..] {
-        if turn.role == "user" || turn.role == "assistant" {
-            messages.push((turn.role.clone(), turn.content.clone()));
-        }
-    }
-    messages.push(("user".to_string(), question));
-    complete(&app, messages).await
 }
 
 #[cfg(test)]

@@ -2206,17 +2206,6 @@ async meetGenerateSummary(sessionId: string) : Promise<Result<MeetSummaryDoc, st
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
-},
-/**
- * Answer a question about one meeting from its transcript.
- */
-async meetAsk(sessionId: string, question: string, history: AskTurn[]) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_ask", { sessionId, question, history }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
 }
 }
 
@@ -2631,14 +2620,6 @@ meet_auto_title?: boolean;
  * resets and collapses back to the compact capsule until the next word.
  */
 scrap_that_enabled?: boolean }
-/**
- * One earlier message in an "ask" conversation.
- */
-export type AskTurn = { 
-/**
- * `user` or `assistant`.
- */
-role: string; content: string }
 export type Attribution = { Speaker: number } | 
 /**
  * The diarizer found no speech on this track.

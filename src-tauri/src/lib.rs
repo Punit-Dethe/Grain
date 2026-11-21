@@ -1585,7 +1585,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::ai::meet_ai_available,    // [GRAIN]
             grain_meet::ai::meet_summary,         // [GRAIN]
             grain_meet::ai::meet_generate_summary, // [GRAIN]
-            grain_meet::ai::meet_ask,             // [GRAIN]
         ])
         .events(collect_events![
             grain_update::UpdateAvailable,

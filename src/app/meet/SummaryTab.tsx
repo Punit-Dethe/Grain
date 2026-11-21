@@ -12,7 +12,7 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Shown by the Summary and Ask AI tabs while no AI provider is set up. */
+/** Shown by the Summary tab while no AI provider is set up. */
 export function AiRequired() {
   const { t } = useTranslation();
   return (
