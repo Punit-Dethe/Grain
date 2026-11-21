@@ -23,6 +23,10 @@ use tauri::{AppHandle, Manager};
 const VOICE: &str = "Zoey";
 /// Hard cap on what is read aloud; longer replies stop at a sentence end.
 const MAX_SPOKEN_CHARS: usize = 3000;
+/// A long reply without its short spoken version (`SAY:` line, see
+/// `grain_agent_reply`) is read up to about this much, always ending on a
+/// whole sentence. A safety net: the model is asked to write that line.
+const FALLBACK_SPOKEN_CHARS: usize = 500;
 
 struct ModelFile {
     /// Path inside the model folder.
@@ -428,6 +432,8 @@ struct FeedState {
     consumed: usize,
     done: bool,
     cancelled: bool,
+    /// How much to read: all of a short spoken version, or the fallback.
+    budget: Option<usize>,
 }
 
 impl SpeechFeed {
@@ -454,6 +460,19 @@ impl SpeechFeed {
 
     fn cancelled(&self) -> bool {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).cancelled
+    }
+
+    /// The text is the reply's short spoken version: read all of it.
+    pub(crate) fn speak_all(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).budget = Some(MAX_SPOKEN_CHARS);
+    }
+
+    fn budget(&self) -> usize {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .budget
+            .unwrap_or(FALLBACK_SPOKEN_CHARS)
     }
 
     /// The next piece worth speaking: whole sentences (outside a code fence),
@@ -554,13 +573,25 @@ fn say_feed(
             return Ok(());
         }
         let text = speakable(&piece);
-        if text.is_empty() || spoken >= MAX_SPOKEN_CHARS {
+        let budget = feed.budget();
+        if text.is_empty() || spoken >= budget {
             if piece.is_empty() {
                 std::thread::sleep(Duration::from_millis(40));
             }
             continue;
         }
-        spoken += text.len();
+        let (text, trimmed) = fit_sentences(&text, budget - spoken, spoken == 0);
+        if trimmed {
+            info!(
+                "[GRAIN] talk-back: long streamed reply without a SAY line; ending at a sentence"
+            );
+            spoken = budget;
+        } else {
+            spoken += text.chars().count();
+        }
+        if text.is_empty() {
+            continue;
+        }
         let stream = tts
             .stream_with(&text, &options)
             .map_err(|e| format!("could not start speech: {e}"))?;
@@ -929,6 +960,68 @@ fn plain_inline(line: &str) -> String {
         .join(" ")
 }
 
+/// What to read aloud for a finished reply: all of its short spoken version
+/// when it has one, else the reply itself, a long one only up to the fallback
+/// budget and always ending on a whole sentence.
+pub(crate) fn reply_speech(say: Option<&str>, reply: &str) -> String {
+    if let Some(say) = say {
+        return speakable(say);
+    }
+    let plain = speakable(reply);
+    let (spoken, trimmed) = fit_sentences(&plain, FALLBACK_SPOKEN_CHARS, true);
+    if trimmed {
+        info!(
+            "[GRAIN] talk-back: long reply without a SAY line; reading {} of {} chars",
+            spoken.chars().count(),
+            plain.chars().count()
+        );
+    }
+    spoken
+}
+
+/// Plain text split after each `.`, `!` or `?` that ends a sentence.
+fn sentences(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, c) in text.char_indices() {
+        if matches!(c, '.' | '!' | '?') {
+            let end = i + c.len_utf8();
+            let rest = &text[end..];
+            if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                let sentence = text[start..end].trim();
+                if !sentence.is_empty() {
+                    out.push(sentence);
+                }
+                start = end;
+            }
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        out.push(tail);
+    }
+    out
+}
+
+/// The whole sentences of `text` that fit in `budget` characters (with
+/// `first`, at least the first one, however long). `true` = some were left out.
+fn fit_sentences(text: &str, budget: usize, first: bool) -> (String, bool) {
+    let mut out = String::new();
+    let mut used = 0;
+    for (n, sentence) in sentences(text).into_iter().enumerate() {
+        let len = sentence.chars().count() + usize::from(!out.is_empty());
+        if used + len > budget && !(first && n == 0) {
+            return (out, true);
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(sentence);
+        used += len;
+    }
+    (out, false)
+}
+
 fn truncate_at_sentence(text: String, max: usize) -> String {
     if text.chars().count() <= max {
         return text;
@@ -972,6 +1065,45 @@ mod tests {
             "Use cargo and care. quoted."
         );
         assert_eq!(speakable("| a | b |\n|---|---|\n| 1 | 2 |"), "a b. 1 2.");
+    }
+
+    #[test]
+    fn a_spoken_version_is_read_in_full() {
+        let say = "I've written you a story about a lighthouse keeper; it ends well.";
+        assert_eq!(reply_speech(Some(say), &"Long story. ".repeat(200)), say);
+    }
+
+    #[test]
+    fn short_replies_are_read_whole() {
+        assert_eq!(reply_speech(None, "Twelve."), "Twelve.");
+        assert_eq!(
+            reply_speech(None, "Which Priya, work or family?"),
+            "Which Priya, work or family?"
+        );
+    }
+
+    #[test]
+    fn a_long_reply_without_its_line_ends_on_a_whole_sentence() {
+        let reply = "The keeper climbed the stairs at dusk. ".repeat(40);
+        let spoken = reply_speech(None, &reply);
+        assert!(spoken.chars().count() <= FALLBACK_SPOKEN_CHARS);
+        assert!(spoken.ends_with("at dusk."), "{spoken}");
+        // One very long first sentence is still read whole, never cut.
+        let one = format!("{}end.", "word ".repeat(150));
+        assert_eq!(reply_speech(None, &one), one);
+    }
+
+    #[test]
+    fn sentences_split_only_at_sentence_ends() {
+        assert_eq!(
+            sentences("Version 2.5 is out. Try it! Done?"),
+            ["Version 2.5 is out.", "Try it!", "Done?"]
+        );
+        assert_eq!(
+            fit_sentences("One. Two. Three.", 9, false),
+            ("One. Two.".into(), true)
+        );
+        assert_eq!(fit_sentences("Toolong.", 3, false), (String::new(), true));
     }
 
     #[test]

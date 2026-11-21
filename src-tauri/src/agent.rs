@@ -85,7 +85,9 @@ fn first_step_line(first_round: bool, reply: &LlmToolReply) -> Option<String> {
     {
         return None;
     }
-    crate::grain_tts::step_line(&reply.content)
+    // [GRAIN] The model may tag even a step line with `SAY:`.
+    let (say, text) = crate::grain_agent_reply::split_say(&reply.content);
+    crate::grain_tts::step_line(say.as_deref().unwrap_or(&text))
 }
 
 /// Strip the same-round marker. Returns the reply only when the marker leads
@@ -2054,12 +2056,36 @@ impl StreamTurn {
             let _ = self.app.emit_to(PANEL_LABEL, "agent-stream", "");
             return;
         };
-        let (visible, _) = crate::grain_agent_canvas::split_ui(text);
+        // [GRAIN] A long reply leads with its short spoken version (`SAY:`
+        // line): only that is read, and only the reply after it is shown.
+        use crate::grain_agent_reply::StreamSay;
+        let (speech, said_all, body) = match crate::grain_agent_reply::stream_say(text) {
+            StreamSay::Undecided => return,
+            StreamSay::Plain => (None, false, text),
+            StreamSay::Say {
+                line,
+                complete,
+                body,
+            } => (Some(line), complete, body),
+        };
+        let (visible, _) = crate::grain_agent_canvas::split_ui(body);
+        let spoken = speech.as_deref().unwrap_or(&visible);
         if let Some(feed) = &state.speech {
-            feed.update(&visible);
-        } else if speak_now(&visible) {
+            if said_all {
+                feed.finish(spoken);
+            } else {
+                feed.update(spoken);
+            }
+        } else if !spoken.trim().is_empty() && (said_all || speak_now(spoken)) {
             let feed = Arc::new(crate::grain_tts::SpeechFeed::default());
-            feed.update(&visible);
+            if speech.is_some() {
+                feed.speak_all();
+            }
+            if said_all {
+                feed.finish(spoken);
+            } else {
+                feed.update(spoken);
+            }
             let started = start_reply_speech(&self.app, self.generation, |on_end| {
                 crate::grain_tts::speak_feed(&self.app, Arc::clone(&feed), on_end)
             });
@@ -2067,9 +2093,11 @@ impl StreamTurn {
                 state.speech = Some(feed);
             }
         }
-        if state
-            .last_emit
-            .is_none_or(|at| at.elapsed() >= STREAM_EMIT_EVERY)
+        // Nothing to show yet while the spoken version is still arriving.
+        if !visible.is_empty()
+            && state
+                .last_emit
+                .is_none_or(|at| at.elapsed() >= STREAM_EMIT_EVERY)
         {
             state.last_emit = Some(Instant::now());
             let _ = self.app.emit_to(PANEL_LABEL, "agent-stream", visible);
@@ -3194,19 +3222,35 @@ pub async fn agent_run(
         )
         .await?;
     if let Ok(reply) = &mut reply {
+        // [GRAIN] A long reply's short spoken version (`grain_agent_reply`):
+        // read aloud in full; the chat shows the reply after it.
+        let mut say = None;
+        if reply.confirm_action.is_none() {
+            let (line, body) = crate::grain_agent_reply::split_say(&reply.text);
+            say = line;
+            reply.text = body;
+        }
         if ui_prompt.is_some() && reply.confirm_action.is_none() {
             let (text, ui) = crate::grain_agent_canvas::split_ui(&reply.text);
             reply.text = text;
             reply.ui = ui;
         }
+        // An approval is said in short; its details stay on screen.
+        let spoken = match &reply.confirm_action {
+            Some(confirm) => {
+                crate::grain_agent_reply::confirm_line(&confirm.title, &confirm.summary)
+            }
+            None => crate::grain_tts::reply_speech(say.as_deref(), &reply.text),
+        };
         // A reply with a view always opens the notch to show it: never the
         // compact spoken presentation, even with `agent_compact_voice`.
         let first_turn = if reply.ui.is_some() { None } else { generation };
         match stream.take_speech() {
             // Already talking: hand it the finished text. A view opens the
             // notch, so the spoken reply is not presented compact after all.
+            // (A spoken version was already finished as its line ended.)
             Some(feed) => {
-                feed.finish(&reply.text);
+                feed.finish(say.as_deref().unwrap_or(&reply.text));
                 if first_turn.is_none() {
                     let summon = state.summon_gen.load(Ordering::SeqCst);
                     let _ = state.compact_speech.compare_exchange(
@@ -3217,7 +3261,7 @@ pub async fn agent_run(
                     );
                 }
             }
-            None => speak_reply(&app, &reply.text, first_turn),
+            None => speak_reply(&app, &spoken, first_turn),
         }
     }
     if record {
@@ -3321,6 +3365,16 @@ async fn agent_run_owned(
     if let Some(prompt) = ui_prompt {
         full.insert(1, ("system".to_string(), prompt.to_owned()));
     }
+    // [GRAIN] Read aloud: a long reply leads with its short spoken version.
+    if crate::settings::get_settings(app).agent_talk_back {
+        full.insert(
+            1,
+            (
+                "system".to_string(),
+                crate::grain_agent_reply::SAY_RULE.to_owned(),
+            ),
+        );
+    }
     let image = screen_attachment(app);
     run_with_tools(app, full, image.as_ref(), run).await
 }
@@ -3341,10 +3395,18 @@ pub async fn agent_confirm_action(
         .try_state::<AgentState>()
         .ok_or("Agent state unavailable")?;
     let (run, registration) = state.execution.begin()?;
-    run.wait(registration, async {
-        resume_pending_turn(&app, &run, &token, approve).await
-    })
-    .await?
+    let mut reply = run
+        .wait(registration, async {
+            resume_pending_turn(&app, &run, &token, approve).await
+        })
+        .await?;
+    // [GRAIN] Approved from the panel: show the reply without its spoken line.
+    if let Ok(reply) = &mut reply {
+        if reply.confirm_action.is_none() {
+            reply.text = crate::grain_agent_reply::split_say(&reply.text).1;
+        }
+    }
+    reply
 }
 
 /// Render an execution outcome as a plain chat reply (the receipt/result/notice).
@@ -3575,7 +3637,13 @@ fn continuation_reply(
 ) -> Result<AgentReply, String> {
     match result {
         Ok(mut reply) => {
-            reply.text = format!("{receipt}\n\n{}", reply.text);
+            // [GRAIN] A spoken version stays in front, where `split_say` finds it.
+            reply.text = match crate::grain_agent_reply::split_say(&reply.text) {
+                (Some(say), body) if reply.confirm_action.is_none() => {
+                    format!("SAY: {say}\n{receipt}\n\n{body}")
+                }
+                _ => format!("{receipt}\n\n{}", reply.text),
+            };
             Ok(reply)
         }
         Err(error) => Ok(AgentReply::plain(format!(

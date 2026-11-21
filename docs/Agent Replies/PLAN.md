@@ -1,6 +1,10 @@
 # Agent replies: a short spoken version and a result card
 
-Branch: `feat/agent-reply-voice-and-result-card` (from `main`, 2026-11-21). Plan only; nothing is built yet.
+Branch: `feat/agent-reply-voice-and-result-card` (from `main`, 2026-11-21).
+
+**Status:** Phase 1 (spoken version) built, not yet tried in the real app. Phases 2–4 not started.
+
+Phase 1 as built: `grain_agent_reply.rs` (`SAY_RULE`, `split_say`, `stream_say`, `confirm_line`); `grain_tts::reply_speech` + `fit_sentences` (fallback 500 chars, whole sentences only; the feed reads all of a SAY line); `agent.rs` sends `SAY_RULE` only with talk-back on, speaks the SAY line or the approval line, keeps the SAY line out of the chat and the stream, keeps it in front through approval continuations, and strips it from first-step lines.
 
 Revision 2 (2026-11-21) folds in the user's review of revision 1.
 
