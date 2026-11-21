@@ -244,20 +244,23 @@ jobs:
           Write-Host "HANDY_VC_REDIST_DIRS=$dirs"
           Add-Content -Path $env:GITHUB_ENV -Value "HANDY_VC_REDIST_DIRS=$dirs"
 
-      # Grain Pilot's browser extension reaches Grain through this native
-      # messaging host, which Grain expects beside its own exe. It is a separate
-      # binary, so tauri build would not ship it on its own;
-      # tauri.pilot-host.conf.json bundles the copy staged here.
-      - name: Build the Grain Pilot browser host
+      # Helper exes Grain expects beside its own exe: Grain Pilot's native
+      # messaging host (its browser extension reaches Grain through it) and
+      # Recall's MCP reader (AI apps start it to read meetings). They are
+      # separate binaries, so tauri build would not ship them on its own;
+      # tauri.helpers.conf.json bundles the copies staged here.
+      - name: Build the helper exes (Pilot browser host, Recall MCP reader)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          cargo build --release --locked -p grain-browser-host
-          if ($LASTEXITCODE -ne 0) { throw "grain-browser-host build failed" }
-          $built = Join-Path $env:CARGO_TARGET_DIR "release\grain-browser-host.exe"
-          if (-not (Test-Path -LiteralPath $built)) { throw "grain-browser-host.exe not found at $built" }
-          New-Item -ItemType Directory -Force -Path src-tauri/pilot-host | Out-Null
-          Copy-Item -LiteralPath $built -Destination src-tauri/pilot-host/grain-browser-host.exe -Force
+          cargo build --release --locked -p grain-browser-host -p grain-recall-mcp
+          if ($LASTEXITCODE -ne 0) { throw "helper exe build failed" }
+          New-Item -ItemType Directory -Force -Path src-tauri/helpers | Out-Null
+          foreach ($exe in 'grain-browser-host.exe', 'grain-recall-mcp.exe') {
+            $built = Join-Path $env:CARGO_TARGET_DIR "release\$exe"
+            if (-not (Test-Path -LiteralPath $built)) { throw "$exe not found at $built" }
+            Copy-Item -LiteralPath $built -Destination "src-tauri/helpers/$exe" -Force
+          }
 
       - name: Build, sign updater artifacts, and publish release
         uses: tauri-apps/tauri-action@v0
@@ -278,8 +281,8 @@ jobs:
           prerelease: false
           releaseBody: ${{ steps.release_notes.outputs.body }}
           # NSIS installer only (matches tauri.conf.json windows.nsis).
-          # The second config bundles the Grain Pilot browser host beside the exe.
-          args: "--bundles nsis --config src-tauri/tauri.pilot-host.conf.json"
+          # The second config bundles the helper exes beside Grain's exe.
+          args: "--bundles nsis --config src-tauri/tauri.helpers.conf.json"
 
       - name: Verify staged native runtime contract and CPU fallback
         shell: pwsh

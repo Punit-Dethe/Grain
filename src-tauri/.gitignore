@@ -11,4 +11,4 @@
 # tauri.windows.conf.json on Windows, into /usr/lib/Grain for deb/rpm and
 # /usr/lib for AppImage via tauri.conf.json on Linux.
 /transcribe-libs/
-/pilot-host/
+/helpers/

@@ -28,7 +28,7 @@ PKG = ROOT / "package.json"
 CONF = ROOT / "src-tauri" / "tauri.conf.json"
 CARGO = ROOT / "src-tauri" / "Cargo.toml"
 CAPS = ROOT / "src-tauri" / "capabilities" / "default.json"
-PILOT_HOST_CONF = ROOT / "src-tauri" / "tauri.pilot-host.conf.json"
+HELPERS_CONF = ROOT / "src-tauri" / "tauri.helpers.conf.json"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "grain-release.yml"
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -106,26 +106,32 @@ def main() -> int:
             "check would be denied at runtime"
         )
 
-    # 5. Grain Pilot only works with its native messaging host installed beside
-    #    the exe. Dev builds have it lying around, so a release without it looks
-    #    fine until a user connects Pilot: "The browser host is missing".
-    pilot_conf = read_json(PILOT_HOST_CONF)
-    pilot_resources = (pilot_conf.get("bundle") or {}).get("resources") or {}
-    if "grain-browser-host.exe" not in pilot_resources.values():
-        problems.append(
-            f"{PILOT_HOST_CONF.name}: does not bundle grain-browser-host.exe -- "
-            "Grain Pilot would fail with 'The browser host is missing'"
-        )
+    # 5. Helper exes must be installed beside Grain's exe. Dev builds have them
+    #    lying around, so a release without one looks fine until a user needs
+    #    it: Grain Pilot says "The browser host is missing", Recall's AI-apps
+    #    settings say the MCP reader is missing.
+    helpers = read_json(HELPERS_CONF)
+    bundled = ((helpers.get("bundle") or {}).get("resources") or {}).values()
     workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-    if (
-        f"--config src-tauri/{PILOT_HOST_CONF.name}" not in workflow
-        or "-p grain-browser-host" not in workflow
-    ):
+    if f"--config src-tauri/{HELPERS_CONF.name}" not in workflow:
         problems.append(
-            f"{RELEASE_WORKFLOW.name}: does not build grain-browser-host and pass "
-            f"--config src-tauri/{PILOT_HOST_CONF.name} -- Grain Pilot would fail "
-            "with 'The browser host is missing'"
+            f"{RELEASE_WORKFLOW.name}: does not pass --config src-tauri/"
+            f"{HELPERS_CONF.name} -- no helper exe would be installed"
         )
+    for package, feature in (
+        ("grain-browser-host", "Grain Pilot"),
+        ("grain-recall-mcp", "Recall's AI apps (MCP)"),
+    ):
+        if f"{package}.exe" not in bundled:
+            problems.append(
+                f"{HELPERS_CONF.name}: does not bundle {package}.exe -- "
+                f"{feature} would report it missing"
+            )
+        if f"-p {package}" not in workflow:
+            problems.append(
+                f"{RELEASE_WORKFLOW.name}: does not build {package} -- "
+                f"{feature} would report it missing"
+            )
 
     if problems:
         print("[release] NOT READY:")

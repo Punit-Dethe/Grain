@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "helpers/grain-browser-host.exe": "grain-browser-host.exe",
+      "helpers/grain-recall-mcp.exe": "grain-recall-mcp.exe"
+    }
+  }
+}
