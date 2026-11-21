@@ -992,6 +992,14 @@ html[data-window="agent-panel"] body {
   align-items: flex-end;
 }
 
+/* Air between the user and the AI: a change of speaker gets more room than
+   the AI's own messages (its spoken part, then the rest) get from each other. */
+.agc-c-turn.is-user + .agc-c-turn.is-assistant,
+.agc-c-turn.is-assistant + .agc-c-turn.is-user,
+.agc-c-turn.is-user ~ .agent-typing {
+  margin-top: 10px;
+}
+
 .agc-c-user {
   max-width: 80%;
   box-sizing: border-box;
@@ -1329,15 +1337,15 @@ html[data-window="agent-panel"] body {
 
 .agc-c-answer.is-copyable {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23000' stroke-width='4.5'%3E%3Crect x='9' y='9' width='13' height='13' rx='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/g%3E%3Cg stroke='%23fff' stroke-width='2'%3E%3Crect x='9' y='9' width='13' height='13' rx='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/g%3E%3C/svg%3E")
-      11 11,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23000' stroke-width='4.5'%3E%3Crect x='9' y='9' width='13' height='13' rx='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/g%3E%3Cg stroke='%23fff' stroke-width='2'%3E%3Crect x='9' y='9' width='13' height='13' rx='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/g%3E%3C/svg%3E")
+      8 8,
     copy;
 }
 
 .agc-c-answer.is-copyable.is-copied {
   cursor:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5' stroke='%23000' stroke-width='5'/%3E%3Cpath d='M20 6 9 17l-5-5' stroke='%239be0b8' stroke-width='2.5'/%3E%3C/svg%3E")
-      11 11,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5' stroke='%23000' stroke-width='5'/%3E%3Cpath d='M20 6 9 17l-5-5' stroke='%239be0b8' stroke-width='2.5'/%3E%3C/svg%3E")
+      8 8,
     default;
 }
 

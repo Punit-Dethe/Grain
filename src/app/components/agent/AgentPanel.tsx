@@ -1493,19 +1493,14 @@ export function AgentPanel() {
           : []),
       ];
   const canRetry = !hasFollowups && !busy && !firstReply?.confirm_action;
-  // Talk-back reads the newest reply; its Stop button sits on that reply, or
-  // on its spoken part's own message when it has one (that is what is read).
-  const speaking =
+  // Talk-back reads the newest reply; its Stop button sits on that reply (the
+  // longer message, when its spoken part shows apart).
+  const speakingId =
     speechId === null
-      ? undefined
-      : [...thread, ...(thread.length ? [] : history)]
+      ? null
+      : ([...thread, ...(thread.length ? [] : history)]
           .reverse()
-          .find((m) => m.role === "assistant" && m.content.trim());
-  const speakingId = !speaking
-    ? null
-    : speaking.said?.trim()
-      ? `${speaking.id}:said`
-      : speaking.id;
+          .find((m) => m.role === "assistant" && m.content.trim())?.id ?? null);
   const stopSpeech = useCallback(() => {
     setSpeechId(null);
     void commands.agentStopSpeech().catch(console.error);
