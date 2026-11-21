@@ -1956,6 +1956,17 @@ pub fn agent_stop_speech() {
 /// then shows the speaking bar instead of growing). Must run before the reply
 /// is returned to the renderer, which is what triggers that presentation.
 fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
+    start_reply_speech(app, first_turn, |on_end| {
+        crate::grain_tts::speak(app, text, on_end)
+    });
+}
+
+/// [GRAIN] The presentation half of [`speak_reply`]; `start` begins the voice.
+fn start_reply_speech(
+    app: &AppHandle,
+    first_turn: Option<u64>,
+    start: impl FnOnce(Box<dyn FnOnce(u64) + Send>) -> Option<u64>,
+) -> Option<u64> {
     let state = app.state::<AgentState>();
     let summon = state.summon_gen.load(Ordering::SeqCst);
     let compact = crate::settings::get_settings(app).agent_compact_voice
@@ -1968,24 +1979,125 @@ fn speak_reply(app: &AppHandle, text: &str, first_turn: Option<u64>) {
     let handle = app.clone();
     // The panel's Stop button follows these two events, matched by id so a
     // replaced speech's late end never hides the newer one's button.
-    let id = crate::grain_tts::speak(app, text, move |id| {
-        let _ = handle.emit_to(PANEL_LABEL, "agent-speech", AgentSpeech { id, active: false });
+    let id = start(Box::new(move |id| {
+        let _ = handle.emit_to(
+            PANEL_LABEL,
+            "agent-speech",
+            AgentSpeech { id, active: false },
+        );
         speech_ended(&handle, summon);
         voice_ended(&handle);
-    });
+    }));
     if let Some(id) = id {
-        let _ = app.emit_to(PANEL_LABEL, "agent-speech", AgentSpeech { id, active: true });
+        let _ = app.emit_to(
+            PANEL_LABEL,
+            "agent-speech",
+            AgentSpeech { id, active: true },
+        );
         voice_started(app);
     }
     if compact && id.is_none() {
         // Nothing will be heard: present the reply the normal way.
-        let _ = state.compact_speech.compare_exchange(
-            summon,
-            0,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        );
+        let _ =
+            state
+                .compact_speech
+                .compare_exchange(summon, 0, Ordering::SeqCst, Ordering::SeqCst);
     }
+    id
+}
+
+// ── Streamed turn (EXPERIMENT, revertable) ──────────────────────────────────
+//
+// The reply streams into the chat as it arrives (`agent-stream`, the visible
+// text so far; "" clears it), and talk-back starts once enough has landed.
+
+/// Start talking at a sentence end past this many characters...
+const STREAM_SPEAK_AT: usize = 80;
+/// ...or here regardless.
+const STREAM_SPEAK_ANYWAY: usize = 200;
+const STREAM_EMIT_EVERY: Duration = Duration::from_millis(50);
+
+struct StreamTurn {
+    app: AppHandle,
+    generation: Option<u64>,
+    state: Mutex<StreamTurnState>,
+}
+
+#[derive(Default)]
+struct StreamTurnState {
+    last_emit: Option<Instant>,
+    speech: Option<Arc<crate::grain_tts::SpeechFeed>>,
+}
+
+impl StreamTurn {
+    fn new(app: &AppHandle, generation: Option<u64>) -> Arc<Self> {
+        Arc::new(Self {
+            app: app.clone(),
+            generation,
+            state: Mutex::default(),
+        })
+    }
+
+    fn sink(self: &Arc<Self>) -> crate::llm_client::stream::Sink {
+        let turn = Arc::clone(self);
+        Arc::new(move |text| turn.on_text(text))
+    }
+
+    fn on_text(&self, text: Option<&str>) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(text) = text else {
+            // A tool round or a broken stream: what streamed was not the reply.
+            if let Some(feed) = state.speech.take() {
+                feed.cancel();
+            }
+            state.last_emit = None;
+            let _ = self.app.emit_to(PANEL_LABEL, "agent-stream", "");
+            return;
+        };
+        let (visible, _) = crate::grain_agent_canvas::split_ui(text);
+        if let Some(feed) = &state.speech {
+            feed.update(&visible);
+        } else if speak_now(&visible) {
+            let feed = Arc::new(crate::grain_tts::SpeechFeed::default());
+            feed.update(&visible);
+            let started = start_reply_speech(&self.app, self.generation, |on_end| {
+                crate::grain_tts::speak_feed(&self.app, Arc::clone(&feed), on_end)
+            });
+            if started.is_some() {
+                state.speech = Some(feed);
+            }
+        }
+        if state
+            .last_emit
+            .is_none_or(|at| at.elapsed() >= STREAM_EMIT_EVERY)
+        {
+            state.last_emit = Some(Instant::now());
+            let _ = self.app.emit_to(PANEL_LABEL, "agent-stream", visible);
+        }
+    }
+
+    /// The streamed speech already talking, for the finished reply to complete.
+    fn take_speech(&self) -> Option<Arc<crate::grain_tts::SpeechFeed>> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .speech
+            .take()
+    }
+}
+
+impl Drop for StreamTurn {
+    fn drop(&mut self) {
+        // The turn failed or was stopped mid-speech.
+        if let Some(feed) = self.take_speech() {
+            feed.cancel();
+        }
+    }
+}
+
+fn speak_now(visible: &str) -> bool {
+    let count = visible.chars().count();
+    count >= STREAM_SPEAK_ANYWAY || (count >= STREAM_SPEAK_AT && visible.ends_with(['.', '!', '?']))
 }
 
 /// [GRAIN] Read the first tool step's line aloud. It shows like any speech: the
@@ -3070,10 +3182,15 @@ pub async fn agent_run(
     // A new turn silences the previous reply's talk-back.
     crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
+    // [GRAIN] EXPERIMENT: stream this turn's model calls into the chat.
+    let stream = StreamTurn::new(&app, generation);
     let mut reply = run
         .wait(
             registration,
-            agent_run_owned(&app, messages, context, ui_prompt.as_deref(), &run),
+            crate::llm_client::stream::SINK.scope(
+                stream.sink(),
+                agent_run_owned(&app, messages, context, ui_prompt.as_deref(), &run),
+            ),
         )
         .await?;
     if let Ok(reply) = &mut reply {
@@ -3085,7 +3202,23 @@ pub async fn agent_run(
         // A reply with a view always opens the notch to show it: never the
         // compact spoken presentation, even with `agent_compact_voice`.
         let first_turn = if reply.ui.is_some() { None } else { generation };
-        speak_reply(&app, &reply.text, first_turn);
+        match stream.take_speech() {
+            // Already talking: hand it the finished text. A view opens the
+            // notch, so the spoken reply is not presented compact after all.
+            Some(feed) => {
+                feed.finish(&reply.text);
+                if first_turn.is_none() {
+                    let summon = state.summon_gen.load(Ordering::SeqCst);
+                    let _ = state.compact_speech.compare_exchange(
+                        summon,
+                        0,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                }
+            }
+            None => speak_reply(&app, &reply.text, first_turn),
+        }
     }
     if record {
         if let Ok(reply) = &reply {

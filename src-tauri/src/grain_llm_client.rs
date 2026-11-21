@@ -834,6 +834,10 @@ async fn post_chat(
     request_body: &ChatCompletionRequest,
     format: PostProcessApiFormat,
 ) -> Result<ChatCompletionResponse, LlmError> {
+    // [GRAIN] Experimental streaming: only inside a scope that set a sink.
+    if let Some(done) = stream::try_stream(client, url, &headers, request_body, format).await {
+        return Ok(done);
+    }
     // [GRAIN] Reasoning-rejection retry (ported from upstream Handy #1809).
     // Grain gates reasoning-disable fields by provider, so only "custom" and
     // "openrouter" ever send them — but a "custom" endpoint pointed at a strict
@@ -1332,5 +1336,188 @@ mod anthropic_transport_tests {
         .unwrap_or_else(|error| panic!("{error}"));
         assert_eq!(result.content.as_deref(), Some("Ready."));
         server.await.unwrap();
+    }
+}
+
+/// [GRAIN] EXPERIMENT (revertable): stream a chat completion's text as it
+/// arrives. Active only inside a [`stream::SINK`] scope (the Agent chat turn);
+/// every other caller sends exactly what it always sent. A provider or model
+/// that cannot stream falls back to the normal request, and is remembered so it
+/// is not asked again this session.
+pub mod stream {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Called with the reply text so far, or `None` when a partial reply is
+    /// discarded (its round ended in tool calls, or the stream broke).
+    pub type Sink = Arc<dyn Fn(Option<&str>) + Send + Sync>;
+
+    tokio::task_local! {
+        pub static SINK: Sink;
+    }
+
+    /// `url|model` pairs that answered a streaming request without a stream.
+    fn unsupported() -> &'static Mutex<HashSet<String>> {
+        static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+        SET.get_or_init(|| Mutex::new(HashSet::new()))
+    }
+
+    fn remember(key: String) {
+        if let Ok(mut set) = unsupported().lock() {
+            set.insert(key);
+        }
+    }
+
+    /// The finished response, or `None` to send the normal request instead.
+    pub(super) async fn try_stream(
+        client: &reqwest::Client,
+        url: &str,
+        headers: &HeaderMap,
+        request_body: &ChatCompletionRequest,
+        format: PostProcessApiFormat,
+    ) -> Option<ChatCompletionResponse> {
+        let sink = SINK.try_with(Arc::clone).ok()?;
+        if format == PostProcessApiFormat::Anthropic || request_body.response_format.is_some() {
+            return None;
+        }
+        let key = format!("{}|{}", url, request_body.model);
+        if unsupported().lock().is_ok_and(|set| set.contains(&key)) {
+            return None;
+        }
+        let mut payload = serde_json::to_value(request_body).ok()?;
+        // Images keep their own degrade-and-retry path.
+        if payload_has_image(&payload) {
+            return None;
+        }
+        if reasoning_endpoint_rejected(&key) {
+            strip_reasoning_fields(&mut payload);
+        }
+        let carries_reasoning =
+            payload.get("reasoning_effort").is_some() || payload.get("reasoning").is_some();
+        payload["stream"] = Value::Bool(true);
+
+        let response = client
+            .post(url)
+            .headers(headers.clone())
+            .timeout(LLM_REQUEST_TIMEOUT)
+            .json(&payload)
+            .send()
+            .await
+            .ok()?;
+        let status = response.status();
+        let is_stream = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("text/event-stream"));
+        if status.is_success() && !is_stream {
+            // Answered in one piece: use it, and stop asking this model.
+            log::info!(
+                "[GRAIN] llm stream: '{}' does not stream",
+                request_body.model
+            );
+            remember(key);
+            let body = response.text().await.ok()?;
+            return serde_json::from_str(&body).ok();
+        }
+        if !status.is_success() {
+            // 429 / 5xx are not about streaming, and a 400 to a body with
+            // reasoning fields is that retry's business: the normal request
+            // handles those.
+            if matches!(status.as_u16(), 400 | 404 | 405 | 415 | 422 | 501) && !carries_reasoning {
+                remember(key);
+            }
+            log::info!(
+                "[GRAIN] llm stream: '{}' refused a stream ({status}); sending normally",
+                request_body.model
+            );
+            return None;
+        }
+        match read(response, &sink).await {
+            Ok(done) => Some(done),
+            Err(e) => {
+                log::warn!("[GRAIN] llm stream: broke ({e}); sending normally");
+                sink(None);
+                None
+            }
+        }
+    }
+
+    /// Read an OpenAI-style event stream: text deltas go to `sink` as they
+    /// land, tool-call fragments are joined by index.
+    async fn read(
+        mut response: reqwest::Response,
+        sink: &Sink,
+    ) -> Result<ChatCompletionResponse, String> {
+        let mut buffer: Vec<u8> = Vec::new();
+        let mut content = String::new();
+        // (id, name, arguments) per call index.
+        let mut calls: Vec<(String, String, String)> = Vec::new();
+        'read: while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+            buffer.extend_from_slice(&chunk);
+            while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = buffer.drain(..=end).collect();
+                let line = String::from_utf8_lossy(&line);
+                let Some(data) = line.trim().strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data == "[DONE]" {
+                    break 'read;
+                }
+                let event: Value =
+                    serde_json::from_str(data).map_err(|e| format!("bad event: {e}"))?;
+                if let Some(error) = event.get("error") {
+                    return Err(format!("provider error: {error}"));
+                }
+                let Some(choice) = event["choices"].get(0) else {
+                    continue;
+                };
+                let delta = &choice["delta"];
+                if let Some(text) = delta["content"].as_str().filter(|text| !text.is_empty()) {
+                    content.push_str(text);
+                    sink(Some(&content));
+                }
+                for part in delta["tool_calls"].as_array().into_iter().flatten() {
+                    let index = part["index"].as_u64().unwrap_or(0) as usize;
+                    if calls.len() <= index {
+                        calls.resize_with(index + 1, Default::default);
+                    }
+                    let call = &mut calls[index];
+                    if let Some(id) = part["id"].as_str().filter(|id| !id.is_empty()) {
+                        call.0 = id.to_string();
+                    }
+                    if let Some(name) = part["function"]["name"].as_str() {
+                        call.1.push_str(name);
+                    }
+                    if let Some(arguments) = part["function"]["arguments"].as_str() {
+                        call.2.push_str(arguments);
+                    }
+                }
+                if choice["finish_reason"] == "length" {
+                    return Err("truncated at the output token limit".into());
+                }
+            }
+        }
+        let calls: Vec<RespToolCall> = calls
+            .into_iter()
+            .filter(|(_, name, _)| !name.is_empty())
+            .map(|(id, name, arguments)| RespToolCall {
+                id,
+                function: RespToolCallFn { name, arguments },
+            })
+            .collect();
+        if !calls.is_empty() {
+            // A tool round: its text was not the reply.
+            sink(None);
+        }
+        Ok(ChatCompletionResponse {
+            choices: vec![ChatChoice {
+                message: ChatMessageResponse {
+                    content: (!content.is_empty()).then_some(content),
+                    tool_calls: (!calls.is_empty()).then_some(calls),
+                },
+            }],
+        })
     }
 }

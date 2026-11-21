@@ -161,6 +161,11 @@ export function AgentPanel() {
   const [firstReply, setFirstReply] = useState<AgentReply | null>(null);
   const [hasFollowups, setHasFollowups] = useState(false);
   const [busy, setBusy] = useState(true);
+  // EXPERIMENT: the streaming reply, shown until the finished one lands.
+  const [streamText, setStreamText] = useState("");
+  useEffect(() => {
+    if (!busy) setStreamText("");
+  }, [busy]);
   const [error, setError] = useState<string | null>(null);
   const [flashedId, setFlashedId] = useState<string | null>(null);
   // Talk-back: the reply being read aloud, by speech id (null = silent).
@@ -504,6 +509,10 @@ export function AgentPanel() {
           );
         })
         .then(track),
+      // EXPERIMENT: the reply so far, while it streams ("" clears it).
+      win
+        .listen<string>("agent-stream", ({ payload }) => setStreamText(payload))
+        .then(track),
       // Talk-back started or ended: the reply's Stop button follows it.
       win
         .listen<{ id: number; active: boolean }>(
@@ -687,7 +696,7 @@ export function AgentPanel() {
     const start = !hasFollowups ? currentStartRef.current : null;
     if (start) start.scrollIntoView({ block: "start" });
     else endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, history, hasFollowups, busy, revealed, mode, view]);
+  }, [messages, history, hasFollowups, busy, revealed, mode, view, streamText]);
 
   // A hand-opened notch has no global Escape (it may stay open for a whole
   // meeting); its own keydown closes it. A summon's Escape is the host's.
@@ -1759,7 +1768,14 @@ export function AgentPanel() {
                 </div>
               ))}
 
-              {busy && !summonListening && (
+              {busy && !summonListening && streamText && (
+                <div className="agc-c-turn is-assistant is-streaming">
+                  <div className="agc-c-answer">
+                    <AgentMarkdown markdown={streamText} />
+                  </div>
+                </div>
+              )}
+              {busy && !summonListening && !streamText && (
                 <div className="agent-typing" aria-hidden="true">
                   <span />
                   <span />

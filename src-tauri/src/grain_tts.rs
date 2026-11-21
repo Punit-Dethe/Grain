@@ -412,6 +412,177 @@ pub(crate) fn speak(
     }
 }
 
+// ── Streamed reply (EXPERIMENT, revertable) ─────────────────────────────────
+//
+// A streamed reply starts talking once enough of it has arrived, and the rest
+// is read as it lands: the worker speaks whole sentences from a growing text.
+
+/// Text arriving for one streamed speech.
+#[derive(Default)]
+pub(crate) struct SpeechFeed(Mutex<FeedState>);
+
+#[derive(Default)]
+struct FeedState {
+    text: String,
+    /// Bytes of `text` already handed to the voice.
+    consumed: usize,
+    done: bool,
+    cancelled: bool,
+}
+
+impl SpeechFeed {
+    /// The reply so far. Ignored if it no longer starts with what was spoken.
+    pub(crate) fn update(&self, text: &str) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.done && text.get(..state.consumed) == state.text.get(..state.consumed) {
+            state.text = text.to_string();
+        }
+    }
+
+    /// The whole reply is in: speak the rest, then end.
+    pub(crate) fn finish(&self, text: &str) {
+        self.update(text);
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).done = true;
+    }
+
+    /// Stop this speech (only this one).
+    pub(crate) fn cancel(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.done = true;
+        state.cancelled = true;
+    }
+
+    fn cancelled(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).cancelled
+    }
+
+    /// The next piece worth speaking: whole sentences (outside a code fence),
+    /// or everything once the reply is done. `None` = finished.
+    fn next(&self) -> Option<String> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let rest = &state.text[state.consumed..];
+        let cut = if state.done {
+            rest.len()
+        } else {
+            rest.char_indices()
+                .filter(|&(i, c)| {
+                    c == '\n'
+                        || (matches!(c, '.' | '!' | '?')
+                            && rest[i + 1..].starts_with(char::is_whitespace))
+                })
+                .map(|(i, c)| i + c.len_utf8())
+                .filter(|&end| rest[..end].matches("```").count() % 2 == 0)
+                .last()
+                .unwrap_or(0)
+        };
+        if cut == 0 && state.done {
+            return None;
+        }
+        let piece = rest[..cut].to_string();
+        state.consumed += cut;
+        Some(piece)
+    }
+}
+
+/// Like [`speak`], but the text keeps arriving through `feed` until it is
+/// finished or cancelled.
+pub(crate) fn speak_feed(
+    app: &AppHandle,
+    feed: std::sync::Arc<SpeechFeed>,
+    on_end: impl FnOnce(u64) + Send + 'static,
+) -> Option<u64> {
+    if !crate::settings::get_settings(app).agent_talk_back {
+        return None;
+    }
+    let dir = model_dir(app).ok()?;
+    if !installed(&dir) {
+        ensure_installed(app);
+        return None;
+    }
+    let voice = chosen_voice(app, &dir);
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    info!("[GRAIN] talk-back: speaking a streamed reply as {voice}");
+    LIVE.store(generation, Ordering::SeqCst);
+    let spawned = std::thread::Builder::new()
+        .name("grain-tts".into())
+        .spawn(move || {
+            {
+                let _one = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
+                let keep = || GENERATION.load(Ordering::SeqCst) == generation && !feed.cancelled();
+                if !keep() {
+                    info!("[GRAIN] talk-back: replaced before it started");
+                } else if let Err(e) = say_feed(&dir, voice, &feed, keep) {
+                    warn!("[GRAIN] talk-back failed: {e}");
+                }
+            }
+            let _ = LIVE.compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
+            on_end(generation);
+        });
+    match spawned {
+        Ok(_) => Some(generation),
+        Err(e) => {
+            let _ = LIVE.compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
+            warn!("[GRAIN] talk-back: could not start: {e}");
+            None
+        }
+    }
+}
+
+fn say_feed(
+    dir: &Path,
+    voice: &str,
+    feed: &SpeechFeed,
+    keep: impl Fn() -> bool,
+) -> Result<(), String> {
+    use ptts::synth::SpeechOptions;
+    use rodio::buffer::SamplesBuffer;
+    use rodio::{ChannelCount, DeviceSinkBuilder, Player, SampleRate};
+
+    let tts = load_voice(dir, voice)?;
+    let rate = SampleRate::new(tts.sample_rate()).ok_or("the voice model has no sample rate")?;
+    let mono = ChannelCount::new(1).expect("1 is non-zero");
+    let mut device = DeviceSinkBuilder::from_default_device()
+        .and_then(DeviceSinkBuilder::open_stream)
+        .map_err(|e| format!("no audio output: {e}"))?;
+    device.log_on_drop(false);
+    let player = Player::connect_new(device.mixer());
+    let options = SpeechOptions::default().voice(voice);
+    let mut spoken = 0usize;
+    while let Some(piece) = feed.next() {
+        if !keep() {
+            player.stop();
+            return Ok(());
+        }
+        let text = speakable(&piece);
+        if text.is_empty() || spoken >= MAX_SPOKEN_CHARS {
+            if piece.is_empty() {
+                std::thread::sleep(Duration::from_millis(40));
+            }
+            continue;
+        }
+        spoken += text.len();
+        let stream = tts
+            .stream_with(&text, &options)
+            .map_err(|e| format!("could not start speech: {e}"))?;
+        for chunk in stream {
+            if !keep() {
+                player.stop();
+                return Ok(());
+            }
+            let pcm = chunk.map_err(|e| format!("speech failed: {e}"))?;
+            player.append(SamplesBuffer::new(mono, rate, pcm));
+        }
+    }
+    while !player.empty() {
+        if !keep() {
+            player.stop();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(40));
+    }
+    Ok(())
+}
+
 /// Load the voice model (CPU, Q8) with only `voice` registered (the other
 /// downloaded presets stay on disk).
 fn load_voice(dir: &Path, voice: &str) -> Result<ptts::synth::Synth, String> {
