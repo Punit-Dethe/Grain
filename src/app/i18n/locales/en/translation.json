@@ -103,7 +103,6 @@
       "continuing": "Still on it…"
     },
     "processing": "PROCESSING",
-    "copyReply": "COPY REPLY",
     "stopSpeaking": "Stop speaking",
     "reminderBackTo": "Back to {{mode}}",
     "reminderDone": "Done",

@@ -17,10 +17,8 @@ import {
   PenLine,
   Mic,
   Plane,
-  Copy,
   RotateCcw,
   X,
-  Check,
   Square,
   SquarePen,
   VolumeX,
@@ -67,10 +65,6 @@ interface ChatMessage {
   // The reply's spoken part, shown as its own message before `content`.
   said?: string | null;
 }
-
-/** What Copy copies for a reply: its result text when it has one (an
- * email's subject has its own copy button in the card). */
-const copyTextOf = (m: ChatMessage) => m.result?.body ?? m.content;
 
 /** Messages as shown: a reply's spoken part becomes its own message, so the
  * assistant reads as having sent two (the short spoken one, then the rest). */
@@ -1371,8 +1365,8 @@ export function AgentPanel() {
     [sendDraft, finishVoice],
   );
 
-  /** Copy one specific answer (the per-reply copy affordance). Only the copied
-   * reply's icon flashes — the flash is keyed by turn id, not global. */
+  /** Copy one specific answer (a click on it). Only that reply shows the tick
+   * cursor: the flash is keyed by turn id, not global. */
   const copyOne = useCallback((id: string, text: string) => {
     if (!text.trim()) return;
     commands
@@ -1499,13 +1493,19 @@ export function AgentPanel() {
           : []),
       ];
   const canRetry = !hasFollowups && !busy && !firstReply?.confirm_action;
-  // Talk-back reads the newest reply; its Stop button sits on that reply.
-  const speakingId =
+  // Talk-back reads the newest reply; its Stop button sits on that reply, or
+  // on its spoken part's own message when it has one (that is what is read).
+  const speaking =
     speechId === null
-      ? null
-      : ([...thread, ...(thread.length ? [] : history)]
+      ? undefined
+      : [...thread, ...(thread.length ? [] : history)]
           .reverse()
-          .find((m) => m.role === "assistant" && m.content.trim())?.id ?? null);
+          .find((m) => m.role === "assistant" && m.content.trim());
+  const speakingId = !speaking
+    ? null
+    : speaking.said?.trim()
+      ? `${speaking.id}:said`
+      : speaking.id;
   const stopSpeech = useCallback(() => {
     setSpeechId(null);
     void commands.agentStopSpeech().catch(console.error);
@@ -1546,6 +1546,22 @@ export function AgentPanel() {
       </button>
     );
   };
+
+  /** A reply's text. A click copies it (the cursor shows a copy icon, then a
+   * tick); links and buttons inside keep their own click, and a drag that
+   * selected text copies nothing. */
+  const renderAnswer = (m: ChatMessage) => (
+    <div
+      className={`agc-c-answer is-copyable${flashedId === m.id ? " is-copied" : ""}`}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("a, button")) return;
+        if (window.getSelection()?.toString()) return;
+        copyOne(m.id, m.content);
+      }}
+    >
+      <AgentMarkdown markdown={m.content} />
+    </div>
+  );
 
   /** A reply's result, as a card that reopens it with Copy. */
   const renderResultCard = (result: AgentResult) => {
@@ -1830,15 +1846,11 @@ export function AgentPanel() {
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
                     <>
-                      {m.content.trim() && (
-                        <div className="agc-c-answer">
-                          <AgentMarkdown markdown={m.content} />
-                        </div>
-                      )}
+                      {m.content.trim() && renderAnswer(m)}
                       {m.ui && renderViewCard(m.ui)}
                       {m.result && renderResultCard(m.result)}
-                      <div className="agc-c-tools">
-                        {speakingId === m.id && (
+                      {speakingId === m.id && (
+                        <div className="agc-c-tools">
                           <button
                             type="button"
                             className="agc-c-tool agc-c-stop-speech"
@@ -1848,21 +1860,8 @@ export function AgentPanel() {
                           >
                             <VolumeX size={13} />
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                          onClick={() => copyOne(m.id, copyTextOf(m))}
-                          aria-label={t("agent.copyReply")}
-                          title={t("agent.copyReply")}
-                        >
-                          {flashedId === m.id ? (
-                            <Check size={13} />
-                          ) : (
-                            <Copy size={13} />
-                          )}
-                        </button>
-                      </div>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -1892,15 +1891,11 @@ export function AgentPanel() {
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
                     <>
-                      {m.content.trim() && (
-                        <div className="agc-c-answer">
-                          <AgentMarkdown markdown={m.content} />
-                        </div>
-                      )}
+                      {m.content.trim() && renderAnswer(m)}
                       {m.ui && renderViewCard(m.ui)}
                       {m.result && renderResultCard(m.result)}
                       {m.confirmAction && renderConfirmAction(m.confirmAction)}
-                      {m.content.trim() && (
+                      {(speakingId === m.id || (canRetry && m.id === "a0")) && (
                         <div className="agc-c-tools">
                           {speakingId === m.id && (
                             <button
@@ -1913,19 +1908,6 @@ export function AgentPanel() {
                               <VolumeX size={13} />
                             </button>
                           )}
-                          <button
-                            type="button"
-                            className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                            onClick={() => copyOne(m.id, copyTextOf(m))}
-                            aria-label={t("agent.copyReply")}
-                            title={t("agent.copyReply")}
-                          >
-                            {flashedId === m.id ? (
-                              <Check size={13} />
-                            ) : (
-                              <Copy size={13} />
-                            )}
-                          </button>
                           {canRetry && m.id === "a0" && (
                             <button
                               type="button"

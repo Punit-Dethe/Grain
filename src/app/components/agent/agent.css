@@ -1308,6 +1308,39 @@ html[data-window="agent-panel"] body {
   transition: opacity 140ms ease;
 }
 
+/* A reply copies on click: no Copy row under it, so no empty band below
+   each reply. The cursor shows a copy icon, then a tick once copied. Stop
+   and Retry float at the reply's bottom right instead of taking a row. */
+.agc-c-turn.is-assistant {
+  position: relative;
+}
+
+.agc-c-turn.is-assistant:has(> .agc-c-tools) > .agc-c-answer {
+  max-width: calc(100% - 32px);
+}
+
+.agc-c-turn.is-assistant > .agc-c-tools {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  flex-direction: column;
+  padding-left: 0;
+}
+
+.agc-c-answer.is-copyable {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23000' stroke-width='4.5'%3E%3Crect x='9' y='9' width='13' height='13' rx='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/g%3E%3Cg stroke='%23fff' stroke-width='2'%3E%3Crect x='9' y='9' width='13' height='13' rx='2'/%3E%3Cpath d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/%3E%3C/g%3E%3C/svg%3E")
+      11 11,
+    copy;
+}
+
+.agc-c-answer.is-copyable.is-copied {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5' stroke='%23000' stroke-width='5'/%3E%3Cpath d='M20 6 9 17l-5-5' stroke='%239be0b8' stroke-width='2.5'/%3E%3C/svg%3E")
+      11 11,
+    default;
+}
+
 .agc-c-tool {
   width: 26px;
   height: 22px;
@@ -1341,10 +1374,6 @@ html[data-window="agent-panel"] body {
   display: flex;
   gap: 6px;
   margin-top: 8px;
-}
-
-.agc-c-tool.is-flash {
-  color: #9be0b8;
 }
 
 .agc-c-compose {
@@ -1494,10 +1523,6 @@ html[data-window="agent-panel"] body {
 .agc-c-stream-box .agc-markdown > *,
 .agc-c-stream-box li {
   animation: agc-stream-in 320ms ease both;
-}
-
-.agc-c-tools.is-placeholder {
-  height: 22px;
 }
 
 @keyframes agc-stream-in {

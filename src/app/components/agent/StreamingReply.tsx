@@ -116,8 +116,6 @@ export function StreamingReply({
           <AgentMarkdown markdown={visible} />
         </div>
       </div>
-      {/* The finished reply's tool row takes this room: no jump when it lands. */}
-      <div className="agc-c-tools is-placeholder" aria-hidden="true" />
     </div>
   );
 }
