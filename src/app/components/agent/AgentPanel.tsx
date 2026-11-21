@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowUp,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CloudSun,
@@ -713,6 +714,10 @@ export function AgentPanel() {
   // sliver does; when it is full (or on a click) the chat opens early.
   const [hoverOpening, setHoverOpening] = useState(false);
   const canOpenEarly = !revealed && !closing && !!capture && !capture.opened;
+  // A compact spoken reply that is a short version of a longer one: offer
+  // "View" while the voice talks.
+  const canViewMore =
+    canOpenEarly && !!capture?.speaking && !!firstReply?.shortened;
   const openEarly = useCallback(() => {
     setHoverOpening(false);
     // Shrunk by Escape while listening: reopen the same chat.
@@ -1552,6 +1557,7 @@ export function AgentPanel() {
         ref={shellRef}
         className={`agent-notch${entering ? " is-entering" : ""}${revealed ? " is-reply" : ""}${fitted ? " is-fit" : ""}${closing ? " is-closing" : ""}${resizing ? " is-resizing" : ""}`}
         data-opened={capture?.opened ? "" : undefined}
+        data-more={canViewMore ? "" : undefined}
         style={
           {
             "--chat-w": `${chatSize.w}px`,
@@ -1587,6 +1593,21 @@ export function AgentPanel() {
         )}
         {!revealed && <span className="agent-notch-work" aria-hidden />}
         {canOpenEarly && <span className="agent-notch-fill" aria-hidden />}
+        {canViewMore && (
+          // The voice reads a short version: the sliver drops a lip that
+          // opens the whole reply. It goes with the speech.
+          <button
+            type="button"
+            className="agent-notch-more"
+            onClick={(event) => {
+              event.stopPropagation();
+              openEarly();
+            }}
+          >
+            <span>{t("agent.notchView")}</span>
+            <ChevronDown size={12} strokeWidth={2.4} aria-hidden />
+          </button>
+        )}
         {/* One header for both states: the compact status crossfades into the
             brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">

@@ -1003,6 +1003,13 @@ fn sentences(text: &str) -> Vec<&str> {
     out
 }
 
+/// Whether `spoken` (from [`reply_speech`]) says less than the reply shows:
+/// a short version, or a long reply read only up to the fallback budget.
+pub(crate) fn is_short_version(spoken: &str, reply: &str) -> bool {
+    // A little slack: re-joined sentences can differ by a space or two.
+    speakable(reply).chars().count() > spoken.chars().count() + 8
+}
+
 /// The whole sentences of `text` that fit in `budget` characters (with
 /// `first`, at least the first one, however long). `true` = some were left out.
 fn fit_sentences(text: &str, budget: usize, first: bool) -> (String, bool) {
@@ -1065,6 +1072,17 @@ mod tests {
             "Use cargo and care. quoted."
         );
         assert_eq!(speakable("| a | b |\n|---|---|\n| 1 | 2 |"), "a b. 1 2.");
+    }
+
+    #[test]
+    fn a_short_version_is_told_apart_from_the_whole_reply() {
+        let story = "The keeper climbed the stairs at dusk. ".repeat(40);
+        let said = "I wrote you a story about a lighthouse keeper.";
+        assert!(is_short_version(&reply_speech(Some(said), &story), &story));
+        assert!(is_short_version(&reply_speech(None, &story), &story));
+        assert!(!is_short_version(&reply_speech(None, "Twelve."), "Twelve."));
+        let short = "- one\n- two";
+        assert!(!is_short_version(&reply_speech(None, short), short));
     }
 
     #[test]

@@ -433,6 +433,10 @@ pub struct AgentReply {
     /// [GRAIN] Text the user asked to get back, changed: shown in a result
     /// card with Copy (`grain_agent_reply`). Never together with `ui`.
     pub result: Option<crate::grain_agent_reply::AgentResult>,
+    /// [GRAIN] What is read aloud is a short version of a longer reply: the
+    /// compact speaking notch offers "View" while it talks.
+    #[serde(default)]
+    pub shortened: bool,
 }
 
 /// [GRAIN] One material argument of a pending action, for the confirmation panel.
@@ -466,6 +470,7 @@ impl AgentReply {
             confirm_action: None,
             ui: None,
             result: None,
+            shortened: false,
         }
     }
 }
@@ -3315,6 +3320,7 @@ pub async fn agent_run(
             }
             None => crate::grain_tts::reply_speech(say.as_deref(), &reply.text),
         };
+        reply.shortened = crate::grain_tts::is_short_version(&spoken, &reply.text);
         // A reply with a view or a result always opens the notch to show it:
         // never the compact spoken presentation, even with
         // `agent_compact_voice`.
@@ -4707,6 +4713,7 @@ mod tool_continuation_tests {
                 confirm_action: Some(confirm),
                 ui: None,
                 result: None,
+                shortened: false,
             }),
         )
         .unwrap();
@@ -4951,6 +4958,7 @@ async fn drive_tool_turn_with<'a>(
                 confirm_action: Some(confirm),
                 ui: None,
                 result: None,
+                shortened: false,
             });
         }
         if let Some(final_reply) = same_round_reply.filter(|_| all_succeeded) {
