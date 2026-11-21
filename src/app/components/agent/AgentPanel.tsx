@@ -33,6 +33,7 @@ import {
   type AgentReply,
 } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
+import { StreamingReply } from "./StreamingReply";
 import { AgentCanvas, CANVAS_MIN } from "./canvas/AgentCanvas";
 import { canvasSpec } from "./canvas/library";
 import { viewSummary, type ViewKind } from "./canvas/program";
@@ -696,7 +697,7 @@ export function AgentPanel() {
     const start = !hasFollowups ? currentStartRef.current : null;
     if (start) start.scrollIntoView({ block: "start" });
     else endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, history, hasFollowups, busy, revealed, mode, view, streamText]);
+  }, [messages, history, hasFollowups, busy, revealed, mode, view]);
 
   // A hand-opened notch has no global Escape (it may stay open for a whole
   // meeting); its own keydown closes it. A summon's Escape is the host's.
@@ -1769,11 +1770,7 @@ export function AgentPanel() {
               ))}
 
               {busy && !summonListening && streamText && (
-                <div className="agc-c-turn is-assistant is-streaming">
-                  <div className="agc-c-answer">
-                    <AgentMarkdown markdown={streamText} />
-                  </div>
-                </div>
+                <StreamingReply text={streamText} capAtStart={!hasFollowups} />
               )}
               {busy && !summonListening && !streamText && (
                 <div className="agent-typing" aria-hidden="true">

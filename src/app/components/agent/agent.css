@@ -1184,6 +1184,53 @@ html[data-window="agent-panel"] body {
   color: #ffb4a4;
 }
 
+/* EXPERIMENT: a streaming reply. It grows out of the typing bubble: the box
+   glides to its content height, and each new paragraph fades in. */
+.agc-c-turn.is-streaming {
+  animation: agc-stream-in 200ms ease both;
+}
+
+.agc-c-stream-box {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  transition: height 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.agc-c-stream-box > .agc-c-answer {
+  flex-shrink: 0;
+}
+
+.agc-c-stream-box .agc-markdown > *,
+.agc-c-stream-box li {
+  animation: agc-stream-in 320ms ease both;
+}
+
+.agc-c-tools.is-placeholder {
+  height: 22px;
+}
+
+@keyframes agc-stream-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agc-c-turn.is-streaming,
+  .agc-c-stream-box,
+  .agc-c-stream-box .agc-markdown > *,
+  .agc-c-stream-box li {
+    animation: none;
+    transition: none;
+  }
+}
+
 /* Typing: a small assistant bubble with three dots in fading grays. */
 .agent-typing {
   align-self: flex-start;
