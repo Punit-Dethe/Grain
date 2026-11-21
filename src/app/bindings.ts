@@ -2453,12 +2453,7 @@ ui: string | null;
  * [GRAIN] Text the user asked to get back, changed: shown in a result
  * card with Copy (`grain_agent_reply`). Never together with `ui`.
  */
-result: AgentResult | null; 
-/**
- * [GRAIN] What is read aloud is a short version of a longer reply: the
- * compact speaking notch offers "View" while it talks.
- */
-shortened?: boolean }
+result: AgentResult | null }
 /**
  * [GRAIN] Text the user asked to get back, changed: shown in a result card.
  */

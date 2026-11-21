@@ -23,10 +23,6 @@ use tauri::{AppHandle, Manager};
 const VOICE: &str = "Zoey";
 /// Hard cap on what is read aloud; longer replies stop at a sentence end.
 const MAX_SPOKEN_CHARS: usize = 3000;
-/// A long reply without its short spoken version (`SAY:` line, see
-/// `grain_agent_reply`) is read up to about this much, always ending on a
-/// whole sentence. A safety net: the model is asked to write that line.
-const FALLBACK_SPOKEN_CHARS: usize = 500;
 
 struct ModelFile {
     /// Path inside the model folder.
@@ -432,8 +428,6 @@ struct FeedState {
     consumed: usize,
     done: bool,
     cancelled: bool,
-    /// How much to read: all of a short spoken version, or the fallback.
-    budget: Option<usize>,
 }
 
 impl SpeechFeed {
@@ -460,19 +454,6 @@ impl SpeechFeed {
 
     fn cancelled(&self) -> bool {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).cancelled
-    }
-
-    /// The text is the reply's short spoken version: read all of it.
-    pub(crate) fn speak_all(&self) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).budget = Some(MAX_SPOKEN_CHARS);
-    }
-
-    fn budget(&self) -> usize {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .budget
-            .unwrap_or(FALLBACK_SPOKEN_CHARS)
     }
 
     /// The next piece worth speaking: whole sentences (outside a code fence),
@@ -573,7 +554,7 @@ fn say_feed(
             return Ok(());
         }
         let text = speakable(&piece);
-        let budget = feed.budget();
+        let budget = MAX_SPOKEN_CHARS;
         if text.is_empty() || spoken >= budget {
             if piece.is_empty() {
                 std::thread::sleep(Duration::from_millis(40));
@@ -582,9 +563,7 @@ fn say_feed(
         }
         let (text, trimmed) = fit_sentences(&text, budget - spoken, spoken == 0);
         if trimmed {
-            info!(
-                "[GRAIN] talk-back: long streamed reply without a SAY line; ending at a sentence"
-            );
+            info!("[GRAIN] talk-back: streamed reply reached the spoken cap");
             spoken = budget;
         } else {
             spoken += text.chars().count();
@@ -960,23 +939,10 @@ fn plain_inline(line: &str) -> String {
         .join(" ")
 }
 
-/// What to read aloud for a finished reply: all of its short spoken version
-/// when it has one, else the reply itself, a long one only up to the fallback
-/// budget and always ending on a whole sentence.
+/// What to read aloud for a finished reply: all of its spoken part when it
+/// has one, else the whole reply (both up to [`MAX_SPOKEN_CHARS`]).
 pub(crate) fn reply_speech(say: Option<&str>, reply: &str) -> String {
-    if let Some(say) = say {
-        return speakable(say);
-    }
-    let plain = speakable(reply);
-    let (spoken, trimmed) = fit_sentences(&plain, FALLBACK_SPOKEN_CHARS, true);
-    if trimmed {
-        info!(
-            "[GRAIN] talk-back: long reply without a SAY line; reading {} of {} chars",
-            spoken.chars().count(),
-            plain.chars().count()
-        );
-    }
-    spoken
+    speakable(say.unwrap_or(reply))
 }
 
 /// Plain text split after each `.`, `!` or `?` that ends a sentence.
@@ -1001,13 +967,6 @@ fn sentences(text: &str) -> Vec<&str> {
         out.push(tail);
     }
     out
-}
-
-/// Whether `spoken` (from [`reply_speech`]) says less than the reply shows:
-/// a short version, or a long reply read only up to the fallback budget.
-pub(crate) fn is_short_version(spoken: &str, reply: &str) -> bool {
-    // A little slack: re-joined sentences can differ by a space or two.
-    speakable(reply).chars().count() > spoken.chars().count() + 8
 }
 
 /// The whole sentences of `text` that fit in `budget` characters (with
@@ -1075,17 +1034,6 @@ mod tests {
     }
 
     #[test]
-    fn a_short_version_is_told_apart_from_the_whole_reply() {
-        let story = "The keeper climbed the stairs at dusk. ".repeat(40);
-        let said = "I wrote you a story about a lighthouse keeper.";
-        assert!(is_short_version(&reply_speech(Some(said), &story), &story));
-        assert!(is_short_version(&reply_speech(None, &story), &story));
-        assert!(!is_short_version(&reply_speech(None, "Twelve."), "Twelve."));
-        let short = "- one\n- two";
-        assert!(!is_short_version(&reply_speech(None, short), short));
-    }
-
-    #[test]
     fn a_spoken_version_is_read_in_full() {
         let say = "I've written you a story about a lighthouse keeper; it ends well.";
         assert_eq!(reply_speech(Some(say), &"Long story. ".repeat(200)), say);
@@ -1101,14 +1049,9 @@ mod tests {
     }
 
     #[test]
-    fn a_long_reply_without_its_line_ends_on_a_whole_sentence() {
+    fn a_reply_without_its_spoken_part_is_read_whole() {
         let reply = "The keeper climbed the stairs at dusk. ".repeat(40);
-        let spoken = reply_speech(None, &reply);
-        assert!(spoken.chars().count() <= FALLBACK_SPOKEN_CHARS);
-        assert!(spoken.ends_with("at dusk."), "{spoken}");
-        // One very long first sentence is still read whole, never cut.
-        let one = format!("{}end.", "word ".repeat(150));
-        assert_eq!(reply_speech(None, &one), one);
+        assert_eq!(reply_speech(None, &reply), reply.trim());
     }
 
     #[test]

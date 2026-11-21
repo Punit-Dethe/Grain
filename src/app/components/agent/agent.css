@@ -199,58 +199,6 @@ html[data-window="agent-panel"] body {
   );
 }
 
-/* The voice reads a short version of a longer reply: the sliver drops a
-   small lip under its blue sweep that opens the whole reply ("View"). It
-   lasts while the voice talks; Escape still stops both. */
-.agent-notch[data-phase="speaking"][data-more] {
-  width: min(136px, 100vw);
-  height: min(33px, 100vh);
-  border-radius: 0 0 14px 14px;
-}
-
-.agent-notch-more {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  height: 27px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--agc-muted);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  cursor: pointer;
-  opacity: 0;
-  transform: translateY(-4px);
-  pointer-events: none;
-  transition:
-    opacity 180ms ease,
-    transform 260ms var(--notch-ease),
-    color 140ms ease;
-}
-
-.agent-notch[data-phase="speaking"][data-more]:not(.is-closing)
-  .agent-notch-more {
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
-  transition-delay: 140ms, 140ms, 0s;
-}
-
-.agent-notch-more:hover,
-.agent-notch-more:focus-visible,
-.agent-notch[data-hover] .agent-notch-more {
-  outline: none;
-  color: var(--agc-ink);
-}
-
 @keyframes agent-notch-work {
   to {
     background-position-x: var(--work-span);
@@ -1629,7 +1577,6 @@ html[data-window="agent-panel"] body {
   .agent-notch-recall,
   .agent-notch-canvas-pane,
   .agent-notch-result-pane,
-  .agent-notch-more,
   .ars-text,
   .ars-chip,
   .ars-copy,

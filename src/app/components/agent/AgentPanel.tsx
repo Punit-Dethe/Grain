@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ArrowUp,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CloudSun,
@@ -206,8 +205,6 @@ export function AgentPanel() {
   const [flashedId, setFlashedId] = useState<string | null>(null);
   // Talk-back: the reply being read aloud, by speech id (null = silent).
   const [speechId, setSpeechId] = useState<number | null>(null);
-  // Generation whose streamed voice reads a SAY line (`agent-short-voice`).
-  const [shortVoice, setShortVoice] = useState<number | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   // True once the shell has finished growing; the compact status (and its
@@ -563,12 +560,6 @@ export function AgentPanel() {
           );
         })
         .then(track),
-      // The streamed voice reads a short version: the sliver offers View.
-      win
-        .listen<number>("agent-short-voice", ({ payload }) =>
-          setShortVoice(payload),
-        )
-        .then(track),
       // EXPERIMENT: the reply so far, while it streams ("" clears it).
       win
         .listen<string>("agent-stream", ({ payload }) => setStreamText(payload))
@@ -725,12 +716,6 @@ export function AgentPanel() {
   // The blue sweep follows the voice: a streamed reply starts talking while
   // the turn still works, and the voice wins over the working look.
   const voiceSpeaking = !!capture?.speaking || (!revealed && speechId !== null);
-  // The voice reads a short version of a longer reply (its SAY line, or the
-  // finished reply says so): offer "View" while it talks.
-  const canViewMore =
-    canOpenEarly &&
-    voiceSpeaking &&
-    (shortVoice === capture?.generation || !!firstReply?.shortened);
   const openEarly = useCallback(() => {
     setHoverOpening(false);
     // Shrunk by Escape while listening: reopen the same chat.
@@ -1570,7 +1555,6 @@ export function AgentPanel() {
         ref={shellRef}
         className={`agent-notch${entering ? " is-entering" : ""}${revealed ? " is-reply" : ""}${fitted ? " is-fit" : ""}${closing ? " is-closing" : ""}${resizing ? " is-resizing" : ""}`}
         data-opened={capture?.opened ? "" : undefined}
-        data-more={canViewMore ? "" : undefined}
         style={
           {
             "--chat-w": `${chatSize.w}px`,
@@ -1606,21 +1590,6 @@ export function AgentPanel() {
         )}
         {!revealed && <span className="agent-notch-work" aria-hidden />}
         {canOpenEarly && <span className="agent-notch-fill" aria-hidden />}
-        {canViewMore && (
-          // The voice reads a short version: the sliver drops a lip that
-          // opens the whole reply. It goes with the speech.
-          <button
-            type="button"
-            className="agent-notch-more"
-            onClick={(event) => {
-              event.stopPropagation();
-              openEarly();
-            }}
-          >
-            <span>{t("agent.notchView")}</span>
-            <ChevronDown size={12} strokeWidth={2.4} aria-hidden />
-          </button>
-        )}
         {/* One header for both states: the compact status crossfades into the
             brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">

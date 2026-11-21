@@ -1,8 +1,9 @@
 //! [GRAIN] What an Agent reply says aloud versus what it shows (see
-//! `docs/Agent Replies/PLAN.md`). With talk-back on, a long reply starts with
-//! one `SAY:` line: a short spoken version written by the model in the same
-//! call. That line is read aloud in full; the rest is the reply shown in the
-//! chat. Short replies carry no line and are read as they are.
+//! `docs/Agent Replies/PLAN.md`). With talk-back on, every reply starts with
+//! its spoken part in `<say>…</say>`, written by the model in the same call:
+//! a short reply whole, a long one as a short spoken version with the full
+//! reply after the tag. The spoken part is read aloud in full; the chat shows
+//! it and the rest, without tags. A reply without the tag is read whole.
 //!
 //! A text transform ("turn this into an email", "more formal") comes back as
 //! a result: the new text in a `<result kind="…">…</result>` block, shown in
@@ -127,102 +128,141 @@ fn unlink(line: &str) -> String {
 }
 
 /// Sent as a system message only while talk-back is on.
-const SAY_RULE: &str = "SPOKEN VERSION: your reply is read aloud. When it is long (more than about three sentences, or it has a list, table, code or a piece of writing), begin with one line `SAY: ` followed by one or two natural sentences that tell the user what you did or found, the way you would tell a friend; never read the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions briefly (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Then the full reply from the next line, unchanged. If the user asked to hear something read out, put all of it in the SAY line. Short replies need no SAY line.";
+const SAY_RULE: &str = "SPOKEN PART: your reply is read aloud. Start every reply (after [final], when you use it) with the part to be spoken, inside <say>…</say>. A short reply goes inside it whole. A longer one (a piece of writing, a list, table or code, or more than is easy to take in by ear) opens with a short spoken version inside it, then the full reply after </say>. The spoken version tells the user what you did or found, naturally, the way you would tell a friend; it never reads the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Keep it short, but say what the user needs to hear. If the user asked to hear something read out, put all of it inside. Inside the tags: plain spoken sentences, no markdown, lists, links or code.";
 
-/// The spoken-version rule, sent only while talk-back is on. With views
-/// possible, a view reply speaks its own short explanation instead.
+/// The spoken-part rule, sent only while talk-back is on. With views
+/// possible, a view reply's short explanation is its spoken part.
 pub(crate) fn say_rule(views: bool) -> String {
     if views {
-        format!("{SAY_RULE} This applies only to a reply without a view: a reply with a view has no SAY line, its short explanation is what is read aloud.")
+        format!("{SAY_RULE} With a view, its short explanation is the spoken part; the program comes last, after the closing tag.")
     } else {
         SAY_RULE.to_owned()
     }
 }
 
-const TAG: &str = "SAY:";
+const SAY_OPEN: &str = "<say>";
+const SAY_CLOSE: &str = "</say>";
 
-/// Leading markdown emphasis a model may wrap the tag in (`**SAY:**`).
-fn strip_emphasis(text: &str) -> &str {
-    text.trim_start_matches(['*', '_'])
-}
+/// The same-round marker a reply may lead with (`agent::FINAL_REPLY_MARKER`).
+const FINAL: &str = "[final]";
 
-/// The text after a leading `SAY:` tag, when `text` starts with one.
-fn after_tag(text: &str) -> Option<&str> {
-    let text = strip_emphasis(text.trim_start());
-    let head = text.get(..TAG.len())?;
-    head.eq_ignore_ascii_case(TAG)
-        .then(|| strip_emphasis(&text[TAG.len()..]))
-}
-
-/// The spoken line itself, without padding or quotes.
-fn clean_line(line: &str) -> String {
-    line.trim()
-        .trim_end_matches(['*', '_'])
-        .trim()
-        .trim_matches('"')
-        .trim()
-        .to_owned()
-}
-
-/// Split a finished reply into its spoken version (`None` when it has none)
-/// and the reply to show. A reply that is only a `SAY:` line shows that line.
-pub(crate) fn split_say(reply: &str) -> (Option<String>, String) {
-    let Some(rest) = after_tag(reply) else {
-        return (None, reply.to_owned());
-    };
-    let (line, body) = rest.split_once('\n').unwrap_or((rest, ""));
-    let say = clean_line(line);
-    let body = body.trim();
-    match (say.is_empty(), body.is_empty()) {
-        (true, _) => (None, body.to_owned()),
-        (false, true) => (Some(say.clone()), say),
-        (false, false) => (Some(say), body.to_owned()),
+/// The text after a leading `[final]` marker, if any.
+fn skip_final(text: &str) -> &str {
+    let text = text.trim_start();
+    match text.get(..FINAL.len()) {
+        Some(head) if head.eq_ignore_ascii_case(FINAL) => text[FINAL.len()..].trim_start(),
+        _ => text,
     }
 }
 
-/// A streaming reply so far, as far as its spoken version goes.
+/// The reply after a leading `<say>` tag, when it starts with one.
+fn after_open(text: &str) -> Option<&str> {
+    let text = skip_final(text);
+    let head = text.get(..SAY_OPEN.len())?;
+    head.eq_ignore_ascii_case(SAY_OPEN)
+        .then(|| &text[SAY_OPEN.len()..])
+}
+
+/// Split the text after `<say>` into the spoken part and the reply after
+/// the closing tag (`None` while it has not arrived). A tag still arriving
+/// at the end (`</sa`) is held back.
+fn split_close(rest: &str) -> (&str, Option<&str>) {
+    let lower = rest.to_ascii_lowercase();
+    if let Some(at) = lower.find(SAY_CLOSE) {
+        return (&rest[..at], Some(&rest[at + SAY_CLOSE.len()..]));
+    }
+    match lower.rfind('<') {
+        Some(at) if SAY_CLOSE.starts_with(&lower[at..]) => (&rest[..at], None),
+        _ => (rest, None),
+    }
+}
+
+/// The spoken part and the rest of the reply as one text to show.
+fn joined(said: &str, rest: &str) -> String {
+    let (said, rest) = (said.trim(), rest.trim());
+    match (said.is_empty(), rest.is_empty()) {
+        (_, true) => said.to_owned(),
+        (true, false) => rest.to_owned(),
+        (false, false) => format!("{said}\n\n{rest}"),
+    }
+}
+
+/// Split a finished reply into its spoken part (`None` when it has none)
+/// and the reply to show: the spoken part, then the rest, without tags. A
+/// missing closing tag makes the whole reply the spoken part.
+pub(crate) fn split_say(reply: &str) -> (Option<String>, String) {
+    let Some(rest) = after_open(reply) else {
+        return (None, reply.trim().to_owned());
+    };
+    let (said, after) = split_close(rest);
+    let shown = joined(said, after.unwrap_or(""));
+    let said = said.trim();
+    ((!said.is_empty()).then(|| said.to_owned()), shown)
+}
+
+/// Put `text` right after a reply's spoken part (or in front of a reply
+/// with none), keeping the tags for [`split_say`].
+pub(crate) fn insert_after_say(reply: &str, text: &str) -> String {
+    let Some(rest) = after_open(reply) else {
+        return format!("{text}\n\n{}", reply.trim());
+    };
+    match split_close(rest) {
+        (said, Some(after)) => {
+            format!("{SAY_OPEN}{said}{SAY_CLOSE}\n{text}\n\n{}", after.trim())
+        }
+        (said, None) => format!("{SAY_OPEN}{said}{SAY_CLOSE}\n{text}"),
+    }
+}
+
+/// A streaming reply so far, as far as its spoken part goes.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum StreamSay<'a> {
-    /// Too little has arrived to tell whether it starts with `SAY:`.
+    /// Too little has arrived to tell whether it starts with `<say>`.
     Undecided,
-    /// No spoken version: the reply itself is read.
+    /// No spoken part: the reply itself is read.
     Plain,
-    /// The spoken version so far (`complete` once its line has ended) and
-    /// the reply to show after it.
+    /// The spoken part so far (`complete` once its tag has closed) and the
+    /// reply after it so far.
     Say {
-        line: String,
+        line: &'a str,
         complete: bool,
-        body: &'a str,
+        rest: &'a str,
     },
 }
 
 pub(crate) fn stream_say(text: &str) -> StreamSay<'_> {
-    let start = strip_emphasis(text.trim_start());
-    if start.len() < TAG.len() {
-        let could_be = TAG
-            .get(..start.len())
-            .is_some_and(|tag| tag.eq_ignore_ascii_case(start));
+    let prefix_of = |whole: &str, part: &str| {
+        whole
+            .get(..part.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(part))
+    };
+    let lead = text.trim_start();
+    if lead.len() < FINAL.len() && !lead.is_empty() && prefix_of(FINAL, lead) {
+        return StreamSay::Undecided;
+    }
+    let start = skip_final(text);
+    if start.len() < SAY_OPEN.len() {
+        let could_be = prefix_of(SAY_OPEN, start);
         return if could_be {
             StreamSay::Undecided
         } else {
             StreamSay::Plain
         };
     }
-    let Some(rest) = after_tag(text) else {
+    let Some(rest) = after_open(text) else {
         return StreamSay::Plain;
     };
-    match rest.split_once('\n') {
-        Some((line, body)) => StreamSay::Say {
-            line: clean_line(line),
-            complete: true,
-            body: body.trim_start(),
-        },
-        None => StreamSay::Say {
-            line: clean_line(rest),
-            complete: false,
-            body: "",
-        },
+    let (said, after) = split_close(rest);
+    StreamSay::Say {
+        line: said.trim_start(),
+        complete: after.is_some(),
+        rest: after.unwrap_or(""),
     }
+}
+
+/// The text to show for a streaming reply with a spoken part.
+pub(crate) fn stream_shown(line: &str, rest_shown: &str) -> String {
+    joined(line, rest_shown)
 }
 
 const OPEN: &str = "<result";
@@ -389,73 +429,104 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_long_reply_splits_into_spoken_version_and_body() {
-        let reply = "SAY: I've written you a story about a lighthouse keeper.\n\nThe storm came in at dusk...\n\nThe end.";
+    fn a_long_reply_speaks_its_short_version_and_shows_both() {
+        let reply = "<say>I've written you a story about a lighthouse keeper.</say>\n\nThe storm came in at dusk...\n\nThe end.";
         assert_eq!(
             split_say(reply),
             (
                 Some("I've written you a story about a lighthouse keeper.".into()),
-                "The storm came in at dusk...\n\nThe end.".into()
+                "I've written you a story about a lighthouse keeper.\n\nThe storm came in at dusk...\n\nThe end.".into()
             )
         );
     }
 
     #[test]
-    fn tag_variants_are_tolerated() {
-        for reply in [
-            "**SAY:** Filed it on GitHub.\nDetails",
-            "say: \"Filed it on GitHub.\"\r\nDetails",
-            "  SAY:Filed it on GitHub.\nDetails",
-        ] {
-            assert_eq!(
-                split_say(reply),
-                (Some("Filed it on GitHub.".into()), "Details".into()),
-                "{reply}"
-            );
-        }
-    }
-
-    #[test]
-    fn short_and_plain_replies_have_no_spoken_version() {
-        assert_eq!(split_say("Twelve."), (None, "Twelve.".into()));
+    fn a_short_reply_is_spoken_whole() {
+        let reply = "  <SAY>It's 12.\n\nAnd it rains at 3.</Say>";
         assert_eq!(
-            split_say("Sayonara is Japanese for goodbye."),
-            (None, "Sayonara is Japanese for goodbye.".into())
+            split_say(reply),
+            (
+                Some("It's 12.\n\nAnd it rains at 3.".into()),
+                "It's 12.\n\nAnd it rains at 3.".into()
+            )
         );
-        // A reply that is only the line still shows something.
+        // A missing closing tag: the whole reply is the spoken part.
         assert_eq!(
-            split_say("SAY: Done, I'll remind you at 5."),
+            split_say("<say>Done, I'll remind you at 5."),
             (
                 Some("Done, I'll remind you at 5.".into()),
                 "Done, I'll remind you at 5.".into()
             )
         );
-        // An empty tag is ignored.
-        assert_eq!(split_say("SAY:\nThe reply"), (None, "The reply".into()));
+    }
+
+    #[test]
+    fn a_reply_without_the_tag_has_no_spoken_part() {
+        assert_eq!(split_say("Twelve."), (None, "Twelve.".into()));
+        assert_eq!(
+            split_say("Sayonara is Japanese for goodbye."),
+            (None, "Sayonara is Japanese for goodbye.".into())
+        );
+        // Not at the start: not a spoken part.
+        assert_eq!(
+            split_say("Hi <say>x</say>"),
+            (None, "Hi <say>x</say>".into())
+        );
+        // An empty spoken part is ignored.
+        assert_eq!(
+            split_say("<say></say>\nThe reply"),
+            (None, "The reply".into())
+        );
+    }
+
+    #[test]
+    fn text_goes_in_right_after_the_spoken_part() {
+        assert_eq!(
+            insert_after_say("<say>All done.</say>\nDetails", "Receipt"),
+            "<say>All done.</say>\nReceipt\n\nDetails"
+        );
+        assert_eq!(
+            split_say(&insert_after_say("<say>All done.</say>", "Receipt")),
+            (Some("All done.".into()), "All done.\n\nReceipt".into())
+        );
+        assert_eq!(insert_after_say("Done.", "Receipt"), "Receipt\n\nDone.");
     }
 
     #[test]
     fn streaming_decides_once_the_tag_is_clear() {
         assert_eq!(stream_say(""), StreamSay::Undecided);
-        assert_eq!(stream_say("S"), StreamSay::Undecided);
-        assert_eq!(stream_say("**sa"), StreamSay::Undecided);
-        assert_eq!(stream_say("Su"), StreamSay::Plain);
+        assert_eq!(stream_say(" <"), StreamSay::Undecided);
+        assert_eq!(stream_say("<SA"), StreamSay::Undecided);
+        assert_eq!(stream_say("<b>"), StreamSay::Plain);
         assert_eq!(stream_say("Sayonara"), StreamSay::Plain);
+        assert_eq!(stream_say("[fin"), StreamSay::Undecided);
         assert_eq!(
-            stream_say("SAY: I've written"),
+            stream_say("[final] <say>Done.</say>"),
             StreamSay::Say {
-                line: "I've written".into(),
-                complete: false,
-                body: ""
+                line: "Done.",
+                complete: true,
+                rest: ""
             }
         );
         assert_eq!(
-            stream_say("SAY: I've written you a poem.\nRoses"),
+            stream_say("<say>I've written</s"),
             StreamSay::Say {
-                line: "I've written you a poem.".into(),
-                complete: true,
-                body: "Roses"
+                line: "I've written",
+                complete: false,
+                rest: ""
             }
+        );
+        assert_eq!(
+            stream_say("<say>I've written you a poem.</say>\nRoses"),
+            StreamSay::Say {
+                line: "I've written you a poem.",
+                complete: true,
+                rest: "\nRoses"
+            }
+        );
+        assert_eq!(
+            stream_shown("I've written you a poem.", "Roses"),
+            "I've written you a poem.\n\nRoses"
         );
     }
 
@@ -622,7 +693,7 @@ mod tests {
         assert_eq!(say_rule(false), SAY_RULE);
         let with_views = say_rule(true);
         assert!(with_views.starts_with(SAY_RULE));
-        assert!(with_views.contains("a reply with a view has no SAY line"));
+        assert!(with_views.contains("its short explanation is the spoken part"));
     }
 
     #[test]

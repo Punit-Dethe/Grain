@@ -9,11 +9,11 @@ pub(crate) const MAX_SPEC_BYTES: usize = 96 * 1024;
 
 /// How the model answers when the chat can show a view. `spec` (the
 /// component reference) follows it, then [`UI_FORMAT_RULE`].
-pub(crate) const UI_RULE: &str = "GENERATIVE UI: a reply in this chat can carry an interactive view, drawn in a small panel at the top of the screen. Prefer a view in most replies: whenever the answer has something worth seeing (weather, places, travel, prices, numbers, comparisons, lists, steps, options). Skip it only for pure conversation, a short fact one sentence fully covers, changed text the user wants back (that goes in a result block, never a view), or a question back to the user. ONE FORM PER REPLY: if most of the answer fits in a view, show the view with only a short explanation; if it needs a long written explanation a view cannot carry, write that text and show no view. Never both. Use tools first whenever the answer needs live or external data, then build the view from their results; never invent live data. The view never scrolls: it must fit the space and the limits given in the component reference; show the top items and offer a follow-up button for the rest instead of going long. Earlier assistant turns may include the view you showed; a follow-up may refine or replace it.";
+pub(crate) const UI_RULE: &str = "GENERATIVE UI: a reply in this chat can carry an interactive view, drawn in a small panel at the top of the screen. Prefer a view in most replies: whenever the answer has something worth seeing (weather, places, travel, prices, numbers, comparisons, lists, steps, options). Skip it only for pure conversation, a short fact one sentence fully covers, changed text the user wants back (that goes in a result block, never a view), or a question back to the user. ONE FORM PER REPLY: if most of the answer fits in a view, show the view with only a short explanation; if it needs a long written explanation a view cannot carry, write that text and show no view. Use tools first whenever the answer needs live or external data, then build the view from their results; never invent live data. The view never scrolls: it must fit the space and the limits given in the component reference; show the top items and offer a follow-up button for the rest instead of going long. Earlier assistant turns may include the view you showed; a follow-up may refine or replace it.";
 
 /// Last in the prompt, so it wins over the component reference's own
 /// "start with root" rule.
-pub(crate) const UI_FORMAT_RULE: &str = "REPLY FORMAT WITH A VIEW: first your chat reply, which is shown in the chat and read aloud: one or two short, warm, conversational sentences that give the answer straight away, like a friend telling you (\"It's 14 degrees with light rain until 3, then it clears up nicely.\"). Never describe the view or say you opened, showed or made something; no lists, URLs, symbols or markdown in it. Then, on a new line, the OpenUI Lang program starting with `root = Canvas(`: no code fences and nothing after it; no SAY line and no longer text anywhere. WITHOUT A VIEW: reply normally and write no program.";
+pub(crate) const UI_FORMAT_RULE: &str = "REPLY FORMAT WITH A VIEW: first your chat reply, shown in the chat: short, warm, conversational sentences that give the answer straight away, like a friend telling you (\"It's 14 degrees with light rain until 3, then it clears up nicely.\"). Never describe the view or say you opened, showed or made something; no lists, URLs, symbols or markdown in it. Then, on a new line, the OpenUI Lang program starting with `root = Canvas(`: no code fences and nothing after it. WITHOUT A VIEW: reply normally and write no program.";
 
 /// With Polished UI on (`Settings::agent_polished_ui`): design every view
 /// instead of dumping the answer into the plainest blocks.
@@ -37,8 +37,7 @@ fn opens_program(line: &str) -> bool {
 }
 
 /// Split a reply into its chat text and the view program after it (`None`
-/// when there is none). Tolerates a code fence around the program and a
-/// leftover `SAY:` tag on the text.
+/// when there is none). Tolerates a code fence around the program.
 pub(crate) fn split_ui(reply: &str) -> (String, Option<String>) {
     let mut offset = 0;
     let mut start = None;
@@ -59,12 +58,7 @@ pub(crate) fn split_ui(reply: &str) -> (String, Option<String>) {
             text = before.trim_end();
         }
     }
-    let text = text.trim();
-    let text = match text.get(..4) {
-        Some(tag) if tag.eq_ignore_ascii_case("say:") => text[4..].trim(),
-        _ => text,
-    };
-    let text = text.trim_matches('"').trim().to_owned();
+    let text = text.trim().trim_matches('"').trim().to_owned();
     let mut program = &reply[start..];
     if let Some(end) = program.find("\n```") {
         program = &program[..end];
@@ -87,7 +81,7 @@ mod tests {
             )
         );
         assert_eq!(
-            split_ui("SAY: \"Sunny all day.\"\r\n```openui\r\nroot = Canvas([])\r\n```\r\n"),
+            split_ui("\"Sunny all day.\"\r\n```openui\r\nroot = Canvas([])\r\n```\r\n"),
             (
                 "Sunny all day.".to_owned(),
                 Some("root = Canvas([])".to_owned())
@@ -110,10 +104,10 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_is_a_view_or_a_long_text_never_both() {
-        // The model picks one form; a view carries no SAY line or long text.
-        assert!(UI_RULE.contains("ONE FORM PER REPLY") && UI_RULE.contains("Never both"));
-        assert!(UI_FORMAT_RULE.contains("no SAY line"));
+    fn a_reply_prefers_one_form() {
+        // A view with a short explanation, or a long text without a view.
+        assert!(UI_RULE.contains("ONE FORM PER REPLY"));
+        assert!(UI_FORMAT_RULE.contains("nothing after it"));
     }
 
     #[test]
