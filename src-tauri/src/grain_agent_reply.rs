@@ -129,7 +129,7 @@ fn unlink(line: &str) -> String {
 }
 
 /// Sent as a system message only while talk-back is on.
-const SAY_RULE: &str = "SPOKEN PART: your reply is read aloud. Start every reply (after [final], when you use it) with the part to be spoken, inside <say>…</say>. A short reply goes inside it whole. A longer one (a piece of writing, a list, table or code, or more than is easy to take in by ear) opens with a short spoken version inside it, then the full reply after </say>. The spoken version tells the user what you did or found, naturally, the way you would tell a friend; it never reads the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Keep it short, but say what the user needs to hear. If the user asked to hear something read out, put all of it inside. Inside the tags: plain spoken sentences, no markdown, lists, links or code.";
+const SAY_RULE: &str = "SPOKEN PART: your reply is read aloud. Start every reply (after [final], when you use it) with the part to be spoken, inside <say>…</say>. A short reply goes inside it whole, with nothing after the closing tag: never repeat or reword it after </say>. A longer one (a piece of writing, a list, table or code, or more than is easy to take in by ear) opens with a short spoken version inside it, then the full reply after </say>. The spoken version tells the user what you did or found, naturally, the way you would tell a friend; it never reads the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Keep it short, but say what the user needs to hear. If the user asked to hear something read out, put all of it inside. Inside the tags: plain spoken sentences, no markdown, lists, links or code.";
 
 /// The spoken-part rule, sent only while talk-back is on. With views
 /// possible, a view reply's short explanation is its spoken part.
@@ -205,6 +205,26 @@ pub(crate) fn insert_after_say(reply: &str, text: &str) -> String {
         }
         (said, None) => format!("{SAY_OPEN}{said}{SAY_CLOSE}\n{text}"),
     }
+}
+
+/// Whether the text after the spoken part only says it again: a short reply
+/// the model also wrote out after `</say>`, reworded or not. Most of its
+/// words are the spoken part's, and it is not much longer. A stream's text so
+/// far counts too (it is shorter still).
+pub(crate) fn repeats_said(said: &str, rest: &str) -> bool {
+    fn words(text: &str) -> Vec<String> {
+        text.split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    }
+    let said = words(said);
+    let rest = words(rest);
+    if said.is_empty() || rest.is_empty() || rest.len() > said.len() * 3 / 2 + 3 {
+        return false;
+    }
+    let shared = rest.iter().filter(|word| said.contains(word)).count();
+    shared * 10 >= rest.len() * 7
 }
 
 /// A streaming reply so far, as far as its spoken part goes.
@@ -506,6 +526,31 @@ mod tests {
                 rest: "\nRoses"
             }
         );
+    }
+
+    #[test]
+    fn a_short_reply_written_twice_is_told_apart() {
+        let said = "Hey! Everything's going well, thanks for asking. How are you doing today, and how can I help?";
+        assert!(repeats_said(
+            said,
+            "Hey! Everything's going well, thanks for asking. How are you doing today, and what can I help you with?"
+        ));
+        // While it streams in.
+        assert!(repeats_said(said, "Hey! Everything's going"));
+        // Real detail after a short version is never a repeat.
+        let story = "The keeper climbed the stairs at dusk and lit the lamp. ".repeat(6);
+        assert!(!repeats_said(
+            "I wrote you a story about a lighthouse keeper.",
+            &story
+        ));
+        assert!(!repeats_said(
+            "The meeting is at 3.",
+            "Room 4B, second floor."
+        ));
+        assert!(!repeats_said(
+            "I found three flights to Paris.",
+            "Here are the flights:"
+        ));
     }
 
     #[test]

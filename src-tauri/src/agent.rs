@@ -2104,6 +2104,13 @@ impl StreamTurn {
             plain.clone()
         };
         let shown = match speech {
+            // What follows only repeats the spoken part (so far): show it once.
+            Some(line) if said_all && crate::grain_agent_reply::repeats_said(line, &rest) => {
+                AgentStream {
+                    said: String::new(),
+                    text: line.trim_end().to_owned(),
+                }
+            }
             // Its own message once more follows, unless that is only link
             // buttons (they stay with the spoken part, as when finished).
             Some(line)
@@ -3257,6 +3264,16 @@ mod agent_routing_tests {
             (short.said, short.text.as_str()),
             (None, "It's 12 degrees.")
         );
+        // A short reply written again after the tag: shown once.
+        let mut twice = AgentReply::plain("Doing well, thanks! How can I help you?".into());
+        place_said(
+            &mut twice,
+            Some("Doing well, thanks! How can I help?".into()),
+        );
+        assert_eq!(
+            (twice.said, twice.text.as_str()),
+            (None, "Doing well, thanks! How can I help?")
+        );
         // Only link buttons after it: they stay in the same message.
         let mut links = AgentReply::plain("[Open the page](https://x.dev)".into());
         place_said(&mut links, Some("Here's the page.".into()));
@@ -3618,6 +3635,10 @@ pub async fn agent_confirm_action(
 fn place_said(reply: &mut AgentReply, said: Option<String>) {
     match said {
         Some(said) if reply.text.trim().is_empty() => reply.text = said,
+        // A short reply the model also wrote out after the tag: keep it once.
+        Some(said) if crate::grain_agent_reply::repeats_said(&said, &reply.text) => {
+            reply.text = said;
+        }
         // Link buttons belong with the words they go with: one message.
         Some(said) if crate::grain_agent_link::only_link_buttons(&reply.text, false) => {
             reply.text = format!("{said}\n\n{}", reply.text.trim());
