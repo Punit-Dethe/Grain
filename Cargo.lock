@@ -320,6 +320,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "grain-recall"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "specta",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "grain-sdk"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,21 @@
+[package]
+name = "grain-recall"
+version = "0.1.0"
+description = "Read model of Recall's on-disk meetings: manifests, published transcripts and summaries."
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+# Frontend type reflection, used by the app only; the MCP sidecar leaves it off.
+specta = ["dep:specta"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = "0.4"
+uuid = "1"
+specta = { version = "=2.0.0-rc.22", features = ["derive"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"

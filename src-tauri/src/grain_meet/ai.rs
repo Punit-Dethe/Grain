@@ -15,23 +15,20 @@ use std::path::Path;
 use std::time::Duration;
 
 use log::{info, warn};
-use serde::{Deserialize, Serialize};
-use specta::Type;
 use tauri::{AppHandle, Manager};
 
 use super::commands::{emit_status, meetings_root, state};
 use super::storage;
-use super::transcript::{self, Attribution, TranscriptRevision};
+use super::transcript::{self, TranscriptRevision};
 use crate::settings::{get_settings, APPLE_INTELLIGENCE_PROVIDER_ID};
+pub use grain_recall::summary::{read_summary, MeetSummaryDoc, SUMMARY_FILE};
+use grain_recall::text::transcript_text;
 
-const SUMMARY_FILE: &str = "summary.json";
 /// Longest transcript sent to the model; a longer one keeps its start and end.
 const MAX_TRANSCRIPT_CHARS: usize = 60_000;
 const KEEP_HEAD_CHARS: usize = 40_000;
 /// Enough of the opening to name a meeting.
 const TITLE_CONTEXT_CHARS: usize = 12_000;
-/// A pause this long starts a new line even for the same speaker.
-const LINE_GAP_MS: u64 = 1_500;
 const MAX_TITLE_CHARS: usize = 80;
 /// Titles Recall itself assigns; anything else was chosen by the user.
 const DEFAULT_TITLES: [&str; 2] = ["Meeting", "Recording"];
@@ -58,71 +55,7 @@ const TITLE_PROMPT: &str = "Write a title for this meeting transcript: at most \
 six words, specific to what was discussed, in the language of the transcript. \
 Reply with the title only: no quotes, no trailing punctuation, no Markdown.";
 
-/// A saved AI summary, tied to the transcript revision it was written from.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct MeetSummaryDoc {
-    pub transcript_revision: u32,
-    pub created_unix_ms: u64,
-    /// Markdown.
-    pub text: String,
-}
-
 // --- Transcript as plain text ----------------------------------------------
-
-fn clock(ms: u64) -> String {
-    let total = ms / 1_000;
-    let (h, m, s) = (total / 3_600, (total / 60) % 60, total % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
-}
-
-fn speaker_label(revision: &TranscriptRevision, track: u32, who: &Attribution) -> String {
-    match who {
-        Attribution::Speaker(slot) => revision
-            .speakers
-            .iter()
-            .find(|s| s.track == track && s.slot == *slot)
-            .map(|s| s.label.clone())
-            .unwrap_or_else(|| "Unknown speaker".to_string()),
-        _ => "Unknown speaker".to_string(),
-    }
-}
-
-/// The transcript as "[mm:ss] Speaker N: text" lines on the meeting clock,
-/// merging every track.
-fn transcript_text(revision: &TranscriptRevision) -> String {
-    let mut words: Vec<(u64, u64, &str, String)> = Vec::new();
-    for track in &revision.tracks {
-        for word in &track.words {
-            let label = speaker_label(revision, track.track, &word.speaker);
-            words.push((word.start_ms, word.end_ms, word.text.as_str(), label));
-        }
-    }
-    words.sort_by_key(|word| word.0);
-
-    let mut out = String::new();
-    let mut current: Option<(&str, u64)> = None; // (label, end of last word)
-    for (start, end, text, label) in &words {
-        let continues = matches!(
-            current,
-            Some((open, last_end)) if open == label.as_str() && start.saturating_sub(last_end) <= LINE_GAP_MS
-        );
-        if continues {
-            out.push(' ');
-            out.push_str(text);
-        } else {
-            if current.is_some() {
-                out.push('\n');
-            }
-            out.push_str(&format!("[{}] {label}: {text}", clock(*start)));
-        }
-        current = Some((label.as_str(), *end));
-    }
-    out
-}
 
 /// Keep a long transcript within the model's budget: its start and its end.
 fn bounded(text: String) -> String {
@@ -257,17 +190,6 @@ impl Drop for Busy {
 
 // --- Summary and title ------------------------------------------------------
 
-fn read_summary(dir: &Path) -> Option<MeetSummaryDoc> {
-    let bytes = fs::read(dir.join(SUMMARY_FILE)).ok()?;
-    match serde_json::from_slice(&bytes) {
-        Ok(doc) => Some(doc),
-        Err(error) => {
-            warn!("Ignoring unreadable meeting summary: {error}");
-            None
-        }
-    }
-}
-
 fn write_summary(dir: &Path, doc: &MeetSummaryDoc) -> Result<(), String> {
     let json = serde_json::to_vec_pretty(doc).map_err(|e| e.to_string())?;
     let tmp = dir.join(format!("{SUMMARY_FILE}.tmp"));
@@ -401,69 +323,6 @@ pub async fn meet_generate_summary(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grain_meet::transcript::{Speaker, TrackStatus, TrackTranscript, Word};
-
-    fn word(text: &str, start_ms: u64, end_ms: u64, slot: i32) -> Word {
-        Word {
-            text: text.into(),
-            start_ms,
-            end_ms,
-            speaker: Attribution::Speaker(slot),
-        }
-    }
-
-    fn revision(words: Vec<Word>) -> TranscriptRevision {
-        TranscriptRevision {
-            version: 1,
-            revision: 3,
-            session_id: "s".into(),
-            attempt_id: "a".into(),
-            created_unix_ms: 0,
-            diarizer: None,
-            asr: None,
-            speakers: vec![
-                Speaker {
-                    id: "t0-s0".into(),
-                    track: 0,
-                    slot: 0,
-                    label: "Speaker 1".into(),
-                },
-                Speaker {
-                    id: "t0-s1".into(),
-                    track: 0,
-                    slot: 1,
-                    label: "Speaker 2".into(),
-                },
-            ],
-            tracks: vec![TrackTranscript {
-                track: 0,
-                status: TrackStatus::Complete,
-                text: String::new(),
-                words,
-                activity: Vec::new(),
-            }],
-        }
-    }
-
-    #[test]
-    fn transcript_lines_follow_speaker_changes_and_long_pauses() {
-        let text = transcript_text(&revision(vec![
-            word("Hello", 0, 400, 0),
-            word("there.", 450, 900, 0),
-            word("Hi!", 1_200, 1_500, 1),
-            word("Later", 70_000, 70_400, 1),
-        ]));
-        assert_eq!(
-            text,
-            "[00:00] Speaker 1: Hello there.\n[00:01] Speaker 2: Hi!\n[01:10] Speaker 2: Later"
-        );
-    }
-
-    #[test]
-    fn clock_switches_to_hours() {
-        assert_eq!(clock(59_000), "00:59");
-        assert_eq!(clock(3_725_000), "1:02:05");
-    }
 
     #[test]
     fn long_transcripts_keep_their_start_and_end() {

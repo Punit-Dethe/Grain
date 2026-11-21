@@ -13,6 +13,7 @@ members = [
     "crates/grain-sdk",
     "crates/grain-tdt",
     "crates/grain-browser-host",
+    "crates/grain-recall",
 ]
 exclude = ["src-tauri"]
 

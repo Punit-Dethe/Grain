@@ -7,15 +7,16 @@
 //! same audio, so the rules decide the visible difference.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::tdt_flow::WindowEvidence;
 
-pub const TRANSCRIPT_VERSION: u32 = 1;
-const TRANSCRIPTS: &str = "transcripts";
+// Revision formats and the read side live in `grain-recall`, shared with the
+// Recall MCP sidecar; this module assembles, attributes and publishes.
+pub use grain_recall::transcript::*;
+
 const PREVIEW: &str = "preview.json";
 const PREVIEW_CHARS: usize = 160;
 /// Glimpse `fold_minor_voices`: a slot under 1/20 (5%) of a track's words.
@@ -84,23 +85,6 @@ pub fn assemble_words(
     }
     words.retain(|word| !word.text.trim().is_empty());
     Ok(words)
-}
-
-/// One speaker slot's activity on the meeting clock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct Activity {
-    pub slot: i32,
-    pub start_ns: u64,
-    pub end_ns: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub enum Attribution {
-    Speaker(i32),
-    /// The diarizer found no speech on this track.
-    Unassigned,
-    /// Speaker detection did not run or failed for this track.
-    Unavailable,
 }
 
 /// A word placed on the meeting clock, with its recorded run (smoothing
@@ -196,136 +180,6 @@ pub fn fold_minor_speakers(attribution: &mut [Attribution]) {
 
 // --- Published revisions ---------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub enum TrackStatus {
-    Complete,
-    /// Text without speakers; the transcript is still useful.
-    SpeakersUnavailable {
-        reason: String,
-    },
-    /// No text for this track; its audio is kept for a retry.
-    Failed {
-        reason: String,
-    },
-    /// Longer than the per-track processing cap; its audio is kept.
-    TooLong {
-        minutes: u64,
-        limit_minutes: u64,
-    },
-    /// The track holds no audio.
-    Empty,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct Word {
-    pub text: String,
-    /// Meeting clock, milliseconds from the session start.
-    pub start_ms: u64,
-    pub end_ms: u64,
-    pub speaker: Attribution,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct Speaker {
-    /// Stable within a revision: `t{track}-s{slot}`.
-    pub id: String,
-    pub track: u32,
-    pub slot: i32,
-    /// Anonymous label, numbered across the meeting.
-    pub label: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct TrackTranscript {
-    pub track: u32,
-    pub status: TrackStatus,
-    /// The reviewed full-sequence text of the track's ASR.
-    pub text: String,
-    pub words: Vec<Word>,
-    /// Raw diarizer activity kept as evidence, so attribution can be
-    /// recomputed without repeating capture or inference.
-    pub activity: Vec<Activity>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct ModelRef {
-    pub file: String,
-    pub arch: String,
-    pub variant: String,
-    pub backend: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct TranscriptRevision {
-    pub version: u32,
-    pub revision: u32,
-    pub session_id: String,
-    pub attempt_id: String,
-    pub created_unix_ms: u64,
-    pub diarizer: Option<ModelRef>,
-    pub asr: Option<ModelRef>,
-    pub speakers: Vec<Speaker>,
-    pub tracks: Vec<TrackTranscript>,
-}
-
-/// Number speakers across the meeting in track, then slot order.
-pub fn speakers(tracks: &[TrackTranscript]) -> Vec<Speaker> {
-    let mut speakers = Vec::new();
-    for track in tracks {
-        let slots: BTreeSet<i32> = track
-            .words
-            .iter()
-            .filter_map(|w| match w.speaker {
-                Attribution::Speaker(slot) => Some(slot),
-                _ => None,
-            })
-            .collect();
-        for slot in slots {
-            speakers.push(Speaker {
-                id: format!("t{}-s{slot}", track.track),
-                track: track.track,
-                slot,
-                label: format!("Speaker {}", speakers.len() + 1),
-            });
-        }
-    }
-    speakers
-}
-
-fn revision_path(session: &Path, revision: u32) -> PathBuf {
-    session
-        .join(TRANSCRIPTS)
-        .join(format!("{revision:06}.json"))
-}
-
-fn revisions(session: &Path) -> Result<Vec<u32>, String> {
-    let dir = session.join(TRANSCRIPTS);
-    let entries = match fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("Could not read meeting transcripts: {e}")),
-    };
-    let mut found: Vec<u32> = entries
-        .flatten()
-        .filter_map(|entry| {
-            let name = entry.file_name().into_string().ok()?;
-            let stem = name.strip_suffix(".json")?;
-            (stem.len() == 6).then(|| stem.parse().ok()).flatten()
-        })
-        .collect();
-    found.sort_unstable();
-    Ok(found)
-}
-
-pub fn next_revision(session: &Path) -> Result<u32, String> {
-    Ok(revisions(session)?.last().map_or(1, |last| last + 1))
-}
-
-/// The newest revision number without reading any transcript.
-pub fn latest_revision(session: &Path) -> Result<Option<u32>, String> {
-    Ok(revisions(session)?.last().copied())
-}
-
 /// Publish a revision atomically. Earlier revisions are never modified.
 pub fn publish(session: &Path, revision: &TranscriptRevision) -> Result<(), String> {
     let dir = session.join(TRANSCRIPTS);
@@ -410,21 +264,6 @@ pub fn preview(session: &Path) -> Result<Option<Preview>, String> {
     let built = preview_of(&revision);
     let _ = write_preview(session, &built);
     Ok(Some(built))
-}
-
-/// The newest published revision, if any.
-pub fn latest(session: &Path) -> Result<Option<TranscriptRevision>, String> {
-    let Some(revision) = revisions(session)?.pop() else {
-        return Ok(None);
-    };
-    let bytes = fs::read(revision_path(session, revision))
-        .map_err(|e| format!("Could not read the meeting transcript: {e}"))?;
-    let parsed: TranscriptRevision = serde_json::from_slice(&bytes)
-        .map_err(|e| format!("Meeting transcript is corrupt: {e}"))?;
-    if parsed.version != TRANSCRIPT_VERSION || parsed.revision != revision {
-        return Err("Meeting transcript has an unexpected version".into());
-    }
-    Ok(Some(parsed))
 }
 
 #[cfg(test)]

@@ -58,6 +58,7 @@ serde = { version = "1", features = ["derive"] }
 
 [dependencies]
 grain-core = { path = "../crates/grain-core" } # [GRAIN] headless core: owned settings + event bus
+grain-recall = { path = "../crates/grain-recall", features = ["specta"] } # [GRAIN] Recall meeting read model, shared with the MCP sidecar
 grain-sdk = { path = "../crates/grain-sdk" } # [GRAIN] the wire contract: events, actions, WS auth handshake
 grain-tdt = { path = "../crates/grain-tdt" } # [GRAIN] Bounded stateful Parakeet TDT geometry
 tempfile = "3" # [GRAIN] auto-deleted PCM journal for low-RAM rolling sessions

@@ -2781,6 +2781,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "grain-recall"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "specta",
+ "uuid",
+]
+
+[[package]]
 name = "grain-sdk"
 version = "0.1.0"
 dependencies = [
@@ -2920,6 +2931,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "grain-core",
+ "grain-recall",
  "grain-sdk",
  "grain-tdt",
  "gtk",
