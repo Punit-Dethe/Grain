@@ -61,10 +61,6 @@ pub mod tool_schema;
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{DaemonEvent, SessionMode};
 pub use settings::{AppSettings, PostProcessProvider, SecretMap};
-// [GRAIN] Link policy for links Grain hands to the OS (Reminders) or to Grain
-// Pilot. Pure.
+// [GRAIN] Link policy for links Grain hands to Grain Pilot. Pure.
 pub mod links;
 pub mod pilot;
-// [GRAIN] Reminders (docs/Reminders/PLAN.md). Pure: the record, validation,
-// calendar arithmetic, day/time phrases and the Agent tool schemas.
-pub mod reminders;

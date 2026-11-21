@@ -72,10 +72,9 @@ mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebVi
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Pilot, Reminders, Recall)
+mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Pilot, Recall)
 mod grain_pilot; // [GRAIN] Grain Pilot: the Agent in the user's own browser through the Grain Pilot extension
 mod grain_browser_link; // [GRAIN] Grain Pilot: native messaging link to the browser extension
-mod grain_reminders; // [GRAIN] Reminders: local store, one next-due timer, rings in the Agent notch, Agent tool
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
 
 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
@@ -1200,10 +1199,6 @@ pub fn run(cli_args: CliArgs) {
             // the note above, and grain_overlay owns the overlay path.
             secure_input::init(&app_handle);
 
-            // [GRAIN] Reminders: arm the single next-due timer (none when
-            // nothing is pending) and reopen the notch if one was ringing.
-            grain_reminders::start(&app_handle);
-
             // [GRAIN] Update discovery is backend-owned so it still runs when
             // start-hidden skips the WebView, or after close destroyed it to
             // release WebView2 RAM. This is one delayed task, not a resident
@@ -1418,13 +1413,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::agent_chat_size, // [GRAIN] resizable chat
             grain_commands::set_agent_chat_size, // [GRAIN]
             grain_pilot::change_pilot_enabled_setting, // [GRAIN] Grain Pilot on/off
-            grain_reminders::reminders_list, // [GRAIN] Reminders
-            grain_reminders::reminders_save,
-            grain_reminders::reminders_delete,
-            grain_reminders::reminders_set_done,
-            grain_reminders::reminders_snooze,
-            grain_reminders::reminders_clear_done,
-            grain_reminders::reminders_open_link,
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
             grain_commands::change_meet_auto_title_setting,   // [GRAIN]
             grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]
@@ -1628,7 +1616,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_theme::ThemeChanged,
             grain_meet::commands::MeetStatusChanged, // [GRAIN]
             grain_meet::commands::MeetDiarizerProgress, // [GRAIN]
-            grain_reminders::RemindersChanged, // [GRAIN]
         ])
 }
 

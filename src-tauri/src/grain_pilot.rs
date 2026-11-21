@@ -638,7 +638,7 @@ mod tests {
         }
         assert!(!is_pilot_tool("act"));
         assert!(!is_pilot_tool(&grain_core::capability_agent::tool_name(
-            "grain.reminders:list"
+            "grain.recall:search"
         )));
     }
 

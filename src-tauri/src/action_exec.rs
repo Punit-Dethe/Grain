@@ -241,7 +241,7 @@ pub(crate) async fn run_agent_calls(
             .map(|(index, result)| (index, mcp_outcome(result, &prepared[index])))
             .collect::<Vec<_>>()
     });
-    // Compiled tools (Grain Pilot, Reminders) run one after another, in the
+    // Compiled tools (Grain Pilot, Grain Recall) run one after another, in the
     // order the model wrote them, alongside the MCP batches: browser steps
     // (open, then read, then click) act on one shared tab.
     let compiled_run = async {
