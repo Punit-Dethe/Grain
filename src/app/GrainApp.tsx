@@ -15,7 +15,7 @@ import Onboarding, {
   AccessibilityOnboarding,
   ShortcutsOnboarding,
 } from "@/components/onboarding";
-import { commands, type OnboardingStep } from "@/bindings";
+import { commands, events, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
@@ -107,6 +107,21 @@ function useHashRoute(): AppRoute {
       window.history.replaceState(null, "", "#/overview");
     }
     return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  // A page the backend asked for (an Agent link to a meeting). Taken on load
+  // too: the window may have been rebuilt to show it, missing the event.
+  useEffect(() => {
+    const take = () =>
+      void commands
+        .takeMainWindowRoute()
+        .then((next) => {
+          if (next) window.location.hash = next;
+        })
+        .catch(console.error);
+    take();
+    const unlisten = events.mainWindowRoute.listen(take);
+    return () => void unlisten.then((stop) => stop());
   }, []);
 
   return route;

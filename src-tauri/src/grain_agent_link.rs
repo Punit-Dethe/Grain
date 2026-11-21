@@ -4,15 +4,32 @@
 //!
 //! The reply is model output, so the URL is untrusted: the host — not the
 //! webview — decides what opens. Only plain web addresses reach the user's
-//! default browser; the notch webview itself never navigates.
+//! default browser; the notch webview itself never navigates. The one
+//! exception is Grain's own meeting link (`grain://recall/meetings/<id>`),
+//! which opens that meeting in Grain's main window.
 
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
 /// Appended to the Agent's system prompt (see `agent::build_messages`).
-pub(crate) const LINK_RULE: &str = "Your replies are shown in a panel that renders Markdown. When you give the user a link they may want to open, put it on its own line as a Markdown link whose text is a short action title (2 to 5 words) saying what opening it does, for example [Open the Notion page](https://www.notion.so/...). A link alone on its own line is shown as a button that opens in the user's browser. Never use the raw URL as the title. Only give real http or https addresses that came from the user or from a tool result; never invent or guess one.";
+pub(crate) const LINK_RULE: &str = "Your replies are shown in a panel that renders Markdown. When you give the user a link they may want to open, put it on its own line as a Markdown link whose text is a short action title (2 to 5 words) saying what opening it does, for example [Open the Notion page](https://www.notion.so/...). A link alone on its own line is shown as a button that opens in the user's browser. Never use the raw URL as the title. Only give real http or https addresses that came from the user or from a tool result; never invent or guess one. Grain's own grain://recall/meetings/<id> links are allowed too, for meeting ids a tool returned.";
 
 const MAX_URL: usize = 4096;
+
+/// Grain's meeting link; the same address the Recall MCP server uses.
+const MEETING_LINK: &str = "grain://recall/meetings/";
+
+/// The meeting id of a Grain meeting link (an optional `/transcript` or `/`
+/// tail is ignored), or `None` for any other link.
+fn meeting_link(raw: &str) -> Option<String> {
+    let rest = raw.trim().strip_prefix(MEETING_LINK)?;
+    let id = rest
+        .strip_suffix("/transcript")
+        .or_else(|| rest.strip_suffix('/'))
+        .unwrap_or(rest);
+    grain_recall::manifest::parse_session_id(id).ok()?;
+    Some(id.to_string())
+}
 
 /// The normalised URL to open, or why it is refused.
 fn openable(raw: &str) -> Result<String, &'static str> {
@@ -34,10 +51,15 @@ fn openable(raw: &str) -> Result<String, &'static str> {
     Ok(url.into())
 }
 
-/// Open a link from an Agent reply in the default browser.
+/// Open a link from an Agent reply: a Grain meeting link in Grain, a web link
+/// in the default browser.
 #[tauri::command]
 #[specta::specta]
 pub fn agent_open_link(app: AppHandle, url: String) -> Result<(), String> {
+    if let Some(id) = meeting_link(&url) {
+        crate::grain_app_route::open(&app, format!("/meet/{id}"));
+        return Ok(());
+    }
     let url = openable(&url)?;
     app.opener().open_url(&url, None::<&str>).map_err(|error| {
         log::warn!("[GRAIN] agent: could not open a link: {error}");
@@ -47,7 +69,29 @@ pub fn agent_open_link(app: AppHandle, url: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::openable;
+    use super::{meeting_link, openable};
+
+    #[test]
+    fn only_well_formed_meeting_links_open_in_grain() {
+        let id = "0b6f3c1e-8d2a-4c5b-9e7f-1a2b3c4d5e6f";
+        for link in [
+            format!("grain://recall/meetings/{id}"),
+            format!(" grain://recall/meetings/{id}/transcript"),
+            format!("grain://recall/meetings/{id}/"),
+        ] {
+            assert_eq!(meeting_link(&link).as_deref(), Some(id), "{link}");
+        }
+        for refused in [
+            "grain://recall/meetings/../settings",
+            "grain://recall/meetings/NOT-A-UUID",
+            "grain://recall/meetings/0B6F3C1E-8D2A-4C5B-9E7F-1A2B3C4D5E6F",
+            "grain://other/0b6f3c1e-8d2a-4c5b-9e7f-1a2b3c4d5e6f",
+            "https://example.com",
+        ] {
+            assert!(meeting_link(refused).is_none(), "{refused}");
+        }
+        assert!(openable(&format!("grain://recall/meetings/{id}")).is_err());
+    }
 
     #[test]
     fn only_plain_web_links_open() {

@@ -1298,7 +1298,7 @@ export function canvasSpec(): string {
       'Keep words few: titles of 2-5 words, details as short fragments joined with " · ", no sentences where a fragment will do. Figures are short (≤ 8 characters: "65", "₹430", "20K", "3h 15m"); a unit or explanation goes in the label or detail, never in the value. Never repeat what the view already shows (a Header title does not repeat a Places title).',
       "Colour is not yours to decorate with: weather icons colour themselves. tone (good, warn, bad) says what a figure means for the user (AQI 165 is bad, a price drop for a buyer is good), and trend is only the arrow's direction. A Place status is only a real status (Open, Sold out, On time, Delayed), never a feature or a recommendation.",
       "Use photos (Place/ListItem image, Image) only with image URLs that appeared in tool results in this conversation; search the web for one when it clearly helps. Never invent or guess an image URL — leave the image out instead (a place without a photo shows its icon in a tile). The example image URL is a placeholder: never copy it.",
-      "Use @OpenUrl only for real, well-known URLs or search URLs; never invent links.",
+      "Use @OpenUrl only for real, well-known URLs or search URLs; never invent links. A Grain meeting link (grain://recall/meetings/<id>, with an id a tool returned) opens that meeting in Grain.",
       "Follow-up buttons send a complete, standalone request with @ToAssistant. Offer 1-3 at most, or none.",
     ],
     examples: CANVAS_EXAMPLES,

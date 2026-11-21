@@ -1513,7 +1513,8 @@ async agentNotchSetMode(mode: AgentNotchMode) : Promise<Result<null, string>> {
 }
 },
 /**
- * Open a link from an Agent reply in the default browser.
+ * Open a link from an Agent reply: a Grain meeting link in Grain, a web link
+ * in the default browser.
  */
 async agentOpenLink(url: string) : Promise<Result<null, string>> {
     try {
@@ -2253,6 +2254,12 @@ async recallMcpDisconnect(client: McpClient) : Promise<Result<RecallMcpStatus, s
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * The route waiting for the main window, if any. Empties the slot.
+ */
+async takeMainWindowRoute() : Promise<string | null> {
+    return await TAURI_INVOKE("take_main_window_route");
 }
 }
 
@@ -2265,6 +2272,7 @@ grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
 hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
+mainWindowRoute: MainWindowRoute,
 meetDiarizerProgress: MeetDiarizerProgress,
 meetStatusChanged: MeetStatusChanged,
 micLevel: MicLevel,
@@ -2294,6 +2302,7 @@ grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
 hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
+mainWindowRoute: "main-window-route",
 meetDiarizerProgress: "meet-diarizer-progress",
 meetStatusChanged: "meet-status-changed",
 micLevel: "mic-level",
@@ -2878,6 +2887,10 @@ key_down: number; key_up: number; flags_changed: number; mouse: number; duration
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * A route is waiting: call `take_main_window_route`.
+ */
+export type MainWindowRoute = null
 export type McpClient = "claude_desktop" | "claude_code" | "gemini_cli" | "codex" | "cursor"
 export type McpClientState = 
 /**

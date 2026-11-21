@@ -63,6 +63,7 @@ mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicate
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
 mod grain_recall_mcp; // [GRAIN] Recall MCP: AI app access switch + one-click connect
+mod grain_app_route; // [GRAIN] open the main window on a page from the backend (Agent meeting links)
 mod grain_recall_agent; // [GRAIN] Recall for the Agent: read-only meeting tools, in-process
 mod grain_agent_canvas; // [GRAIN] generated views in the Agent chat (experiment)
 mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
@@ -1591,8 +1592,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_recall_mcp::recall_mcp_set_enabled, // [GRAIN]
             grain_recall_mcp::recall_mcp_connect,     // [GRAIN]
             grain_recall_mcp::recall_mcp_disconnect,  // [GRAIN]
+            grain_app_route::take_main_window_route,  // [GRAIN]
         ])
         .events(collect_events![
+            grain_app_route::MainWindowRoute,
             grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,

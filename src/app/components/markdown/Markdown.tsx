@@ -46,9 +46,11 @@ const LIST_CONTINUATION = /^\s{1,}\S/;
  * a trailing backslash. Everything else that looks like a newline is a SOFT
  * break — the author's wrapping, not their intent. */
 const HARD_BREAK = /( {2,}|\\)$/;
-const LINK = /\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/g;
+// Web links, plus Grain's own meeting links (the host opens those in Grain).
+const LINK = /\[([^\]]+)]\(((?:https?:\/\/|grain:\/\/recall\/)[^\s)]+)\)/g;
 /** A line that is nothing but one or more links. */
-const LINK_ONLY = /^\s*(?:\[[^\]]+]\(https?:\/\/[^\s)]+\)\s*)+$/;
+const LINK_ONLY =
+  /^\s*(?:\[[^\]]+]\((?:https?:\/\/|grain:\/\/recall\/)[^\s)]+\)\s*)+$/;
 
 /**
  * [GRAIN] The app's ONE stateless, safe Markdown renderer. Written for Agent
@@ -129,6 +131,7 @@ function linkButtons(lines: string[]): LinkButton[] | null {
 /** Where a link goes, shown beside its title so a misleading title can't
  * hide the destination. */
 function hostOf(url: string): string {
+  if (url.startsWith("grain://")) return "Grain";
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {

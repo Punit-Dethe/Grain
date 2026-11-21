@@ -21,7 +21,7 @@ pub(crate) const EXTENSION_ID: &str = "grain.recall";
 pub(crate) const PROVIDER_NAME: &str = "Grain Recall";
 const DESCRIPTION: &str = "The user's recorded meetings: search what was said, \
 list by date, read a summary or transcript. Speakers are anonymous (Speaker 1, \
-Speaker 2); never guess their names. Use only meeting ids the tools return.";
+Speaker 2); never guess their names. Use only meeting ids the tools return. \nTo let the user open a meeting in Grain, link grain://recall/meetings/<id>, \nfor example [Open the meeting](grain://recall/meetings/<id>).";
 const OFF: &str = "Recall is turned off for the Agent. The user can turn it on in \
 Extensions > Grain Recall.";
 
