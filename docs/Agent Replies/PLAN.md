@@ -1,179 +1,172 @@
-# Agent replies: a short spoken line and a result card
+# Agent replies: a short spoken version and a result card
 
 Branch: `feat/agent-reply-voice-and-result-card` (from `main`, 2026-11-21). Plan only; nothing is built yet.
 
-## The problem
+Revision 2 (2026-11-21) folds in the user's review of revision 1.
 
-1. **Talk-back reads everything.** `grain_tts::speak` reads `speakable(reply)` up to 3000 characters (`MAX_SPOKEN_CHARS`). A long answer, a list, or a drafted email is read out word by word. The streamed path (`speak_feed`) starts talking before the reply is complete, so it cannot know the length in advance.
-2. **Rewrites have nowhere to go.** "Turn this into an email", "make this more formal", "summarise this paragraph": the result is plain chat text. In compact voice mode (`agent_compact_voice`), which most people use, the notch stays small and the voice reads the email aloud. `UI_RULE` in `grain_agent_canvas.rs` tells the model *not* to draw a view for "a rewrite or transformation of selected text", so Dynamic UI does not help today either.
+## How people use this
 
-What the user wants: the voice says something short ("Done, here's your email. Want it more formal?"), and the rewritten text shows up in a decent-sized card with a clear Copy button. Copy and you're done.
+The Agent is used **while multitasking**. You ask for something, carry on with your work, and the answer comes back by voice. So:
 
-## The idea in one line
+- The voice tells you, briefly and in whole sentences, what happened. That should be enough to move on.
+- **Nothing opens on top of your work by itself.** If the short version makes you curious, you open the notch and read the detail when it suits you.
+- The one exception is a request whose whole point is to get text back to use: "turn this into an email", "make this more formal". There the card with the text *is* the answer, so it appears, you copy, and it closes.
 
-Every reply has two parts: **what Grain says** (always short, unless you asked to hear it all) and **what Grain shows** (the full answer, a view, or a result card). The model writes both in the same call. Grain enforces the length limit itself, so a reply is never read out at full length by accident.
+## The problem today
 
-No second AI call, no background worker, no new model. These are string rules in the host and one new card in the notch.
+1. **Talk-back reads everything.** `grain_tts::speak` reads `speakable(reply)` up to 3000 characters. A one-page story, or a detailed report of five actions, is read out in full.
+2. **Rewrites have nowhere to go.** "Convert this into an email": the email is plain chat text and is read aloud. `UI_RULE` in `grain_agent_canvas.rs` tells the model *not* to draw a view for "a rewrite or transformation of selected text".
+
+## The rule, in one line
+
+**If the reply is long, the AI also writes a short spoken version, and that is what is read aloud, in full.** A short reply is read as it is. A text transform goes into a result card, and the voice just says it's done.
+
+The same rule applies to every kind of reply (stories, explanations, action reports, approval requests), which makes it consistent and easy to enforce. No second AI call, no background worker.
 
 ---
 
 ## Part 1: what gets spoken
 
-### Reply format (one LLM call)
+### The short spoken version
 
-When talk-back is on, the model may start a reply with one line:
+When talk-back is on and the reply is long (more than about three sentences, or any list, table, code or long text), the model starts its reply with one line:
 
 ```
-SAY: Here's your email. Want it more formal?
-<the full reply, a result block, or a view program>
+SAY: I've written you a short story about a lighthouse keeper and the storm that changes his mind.
+<the full reply>
 ```
 
-- The `SAY:` line is first, so the streamed speech (`speak_feed`) speaks it straight away and stops where the body starts. The fast first audio we have today is kept.
-- The model writes a `SAY:` line only when the reply is long, structured, or a result. A short conversational reply is spoken whole, with no tag and no extra tokens.
-- `split_ui` already tolerates a leftover `SAY:` tag. That parsing moves into one shared splitter (see Part 3).
-- The prompt addition is sent **only when `agent_talk_back` is on**, and is kept to about 60 tokens (it is paid on every turn).
+- **The SAY line is spoken whole.** There is no hard time cap and no cutting mid-sentence. It is short because the model wrote it short.
+- It describes, it doesn't read out: "I've written you a poem about autumn, four verses, it ends on a hopeful note", not the first verse.
+- It is first in the reply, so streamed speech (`speak_feed`) can speak it immediately and stops where the body starts. The fast first audio we have today is kept.
+- Short replies get no SAY line and are spoken whole, as today.
+- The chat shows the full reply. The SAY line itself is not shown.
 
-### Grain enforces the limit (host fallback)
+**Prompt cost:** one compact paragraph, sent only when `agent_talk_back` is on. It needs to be clear enough that the model follows it reliably, and no more. Draft:
 
-A pure function in `grain_tts.rs`, `spoken_plan(reply, say) -> Spoken`, decides what is said:
+> SPOKEN VERSION: your reply is read aloud. If it is longer than about three sentences, or has a list, table, code or a long text, begin with one line `SAY: …`: one or two natural sentences that tell the user what you did or found, in plain speech, as if telling a friend. Describe long content rather than reading it ("I've written you a poem about autumn; it ends on a hopeful note"). For actions, say what was done in short ("Filed the bug on GitHub, added it to Linear and wrote it up in Notion"). Then the full reply on the next line. Short replies need no SAY line.
 
-| Case | What is spoken |
-|---|---|
-| Model wrote `SAY:` | That line (still capped at 3000 characters) |
-| No `SAY:`, short plain reply (≤ ~220 chars, ≤ 2 sentences, no list/heading/table/code) | The whole reply |
-| No `SAY:`, long or structured | The first sentence if it is ≤ ~160 chars, then "The rest is on screen." Otherwise just "It's on screen." |
-| Only code | "The code is in the reply." (existing) |
+### If the model forgets the SAY line
 
-About 220 characters is roughly 15 seconds of speech. It is one constant, `SPEAK_WHOLE_MAX_CHARS`, and not a setting (open question 1).
-
-**Streaming:** `SpeechFeed` gets the same rule. It speaks the `SAY:` line if there is one. If not, it speaks whole sentences until the text passes the limit, finishes the current sentence, adds "The rest is on screen." and stops. That is the fallback above, done while the reply streams in.
+A safety net, not the main path: whole sentences are spoken up to a generous budget (about 500 characters) and speech always ends at a sentence boundary, never mid-word or mid-sentence. The existing 3000-character cap goes. A missing SAY line is logged, so we can see how often the prompt fails while testing.
 
 ### Situations
 
-| # | Situation | Example | Spoken | Shown |
+| # | Situation | Example | Spoken | Shown (only if you open the notch) |
 |---|---|---|---|---|
-| 1 | Small talk / short fact | "What's 15% of 80?" | Whole reply: "Twelve." | Chat |
-| 2 | Long explanation | "How does a heat pump work?" | Gist: "It moves heat instead of making it, like a fridge in reverse. The details are on screen." | Chat, notch opens |
-| 3 | Tool task done | "Remind me at 5 to call Mum" | "Done. I'll remind you at 5." | Chat / receipt |
-| 4 | Long tool task | "Clean up my inbox" | Existing first-step line ("Checking your inbox."), then a short result: "Archived 34 emails." | Chat |
-| 5 | **Rewrite / transform** | "Turn this into an email" | "Here's your email. Want it more formal?" | **Result card** |
-| 6 | Refine a result | "More formal" | "Made it more formal." | Result card, replaced in place |
-| 7 | Summarise selection | "Summarise this" | "Here's the summary, three points." (open question 5) | Result card |
-| 8 | List / steps / options | "Steps to reset my router" | "Five steps. Start by unplugging it for 30 seconds." | Chat or view |
-| 9 | View reply | Weather | Existing voice line ("14 degrees, rain until 3.") | View |
-| 10 | Question back | "Which Priya?" | Whole question: you need it to answer | Chat |
-| 11 | Risky action confirmation | "Send this to 40 people?" | **Whole** confirmation text, never shortened, because you must hear what you are approving | Confirm panel |
-| 12 | Error | Provider down | Short reason: "I couldn't reach the AI. Check your connection." | Chat |
-| 13 | **Asked to hear it** | "Read this email to me" | Full text: the model puts it all in `SAY:`. The length limit applies only to the fallback, never to the model's own `SAY:` | Chat |
-| 14 | Code | "Write a regex for emails" | "The regex is in the reply." | Chat / result card |
+| 1 | Short answer | "What's 15% of 80?" | Whole reply: "Twelve." | Chat |
+| 2 | Long creative text | "Write me a one-page story" | "I've written you a story about a lighthouse keeper; it's in the notch when you want it." | Full story |
+| 3 | Long explanation | "How does a heat pump work?" | "It moves heat instead of making it, like a fridge running backwards." | Full explanation |
+| 4 | Simple action | "Remind me at 5 to call Mum" | "Done, I'll remind you at 5." | Chat |
+| 5 | Multi-step action | "File this bug, track it and document it" | "Filed it on GitHub, added it to Linear and wrote it up in Notion." | Detailed report (links, IDs), or a view |
+| 6 | **Text transform** | Selected text + "convert this into an email" | "Done, here's your email." (sometimes "Want it more formal?") | **Result card opens** (Part 2) |
+| 7 | Refine a result | "More formal" | "Made it more formal." | Card updates in place |
+| 8 | Summary of selection | "Summarise this" | **The summary itself**, read aloud | Chat. No card: a summary is something you listen to |
+| 9 | List / steps | "Steps to reset my router" | "Five steps, starting with unplugging it for 30 seconds." | Full list / view |
+| 10 | View reply | Weather | Existing short voice line | View (unchanged) |
+| 11 | Question back | "Which Priya, work or family?" | Whole question (it's short) | Chat |
+| 12 | Approval needed | "Publish the build, tag it, post the notes" | Short version: "Before I publish the build and post the notes, I need your OK." | Confirmation details |
+| 13 | Asked to hear it | "Read this email to me" | The full text: the model puts it all in SAY | Chat |
+| 14 | Error | Provider down | "I couldn't reach the AI, check your connection." | Chat |
 
-Rules that come out of this table:
-- Questions back (10) and confirmations (11) are always spoken whole. The host checks `confirm_action` and skips shortening there.
-- The final spoken line must not repeat the first-step line already said (4).
-- A refine offer ("Want it more formal?") goes on about one result in three, not every reply. The prompt says "sometimes", and the card's chips carry the offer anyway.
+What "transform" means (6, 7): you selected text and asked for **that text back, changed** (email, more formal, better format, fix grammar, translate, shorten). Selected text plus "create a GitHub issue about this" is an action (5), and "summarise this" is a spoken answer (8). Neither one gets a card.
 
-### Compact voice mode
+### Approval requests (12)
 
-Today a long reply can be read in full while the notch stays compact. New rule: **if the spoken line is shorter than the shown answer** (cases 2, 5–8, 14), the notch opens to show it, the same way it already does for views (`first_turn = None` in `agent_run`). Only replies that are spoken whole (1, 3, 10, 12) stay compact.
+Today `confirm_action` replies are spoken from the confirmation's markdown. New: the confirmation gets the same treatment as everything else. Details stay on screen; the spoken line is short ("I need your OK to publish the build and post the release notes"). The host builds it from the confirmation's title and summary, since the model isn't asked to write a SAY line for host-gated approvals. Approving still happens on screen or by saying "yes", as today.
+
+### The notch stays where you left it
+
+Unchanged from today, and now a design rule: a long reply in compact voice mode **stays compact** and speaks the short version. Revision 1's "open the notch when the reply was shortened" is dropped. Only two things open the notch by themselves: a generated view (existing behaviour, unchanged) and a result card (Part 2).
 
 ---
 
-## Part 2: the result card
+## Part 2: the result card (text transforms only)
 
 ### Why not an OpenUI view
 
-The model could draw the email as an OpenUI `Text` block, but:
-- the whole body would have to be escaped inside an OpenUI Lang string, which is fragile for long text with quotes and newlines;
-- it would only work with Dynamic UI on;
-- a document is copied, not looked at: it needs a fixed, readable layout, not a model-composed one.
-
-So a result is its own **host-native reply kind**, next to `text` and `ui`.
+The email would have to be escaped inside an OpenUI Lang string (fragile for long text), it would only work with Dynamic UI on, and text you copy needs a fixed, readable layout, not one the model composes. So a result is its own **host-native reply kind**, next to `text` and `ui`.
 
 ### Format
 
-The model wraps the transformed text in one block after the optional `SAY:` line:
-
 ```
-SAY: Here's your email. Want it more formal?
-<result kind="email" title="Follow-up on Thursday's call" subject="Thursday follow-up">
+SAY: Done, here's your email.
+<result kind="email" subject="Thursday follow-up">
 Hi Sam,
 ...
 </result>
 ```
 
-- `kind`: `email`, `message`, `rewrite`, `summary`, `list`, `code`, `translation` (only picks the card's layout and chips; unknown kinds fall back to `rewrite`).
-- `subject` only for `email` (shown as its own copyable field).
-- The prompt rule: when the user asks to rewrite, convert, reformat, translate, summarise or draft text (with or without a selection), put the result, and only the result, in the block: no preamble and no "Here's your email" inside it. When a selection was captured at summon, the system message says so, which makes this the likely path. The model decides; there is no separate classifier.
-- One reply has a view **or** a result, never both.
+- `kind`: `email`, `message`, `rewrite`, `list`, `code`, `translation` (only picks layout and refine chips; unknown → `rewrite`). `subject` only for email.
+- Prompt rule (short): when the user asks to change, rewrite, reformat or translate text and wants that text back, put only the new text in the `<result>` block, with no preamble inside it. Summaries and actions about the text are not results. When a selection was captured, the system message says so.
+- A reply has a view **or** a result, never both. A result reply always has a SAY line (fallback when missing: "Done.").
 
 ### Host
 
-- `AgentReply` gains `result: Option<AgentResult { kind, title, subject, body }>`, and `AgentHistoryMessage` gains the same, so the chat keeps it.
-- The latest result is sent back with the next turn (like the latest view), so "more formal", "shorter" or "in Spanish" refines that text. Older results are not resent.
-- A reply with a result is never presented compact (Part 1).
+- `AgentReply.result: Option<AgentResult { kind, subject, body }>`; the same on `AgentHistoryMessage`, so the chat keeps it.
+- The latest result is sent back with the next turn (like the latest view), so "more formal" or "shorter" refines it.
+- A result reply opens the notch to the card, even in compact voice mode.
 
-### The card (notch frontend)
+### The card
 
-Sized for the content, inside the existing fixed 760×620 reply window (live window resizes stay off the table; the shell is clipped with `agent_notch_shape` like views):
+Experimental sizing, to be tuned in the real app (the reply window stays a fixed 760×620 and the shell is clipped with `agent_notch_shape`, as views are):
 
 | Variant | When | Size (CSS px) |
 |---|---|---|
-| **Short** | ≤ 3 lines (a rewritten sentence, a message) | 440 wide, height fits, min 160 |
-| **Document** | email, summary, rewrite, list, translation | 560 wide (≈ 70 characters a line, comfortable to read), height fits up to 560 |
-| **Code** | `code` | 600 wide, monospace, height fits up to 560 |
+| Short | ≤ 3 lines (a rewritten sentence, a message) | 440 wide, height fits (min 160) |
+| Document | email, rewrite, list, translation | 560 wide (≈ 70 characters a line), height fits up to 560 |
+| Code | `code` | 600 wide, monospace, up to 560 |
 
-Layout, top to bottom:
-1. **Header row**: kind label + title (quiet, small), close X.
-2. **Subject field** (email only), with its own small copy icon.
-3. **Body**: the text in a readable size, markdown rendered for `list`/`summary`. It streams into the card as it arrives.
-4. **Action row** (bottom, always visible):
-   - **Copy**: the primary, large button. Turns into a check and "Copied" for 1.5 s.
-   - **Replace**: shown only when a selection was captured. It pastes the result over the original selection in the source app (focus goes back to the captured window, then Grain's normal paste path), then closes the notch.
-   - **Refine chips**, two or three per kind: email → *More formal · Shorter · Friendlier*; summary → *Shorter · Bullet points*; rewrite → *Simpler · More formal*. A chip sends that follow-up; the card updates in place.
-   - Speaking a follow-up ("make it shorter") works through the existing follow-up dictation.
+Layout:
+1. **Header**: kind label (quiet), close X.
+2. **Subject** (email only), with its own small copy icon.
+3. **Body**: readable size, markdown rendered for `list`. Streams in as it arrives. **Scrolls when it is longer than the card.** This is the one exception to the views' "never scroll" rule, because text you are about to copy must never be cut off or shrunk. Header and action row stay fixed.
+4. **Action row**:
+   - **Copy**: primary and large. On click: copy, a brief check, then **the notch smoothly closes**. Done.
+   - **Refine chips**, two or three per kind (email: *More formal · Shorter · Friendlier*). The card updates in place. Speaking a follow-up works too.
 
-Long bodies: the views rule is "never scroll", but text you are about to copy cannot be cut off or shrunk to unreadable. Proposal: the **body only** scrolls past 560 px, while the header and action row stay fixed (open question 2).
+Copy writes plain text. Rich copy (HTML for bullets and bold) comes later if pasting into Gmail or Docs needs it.
 
-Copy format: plain text for every kind. For `list`/`summary`/`email` also write HTML to the clipboard, so pasting into Gmail or Docs keeps bullets and bold (Phase 4, needs a small clipboard addition, since `agent_copy` writes text only today).
+### Later, not in this branch
 
-After Copy the card stays open, so you can still refine. Escape or X closes it (open question 3).
+- **Replace**: paste the result back over the original selection. Planned separately, after this has passed testing.
 
 ---
 
-## Part 3: code layout
+## Code layout
 
-All Grain-owned; nothing touches `src-tauri/src/handy/`.
+All Grain-owned; nothing in `src-tauri/src/handy/`.
 
 | Where | Change |
 |---|---|
-| `src-tauri/src/grain_agent_reply.rs` (new, small) | One splitter for a reply: `SAY:` line → `say`, `<result …>` block → `result`, `root = …` → `ui` (moves `split_ui` here from `grain_agent_canvas.rs`, which keeps the prompts). Pure functions + tests for every row of the situations table. |
-| `src-tauri/src/grain_tts.rs` | `spoken_plan`, `SPEAK_WHOLE_MAX_CHARS`, the "rest is on screen" fallback, the `SpeechFeed` limit, speaking only `say` while streaming. |
-| `src-tauri/src/agent.rs` | `agent_run`: use the splitter; speak `spoken_plan`; open the notch when spoken < shown; never shorten confirmations; send the latest result back; prompt rules (`SAY` only with talk-back on, result rule always). `StreamTurn` streams the body to the panel and only the `say` part to speech. |
-| `src-tauri/src/grain_agent_history.rs` | `result` field on recorded messages. |
+| `src-tauri/src/grain_agent_reply.rs` (new) | Pure splitter: `SAY:` line → `say`, `<result …>` → `result`, the rest → text (then `split_ui` for a view, as today). Tests for each row of the situations table. |
+| `src-tauri/src/grain_tts.rs` | Speak `say` when present; sentence-boundary fallback budget instead of the 3000 cap; `SpeechFeed` waits for the first line, speaks only the SAY line if there is one, never speaks a result body. |
+| `src-tauri/src/agent.rs` | `agent_run` uses the splitter, the SAY prompt (talk-back on only), the result prompt, latest result sent back, a short spoken line for confirmations, a result opens the notch. `StreamTurn` keeps the SAY line out of the visible stream and streams result bodies to the card. |
+| `src-tauri/src/grain_agent_canvas.rs` | `UI_RULE` points transforms to the result block instead of "skip". |
+| `src-tauri/src/grain_agent_history.rs` | `result` on recorded messages. |
 | `src/app/components/agent/ResultCard.tsx` (new) + `agent.css` | The card. Mounted only while a result is open. |
-| `AgentPanel.tsx` | Show `reply.result` as a card (like `reply.ui`), chips send follow-ups, Replace command. |
-| `src/app/bindings.ts` | Regenerated (`AgentResult`, new command). |
-| new command `agent_replace_selection(text)` | Restores focus to the window captured at summon and pastes through the existing paste path. |
+| `AgentPanel.tsx` | Show `reply.result`; Copy → copy then close the notch; chips send follow-ups. |
+| `src/app/bindings.ts` | `AgentResult` type and fields. |
 
-Resource cost: zero while idle. A few string scans per reply, one React component while a card is open, no new threads, no extra AI calls.
-
----
+Resource cost: zero while idle. A few string scans per reply and one component while a card is open.
 
 ## Phases
 
 | Phase | Scope | Done when |
 |---|---|---|
-| **1. Spoken line** | `spoken_plan` + streaming limit + `SAY:` prompt rule + "open the notch when shortened" | A long answer is spoken as a gist, short replies unchanged, confirmations and questions spoken whole, "read it to me" reads it all. Rust tests per situation. |
-| **2. Result reply kind** | `<result>` parsing, `AgentReply.result`, history, latest result sent back, prompt rule, bindings | Host returns `result` for transforms; refines replace it; tests. |
-| **3. Result card** | `ResultCard`, sizes, Copy, refine chips, streaming into the card, Replace | User visual approval in the real app (UI protocol). |
-| **4. Polish** | Rich copy (HTML + text), chip wording per kind, harness acceptance runs | `tests/agent-harness/` scenarios for the situations table pass. |
+| **1. Spoken version** | SAY parsing, TTS changes, streaming, prompt, confirmation line | A long story is spoken as one or two sentences; short replies, questions and summaries are read whole; nothing opens by itself; "read it to me" reads it all. Rust tests per situation. |
+| **2. Result reply kind** | `<result>` parsing, `AgentReply.result`, history, refine round-trip, prompt | Transforms come back as results; summaries and actions don't. |
+| **3. Result card** | Card, sizes, scrolling body, Copy-and-close, chips | User visual approval in the real app. |
+| **4. Tuning** | Prompt wording against real replies, card sizes, harness scenarios for the table | `tests/agent-harness/` scenarios pass. |
 
-Each phase: `cargo test` (lib), `cargo clippy`, `bunx tsc`, lint on touched files only (no repo-wide formatters), commit + push per verified chunk. The user does the visual check for Phase 3 with the real `bun run tauri dev`.
+Each phase: Rust lib tests, clippy, `tsc`, lint on touched files only, commit and push per verified chunk. The user checks Phase 3 visually in the real app.
 
-## Open questions for the user
+## Decisions (user, 2026-11-21)
 
-1. **Length limit**: speak a reply whole up to about 220 characters (≈ 15 s) and shorten beyond that? Fixed constant, or a "Short / Full" talk-back choice in settings?
-2. **Long results**: let only the card's body scroll past 560 px (recommended), or keep "never scroll" and cap the length?
-3. **After Copy**: keep the card open so you can still refine (recommended), or close the notch automatically?
-4. **Replace button**: include "Replace" (paste back over the original selection)? It is a one-click finish, but it acts on another app.
-5. **Summaries**: read a short summary aloud (it is often what you want to hear), or treat it like any other result (card + one-line voice)?
+- Long replies get a model-written short version that is spoken in full. No hard time cap, no mid-sentence cuts.
+- Short summaries are read aloud, not put in a card.
+- Nothing opens on its own for long replies or actions; the user opens the notch when curious.
+- Result cards only for "give me this text back, changed".
+- Result card body scrolls; after Copy the notch closes smoothly.
+- Card sizing is experimental, tuned in the real app.
+- Replace (paste back over the selection) comes later, after testing.
