@@ -203,9 +203,9 @@ html[data-window="agent-panel"] body {
    small lip under its blue sweep that opens the whole reply ("View"). It
    lasts while the voice talks; Escape still stops both. */
 .agent-notch[data-phase="speaking"][data-more] {
-  width: min(128px, 100vw);
-  height: min(25px, 100vh);
-  border-radius: 0 0 12px 12px;
+  width: min(136px, 100vw);
+  height: min(33px, 100vh);
+  border-radius: 0 0 14px 14px;
 }
 
 .agent-notch-more {
@@ -217,13 +217,13 @@ html[data-window="agent-panel"] body {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  height: 19px;
+  height: 27px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--agc-muted);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
   cursor: pointer;

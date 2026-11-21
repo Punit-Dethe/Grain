@@ -206,6 +206,8 @@ export function AgentPanel() {
   const [flashedId, setFlashedId] = useState<string | null>(null);
   // Talk-back: the reply being read aloud, by speech id (null = silent).
   const [speechId, setSpeechId] = useState<number | null>(null);
+  // Generation whose streamed voice reads a SAY line (`agent-short-voice`).
+  const [shortVoice, setShortVoice] = useState<number | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   // True once the shell has finished growing; the compact status (and its
@@ -561,6 +563,12 @@ export function AgentPanel() {
           );
         })
         .then(track),
+      // The streamed voice reads a short version: the sliver offers View.
+      win
+        .listen<number>("agent-short-voice", ({ payload }) =>
+          setShortVoice(payload),
+        )
+        .then(track),
       // EXPERIMENT: the reply so far, while it streams ("" clears it).
       win
         .listen<string>("agent-stream", ({ payload }) => setStreamText(payload))
@@ -714,10 +722,15 @@ export function AgentPanel() {
   // sliver does; when it is full (or on a click) the chat opens early.
   const [hoverOpening, setHoverOpening] = useState(false);
   const canOpenEarly = !revealed && !closing && !!capture && !capture.opened;
-  // A compact spoken reply that is a short version of a longer one: offer
-  // "View" while the voice talks.
+  // The blue sweep follows the voice: a streamed reply starts talking while
+  // the turn still works, and the voice wins over the working look.
+  const voiceSpeaking = !!capture?.speaking || (!revealed && speechId !== null);
+  // The voice reads a short version of a longer reply (its SAY line, or the
+  // finished reply says so): offer "View" while it talks.
   const canViewMore =
-    canOpenEarly && !!capture?.speaking && !!firstReply?.shortened;
+    canOpenEarly &&
+    voiceSpeaking &&
+    (shortVoice === capture?.generation || !!firstReply?.shortened);
   const openEarly = useCallback(() => {
     setHoverOpening(false);
     // Shrunk by Escape while listening: reopen the same chat.
@@ -1571,7 +1584,7 @@ export function AgentPanel() {
         data-phase={
           revealed
             ? "reply"
-            : capture?.speaking
+            : voiceSpeaking
               ? "speaking"
               : capture?.working
                 ? "working"
@@ -1586,7 +1599,7 @@ export function AgentPanel() {
             active={
               !!capture?.listening &&
               !capture.working &&
-              !capture.speaking &&
+              !voiceSpeaking &&
               !closing
             }
           />
@@ -1614,12 +1627,12 @@ export function AgentPanel() {
           <span className="agent-notch-label">
             {!grown && !capture?.opened && (
               <span className="agent-notch-status" aria-hidden={revealed}>
-                {capture?.working && !capture.speaking ? (
+                {capture?.working && !voiceSpeaking ? (
                   <AgentWorkingLabel />
                 ) : (
                   <span role="status">
                     {t(
-                      capture?.speaking
+                      voiceSpeaking
                         ? "agent.notchSpeaking"
                         : capture?.listening
                           ? "agent.notchListening"

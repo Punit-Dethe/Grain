@@ -48,8 +48,9 @@ const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
 /// `set_notch_region`). The panel clips the window to its shell — the chat
 /// stays 600x360 — so the transparent rest never eats clicks (Windows).
 const NOTCH_REPLY: (f64, f64) = (760.0, 620.0);
-/// The compact shell, in CSS px (`.agent-notch` in agent.css).
-const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
+/// The compact shell, in CSS px (`.agent-notch` in agent.css). [GRAIN] 6px
+/// taller than the 30px shell: room for the speaking sliver's View lip.
+const NOTCH_COMPACT: (f64, f64) = (300.0, 36.0);
 /// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.
 /// Native window work waits for it: any restyle mid-growth re-presents WebView2.
 const NOTCH_GROW: Duration = Duration::from_millis(460);
@@ -2110,6 +2111,13 @@ impl StreamTurn {
             });
             if started.is_some() {
                 state.speech = Some(feed);
+                // [GRAIN] The voice reads a SAY line, a short version: the
+                // compact notch offers View while it talks.
+                if let (Some(_), Some(generation)) = (&speech, self.generation) {
+                    let _ = self
+                        .app
+                        .emit_to(PANEL_LABEL, "agent-short-voice", generation);
+                }
             }
         }
         // Nothing to show yet while the spoken version is still arriving.
@@ -2713,6 +2721,10 @@ pub fn global_close(app: &AppHandle) {
             return;
         }
         EscapeTarget::AgentWaiting => {
+            // A streamed reply may already be talking: Escape silences it too.
+            if crate::grain_tts::current_speech().is_some() {
+                crate::grain_tts::stop();
+            }
             input_cancel_cleanup(app);
             return;
         }
