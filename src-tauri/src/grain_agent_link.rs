@@ -14,6 +14,54 @@ use tauri_plugin_opener::OpenerExt;
 /// Appended to the Agent's system prompt (see `agent::build_messages`).
 pub(crate) const LINK_RULE: &str = "Your replies are shown in a panel that renders Markdown. When you give the user a link they may want to open, put it on its own line as a Markdown link whose text is a short action title (2 to 5 words) saying what opening it does, for example [Open the Notion page](https://www.notion.so/...). A link alone on its own line is shown as a button that opens in the user's browser. Never use the raw URL as the title. Only give real http or https addresses that came from the user or from a tool result; never invent or guess one. Grain's own grain://recall/meetings/<id> links are allowed too, for meeting ids a tool returned.";
 
+/// [GRAIN] Whether `text` is nothing but link buttons: every line holds only
+/// Markdown links to a web or Grain meeting address (as the notch's
+/// `LINK_ONLY` renders them). With `partial`, a link still arriving at the end
+/// counts too (a stream). Such text stays with a reply's spoken part instead
+/// of becoming a message of its own.
+pub(crate) fn only_link_buttons(text: &str, partial: bool) -> bool {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    !lines.is_empty()
+        && lines.iter().enumerate().all(|(n, line)| {
+            let last = n + 1 == lines.len();
+            links_only(line, partial && last)
+        })
+}
+
+/// One line of only `[title](url)` links; `partial` = its last link may be
+/// cut off.
+fn links_only(mut line: &str, partial: bool) -> bool {
+    const SCHEMES: [&str; 3] = ["https://", "http://", "grain://recall/"];
+    while !line.is_empty() {
+        let Some(rest) = line.strip_prefix('[') else {
+            return false;
+        };
+        let Some(mid) = rest.find("](") else {
+            return partial && !rest.contains(['[', ']']);
+        };
+        if mid == 0 || rest[..mid].contains(['[', ']']) {
+            return false;
+        }
+        let tail = &rest[mid + 2..];
+        let end = tail.find(')');
+        let url = &tail[..end.unwrap_or(tail.len())];
+        let scheme_ok = SCHEMES.iter().any(|s| url.starts_with(s))
+            || (end.is_none() && partial && SCHEMES.iter().any(|s| s.starts_with(url)));
+        if !scheme_ok || url.contains(char::is_whitespace) {
+            return false;
+        }
+        let Some(end) = end else {
+            return partial;
+        };
+        line = tail[end + 1..].trim_start();
+    }
+    true
+}
+
 const MAX_URL: usize = 4096;
 
 /// Grain's meeting link; the same address the Recall MCP server uses.
@@ -69,7 +117,31 @@ pub fn agent_open_link(app: AppHandle, url: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{meeting_link, openable};
+    use super::{meeting_link, only_link_buttons, openable};
+
+    #[test]
+    fn link_only_text_is_recognised() {
+        assert!(only_link_buttons("[Open the page](https://x.dev/a)", false));
+        assert!(only_link_buttons(
+            "[Open it](https://x.dev) [Docs](http://y.dev)\n\n[Meeting](grain://recall/meetings/7)",
+            false
+        ));
+        for not in [
+            "",
+            "See [the page](https://x.dev).",
+            "[Open](ftp://x.dev)",
+            "[](https://x.dev)",
+            "[Open](https://x.dev)\nMore text",
+        ] {
+            assert!(!only_link_buttons(not, false), "{not}");
+        }
+        // Streaming: a link still arriving at the end counts, only there.
+        for arriving in ["[Op", "[Open the page](htt", "[Open](https://x.d"] {
+            assert!(only_link_buttons(arriving, true), "{arriving}");
+            assert!(!only_link_buttons(arriving, false), "{arriving}");
+        }
+        assert!(!only_link_buttons("[Open](https://x.dev)\nThe", true));
+    }
 
     #[test]
     fn only_well_formed_meeting_links_open_in_grain() {

@@ -2104,13 +2104,25 @@ impl StreamTurn {
             plain.clone()
         };
         let shown = match speech {
-            Some(line) if said_all && !rest.is_empty() => AgentStream {
-                said: line.trim().to_owned(),
-                text: rest,
+            // Its own message once more follows, unless that is only link
+            // buttons (they stay with the spoken part, as when finished).
+            Some(line)
+                if said_all
+                    && !rest.is_empty()
+                    && !crate::grain_agent_link::only_link_buttons(&rest, true) =>
+            {
+                AgentStream {
+                    said: line.trim().to_owned(),
+                    text: rest,
+                }
+            }
+            Some(line) if rest.is_empty() => AgentStream {
+                said: String::new(),
+                text: line.trim_end().to_owned(),
             },
             Some(line) => AgentStream {
                 said: String::new(),
-                text: line.trim_end().to_owned(),
+                text: format!("{}\n\n{rest}", line.trim()),
             },
             None => AgentStream {
                 said: String::new(),
@@ -3245,6 +3257,14 @@ mod agent_routing_tests {
             (short.said, short.text.as_str()),
             (None, "It's 12 degrees.")
         );
+        // Only link buttons after it: they stay in the same message.
+        let mut links = AgentReply::plain("[Open the page](https://x.dev)".into());
+        place_said(&mut links, Some("Here's the page.".into()));
+        assert_eq!(links.said, None);
+        assert_eq!(
+            links.text,
+            "Here's the page.\n\n[Open the page](https://x.dev)"
+        );
         // A result with no words around it.
         let mut result = AgentReply::plain(String::new());
         result.result = Some(crate::grain_agent_reply::AgentResult {
@@ -3598,6 +3618,10 @@ pub async fn agent_confirm_action(
 fn place_said(reply: &mut AgentReply, said: Option<String>) {
     match said {
         Some(said) if reply.text.trim().is_empty() => reply.text = said,
+        // Link buttons belong with the words they go with: one message.
+        Some(said) if crate::grain_agent_link::only_link_buttons(&reply.text, false) => {
+            reply.text = format!("{said}\n\n{}", reply.text.trim());
+        }
         Some(said) => reply.said = Some(said),
         None if reply.result.is_some() && reply.text.trim().is_empty() => {
             reply.text = "Done.".into();
