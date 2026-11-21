@@ -58,6 +58,7 @@ mod grain_dictionary;
 mod grain_engine;
 mod grain_history_audio;
 mod grain_llm_client;
+mod grain_tool_schema; // [GRAIN] tool schemas a provider will accept (wire copy only)
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing

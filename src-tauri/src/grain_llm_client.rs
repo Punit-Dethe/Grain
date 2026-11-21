@@ -29,6 +29,41 @@ fn remember_reasoning_rejection(key: &str) {
     }
 }
 
+/// [GRAIN] Endpoints (`url|model`) that refused a portable tool schema and
+/// are sent the strict one instead (`grain_tool_schema::strict`).
+fn strict_schema_endpoints() -> &'static Mutex<HashSet<String>> {
+    static STRICT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    STRICT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn strict_schema_endpoint(key: &str) -> bool {
+    strict_schema_endpoints()
+        .lock()
+        .is_ok_and(|set| set.contains(key))
+}
+
+fn remember_strict_schema_endpoint(key: &str) {
+    if let Ok(mut set) = strict_schema_endpoints().lock() {
+        set.insert(key.to_string());
+    }
+}
+
+fn payload_has_tools(payload: &Value) -> bool {
+    payload["tools"]
+        .as_array()
+        .is_some_and(|tools| !tools.is_empty())
+}
+
+/// Rewrite every tool's parameters in a serialized body to the strict subset.
+fn make_tool_schemas_strict(payload: &mut Value) {
+    for tool in payload["tools"].as_array_mut().into_iter().flatten() {
+        let parameters = &mut tool["function"]["parameters"];
+        if parameters.is_object() {
+            *parameters = crate::grain_tool_schema::strict(parameters);
+        }
+    }
+}
+
 /// Drop the reasoning-disable fields from a serialized request body.
 fn strip_reasoning_fields(payload: &mut Value) {
     if let Some(obj) = payload.as_object_mut() {
@@ -696,7 +731,9 @@ pub async fn send_chat_with_tools(
             function: WireToolSpec {
                 name: t.name,
                 description: t.description,
-                parameters: t.parameters,
+                // Vendor extras (display hints, x-*) make strict providers
+                // refuse the request; the original still validates arguments.
+                parameters: crate::grain_tool_schema::portable(&t.parameters),
             },
         })
         .collect();
@@ -859,6 +896,12 @@ async fn post_chat(
     // be removed to rescue a rejected body. Checked before the first send, since
     // stripping mutates the payload.
     let carries_image = payload_has_image(&payload);
+    // [GRAIN] An endpoint that refused a portable tool schema gets the strict one.
+    let schema_strict = strict_schema_endpoint(&reject_key);
+    if schema_strict {
+        make_tool_schemas_strict(&mut payload);
+    }
+    let headers_for_schema_retry = headers.clone();
 
     let mut response = client
         .post(url)
@@ -912,14 +955,44 @@ async fn post_chat(
             .map_err(|e| LlmError::Other(report_reqwest_error("HTTP retry failed", &e)))?;
     }
 
-    let status = response.status();
+    let mut status = response.status();
     if status.as_u16() == 429 {
         return Err(LlmError::RateLimited);
     }
 
-    let body = response.text().await.map_err(|e| {
+    let mut body = response.text().await.map_err(|e| {
         LlmError::Other(report_reqwest_error("Failed to read API response body", &e))
     })?;
+    // [GRAIN] A provider that refused the tool schemas themselves (Gemini:
+    // "Unknown name ... Cannot find field") gets them once more in its strict
+    // subset, and keeps getting that form for the rest of the session.
+    if !schema_strict
+        && matches!(status.as_u16(), 400 | 422)
+        && payload_has_tools(&payload)
+        && crate::grain_tool_schema::is_schema_rejection(&body)
+    {
+        log::info!(
+            "[GRAIN] llm: '{}' refused the tool schemas ({status}); retrying with strict schemas",
+            request_body.model
+        );
+        remember_strict_schema_endpoint(&reject_key);
+        make_tool_schemas_strict(&mut payload);
+        let retry = client
+            .post(url)
+            .headers(headers_for_schema_retry)
+            .timeout(LLM_REQUEST_TIMEOUT)
+            .json(&wire_payload(&payload, format)?)
+            .send()
+            .await
+            .map_err(|e| LlmError::Other(report_reqwest_error("HTTP retry failed", &e)))?;
+        status = retry.status();
+        if status.as_u16() == 429 {
+            return Err(LlmError::RateLimited);
+        }
+        body = retry.text().await.map_err(|e| {
+            LlmError::Other(report_reqwest_error("Failed to read API response body", &e))
+        })?;
+    }
     if !status.is_success() {
         return Err(LlmError::Other(format!(
             "API request failed with status {}: {}",
@@ -1392,6 +1465,9 @@ pub mod stream {
         if reasoning_endpoint_rejected(&key) {
             strip_reasoning_fields(&mut payload);
         }
+        if strict_schema_endpoint(&key) {
+            make_tool_schemas_strict(&mut payload);
+        }
         let carries_reasoning =
             payload.get("reasoning_effort").is_some() || payload.get("reasoning").is_some();
         payload["stream"] = Value::Bool(true);
@@ -1422,9 +1498,19 @@ pub mod stream {
         }
         if !status.is_success() {
             // 429 / 5xx are not about streaming, and a 400 to a body with
-            // reasoning fields is that retry's business: the normal request
-            // handles those.
-            if matches!(status.as_u16(), 400 | 404 | 405 | 415 | 422 | 501) && !carries_reasoning {
+            // reasoning fields (or to a tool schema) is that retry's business:
+            // the normal request handles those.
+            let refused = match status.as_u16() {
+                404 | 405 | 415 | 501 => true,
+                400 | 422 => {
+                    let body = response.text().await.unwrap_or_default();
+                    !carries_reasoning
+                        && !crate::grain_tool_schema::is_schema_rejection(&body)
+                        && body.to_ascii_lowercase().contains("stream")
+                }
+                _ => false,
+            };
+            if refused {
                 remember(key);
             }
             log::info!(
