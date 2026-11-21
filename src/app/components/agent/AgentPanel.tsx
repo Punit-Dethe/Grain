@@ -989,11 +989,14 @@ export function AgentPanel() {
     else change();
   };
 
-  /** Copy a result's text; Copy in the card then closes the notch. */
+  /** Copy a result's text, with its formatted version when given (the
+   * paste target picks); Copy in the card then closes the notch. */
   const copyResult = useCallback(
-    (text: string) =>
-      commands
-        .agentCopy(text)
+    (text: string, html?: string) =>
+      (html
+        ? commands.agentCopyFormatted(html, text)
+        : commands.agentCopy(text)
+      )
         .then((res) => res.status === "ok")
         .catch(() => false),
     [],

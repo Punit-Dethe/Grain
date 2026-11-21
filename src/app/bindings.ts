@@ -1394,6 +1394,19 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Copy a Markdown result two ways at once: `html` (the rendered
+ * text) for apps that paste formatting (mail, docs), `text` (the Markdown
+ * source) for plain fields and editors. The paste target picks.
+ */
+async agentCopyFormatted(html: string, text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_copy_formatted", { html, text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Run the conversation against the configured AI and return the assistant reply.
  * Uses the post-processing provider config: a single provider, or the smart
  * fallback pool (enabled providers in saved order). The
@@ -2452,7 +2465,13 @@ kind: string;
 /**
  * The subject line of an email result.
  */
-subject?: string | null; body: string }
+subject?: string | null; body: string; 
+/**
+ * `"markdown"` when the text the user selected was Markdown (the card
+ * renders it; Copy puts both the source and the formatted text on the
+ * clipboard), else `"plain"`. Set by the host, never by the model.
+ */
+format?: string }
 /**
  * [GRAIN] A talk-back voice preset, for the settings picker.
  */

@@ -3145,6 +3145,7 @@ mod agent_routing_tests {
                 kind: "email".into(),
                 subject: None,
                 body: body.into(),
+                format: crate::grain_agent_reply::PLAIN.into(),
             })
         };
         let turn = |role: &str, content: &str, result| AgentMessage {
@@ -3205,6 +3206,17 @@ pub fn agent_copy(app: AppHandle, text: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to copy to clipboard: {e}"))
 }
 
+/// [GRAIN] Copy a Markdown result two ways at once: `html` (the rendered
+/// text) for apps that paste formatting (mail, docs), `text` (the Markdown
+/// source) for plain fields and editors. The paste target picks.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_copy_formatted(app: AppHandle, html: String, text: String) -> Result<(), String> {
+    app.clipboard()
+        .write_html(html, Some(text))
+        .map_err(|e| format!("Failed to copy to clipboard: {e}"))
+}
+
 /// Run the conversation against the configured AI and return the assistant reply.
 /// Uses the post-processing provider config: a single provider, or the smart
 /// fallback pool (enabled providers in saved order). The
@@ -3257,6 +3269,8 @@ pub async fn agent_run(
     // A new turn silences the previous reply's talk-back.
     crate::grain_tts::stop();
     let chat_run = record.then(|| ChatRun::start(&app, &messages));
+    // [GRAIN] A result keeps the format of the selected text.
+    let source_markdown = markdown_source(context.as_deref());
     // [GRAIN] EXPERIMENT: stream this turn's model calls into the chat.
     let stream = StreamTurn::new(&app, generation);
     let mut reply = run
@@ -3277,10 +3291,15 @@ pub async fn agent_run(
             say = line;
             // A text transform: the new text goes to the result card; the
             // chat says (and the voice reads) only that it is done.
-            let (text, result) = crate::grain_agent_reply::split_result(&body);
+            let (text, mut result) = crate::grain_agent_reply::split_result(&body);
             reply.text = text;
             if result.is_some() && reply.text.is_empty() {
                 reply.text = say.clone().unwrap_or_else(|| "Done.".into());
+            }
+            // Markdown in, Markdown out; otherwise plain text that pastes
+            // cleanly anywhere.
+            if let Some(result) = &mut result {
+                crate::grain_agent_reply::settle_format(result, source_markdown);
             }
             reply.result = result;
         }
@@ -3440,7 +3459,7 @@ async fn agent_run_owned(
         1,
         (
             "system".to_string(),
-            crate::grain_agent_reply::RESULT_RULE.to_owned(),
+            crate::grain_agent_reply::result_rule(markdown_source(context.as_deref())),
         ),
     );
     let image = screen_attachment(app);
@@ -5006,6 +5025,12 @@ pub(crate) async fn run_messages(
         )),
         ProviderOutcome::Failed => Err(format!("{} could not produce a response.", provider.label)),
     }
+}
+
+/// [GRAIN] Whether the selected text is Markdown (a result then stays
+/// Markdown; with no selection, results are plain text).
+fn markdown_source(context: Option<&str>) -> bool {
+    context.is_some_and(crate::grain_agent_reply::looks_like_markdown)
 }
 
 /// Build the system prompt, optional explicitly selected text, and conversation

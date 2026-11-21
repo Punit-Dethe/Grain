@@ -20,13 +20,111 @@ pub struct AgentResult {
     #[serde(default)]
     pub subject: Option<String>,
     pub body: String,
+    /// `"markdown"` when the text the user selected was Markdown (the card
+    /// renders it; Copy puts both the source and the formatted text on the
+    /// clipboard), else `"plain"`. Set by the host, never by the model.
+    #[serde(default = "plain_format")]
+    pub format: String,
 }
+
+fn plain_format() -> String {
+    PLAIN.into()
+}
+
+pub(crate) const PLAIN: &str = "plain";
+pub(crate) const MARKDOWN: &str = "markdown";
 
 pub(crate) const RESULT_KINDS: [&str; 6] =
     ["email", "message", "rewrite", "list", "code", "translation"];
 
-/// Sent with every notch chat turn.
-pub(crate) const RESULT_RULE: &str = "RESULT TEXT: when the user asks you to change, rewrite, reformat or translate text and wants that text back (\"turn this into an email\", \"make it more formal\", \"fix the grammar\"), put only the new text in one block: <result kind=\"email|message|rewrite|list|code|translation\"> … </result>, with subject=\"…\" added for an email. No preamble or comment inside the block; a short line before it may say what you did. Summaries, answers and actions about the text are not results: reply normally. To refine an earlier result, write the whole new text in a new block.";
+const RESULT_RULE: &str = "RESULT TEXT: when the user asks you to change, rewrite, reformat or translate text and wants that text back (\"turn this into an email\", \"make it more formal\", \"fix the grammar\"), put only the new text in one block: <result kind=\"email|message|rewrite|list|code|translation\"> … </result>, with subject=\"…\" added for an email. No preamble or comment inside the block; a short line before it may say what you did. Summaries, answers and actions about the text are not results: reply normally. To refine an earlier result, write the whole new text in a new block.";
+
+/// Sent with every notch chat turn; `markdown` = the selection is Markdown.
+pub(crate) fn result_rule(markdown: bool) -> String {
+    let format = if markdown {
+        "The selected text is Markdown: keep the result in Markdown."
+    } else {
+        "Write the result as plain text that pastes cleanly anywhere: no Markdown (no **, #, backticks or [links](…)); plain line breaks and simple dashes for lists are fine."
+    };
+    format!("{RESULT_RULE} {format}")
+}
+
+/// Whether text reads as Markdown: a heading, a code fence, bold, a link or
+/// a table, or a list of three or more items.
+pub(crate) fn looks_like_markdown(text: &str) -> bool {
+    let mut list_items = 0;
+    for line in text.lines().map(str::trim_start) {
+        let heading = line.trim_start_matches('#');
+        if (line.starts_with('#') && line.len() - heading.len() <= 6 && heading.starts_with(' '))
+            || line.starts_with("```")
+            || line.starts_with("|---")
+            || line.starts_with("| ---")
+        {
+            return true;
+        }
+        if ["- ", "* ", "+ "]
+            .iter()
+            .any(|bullet| line.starts_with(bullet))
+            || line
+                .split_once(". ")
+                .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        {
+            list_items += 1;
+        }
+    }
+    let bold = text.lines().any(|line| {
+        line.find("**")
+            .is_some_and(|at| line[at + 2..].find("**").is_some_and(|len| len > 0))
+    });
+    let link = text
+        .find("](")
+        .is_some_and(|at| text[..at].contains('[') && text[at..].contains(')'));
+    bold || link || list_items >= 3
+}
+
+/// Plain text from a result the model may have marked up anyway: heading
+/// marks, bold, inline code ticks and link syntax go; lines and dashes stay.
+pub(crate) fn plain_text(body: &str) -> String {
+    body.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let heading = trimmed.trim_start_matches('#');
+            let line = if trimmed.starts_with('#') && heading.starts_with(' ') {
+                heading.trim_start()
+            } else {
+                line
+            };
+            let line = line.replace("**", "").replace("__", "").replace('`', "");
+            unlink(&line)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `[label](url)` → `label (url)`; a label that is the URL stays once.
+fn unlink(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        let Some(mid) = rest[open..].find("](").map(|i| open + i) else {
+            break;
+        };
+        let Some(end) = rest[mid..].find(')').map(|i| mid + i) else {
+            break;
+        };
+        let label = &rest[open + 1..mid];
+        let url = &rest[mid + 2..end];
+        out.push_str(&rest[..open]);
+        if label == url || label.is_empty() {
+            out.push_str(url);
+        } else {
+            out.push_str(&format!("{label} ({url})"));
+        }
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
 
 /// Sent as a system message only while talk-back is on.
 pub(crate) const SAY_RULE: &str = "SPOKEN VERSION: your reply is read aloud. When it is long (more than about three sentences, or it has a list, table, code or a piece of writing), begin with one line `SAY: ` followed by one or two natural sentences that tell the user what you did or found, the way you would tell a friend; never read the content out. Describe a piece of writing (\"I've written you a poem about autumn; it ends on a hopeful note.\") and sum up finished actions briefly (\"Filed the bug on GitHub, added it to Linear and wrote it up in Notion.\"). Then the full reply from the next line, unchanged. If the user asked to hear something read out, put all of it in the SAY line. Short replies need no SAY line.";
@@ -189,8 +287,23 @@ pub(crate) fn split_result(reply: &str) -> (String, Option<AgentResult>) {
             kind,
             subject,
             body: body.to_owned(),
+            format: PLAIN.into(),
         }),
     )
+}
+
+/// Give a result the format of the text it came from: Markdown stays
+/// Markdown; anything else is cleaned to plain text (code is left as is).
+pub(crate) fn settle_format(result: &mut AgentResult, markdown_source: bool) {
+    if markdown_source {
+        result.format = MARKDOWN.into();
+    } else {
+        result.format = PLAIN.into();
+        if result.kind != "code" {
+            result.body = plain_text(&result.body);
+            result.subject = result.subject.as_deref().map(plain_text);
+        }
+    }
 }
 
 /// A streaming reply so far, outside its result block: the text before the
@@ -347,6 +460,7 @@ mod tests {
                     kind: "email".into(),
                     subject: Some("Thursday follow-up".into()),
                     body: "Hi Sam,\n\nThanks for the call.".into(),
+                    format: PLAIN.into(),
                 })
             )
         );
@@ -411,6 +525,7 @@ mod tests {
             kind: "email".into(),
             subject: Some("Hello \"there\"".into()),
             body: "Hi.".into(),
+            format: PLAIN.into(),
         };
         let block = result_block(&result);
         assert_eq!(
@@ -420,6 +535,76 @@ mod tests {
                 ..result
             }
         );
+    }
+
+    #[test]
+    fn markdown_is_recognised_by_its_marks() {
+        for markdown in [
+            "# Title\nBody",
+            "Intro\n```\ncode\n```",
+            "It is **very** good.",
+            "See [the docs](https://x.dev).",
+            "| a | b |\n|---|---|",
+            "- one\n- two\n- three",
+            "1. one\n2. two\n3. three",
+        ] {
+            assert!(looks_like_markdown(markdown), "{markdown}");
+        }
+        for plain in [
+            "Hi Sam,\n\nThanks for the call on Thursday.\n\nBest,\nPunit",
+            "#1 priority is the launch.",
+            "Items:\n- milk\n- eggs",
+            "2 * 3 = 6 and 4 ** 2",
+            "Version 1. Then 2.",
+        ] {
+            assert!(!looks_like_markdown(plain), "{plain}");
+        }
+    }
+
+    #[test]
+    fn plain_results_lose_their_markup() {
+        assert_eq!(
+            plain_text("## Thursday\nIt is **really** `fine`, see [docs](https://x.dev).\n- one"),
+            "Thursday\nIt is really fine, see docs (https://x.dev).\n- one"
+        );
+        assert_eq!(
+            plain_text("[https://x.dev](https://x.dev)"),
+            "https://x.dev"
+        );
+        assert_eq!(plain_text("#1 priority"), "#1 priority");
+    }
+
+    #[test]
+    fn a_result_takes_its_sources_format() {
+        let made = || AgentResult {
+            kind: "email".into(),
+            subject: Some("**Hi**".into()),
+            body: "# Hello\n**Sam**".into(),
+            format: PLAIN.into(),
+        };
+        let mut plain = made();
+        settle_format(&mut plain, false);
+        assert_eq!(
+            (
+                plain.format.as_str(),
+                plain.subject.as_deref(),
+                plain.body.as_str()
+            ),
+            (PLAIN, Some("Hi"), "Hello\nSam")
+        );
+        let mut markdown = made();
+        settle_format(&mut markdown, true);
+        assert_eq!(
+            (markdown.format.as_str(), markdown.body.as_str()),
+            (MARKDOWN, "# Hello\n**Sam**")
+        );
+        let mut code = AgentResult {
+            kind: "code".into(),
+            body: "let x = **y;".into(),
+            ..made()
+        };
+        settle_format(&mut code, false);
+        assert_eq!(code.body, "let x = **y;");
     }
 
     #[test]

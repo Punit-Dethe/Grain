@@ -1227,6 +1227,80 @@ html[data-window="agent-panel"] body {
   color: #1d6b37;
 }
 
+/* Copy plus its "Copy as…" arrow, for Markdown results: one split pill. */
+.ars-copy-group {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.ars-copy-group.has-menu .ars-copy {
+  padding-right: 14px;
+  border-radius: 999px 0 0 999px;
+}
+
+.ars-copy-more {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 34px;
+  border: 0;
+  border-left: 1px solid #0a0a0e26;
+  border-radius: 0 999px 999px 0;
+  background: var(--agc-fill);
+  color: #0a0a0e;
+  cursor: pointer;
+  transition: filter 140ms ease;
+}
+
+.ars-copy-more:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.ars-copy-more:focus-visible {
+  outline: 2px solid #ffffff59;
+  outline-offset: 2px;
+}
+
+.ars-copy-more:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ars-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: flex;
+  flex-direction: column;
+  min-width: 176px;
+  padding: 4px;
+  border-radius: 10px;
+  background: #1b1b22;
+  box-shadow:
+    inset 0 0 0 1px #ffffff14,
+    0 8px 24px #00000080;
+}
+
+.ars-menu-item {
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--agc-ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ars-menu-item:hover,
+.ars-menu-item:focus-visible {
+  outline: none;
+  background: var(--agc-raise);
+}
+
 .agc-c-tools {
   display: flex;
   gap: 2px;

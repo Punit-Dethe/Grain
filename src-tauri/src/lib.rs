@@ -1494,6 +1494,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_collapse_to_listening,
             agent::agent_reopen_listening,
             agent::agent_copy,
+            agent::agent_copy_formatted,
             agent::agent_run,
             agent::agent_confirm_action,
             agent::agent_notch_status,

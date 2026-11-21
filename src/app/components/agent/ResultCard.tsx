@@ -5,7 +5,7 @@
 // check, and the panel then closes the notch.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, Copy } from "lucide-react";
+import { Check, ChevronDown, Copy } from "lucide-react";
 import type { AgentResult } from "@/bindings";
 import { AgentMarkdown } from "../markdown/Markdown";
 
@@ -36,6 +36,37 @@ const CHIPS: Record<string, string[]> = {
 
 export type ResultLayout = keyof typeof WIDTH;
 
+/** How a Markdown result is copied: both ways at once (default), or one. */
+type CopyAs = "both" | "plain" | "markdown";
+
+/** `[label](url)` → `label (url)`; a link whose label is its URL stays once. */
+const unlink = (line: string) =>
+  line.replace(/\[([^\]]*)\]\(([^)\s]*)\)/g, (_, label: string, url: string) =>
+    !label || label === url ? url : `${label} (${url})`,
+  );
+
+/** Plain text from Markdown (like `plain_text` in grain_agent_reply.rs):
+ * heading marks, bold, code ticks and link syntax go; lines and list dashes
+ * stay, so it still reads well pasted into a plain field. */
+export function plainFromMarkdown(markdown: string): string {
+  let inFence = false;
+  return markdown
+    .split("\n")
+    .flatMap((line) => {
+      if (line.trimStart().startsWith("```")) {
+        inFence = !inFence;
+        return [];
+      }
+      if (inFence) return [line];
+      const heading = line.match(/^\s*#{1,6}\s+(.*)$/);
+      const text = (heading ? heading[1] : line)
+        .replace(/\*\*|__|`/g, "")
+        .replace(/^(\s*)[*+] /, "$1- ");
+      return [unlink(text)];
+    })
+    .join("\n");
+}
+
 export function resultLayout(result: AgentResult): ResultLayout {
   if (result.kind === "code") return "code";
   const short =
@@ -54,8 +85,9 @@ export const resultStartSize = (result: AgentResult) => ({
 interface Props {
   result: AgentResult;
   busy: boolean;
-  /** Copy the text; resolves true once it is on the clipboard. */
-  onCopy: (text: string) => Promise<boolean>;
+  /** Copy the text (with `html`, its formatted version too); resolves true
+   * once it is on the clipboard. */
+  onCopy: (text: string, html?: string) => Promise<boolean>;
   /** Copied and shown: the panel closes the notch. */
   onDone: () => void;
   /** A refine chip: the follow-up request. */
@@ -81,10 +113,16 @@ export function ResultCard({
   const onSizeRef = useRef(onSize);
   onSizeRef.current = onSize;
   const [copied, setCopied] = useState<"body" | "subject" | null>(null);
+  // The "Copy as…" menu (Markdown results only).
+  const [menu, setMenu] = useState(false);
+  // Markdown in, Markdown out (the host decides from the selection); code
+  // always shows as typed.
+  const markdown = result.format === "markdown" && result.kind !== "code";
 
   // A new result starts uncopied, with Copy focused (Enter copies).
   useEffect(() => {
     setCopied(null);
+    setMenu(false);
     copyRef.current?.focus({ preventScroll: true });
   }, [result]);
 
@@ -121,12 +159,25 @@ export function ResultCard({
     return () => window.clearTimeout(timer);
   }, [copied, onDone]);
 
-  const copy = (what: "body" | "subject") => {
-    const text = what === "subject" ? result.subject : result.body;
-    if (!text || busy || copied === "body") return;
-    void onCopy(text).then((ok) => {
-      if (ok) setCopied(what);
-    });
+  const copySubject = () => {
+    if (!result.subject || busy || copied === "body") return;
+    void onCopy(result.subject).then((ok) => ok && setCopied("subject"));
+  };
+
+  /** Copy the text. A plain result is copied as it is. A Markdown result
+   * goes on the clipboard two ways by default (the paste target picks the
+   * formatted text or the Markdown source), or one way from the menu. */
+  const copyBody = (as: CopyAs = "both") => {
+    if (busy || copied === "body") return;
+    setMenu(false);
+    const job = !markdown
+      ? onCopy(result.body)
+      : as === "plain"
+        ? onCopy(plainFromMarkdown(result.body))
+        : as === "markdown"
+          ? onCopy(result.body)
+          : onCopy(result.body, textRef.current?.innerHTML);
+    void job.then((ok) => ok && setCopied("body"));
   };
 
   const chips = CHIPS[result.kind] ?? CHIPS.rewrite;
@@ -145,7 +196,7 @@ export function ResultCard({
             <button
               type="button"
               className="ars-subject-copy"
-              onClick={() => copy("subject")}
+              onClick={copySubject}
               aria-label={t("agent.resultCopySubject")}
               title={t("agent.resultCopySubject")}
             >
@@ -160,11 +211,7 @@ export function ResultCard({
           ref={textRef}
           className={`ars-text${busy ? " is-stale" : ""}${layout === "code" ? " is-code" : ""}`}
         >
-          {result.kind === "list" ? (
-            <AgentMarkdown markdown={result.body} />
-          ) : (
-            result.body
-          )}
+          {markdown ? <AgentMarkdown markdown={result.body} /> : result.body}
         </div>
       </div>
 
@@ -182,24 +229,60 @@ export function ResultCard({
             </button>
           ))}
         </div>
-        <button
-          ref={copyRef}
-          type="button"
-          className={`ars-copy${copied === "body" ? " is-done" : ""}`}
-          disabled={busy}
-          onClick={() => copy("body")}
-        >
-          {copied === "body" ? (
-            <Check size={15} strokeWidth={2.4} />
-          ) : (
-            <Copy size={14} strokeWidth={2.1} />
+        <div className={`ars-copy-group${markdown ? " has-menu" : ""}`}>
+          {menu && (
+            <div className="ars-menu" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="ars-menu-item"
+                onClick={() => copyBody("plain")}
+              >
+                {t("agent.resultCopyPlain")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="ars-menu-item"
+                onClick={() => copyBody("markdown")}
+              >
+                {t("agent.resultCopyMarkdown")}
+              </button>
+            </div>
           )}
-          <span>
-            {copied === "body"
-              ? t("agent.resultCopied")
-              : t("agent.resultCopy")}
-          </span>
-        </button>
+          <button
+            ref={copyRef}
+            type="button"
+            className={`ars-copy${copied === "body" ? " is-done" : ""}`}
+            disabled={busy}
+            onClick={() => copyBody()}
+          >
+            {copied === "body" ? (
+              <Check size={15} strokeWidth={2.4} />
+            ) : (
+              <Copy size={14} strokeWidth={2.1} />
+            )}
+            <span>
+              {copied === "body"
+                ? t("agent.resultCopied")
+                : t("agent.resultCopy")}
+            </span>
+          </button>
+          {markdown && (
+            <button
+              type="button"
+              className="ars-copy-more"
+              disabled={busy || copied === "body"}
+              aria-haspopup="menu"
+              aria-expanded={menu}
+              aria-label={t("agent.resultCopyAs")}
+              title={t("agent.resultCopyAs")}
+              onClick={() => setMenu((open) => !open)}
+            >
+              <ChevronDown size={14} strokeWidth={2.2} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
