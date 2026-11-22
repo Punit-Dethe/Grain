@@ -268,16 +268,13 @@ transcribe-cpp = { version = "=0.4.0", default-features = false, features = [
 [patch.crates-io]
 # [GRAIN] Paired immutable native fork; preserve exact upstream versions/features.
 # See ../native/transcribe-fork.json and ../docs/TRANSCRIBE-CPP-FORK.md.
-# TESTING ONLY (local fork branch grain/diarize-file-stream): transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "c8cf6b11dd5e67131b264025112293bda1bb8c86" }
-# TESTING ONLY (local fork branch grain/diarize-file-stream): transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "c8cf6b11dd5e67131b264025112293bda1bb8c86" }
-transcribe-cpp = { path = "../native/transcribe.cpp/bindings/rust/transcribe-cpp" }
-transcribe-cpp-sys = { path = "../native/transcribe.cpp" }
+transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4" }
+transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4" }
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
-# [GRAIN] TESTING ONLY: local xn with run-time AVX2 kernel dispatch (../../xn, branch
-# cpu/runtime-avx2-dispatch). Replace with a pinned git rev before this leaves the
-# plan/inference-architecture branch; see docs/Inference Architecture/PLAN.md (T2).
-xn = { path = "../../xn/xn-core" }
+# [GRAIN] xn with run-time AVX2 kernel dispatch (Punit-Dethe/xn, branch
+# cpu/runtime-avx2-dispatch on top of 0.2.15). Not sent to Gradium yet.
+xn = { git = "https://github.com/Punit-Dethe/xn.git", rev = "30bfa373d636fec8687b2a9ab50a9ca926d511d7" }
 
 [dev-dependencies]
 grain-recall = { path = "../crates/grain-recall", features = ["specta", "fixtures"] }

@@ -165,7 +165,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp"
 version = "0.4.0"
-source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=c8cf6b11dd5e67131b264025112293bda1bb8c86#c8cf6b11dd5e67131b264025112293bda1bb8c86"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4#1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4"
 dependencies = [
  "log",
  "thiserror",
@@ -175,7 +175,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp-sys"
 version = "0.4.0"
-source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=c8cf6b11dd5e67131b264025112293bda1bb8c86#c8cf6b11dd5e67131b264025112293bda1bb8c86"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4#1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4"
 dependencies = [
  "cmake",
  "serde_json",

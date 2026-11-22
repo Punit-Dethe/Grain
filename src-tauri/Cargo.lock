@@ -8485,6 +8485,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp"
 version = "0.4.0"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4#1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4"
 dependencies = [
  "log",
  "serde",
@@ -8495,6 +8496,7 @@ dependencies = [
 [[package]]
 name = "transcribe-cpp-sys"
 version = "0.4.0"
+source = "git+https://github.com/Punit-Dethe/transcribe.cpp.git?rev=1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4#1d1ce5fcf9ea011dff6379d2c35ef484d73f30d4"
 dependencies = [
  "cmake",
  "serde_json",
@@ -10203,6 +10205,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 [[package]]
 name = "xn"
 version = "0.2.15"
+source = "git+https://github.com/Punit-Dethe/xn.git?rev=30bfa373d636fec8687b2a9ab50a9ca926d511d7#30bfa373d636fec8687b2a9ab50a9ca926d511d7"
 dependencies = [
  "byteorder",
  "half",
