@@ -223,9 +223,10 @@ fn build_console_filter() -> env_filter::Filter {
     builder.build()
 }
 
-/// [GRAIN] Build the main settings window (hidden). Extracted so it can be
-/// recreated on demand after the window is destroyed on close (freeing WebView2
-/// RAM). Sets the portable data_directory like the original setup did.
+/// [GRAIN] Build the main settings window (hidden). Called eagerly during
+/// setup, like upstream, so the UI is already loaded when the window is first
+/// shown; `show_main_window` only rebuilds it if it is somehow missing. Sets
+/// the portable data_directory like the original setup did.
 fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let monitor = app
         .primary_monitor()
@@ -293,7 +294,7 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
 
     let window = win_builder.build()?;
 
-    // [GRAIN] Handy's WebView2 accelerator fix at Grain's lazy builder.
+    // [GRAIN] Handy's WebView2 accelerator fix at Grain's builder.
     #[cfg(target_os = "windows")]
     let _ = window.with_webview(|webview| unsafe {
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
@@ -361,8 +362,9 @@ fn show_main_window(app: &AppHandle) {
             log::error!("Failed to set activation policy to Regular: {}", e);
         }
     }
-    // [GRAIN] The window is destroyed on close to free RAM, so recreate it if
-    // absent. Every reopen path (tray, single-instance, macOS Reopen) lands here.
+    // [GRAIN] The window is built at startup and only hidden on close; rebuild
+    // it only as a fallback if it is missing. Every reopen path (tray,
+    // single-instance, macOS Reopen) lands here.
     let main_window = match app.get_webview_window("main") {
         Some(w) => w,
         None => match build_main_window(app) {
@@ -1139,9 +1141,9 @@ pub fn run(cli_args: CliArgs) {
 
             // Create main window programmatically so we can set data_directory
             // for portable mode (redirects WebView2 cache to portable Data dir).
-            // [GRAIN] This is now fully lazy (invoked by show_main_window) to save
-            // RAM if the app is started hidden. Upstream's eager builder lives
-            // there instead; its #1778 `.maximizable(true)` is already applied.
+            // [GRAIN] Built eagerly (hidden) by `build_main_window` further down,
+            // once every managed state its commands need exists. Upstream's
+            // #1778 `.maximizable(true)` is already applied there.
 
             // [GRAIN] Build the headless core context and own it as managed state
             // BEFORE any get_settings() call routes through it. AppContext loads +
@@ -1200,16 +1202,24 @@ pub fn run(cli_args: CliArgs) {
             // the note above, and grain_overlay owns the overlay path.
             secure_input::init(&app_handle);
 
-            // [GRAIN] Update discovery is backend-owned so it still runs when
-            // start-hidden skips the WebView, or after close destroyed it to
-            // release WebView2 RAM. This is one delayed task, not a resident
-            // polling engine.
+            // [GRAIN] Update discovery is backend-owned so it does not depend
+            // on the WebView having mounted. This is one delayed task, not a
+            // resident polling engine.
             #[cfg(not(feature = "agent-harness"))]
             grain_update::spawn_automatic_check(app_handle.clone());
 
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {
                 tray::set_tray_visibility(&app_handle, false);
+            }
+
+            // [GRAIN] Instant open, matching upstream: build the main window
+            // now (hidden) so React has already loaded when it is first shown,
+            // instead of creating the WebView on the first tray click.
+            if app_handle.get_webview_window("main").is_none() {
+                if let Err(e) = build_main_window(&app_handle) {
+                    log::error!("Failed to create main window: {}", e);
+                }
             }
 
             // Show main window only if not starting hidden.
@@ -1231,9 +1241,9 @@ pub fn run(cli_args: CliArgs) {
             ) {
                 show_main_window(&app_handle);
             } else {
-                // [GRAIN] If we skip the frontend on startup, we must manually
-                // initialize global systems (shortcuts, enigo) here because the
-                // frontend won't mount and call the initialization IPC commands.
+                // [GRAIN] Initialize global systems (shortcuts, enigo) here too,
+                // so they work before the hidden frontend finishes mounting.
+                // Both commands are idempotent.
                 let _ = commands::initialize_shortcuts(app_handle.clone());
                 let _ = commands::initialize_enigo(app_handle.clone());
             }
@@ -1241,7 +1251,7 @@ pub fn run(cli_args: CliArgs) {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            tauri::WindowEvent::CloseRequested { .. } => {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 // [GRAIN] The Agent notch owns its transient shortcuts while
                 // recording, working or showing a reply.
                 if window.label() == agent::PANEL_LABEL {
@@ -1249,12 +1259,15 @@ pub fn run(cli_args: CliArgs) {
                     return;
                 }
 
-                // [GRAIN] Let the window actually CLOSE (destroy) so WebView2's
-                // RAM is freed — "if it's not in use, destroy it". The app lives
-                // on in the tray (auto-exit is prevented in the run loop unless
-                // --no-tray), and show_main_window recreates the window on reopen.
-                // The Agent window also closes-to-destroy; only the MAIN settings
-                // window drives the macOS dock/activation policy.
+                // [GRAIN] Match upstream: closing the MAIN window hides it so the
+                // next open is instant (no WebView rebuild / React reload). Other
+                // Grain windows still close-to-destroy. With --no-tray, closing
+                // is meant to quit, so that close goes through.
+                if window.label() == "main" && !window.app_handle().state::<CliArgs>().no_tray
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
                 #[cfg(target_os = "macos")]
                 if window.label() == "main" {
                     let settings = get_settings(&window.app_handle());
@@ -1314,7 +1327,7 @@ pub fn run(cli_args: CliArgs) {
             // [GRAIN] Close Grain Pilot's browser link.
             grain_pilot::stop_at_exit();
         }
-        // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
+        // [GRAIN] Closing the settings window only hides it. Keep the
         // process alive in the tray so dictation/rolling/pill keep working —
         // unless launched with --no-tray, where closing is meant to quit. The
         // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
