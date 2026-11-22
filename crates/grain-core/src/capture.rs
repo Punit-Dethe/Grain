@@ -2,7 +2,8 @@
 //!
 //! Grain has one dictation binding, plus the optional AI key.
 //! Dictation selects Standard or Flow from the selected model. Flow is intentionally
-//! narrower: only the reviewed Parakeet TDT v2/v3 catalog artifacts can run it.
+//! narrower: only the reviewed Parakeet TDT v2/v3 catalog artifacts (and Fluid Speech Pro,
+//! which uses the v3 layout) can run it.
 //!
 //! This module is the single place that answers "what does the AI key do, and
 //! which shortcuts hold a global hotkey?". The Handy-derived shortcut backends
@@ -26,6 +27,10 @@ pub fn is_reviewed_flow_model(model_id: &str) -> bool {
             "handy-computer/parakeet-tdt-0.6b-v3-gguf" => {
                 filename.strip_prefix("parakeet-tdt-0.6b-v3-")
             }
+            // Fluid Speech Pro: v3 runtime layout, Flow-audited Q8_0 only.
+            "Straylight-dev/fluid-speech-pro-gguf" => filename
+                .strip_prefix("fluid-speech-pro-")
+                .filter(|rest| *rest == "Q8_0.gguf"),
             _ => None,
         })
         .and_then(|suffix| suffix.strip_suffix(".gguf"))
@@ -147,11 +152,16 @@ mod tests {
                 assert!(is_reviewed_flow_model(&id), "rejected {id}");
             }
         }
+        assert!(is_reviewed_flow_model(
+            "Straylight-dev/fluid-speech-pro-gguf/fluid-speech-pro-Q8_0.gguf"
+        ));
         for id in [
             "handy-computer/parakeet-tdt-0.6b-v1-gguf/parakeet-tdt-0.6b-v1-Q8_0.gguf",
             "local/parakeet-tdt-0.6b-v3-Q8_0.gguf",
             "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.bin",
             "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q2_K.gguf",
+            "Straylight-dev/fluid-speech-pro-gguf/fluid-speech-pro-Q4_K_M.gguf",
+            "FluidVoice-Labs/fluid-speech-pro-gguf/fluid-speech-pro-q8_0.gguf",
         ] {
             assert!(!is_reviewed_flow_model(id), "accepted {id}");
         }

@@ -334,6 +334,7 @@ pub static CATALOG: Lazy<Vec<ModelDescriptor>> = Lazy::new(|| {
     transcription_models()
         .filter(|m| m.is_offered())
         .map(ModelDescriptor::from)
+        .chain(crate::grain_models::descriptors()) // [GRAIN] Grain's extra models
         .collect()
 });
 
@@ -362,7 +363,7 @@ pub fn mirror_fallbacks(model_id: &str) -> Vec<MirrorFile> {
                 .map(|f| (m, f))
         })
     else {
-        return Vec::new();
+        return crate::grain_models::mirror_fallbacks(model_id); // [GRAIN] Grain's extra models
     };
     MIRRORS
         .iter()

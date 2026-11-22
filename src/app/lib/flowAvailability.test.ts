@@ -24,6 +24,18 @@ describe("Flow availability", () => {
     expect(isReviewedFlowModelId(v3.replace(".gguf", ".bin"))).toBe(false);
   });
 
+  it("accepts only the audited Fluid Speech Pro artifact", () => {
+    const pro =
+      "Straylight-dev/fluid-speech-pro-gguf/fluid-speech-pro-Q8_0.gguf";
+    expect(isReviewedFlowModelId(pro)).toBe(true);
+    expect(isReviewedFlowModelId(pro.replace("Q8_0", "Q4_K_M"))).toBe(false);
+    expect(
+      isReviewedFlowModelId(
+        "FluidVoice-Labs/fluid-speech-pro-gguf/fluid-speech-pro-q8_0.gguf",
+      ),
+    ).toBe(false);
+  });
+
   it("requires the selected artifact to be installed", () => {
     expect(getFlowAvailability([model(v2)], v2, false)).toEqual({
       available: true,

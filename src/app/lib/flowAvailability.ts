@@ -19,6 +19,10 @@ export function isReviewedFlowModelId(modelId: string): boolean {
   if (slash < 0) return false;
   const repository = modelId.slice(0, slash);
   const filename = modelId.slice(slash + 1);
+  // Fluid Speech Pro (v3 runtime layout): only the Flow-audited Q8_0 file.
+  if (repository === "Straylight-dev/fluid-speech-pro-gguf") {
+    return filename === "fluid-speech-pro-Q8_0.gguf";
+  }
   const version =
     repository === "handy-computer/parakeet-tdt-0.6b-v2-gguf"
       ? "v2"

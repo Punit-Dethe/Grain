@@ -1,5 +1,30 @@
 # Divergence Map (Grain vs Handy)
 
+## Fluid Speech Pro model (2026-11-23)
+
+Grain offers FluidVoice's Fluid Speech Pro (CC BY 4.0, a Parakeet TDT 0.6B v3
+fine-tune). FluidVoice's own GGUF targets parakeet.cpp and does not load in
+transcribe.cpp, so `scripts/models/convert_fluid_speech_pro.py` converts the
+original `.nemo` with the fork's unchanged `convert-parakeet.py` (v3 layout;
+the `encoder.fv_insert` block and clean-mode adapters have no slot and are
+dropped, as in FluidVoice's GGUF). The Q8_0 file is hosted at
+`Straylight-dev/fluid-speech-pro-gguf`, pinned to commit `fe8969ed`.
+
+- `catalog.json` is untouched. The descriptor lives in owned
+  `grain_models.rs`; `catalog/mod.rs` gains two marked hook lines: `CATALOG`
+  chains `grain_models::descriptors()`, and `mirror_fallbacks` returns the
+  Grain model's hash-verified pinned URL instead of an empty list (keeping
+  upstream's every-offered-model-has-a-fallback test valid unmodified).
+- Flow: `grain-core/capture.rs` and its frontend mirror admit only the audited
+  `fluid-speech-pro-Q8_0.gguf`. The native fork's buffered-TDT gate accepts it
+  because `stt.variant = tdt-0.6b-v3`; no fork change. Batch works as any
+  offline Parakeet; it has no native live streaming.
+- `lib.rs` gains one `mod grain_models;` registration line.
+
+At sync: preserve both `catalog/mod.rs` hook lines if upstream reshapes
+`CATALOG` or `mirror_fallbacks`. If a future Handy catalog publishes this model
+itself, delete the Grain descriptor rather than listing it twice.
+
 ## Single-model dictation convergence (2026-11-06)
 
 The user explicitly replaces Grain's dual model/shortcut architecture. One
@@ -236,6 +261,7 @@ Native version upgrades require the fork's semantic/backend/package gates.
 | tray / Secure Input                                    | Preserve Grain's branded single-icon/menu model; take upstream state-transition, platform, and race fixes.                                                                                                                                                                                                                                |
 | `Cargo.toml`, `build.rs`                               | Keep Grain dependencies, reviewed transcribe-cpp/TDT baseline, and Grain packaging paths; take upstream fixes after lockfile/ABI checks.                                                                                                                                                                                                  |
 | `lib.rs`                                               | Keep the marked Grain composition/registration block; merge upstream initialization and compatibility fixes around it.                                                                                                                                                                                                                    |
+| `catalog/mod.rs`                                       | Merge upstream catalogue changes; keep `catalog.json` verbatim. Preserve the two marked `grain_models` hooks (`CATALOG` chain, `mirror_fallbacks` fallthrough). Grain-only models stay in `grain_models.rs`. |
 | `.gitignore`                                           | Merge normally; inspect final rule order and both forks' `!path` negations. `merge=union` is disabled because it can preserve contradictory intent.                                                                                                                                                                                       |
 | `overlay.rs`                                           | Active shared WebView lifecycle: merge Handy platform/window fixes, preserve marked integration hooks, and review owned presentation/readiness via [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md).                                                                                                                                      |
 | `src/**`                                               | Grain-owned; discard upstream UI code, but complete the frontend-knowledge review and port host facts into Rust.                                                                                                                                                                                                                          |
@@ -311,7 +337,7 @@ conflict rules.
 | `commands/models.rs`, `managers/history.rs`, `clipboard.rs`, `cli.rs`, `utils.rs` | Light. `clipboard.rs` also has Grain's Agent/Paste Catch hooks; **2026-08-22:** #1817/#1892's post-xdotool keyup cleanup is ported in addition to `--clearmodifiers`, because the latter can re-latch a modifier released during synthetic typing | Merge normally; keep Grain paste interceptors and upstream's explicit modifier cleanup |
 | `catalog/catalog.json` | Matches the last integrated upstream blob after removing accidental formatting-only drift on 2026-08-21. It is **generated upstream** by `scripts/gen_catalog.py`, which Grain deliberately does not vendor. Current `upstream/main` has pending generated model additions, so blob audits will report ancestry/content drift until the final sync takes that file. | **Take current upstream's version verbatim at sync.** Never hand-edit or reformat this file, and do not add a divergence budget for it. |
 | `managers/gguf_meta.rs`, `managers/model_capabilities.rs` | Converged (byte-identical to the assessed upstream baseline). | Merge freely. |
-| `catalog/mod.rs` | Shared catalogue reader; two test-only adaptations resolve Grain's relocated manifest and exact engine-version pin. | Merge freely and preserve those narrow test adaptations. |
+| `catalog/mod.rs` | Shared catalogue reader; two test-only adaptations resolve Grain's relocated manifest and exact engine-version pin. **2026-11-23:** two marked hooks append `grain_models` descriptors to `CATALOG` and route their `mirror_fallbacks` (Fluid Speech Pro; see the dated section). | Merge freely; preserve the test adaptations and both `[GRAIN]` hook lines. |
 | `audio_toolkit/audio/resampler.rs` | **Not converged (+166/−13)** — the row above used to claim it was, for ~2 weeks. It carries the resampler tail-drop drain (`output_delay`), a real fix logged as [UPSTREAMABLE.md](UPSTREAMABLE.md) #1: `FftFixedIn` holds `output_delay()` frames in its FFT delay line, so end-of-stream dropped the last ~30–60 ms — inaudible to local ASR, a clipped final word for cloud STT | Merge upstream freely; **keep the drain**. Do not restore upstream's `finish()` |
 | `audio_toolkit/mod.rs` | Grain-only `snippets`/`grain_text` module exports. | Merge upstream freely; keep the marked module exports. |
 | `audio_toolkit/audio/mod.rs` | Converged after conditioning removal on 2026-09-26. | Take upstream verbatim. |
