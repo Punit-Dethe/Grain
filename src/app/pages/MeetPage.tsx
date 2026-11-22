@@ -35,6 +35,10 @@ import type {
   TranscriptRevision,
 } from "@/bindings";
 import { Dropdown } from "../components/ui/Dropdown";
+import {
+  GrainModelProgressBar,
+  useGrainModel,
+} from "../components/settings/GrainModelRow";
 import { SummaryTab } from "../meet/SummaryTab";
 import { MeetSettingsPage } from "./MeetSettingsPage";
 import { hashForRoute } from "../navigation";
@@ -517,33 +521,28 @@ function HeaderSearch({
   );
 }
 
-function SpeakerModelNotice({ meet }: { meet: MeetController }) {
+/** Asks for the speaker model while it is missing. Downloading, cancelling
+ * and deleting it also live in Recall's settings. */
+function SpeakerModelNotice() {
   const { t } = useTranslation();
-  if (meet.diarizerInstalled !== false) return null;
-  const downloading = meet.diarizerProgress !== null;
-  const percent = Math.round((meet.diarizerProgress ?? 0) * 100);
+  const model = useGrainModel("SpeakerDetection");
+  const status = model.status;
+  if (!status || (status.installed && !status.downloading)) return null;
   const download = async () => {
-    try {
-      await meet.downloadDiarizer();
+    if ((await model.download())?.installed) {
       toast.success(t("ui2.meet.speakerModel.ready"));
-    } catch (error) {
-      toast.error(errorText(error));
     }
   };
   return (
     <div className="meet-callout">
-      <p>{t("ui2.meet.speakerModel.body")}</p>
-      {downloading ? (
-        <div
-          className="meet-progress"
-          role="progressbar"
-          aria-label={t("ui2.meet.speakerModel.downloading", { percent })}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-        >
-          <i style={{ transform: `scaleX(${percent / 100})` }} />
-        </div>
+      <p>{model.error ?? t("ui2.meet.speakerModel.body")}</p>
+      {status.downloading ? (
+        <GrainModelProgressBar
+          percent={model.percent}
+          label={t("ui2.meet.speakerModel.downloading", {
+            percent: model.percent,
+          })}
+        />
       ) : (
         <button className="text-button meet-callout-action" onClick={download}>
           {t("ui2.meet.speakerModel.download")}
@@ -754,7 +753,7 @@ function Recordings({
       className="meet-recordings"
       aria-label={t("ui2.meet.list.heading")}
     >
-      <SpeakerModelNotice meet={meet} />
+      <SpeakerModelNotice />
       {meet.status.last_error && (
         <div className="meet-callout is-error" role="alert">
           <p>

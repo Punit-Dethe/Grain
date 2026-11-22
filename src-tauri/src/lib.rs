@@ -1572,8 +1572,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::commands::meet_rename,
             grain_meet::commands::meet_delete,
             grain_meet::commands::meet_playback_audio,
-            grain_meet::commands::meet_diarizer_installed,
-            grain_meet::commands::meet_download_diarizer,
+            grain_model_files::grain_model_status,   // [GRAIN] Grain's own models
+            grain_model_files::grain_model_download, // [GRAIN]
+            grain_model_files::grain_model_cancel,   // [GRAIN]
+            grain_model_files::grain_model_delete,   // [GRAIN]
             grain_meet::ai::meet_ai_available,    // [GRAIN]
             grain_meet::ai::meet_summary,         // [GRAIN]
             grain_meet::ai::meet_generate_summary, // [GRAIN]
@@ -1616,7 +1618,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::PasteError,
             grain_theme::ThemeChanged,
             grain_meet::commands::MeetStatusChanged, // [GRAIN]
-            grain_meet::commands::MeetDiarizerProgress, // [GRAIN]
+            grain_model_files::GrainModelProgress, // [GRAIN]
         ])
 }
 

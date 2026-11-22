@@ -20,7 +20,7 @@ use super::recorder::{DeviceOpener, Recording, SourceKind};
 use super::sources::{self, SourceDevice, SourceSettings};
 use super::storage::{self, SessionState};
 use super::transcript::{self, TranscriptRevision};
-use crate::grain_model_files::{self, PinnedFile};
+use crate::grain_model_files::{ModelFiles, PinnedFile};
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 
@@ -33,6 +33,19 @@ const DIARIZER: PinnedFile = PinnedFile {
     bytes: 105_936_416,
     sha256: "877ff9e77e829e30158528cfaabf56188fca11d05349e09821b3033a97d31688",
 };
+
+/// Speaker detection as one of Grain's own models (Settings shows, downloads
+/// and deletes it through `grain_model_files`). In use while a meeting
+/// processes.
+pub(crate) const SPEAKER_MODEL: ModelFiles = ModelFiles {
+    folder: &["grain-meet"],
+    files: &[DIARIZER],
+    in_use: processing_running,
+};
+
+fn processing_running() -> bool {
+    state().processing.is_some()
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct SourceStatus {
@@ -76,13 +89,6 @@ pub struct MeetStatus {
 /// Grain Meet state changed; the payload is the full current status.
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct MeetStatusChanged(pub MeetStatus);
-
-/// Diarizer download progress in bytes.
-#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
-pub struct MeetDiarizerProgress {
-    pub downloaded: u64,
-    pub total: u64,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct MeetingSummary {
@@ -135,7 +141,6 @@ static STATE: Mutex<State> = Mutex::new(State {
     summarizing: None,
 });
 static NEXT_ATTEMPT: AtomicU64 = AtomicU64::new(1);
-static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
@@ -148,10 +153,7 @@ pub(super) fn meetings_root(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn diarizer_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(crate::portable::app_data_dir(app)
-        .map_err(|e| e.to_string())?
-        .join("models")
-        .join("grain-meet"))
+    SPEAKER_MODEL.dir(app)
 }
 
 fn snapshot(state: &State) -> MeetStatus {
@@ -625,44 +627,6 @@ pub async fn meet_playback_audio(app: AppHandle, session_id: String) -> Result<S
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Whether the pinned speaker model is installed.
-#[tauri::command]
-#[specta::specta]
-pub fn meet_diarizer_installed(app: AppHandle) -> Result<bool, String> {
-    Ok(DIARIZER.present_in(&diarizer_dir(&app)?))
-}
-
-/// Download the pinned speaker model, verifying its size and SHA-256 before
-/// it is installed.
-#[tauri::command]
-#[specta::specta]
-pub async fn meet_download_diarizer(app: AppHandle) -> Result<(), String> {
-    let dir = diarizer_dir(&app)?;
-    if DIARIZER.present_in(&dir) {
-        return Ok(());
-    }
-    if DOWNLOADING.swap(true, Ordering::AcqRel) {
-        return Err("The speaker model is already downloading".into());
-    }
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            DOWNLOADING.store(false, Ordering::Release);
-        }
-    }
-    let _reset = Reset;
-    let client = app.state::<reqwest::Client>().inner().clone();
-    grain_model_files::download(&client, &DIARIZER, &dir, |downloaded| {
-        let _ = MeetDiarizerProgress {
-            downloaded,
-            total: DIARIZER.bytes,
-        }
-        .emit(&app);
-    })
-    .await
-    .map_err(|e| format!("Could not download the speaker model: {e}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,7 +639,6 @@ mod tests {
     #[test]
     fn event_names_are_stable() {
         assert_eq!(MeetStatusChanged::NAME, "meet-status-changed");
-        assert_eq!(MeetDiarizerProgress::NAME, "meet-diarizer-progress");
     }
 
     #[test]

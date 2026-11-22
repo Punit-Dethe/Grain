@@ -7,6 +7,28 @@ import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ShortcutInput } from "../ShortcutInput";
+import { GrainModelRow, useGrainModel } from "../GrainModelRow";
+
+/** The talk-back voice model: shown while talk-back is on, and whenever it is
+ * downloaded or downloading (so it can be deleted with talk-back off).
+ * Deleting it turns talk-back off. */
+function VoiceModelRow({ talkBack }: { talkBack: boolean }) {
+  const { t } = useTranslation();
+  const { updateSetting } = useSettings();
+  const state = useGrainModel("TalkBackVoice");
+  const status = state.status;
+  if (!status) return null;
+  if (!talkBack && !status.installed && !status.downloading) return null;
+  return (
+    <GrainModelRow
+      title={t("ui2.settings.agent.voiceModel")}
+      state={state}
+      onDeleted={() => {
+        if (talkBack) void updateSetting("agent_talk_back", false);
+      }}
+    />
+  );
+}
 
 /** The talk-back voice: presets come from the backend (`grain_tts::VOICES`). */
 function VoicePicker() {
@@ -93,6 +115,8 @@ export function AgentSection() {
             isUpdating={isUpdating("agent_talk_back")}
             onChange={(v) => updateSetting("agent_talk_back", v)}
           />
+
+          <VoiceModelRow talkBack={talkBack} />
 
           {talkBack && <VoicePicker />}
 

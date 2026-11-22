@@ -5643,7 +5643,7 @@ html[data-theme="light"] .dropdown-compact-menu {
   font-weight: 600;
 }
 
-.meet-progress {
+.grain-model-progress {
   width: 160px;
   height: 3px;
   flex: 0 0 auto;
@@ -5652,7 +5652,7 @@ html[data-theme="light"] .dropdown-compact-menu {
   background: var(--accent-soft-hover);
 }
 
-.meet-progress i {
+.grain-model-progress i {
   width: 100%;
   height: 100%;
   display: block;
@@ -7013,7 +7013,7 @@ html[data-theme="light"] .meet-dock-inner {
     animation: none;
   }
 
-  .meet-progress i,
+  .grain-model-progress i,
   .meet-row-go,
   .meet-underline,
   .meet-source-control button,

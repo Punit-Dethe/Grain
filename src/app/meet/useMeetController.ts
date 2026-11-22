@@ -39,8 +39,6 @@ export interface MeetController {
   loadError: string | null;
   /** Recall's own audio sources; null until loaded. */
   sources: MeetSources | null;
-  diarizerInstalled: boolean | null;
-  diarizerProgress: number | null;
   reload: () => Promise<void>;
   refreshSources: () => Promise<void>;
   setSources: (settings: SourceSettings) => Promise<void>;
@@ -52,7 +50,6 @@ export interface MeetController {
   cancelProcessing: () => Promise<void>;
   renameMeeting: (sessionId: string, title: string) => Promise<void>;
   deleteMeeting: (sessionId: string) => Promise<void>;
-  downloadDiarizer: () => Promise<void>;
   loadTranscript: (sessionId: string) => Promise<TranscriptRevision | null>;
   loadPlayback: (sessionId: string) => Promise<string>;
   /** Mix a finished meeting's playback audio ahead of the first play. */
@@ -89,10 +86,6 @@ export function useMeetController(): MeetController {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sources, setSourcesState] = useState<MeetSources | null>(null);
-  const [diarizerInstalled, setDiarizerInstalled] = useState<boolean | null>(
-    null,
-  );
-  const [diarizerProgress, setDiarizerProgress] = useState<number | null>(null);
   const mountedRef = useRef(false);
   const reloadId = useRef(0);
   const sourcesRef = useRef<MeetSources | null>(null);
@@ -105,14 +98,12 @@ export function useMeetController(): MeetController {
   const reload = useCallback(async () => {
     const requestId = ++reloadId.current;
     try {
-      const [list, installed, current] = await Promise.all([
+      const [list, current] = await Promise.all([
         commands.meetList().then(unwrap),
-        commands.meetDiarizerInstalled().then(unwrap),
         commands.meetStatus(),
       ]);
       if (!mountedRef.current || requestId !== reloadId.current) return;
       setMeetings(list);
-      setDiarizerInstalled(installed);
       setStatus(current);
       setLoadError(null);
     } catch (error) {
@@ -155,10 +146,6 @@ export function useMeetController(): MeetController {
       previous = next;
       if (ended) void reload();
     });
-    const progressListener = events.meetDiarizerProgress.listen((event) => {
-      const { downloaded, total } = event.payload;
-      setDiarizerProgress(total > 0 ? downloaded / total : null);
-    });
     // Devices come and go while the app is in the background.
     const onFocus = () => void refreshSources();
     window.addEventListener("focus", onFocus);
@@ -168,7 +155,6 @@ export function useMeetController(): MeetController {
       mountedRef.current = false;
       window.removeEventListener("focus", onFocus);
       void statusListener.then((cleanup) => cleanup());
-      void progressListener.then((cleanup) => cleanup());
     };
   }, [reload, refreshSources]);
 
@@ -234,16 +220,6 @@ export function useMeetController(): MeetController {
     }
   }, []);
 
-  const downloadDiarizer = useCallback(async () => {
-    setDiarizerProgress(0);
-    try {
-      unwrap(await commands.meetDownloadDiarizer());
-      if (mountedRef.current) setDiarizerInstalled(true);
-    } finally {
-      if (mountedRef.current) setDiarizerProgress(null);
-    }
-  }, []);
-
   const loadTranscript = useCallback(
     async (sessionId: string) =>
       unwrap(await commands.meetTranscript(sessionId)),
@@ -290,8 +266,6 @@ export function useMeetController(): MeetController {
     loading,
     loadError,
     sources,
-    diarizerInstalled,
-    diarizerProgress,
     reload,
     refreshSources,
     setSources,
@@ -301,7 +275,6 @@ export function useMeetController(): MeetController {
     cancelProcessing,
     renameMeeting,
     deleteMeeting,
-    downloadDiarizer,
     loadTranscript,
     loadPlayback,
     warmPlayback,

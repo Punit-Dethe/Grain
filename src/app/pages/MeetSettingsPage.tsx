@@ -1,4 +1,8 @@
 import { useTranslation } from "react-i18next";
+import {
+  GrainModelRow,
+  useGrainModel,
+} from "../components/settings/GrainModelRow";
 import { SettingsGroup } from "../components/ui/SettingsGroup";
 import { ToggleSwitch } from "../components/ui/ToggleSwitch";
 import { useSettings } from "../hooks/useSettings";
@@ -24,6 +28,7 @@ export function MeetSettingsPage() {
   const autoSummary = getSetting("meet_auto_summary") ?? false;
   const autoTitle = getSetting("meet_auto_title") ?? false;
   const autoTranscribe = getSetting("meet_auto_transcribe") ?? false;
+  const speakerModel = useGrainModel("SpeakerDetection");
 
   return (
     <section className="page active" data-page-panel="meet">
@@ -76,6 +81,10 @@ export function MeetSettingsPage() {
               checked={autoTitle}
               isUpdating={isUpdating("meet_auto_title")}
               onChange={(value) => updateSetting("meet_auto_title", value)}
+            />
+            <GrainModelRow
+              title={t("ui2.meet.settings.speakerModel")}
+              state={speakerModel}
             />
           </SettingsGroup>
           <RecallMcpSettings />

@@ -2083,23 +2083,40 @@ async meetPlaybackAudio(sessionId: string) : Promise<Result<string, string>> {
 }
 },
 /**
- * Whether the pinned speaker model is installed.
+ * Status of one of Grain's own models.
  */
-async meetDiarizerInstalled() : Promise<Result<boolean, string>> {
+async grainModelStatus(model: GrainModel) : Promise<Result<GrainModelStatus, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_diarizer_installed") };
+    return { status: "ok", data: await TAURI_INVOKE("grain_model_status", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Download the pinned speaker model, verifying its size and SHA-256 before
- * it is installed.
+ * Download a model (verified by size and SHA-256). Resolves when the
+ * download ends; progress arrives as [`GrainModelProgress`] events.
  */
-async meetDownloadDiarizer() : Promise<Result<null, string>> {
+async grainModelDownload(model: GrainModel) : Promise<Result<GrainModelStatus, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("meet_download_diarizer") };
+    return { status: "ok", data: await TAURI_INVOKE("grain_model_download", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop a model's download. Nothing of it is kept.
+ */
+async grainModelCancel(model: GrainModel) : Promise<void> {
+    await TAURI_INVOKE("grain_model_cancel", { model });
+},
+/**
+ * Delete a model's folder. Refused while it downloads or is in use.
+ */
+async grainModelDelete(model: GrainModel) : Promise<Result<GrainModelStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_model_delete", { model }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2193,13 +2210,13 @@ async takeMainWindowRoute() : Promise<string | null> {
 
 
 export const events = __makeEvents__<{
+grainModelProgress: GrainModelProgress,
 grainOverlayCompactCloseHidden: GrainOverlayCompactCloseHidden,
 grainOverlayContext: GrainOverlayContext,
 grainOverlayPosition: GrainOverlayPosition,
 hideOverlay: HideOverlay,
 historyUpdatePayload: HistoryUpdatePayload,
 mainWindowRoute: MainWindowRoute,
-meetDiarizerProgress: MeetDiarizerProgress,
 meetStatusChanged: MeetStatusChanged,
 micLevel: MicLevel,
 modelDeleted: ModelDeleted,
@@ -2222,13 +2239,13 @@ transcriptionJob: TranscriptionJob,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
+grainModelProgress: "grain-model-progress",
 grainOverlayCompactCloseHidden: "grain-overlay-compact-close-hidden",
 grainOverlayContext: "grain-overlay-context",
 grainOverlayPosition: "grain-overlay-position",
 hideOverlay: "hide-overlay",
 historyUpdatePayload: "history-update-payload",
 mainWindowRoute: "main-window-route",
-meetDiarizerProgress: "meet-diarizer-progress",
 meetStatusChanged: "meet-status-changed",
 micLevel: "mic-level",
 modelDeleted: "model-deleted",
@@ -2763,6 +2780,36 @@ export type DictionarySuggestion = { id: number; original: string; corrected: st
  */
 expires_at_ms: number | null }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
+/**
+ * One of Grain's own models (outside Handy's speech-to-text catalog).
+ */
+export type GrainModel = 
+/**
+ * Meet's speaker detection (the diarizer).
+ */
+"SpeakerDetection" | 
+/**
+ * The Agent's talk-back voice.
+ */
+"TalkBackVoice"
+/**
+ * A model's download moved on, or ended (`done`: finished, failed or
+ * cancelled; read its status again).
+ */
+export type GrainModelProgress = { model: GrainModel; downloaded: number; total: number; done: boolean }
+export type GrainModelStatus = { installed: boolean; 
+/**
+ * A download is running; `downloaded` of `total` bytes are in.
+ */
+downloading: boolean; downloaded: number; 
+/**
+ * What a full download fetches.
+ */
+total: number; 
+/**
+ * Space the model's folder takes now (extra voices included).
+ */
+disk_bytes: number }
 export type GrainOverlayCompactCloseHidden = boolean
 export type GrainOverlayContext = OverlayPresentation
 export type GrainOverlayPosition = OverlayPosition
@@ -2843,10 +2890,6 @@ state: string }
  * account tokens; this never supplies a client secret or callback override.
  */
 export type McpPublicOAuthClient = { clientId: string; issuer: string }
-/**
- * Diarizer download progress in bytes.
- */
-export type MeetDiarizerProgress = { downloaded: number; total: number }
 /**
  * Recall's audio sources and what this device can offer.
  */

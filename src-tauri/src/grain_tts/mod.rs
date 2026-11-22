@@ -19,9 +19,9 @@ mod text;
 pub(crate) use model::{init_threads, VoicePreset, VOICES};
 pub(crate) use text::step_line;
 
-use crate::grain_model_files;
+use crate::grain_model_files::{self, GrainModel, ModelFiles};
 use log::{info, warn};
-use model::{Voice, FILES, VOICE};
+use model::{Voice, FILES, FOLDER, VOICE};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -72,7 +72,9 @@ pub(crate) fn fetch_voice(app: &AppHandle, voice: &'static VoicePreset, preview:
                 return;
             }
             let client = app.state::<reqwest::Client>().inner().clone();
-            let result = grain_model_files::download(&client, &voice.file, &dir, |_| {}).await;
+            let never = AtomicBool::new(false);
+            let result =
+                grain_model_files::download(&client, &voice.file, &dir, |_| {}, &never).await;
             FETCHING_VOICE.store(false, Ordering::Release);
             if let Err(e) = result {
                 warn!(
@@ -112,7 +114,6 @@ static LIVE: AtomicU64 = AtomicU64::new(0);
 static SPEAKING: Mutex<Option<Voice>> = Mutex::new(None);
 /// Jobs spawned but not yet holding [`SPEAKING`].
 static WAITING: AtomicUsize = AtomicUsize::new(0);
-static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
 /// What a job reads.
 enum Source {
@@ -142,16 +143,25 @@ impl Policy {
     }
 }
 
+/// The talk-back voice as one of Grain's own models (Settings shows, downloads
+/// and deletes it through [`grain_model_files`]).
+pub(crate) const MODEL: ModelFiles = ModelFiles {
+    folder: &FOLDER,
+    files: &FILES,
+    in_use: busy,
+};
+
+/// A speech job is alive or waiting, so the model files may be open.
+fn busy() -> bool {
+    WAITING.load(Ordering::SeqCst) > 0 || SPEAKING.try_lock().is_err()
+}
+
 fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let mut dir = crate::portable::app_data_dir(app)
-        .map_err(|e| e.to_string())?
-        .join("models");
-    dir.extend(model::FOLDER);
-    Ok(dir)
+    MODEL.dir(app)
 }
 
 fn installed(dir: &Path) -> bool {
-    FILES.iter().all(|file| file.present_in(dir))
+    MODEL.installed_in(dir)
 }
 
 /// Stop any speech now (a first-step line too). Cheap and safe to call from
@@ -513,7 +523,8 @@ impl SpeechFeed {
     }
 }
 
-/// Download the pinned voice files in the background when they are missing.
+/// Download the pinned voice files in the background when they are missing
+/// (progress shows in Settings).
 pub(crate) fn ensure_installed(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -524,22 +535,8 @@ pub(crate) fn ensure_installed(app: &AppHandle) {
 }
 
 async fn install(app: &AppHandle) -> Result<(), String> {
-    let dir = model_dir(app)?;
-    if installed(&dir) || DOWNLOADING.swap(true, Ordering::AcqRel) {
-        return Ok(());
-    }
-    struct Reset;
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            DOWNLOADING.store(false, Ordering::Release);
-        }
-    }
-    let _reset = Reset;
-    let client = app.state::<reqwest::Client>().inner().clone();
-    for file in FILES.iter().filter(|file| !file.present_in(&dir)) {
-        grain_model_files::download(&client, file, &dir, |_| {}).await?;
-    }
-    info!("[GRAIN] talk-back: voice installed at {}", dir.display());
+    grain_model_files::install(app, GrainModel::TalkBackVoice).await?;
+    info!("[GRAIN] talk-back: voice ready");
     Ok(())
 }
 
