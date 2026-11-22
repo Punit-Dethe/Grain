@@ -975,8 +975,9 @@ async composioRemoveApiKey() : Promise<Result<ComposioStatus, string>> {
 }
 },
 /**
- * Apps the user can connect, most used first. Fetched when the page asks
- * and not kept afterwards.
+ * Apps the user can connect, most used first. Served from the on-disk copy when there is one, so the page opens at once;
+ * a copy older than [`CATALOG_MAX_AGE`] is refreshed in the background for
+ * the next visit. Nothing is held in memory between calls.
  */
 async composioCatalog() : Promise<Result<ComposioCatalogEntry[], string>> {
     try {

@@ -242,10 +242,22 @@ export function useComposio() {
     mounted.current = true;
     void (async () => {
       try {
-        const next = unwrapResult(await commands.composioStatus(true));
+        // Saved state first so the page paints at once; the catalog comes
+        // from its on-disk copy.
+        const saved = unwrapResult(await commands.composioStatus(false));
         if (!mounted.current) return;
-        setStatus(next);
-        if (next.configured) await loadCatalog();
+        setStatus(saved);
+        if (!saved.configured) return;
+        // Checking for accounts removed elsewhere needs the network, so it
+        // runs alongside and only replaces the list if nothing changed it since.
+        void commands
+          .composioStatus(true)
+          .then((result) => {
+            if (mounted.current && !operation.current && result.status === "ok")
+              setStatus(result.data);
+          })
+          .catch(() => {});
+        await loadCatalog();
       } catch (reason) {
         if (mounted.current) setError(String(reason));
       }

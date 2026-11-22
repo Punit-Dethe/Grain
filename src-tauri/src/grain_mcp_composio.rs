@@ -10,11 +10,12 @@ use super::{tool_cache, validate_tool_name, McpCallOutput, McpToolSet, DEFINITIO
 use grain_core::execution::{DispatchPhase, ExecutionFailure, FailureClass};
 use grain_core::settings::ComposioToolkit;
 use rmcp::model::{Tool, ToolAnnotations};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use specta::Type;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, WebviewWindow};
@@ -37,6 +38,13 @@ const MAX_TOOLS: usize = 200;
 const MAX_TOOL_PAGES: usize = 4;
 /// Saved tool lists older than this are rediscovered, so new Composio tools appear.
 const TOOL_CACHE_MAX_AGE: Duration = Duration::from_secs(3 * 24 * 60 * 60);
+/// The saved app catalog is shown at once; older than this, it is refreshed
+/// in the background for the next visit.
+const CATALOG_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+const CATALOG_FILE: &str = "composio-catalog.json";
+const CATALOG_SCHEMA: u32 = 1;
+/// Larger saved catalogs are ignored and fetched again.
+const CATALOG_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const SIGN_IN_CANCELLED: &str = "Sign-in cancelled.";
 const NOT_SET_UP: &str = "Add your Composio API key on the Extensions page first.";
 
@@ -345,7 +353,7 @@ pub struct ComposioStatus {
     pub toolkits: Vec<ComposioToolkit>,
 }
 
-#[derive(Serialize, Type, Clone, Debug)]
+#[derive(Serialize, Deserialize, Type, Clone, Debug)]
 pub struct ComposioCatalogEntry {
     pub slug: String,
     pub name: String,
@@ -474,6 +482,9 @@ async fn forget_all(app: &AppHandle) -> Result<(), String> {
     for toolkit in &previous {
         tool_cache::clear(app, &cache_account(toolkit)).await;
     }
+    if let Some(path) = catalog_path(app) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
     Ok(())
 }
 
@@ -503,8 +514,9 @@ fn catalog_entry(item: &Value) -> Option<ComposioCatalogEntry> {
     })
 }
 
-/// Apps the user can connect, most used first. Fetched when the page asks
-/// and not kept afterwards.
+/// Apps the user can connect, most used first. Served from the on-disk copy when there is one, so the page opens at once;
+/// a copy older than [`CATALOG_MAX_AGE`] is refreshed in the background for
+/// the next visit. Nothing is held in memory between calls.
 #[tauri::command]
 #[specta::specta]
 pub async fn composio_catalog(
@@ -512,8 +524,81 @@ pub async fn composio_catalog(
     window: WebviewWindow,
 ) -> Result<Vec<ComposioCatalogEntry>, String> {
     crate::grain_commands::require_main_window(&window)?;
-    let _ = &app;
     let key = api_key().await?;
+    if let Some((entries, age)) = load_catalog(&app, &key).await {
+        if age > CATALOG_MAX_AGE && !CATALOG_REFRESHING.swap(true, Ordering::AcqRel) {
+            tauri::async_runtime::spawn(async move {
+                if let Ok(fresh) = fetch_catalog(&key).await {
+                    store_catalog(&app, &key, &fresh).await;
+                }
+                CATALOG_REFRESHING.store(false, Ordering::Release);
+            });
+        }
+        return Ok(entries);
+    }
+    let entries = fetch_catalog(&key).await?;
+    store_catalog(&app, &key, &entries).await;
+    Ok(entries)
+}
+
+/// One background catalog refresh at a time.
+static CATALOG_REFRESHING: AtomicBool = AtomicBool::new(false);
+
+#[derive(Serialize, Deserialize)]
+struct SavedCatalog {
+    schema: u32,
+    /// SHA-256 of the API key it was fetched with; another project's key
+    /// never sees this copy. The key itself is never written here.
+    key: String,
+    entries: Vec<ComposioCatalogEntry>,
+}
+
+fn catalog_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let context = app.try_state::<Arc<grain_core::AppContext>>()?;
+    Some(context.data_dir.join(CATALOG_FILE))
+}
+
+fn key_fingerprint(key: &str) -> String {
+    format!("{:x}", Sha256::digest(key.as_bytes()))
+}
+
+/// The saved catalog and its age, when it was fetched with `key`.
+async fn load_catalog(app: &AppHandle, key: &str) -> Option<(Vec<ComposioCatalogEntry>, Duration)> {
+    let path = catalog_path(app)?;
+    let metadata = tokio::fs::metadata(&path).await.ok()?;
+    if !metadata.is_file() || metadata.len() > CATALOG_MAX_BYTES {
+        return None;
+    }
+    let age = metadata.modified().ok()?.elapsed().unwrap_or_default();
+    let saved: SavedCatalog = serde_json::from_slice(&tokio::fs::read(&path).await.ok()?).ok()?;
+    (saved.schema == CATALOG_SCHEMA && saved.key == key_fingerprint(key))
+        .then_some((saved.entries, age))
+}
+
+/// Best effort: a failed write only costs a live fetch next time.
+async fn store_catalog(app: &AppHandle, key: &str, entries: &[ComposioCatalogEntry]) {
+    let Some(path) = catalog_path(app) else {
+        return;
+    };
+    let saved = SavedCatalog {
+        schema: CATALOG_SCHEMA,
+        key: key_fingerprint(key),
+        entries: entries.to_vec(),
+    };
+    let Ok(bytes) = serde_json::to_vec(&saved) else {
+        return;
+    };
+    if bytes.len() as u64 > CATALOG_MAX_BYTES {
+        return;
+    }
+    let tmp = path.with_extension("json.tmp");
+    if tokio::fs::write(&tmp, &bytes).await.is_ok() && tokio::fs::rename(&tmp, &path).await.is_err()
+    {
+        let _ = tokio::fs::remove_file(&tmp).await;
+    }
+}
+
+async fn fetch_catalog(key: &str) -> Result<Vec<ComposioCatalogEntry>, String> {
     let mut entries = Vec::new();
     let mut cursor = String::new();
     for _ in 0..4 {
@@ -521,7 +606,7 @@ pub async fn composio_catalog(
         if !cursor.is_empty() {
             query.push(("cursor", cursor.as_str()));
         }
-        let page = get(&key, "/toolkits", &query).await?;
+        let page = get(key, "/toolkits", &query).await?;
         entries.extend(
             page["items"]
                 .as_array()
