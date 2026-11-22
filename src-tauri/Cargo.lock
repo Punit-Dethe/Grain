@@ -10204,9 +10204,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 
 [[package]]
 name = "xn"
-version = "0.2.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "940d8e12d2ab81c93ca7a19d236329dcc4df0782fcaeb0891c188077e43f6e0f"
+version = "0.2.15"
 dependencies = [
  "byteorder",
  "half",

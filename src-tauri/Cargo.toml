@@ -148,7 +148,7 @@ sha2 = "0.10"
 # CPU: no ONNX Runtime, no ggml, no C/C++ build. `hf` = pure-Rust JSON tokenizer.
 ptts = { version = "=0.7.0", default-features = false, features = ["hf"] }
 # ptts's tensor runtime; direct only to size its thread pool (grain_tts::init_threads).
-xn = { version = "=0.2.14", default-features = false }
+xn = { version = "=0.2.15", default-features = false }
 # [GRAIN] transcribe-cpp â€” the ONLY inference engine (batch + streaming).
 # transcribe-rs (ONNX) was removed entirely: every legacy ONNX family ships as
 # GGUF in the bundled catalog, so keeping the ONNX runtime linked was dead
@@ -272,6 +272,10 @@ transcribe-cpp = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", re
 transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git", rev = "c8cf6b11dd5e67131b264025112293bda1bb8c86" }
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
+# [GRAIN] TESTING ONLY: local xn with run-time AVX2 kernel dispatch (../../xn, branch
+# cpu/runtime-avx2-dispatch). Replace with a pinned git rev before this leaves the
+# plan/inference-architecture branch; see docs/Inference Architecture/PLAN.md (T2).
+xn = { path = "../../xn/xn-core" }
 
 [dev-dependencies]
 grain-recall = { path = "../crates/grain-recall", features = ["specta", "fixtures"] }
