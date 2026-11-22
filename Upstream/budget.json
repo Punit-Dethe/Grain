@@ -11,7 +11,7 @@
   "src-tauri/src/handy/audio_toolkit/audio/sink/tests.rs": 16,
   "src-tauri/src/handy/audio_toolkit/mod.rs": 4,
   "src-tauri/src/handy/catalog/catalog.json": 2,
-  "src-tauri/src/handy/catalog/mod.rs": 4,
+  "src-tauri/src/handy/catalog/mod.rs": 7,
   "src-tauri/src/handy/clipboard.rs": 56,
   "src-tauri/src/handy/commands/history.rs": 6,
   "src-tauri/src/handy/commands/mod.rs": 20,
@@ -38,7 +38,7 @@
   "src-tauri/src/handy/transcription_coordinator.rs": 101,
   "src-tauri/src/handy/tray.rs": 653,
   "src-tauri/src/handy/utils.rs": 60,
-  "src-tauri/src/lib.rs": 1338,
+  "src-tauri/src/lib.rs": 1339,
   "src-tauri/src/main.rs": 4,
   "src-tauri/tauri.conf.json": 28
 }
