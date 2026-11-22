@@ -4,8 +4,9 @@
 //! No WebView: it is a layered Win32 popup painted from a few kilobytes of
 //! premultiplied pixels, created on the main thread so tao's message loop
 //! drives it. It costs nothing at idle (no timer, no hook, no polling). While
-//! the pointer rests on it a light bar fills left to right; when the bar is
-//! full (or on a click) the Agent notch opens from this same spot. The WebView
+//! the pointer rests on it a light line traces its outline from the bottom
+//! centre; when the two ends meet at the top (or on a click) the Agent notch
+//! opens from this same spot. The WebView
 //! is pre-created when the hover starts and destroyed again if it is abandoned.
 //!
 //! With `agent_notch_autohide` the sliver is drawn out of sight above the top
@@ -538,7 +539,7 @@ mod imp {
 
     /// Premultiplied BGRA pixels: the shape flush with the top edge, bottom
     /// corners rounded and anti-aliased, the working line (while a request
-    /// runs, `work` is its phase) and the hover fill bar. Everything else is
+    /// runs, `work` is its phase) and the hover trace. Everything else is
     /// alpha 1/255: invisible, but it still takes the hover. `shown` slides the
     /// whole shape up past the top edge (0 is out of sight).
     fn render(
@@ -559,6 +560,10 @@ mod imp {
         let pad = 9.0 * zoom;
         let (bar_top, bar_bottom) = (1.75 * zoom, 4.0 * zoom);
         let (bar_left, bar_right) = (cx - half + pad, cx + half - pad);
+        // The hover trace (`.agent-notch-trace` in agent.css).
+        let stroke = 1.5 * zoom;
+        let corner_end = (half - radius) + radius * std::f64::consts::FRAC_PI_2;
+        let trace_length = corner_end + half;
         let mut pixels = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
             // In shape space: the shape is drawn `lift` px higher.
@@ -594,21 +599,35 @@ mod imp {
                     }
                 }
                 if let Some(progress) = progress {
-                    let row = span(py, bar_top, bar_bottom);
-                    if row > 0.0 {
-                        let eased = 1.0 - (1.0 - progress).powi(2);
-                        // The fill grows from the centre out to both ends.
-                        let reach = (bar_right - bar_left) / 2.0 * eased;
-                        // Over the working line the hover fill alone shows.
-                        let track = if work.is_some() {
-                            0.0
+                    // The hover trace: a line runs from the bottom centre both
+                    // ways round the outline (bottom edge, corner arc, then the
+                    // top edge back in) until its ends meet at the top centre.
+                    // `along` is arc length from the bottom centre.
+                    let reach = (1.0 - (1.0 - progress).powi(2)) * trace_length;
+                    let inner = (0.5 - (distance + stroke)).clamp(0.0, 1.0);
+                    let ring = ((coverage - inner) / coverage).clamp(0.0, 1.0);
+                    let ring_along = if py <= sh - radius {
+                        corner_end
+                    } else {
+                        let qx = dx - (half - radius);
+                        if qx <= 0.0 {
+                            dx
                         } else {
-                            row * span(px, bar_left, bar_right)
-                        };
-                        let fill = row * span(px, cx - reach, cx + reach);
+                            let qy = py - (sh - radius);
+                            let angle = qx.atan2(qy).clamp(0.0, std::f64::consts::FRAC_PI_2);
+                            (half - radius) + radius * angle
+                        }
+                    };
+                    let top = span(py, 0.0, stroke);
+                    let top_along = corner_end + (half - dx);
+                    for (band, along) in [(ring, ring_along), (top, top_along)] {
+                        if band <= 0.0 {
+                            continue;
+                        }
+                        let lit = band * (reach - along + 0.5).clamp(0.0, 1.0);
                         for i in 0..3 {
-                            color[i] += (TRACK[i] - color[i]) * track;
-                            color[i] += (BAR[i] - color[i]) * fill;
+                            color[i] += (TRACK[i] - color[i]) * band;
+                            color[i] += (BAR[i] - color[i]) * lit;
                         }
                     }
                 }
