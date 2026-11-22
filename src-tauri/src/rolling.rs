@@ -340,7 +340,9 @@ fn run_session(
             }
             Ok(WorkerCommand::Finish) => {
                 let total = journal.frame_count();
-                if total < MIN_TRANSCRIBE_SAMPLES {
+                // Fluid-profile models pad sub-second audio to 1 s instead.
+                let fluid = crate::grain_models::uses_fluid_flow(&config.model_id);
+                if total == 0 || (!fluid && total < MIN_TRANSCRIBE_SAMPLES) {
                     return WorkerOutput::success(String::new());
                 }
                 let mut final_error = first_error.take();

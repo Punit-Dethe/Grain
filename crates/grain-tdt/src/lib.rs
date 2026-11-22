@@ -1,12 +1,20 @@
-//! Bounded, stateful Parakeet TDT v2/v3 planning for Grain Flow.
+//! Bounded Parakeet TDT v2/v3 planning for Grain Flow: the stateful buffered
+//! policy, and FluidVoice's independent-window policy with overlap merging.
 //! No audio, native model, threads or app lifecycle is owned here.
 
 mod buffered;
+mod fluid;
+mod merge;
 
 pub use buffered::{
     BufferedCursor, BUFFERED_LEFT_FRAMES, BUFFERED_MAX_SAMPLES, BUFFERED_OWNED_FRAMES,
     BUFFERED_RIGHT_FRAMES,
 };
+pub use fluid::{
+    FluidCursor, CONTENT_SAMPLES, LEAD_IN_SAMPLES, MAX_MODEL_SAMPLES, MIN_FINAL_SAMPLES,
+    OVERLAP_SAMPLES, STRIDE_SAMPLES,
+};
+pub use merge::merge_tokens;
 
 pub const SAMPLE_RATE: u64 = 16_000;
 pub const FRAME_SAMPLES: u64 = 1_280;

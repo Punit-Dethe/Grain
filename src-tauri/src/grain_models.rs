@@ -33,6 +33,17 @@ pub(crate) fn descriptors() -> impl Iterator<Item = ModelDescriptor> {
     std::iter::once(fluid_speech_pro())
 }
 
+/// Whether Flow decodes this model with FluidVoice's window profile (whole
+/// decode with lead-in up to 15 s; independent 14.88 s windows with 2 s merged
+/// overlaps beyond) instead of the stateful buffered policy. Fluid Speech Pro
+/// was tuned and shipped by FluidVoice with that profile.
+pub(crate) fn uses_fluid_flow(model_id: &str) -> bool {
+    model_id
+        .strip_prefix(FLUID_SPEECH_PRO_REPO)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .is_some_and(|file| file.starts_with("fluid-speech-pro-") && file.ends_with(".gguf"))
+}
+
 /// Hash-verified fallback for a Grain model whose hf-hub download failed: the
 /// same pinned file fetched as a plain URL and checked against its SHA-256.
 /// Empty for any other id.
@@ -96,6 +107,11 @@ mod tests {
         assert_eq!(FLUID_SPEECH_PRO_REVISION.len(), 40);
         assert!(desc.description.contains("Fluid Speech Pro by FluidVoice"));
         assert!(grain_core::capture::is_reviewed_flow_model(&desc.id));
+        assert!(uses_fluid_flow(&desc.id));
+        assert!(!uses_fluid_flow(
+            "handy-computer/parakeet-tdt-0.6b-v3-gguf/parakeet-tdt-0.6b-v3-Q8_0.gguf"
+        ));
+        assert!(!uses_fluid_flow("tdt-0.6b-v3"));
     }
 
     #[test]

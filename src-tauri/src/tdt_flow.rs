@@ -1,13 +1,20 @@
 //! [GRAIN] Bounded Parakeet TDT window adapter for Flow.
 //!
-//! Grain owns the journal and geometry. Both reviewed models carry native TDT
-//! decoder state across owned frame ranges and detokenize one token sequence.
+//! Grain owns the journal and geometry. Two planners share one journal, worker
+//! and detokenization path:
+//! - Buffered (Parakeet v2/v3): native TDT decoder state carries across owned
+//!   frame ranges; tokens append.
+//! - Fluid (models published with FluidVoice's profile, e.g. Fluid Speech Pro):
+//!   <=15 s decodes once with a 0.25 s lead-in; longer audio decodes independent
+//!   14.88 s windows (fresh decoder) and merges their 2 s overlaps.
 
 use grain_tdt::{
-    BufferedCursor, Token, Window, BUFFERED_MAX_SAMPLES, BUFFERED_OWNED_FRAMES, FRAME_SAMPLES,
-    SAMPLE_RATE,
+    merge_tokens, BufferedCursor, FluidCursor, Token, Window, BUFFERED_MAX_SAMPLES,
+    BUFFERED_OWNED_FRAMES, FRAME_SAMPLES, MAX_MODEL_SAMPLES, SAMPLE_RATE,
 };
-use transcribe_cpp::{ParakeetTdtBufferedOptions, RunExtension, RunOptions, TimestampKind};
+use transcribe_cpp::{
+    ParakeetTdtBufferedOptions, ParakeetTdtWindowOptions, RunExtension, RunOptions, TimestampKind,
+};
 
 use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
 
@@ -91,8 +98,36 @@ pub(crate) struct StructuredResult {
 
 /// One recording's bounded-audio token accumulator. Transcript tokens and, when
 /// explicitly requested, native evidence grow with output; audio stays on disk.
+enum Planner {
+    Buffered(BufferedCursor),
+    Fluid(FluidCursor),
+}
+
+impl Planner {
+    fn next_stable(&self, total_samples: u64) -> Option<Window> {
+        match self {
+            Self::Buffered(cursor) => cursor.next_stable(total_samples),
+            Self::Fluid(cursor) => cursor.next_stable(total_samples),
+        }
+    }
+
+    fn commit(&mut self, window: Window) -> bool {
+        match self {
+            Self::Buffered(cursor) => cursor.commit(window),
+            Self::Fluid(cursor) => cursor.commit(window),
+        }
+    }
+
+    fn tail(&self, total_samples: u64) -> Option<Window> {
+        match self {
+            Self::Buffered(cursor) => cursor.tail(total_samples),
+            Self::Fluid(cursor) => cursor.tail(total_samples),
+        }
+    }
+}
+
 pub(crate) struct TdtAccumulator {
-    cursor: BufferedCursor,
+    planner: Planner,
     stable_tokens: Vec<Token>,
     decoded_windows: usize,
     evidence: Option<Vec<WindowEvidence>>,
@@ -130,7 +165,11 @@ impl TdtAccumulator {
             ));
         }
         Ok(Self {
-            cursor: BufferedCursor::default(),
+            planner: if crate::grain_models::uses_fluid_flow(&config.model_id) {
+                Planner::Fluid(FluidCursor::default())
+            } else {
+                Planner::Buffered(BufferedCursor::default())
+            },
             stable_tokens: Vec::new(),
             decoded_windows: 0,
             evidence: retain_evidence.then(Vec::new),
@@ -143,7 +182,10 @@ impl TdtAccumulator {
     }
 
     pub(crate) fn max_input_samples(&self) -> usize {
-        BUFFERED_MAX_SAMPLES as usize
+        match self.planner {
+            Planner::Buffered(_) => BUFFERED_MAX_SAMPLES as usize,
+            Planner::Fluid(_) => MAX_MODEL_SAMPLES as usize,
+        }
     }
 
     /// Finalize every window that now has real lookahead. Successful accumulation
@@ -160,14 +202,13 @@ impl TdtAccumulator {
         if self.finished {
             return Err("Flow accumulator is finalized or failed; create a fresh replay".into());
         }
-        while let Some(window) = self.cursor.next_stable(total_samples) {
+        while let Some(window) = self.planner.next_stable(total_samples) {
             // Any failed call may have advanced the native decoder. Poison this
             // accumulator until the caller creates a fresh, reset replay.
             self.finished = true;
-            read_window(journal, reader, audio, window)?;
-            let transcript = decode_buffered_window(session, config, audio, window)?;
+            let transcript = self.decode(session, config, journal, reader, audio, window)?;
             self.append_window(window, transcript)?;
-            if !self.cursor.commit(window) {
+            if !self.planner.commit(window) {
                 return Err("Flow window cursor rejected its own stable window".into());
             }
             self.decoded_windows += 1;
@@ -216,7 +257,10 @@ impl TdtAccumulator {
             .iter()
             .map(convert_token)
             .collect::<Result<Vec<_>, _>>()?;
-        self.stable_tokens.extend(tokens);
+        match self.planner {
+            Planner::Buffered(_) => self.stable_tokens.extend(tokens),
+            Planner::Fluid(_) => merge_tokens(&mut self.stable_tokens, &tokens),
+        }
         if let Some(evidence) = &mut self.evidence {
             evidence.push(WindowEvidence { window, transcript });
         }
@@ -236,11 +280,14 @@ impl TdtAccumulator {
         // A tail advances native decoder state. Success or failure, finalization
         // is single-use; retry with a fresh accumulator and reset native state.
         self.finished = true;
-        if let Some(window) = self.cursor.tail(total_samples) {
-            read_window(journal, reader, audio, window)?;
-            let transcript = decode_buffered_window(session, config, audio, window)?;
+        if let Some(window) = self.planner.tail(total_samples) {
+            let transcript = self.decode(session, config, journal, reader, audio, window)?;
             self.append_window(window, transcript)?;
             self.decoded_windows += 1;
+        }
+        if matches!(self.planner, Planner::Fluid(_)) {
+            // FluidAudio folds windows in order, then stable-sorts the view.
+            self.stable_tokens.sort_by_key(|token| token.frame);
         }
         let ids: Vec<i32> = self.stable_tokens.iter().map(|token| token.id).collect();
         let text = session
@@ -253,6 +300,34 @@ impl TdtAccumulator {
             text,
             windows: self.evidence.take().unwrap_or_default(),
         })
+    }
+}
+
+impl TdtAccumulator {
+    fn decode(
+        &self,
+        session: &mut dyn Inference,
+        config: &TdtRunConfig,
+        journal: &PcmJournal,
+        reader: &mut PcmJournalReader,
+        audio: &mut Vec<f32>,
+        window: Window,
+    ) -> Result<transcribe_cpp::Transcript, String> {
+        read_window(journal, reader, audio, window)?;
+        match self.planner {
+            Planner::Buffered(_) => decode_buffered_window(session, config, audio, window),
+            Planner::Fluid(_) => {
+                // FluidVoice order: pad short audio to 1 s, prepend the 0.25 s
+                // lead-in, then frame-align. The journal keeps the real count.
+                audio.resize(window.padded_input_samples(), 0.0);
+                let lead_in = window.lead_in_samples();
+                if lead_in > 0 {
+                    audio.splice(0..0, std::iter::repeat_n(0.0, lead_in));
+                }
+                audio.resize(window.encoder_input_samples(), 0.0);
+                decode_fluid_window(session, config, audio, window)
+            }
+        }
     }
 }
 
@@ -310,6 +385,35 @@ fn decode_buffered_window(
     Ok(transcript)
 }
 
+fn decode_fluid_window(
+    session: &mut dyn Inference,
+    config: &TdtRunConfig,
+    audio: &[f32],
+    window: Window,
+) -> Result<transcribe_cpp::Transcript, String> {
+    let int = |value: u64, what: &str| {
+        i32::try_from(value).map_err(|_| format!("Flow {what} exceeds native range"))
+    };
+    let start = int(window.context_frames() as u64, "context")?;
+    let options = RunOptions {
+        timestamps: TimestampKind::Token,
+        language: config.language.clone(),
+        family: Some(RunExtension::ParakeetTdtWindow(ParakeetTdtWindowOptions {
+            decode_start_frame: start,
+            decode_end_frame: int(window.content_frames() as u64, "window")?.max(start + 1),
+            timestamp_offset_frames: int(window.global_frame_offset(), "offset")?,
+            finalize_tail: window.finalize_decoder(),
+        })),
+        ..Default::default()
+    };
+    session.run(audio, &options).map_err(|error| {
+        format!(
+            "Flow window decode failed for samples [{}..{}]: {error}",
+            window.read_start, window.read_end
+        )
+    })
+}
+
 #[cfg(test)]
 fn convert_tokens(tokens: Vec<transcribe_cpp::Token>) -> Result<Vec<Token>, String> {
     tokens.iter().map(convert_token).collect()
@@ -336,6 +440,76 @@ fn convert_token(token: &transcribe_cpp::Token) -> Result<Token, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fluid Speech Pro through the native stateless window decoder. Supply
+    /// GRAIN_FLUID_TEST_MODEL, GRAIN_FLOW_TEST_NATIVE_DIR and GRAIN_FLUID_TEST_WAVS
+    /// (`;`-separated mono 16 kHz PCM16 paths). Checks that every window is
+    /// accepted natively and incremental feeding equals one-shot rendering.
+    #[test]
+    #[ignore = "requires the local Fluid Speech Pro GGUF and WAV fixtures"]
+    fn real_fluid_profile_windows_decode_and_partition_invariant() {
+        use transcribe_cpp::{Model, ModelOptions, SessionOptions};
+        transcribe_cpp::disable_logging();
+        transcribe_cpp::init_backends(std::env::var("GRAIN_FLOW_TEST_NATIVE_DIR").unwrap())
+            .unwrap();
+        let model = Model::load_with(
+            std::env::var("GRAIN_FLUID_TEST_MODEL").unwrap(),
+            &ModelOptions::default(),
+        )
+        .unwrap();
+        let mut session = model.session_with(&SessionOptions::default()).unwrap();
+        let config = TdtRunConfig {
+            model_id: "Straylight-dev/fluid-speech-pro-gguf/fluid-speech-pro-Q8_0.gguf".into(),
+            language: None,
+        };
+        for path in std::env::var("GRAIN_FLUID_TEST_WAVS").unwrap().split(';') {
+            let mut wav = hound::WavReader::open(path).unwrap();
+            let pcm: Vec<f32> = wav
+                .samples::<i16>()
+                .map(|s| s.unwrap() as f32 / 32768.0)
+                .collect();
+            let mut texts = Vec::new();
+            for incremental in [true, false] {
+                let journal = PcmJournal::create().unwrap();
+                let mut reader = journal.reader().unwrap();
+                let mut accumulator = TdtAccumulator::new(&session, &config).unwrap();
+                let mut audio = Vec::with_capacity(accumulator.max_input_samples());
+                for block in pcm.chunks(8_001) {
+                    journal.append(block).unwrap();
+                    if incremental {
+                        let total = journal.frame_count();
+                        accumulator
+                            .process_stable(
+                                &mut session,
+                                &config,
+                                &journal,
+                                &mut reader,
+                                &mut audio,
+                                total,
+                            )
+                            .unwrap();
+                    }
+                }
+                journal.close().unwrap();
+                let total = journal.frame_count();
+                texts.push(
+                    accumulator
+                        .render(
+                            &mut session,
+                            &config,
+                            &journal,
+                            &mut reader,
+                            &mut audio,
+                            total,
+                        )
+                        .unwrap(),
+                );
+            }
+            eprintln!("{path}: {}", texts[0]);
+            assert!(!texts[0].is_empty());
+            assert_eq!(texts[0], texts[1]);
+        }
+    }
 
     /// Local fixtures may contain private dictation. Supply model/module paths and
     /// a JSON array of {path, expected} cases; nothing is downloaded or printed.
@@ -510,16 +684,18 @@ mod tests {
             if self.fail_call == Some(self.calls.len()) {
                 return Err("injected decode failure".into());
             }
-            let Some(RunExtension::ParakeetTdtBuffered(ext)) = &options.family else {
-                panic!("expected buffered TDT")
+            let offset = match &options.family {
+                Some(RunExtension::ParakeetTdtBuffered(ext)) => ext.timestamp_offset_frames,
+                Some(RunExtension::ParakeetTdtWindow(ext)) => ext.timestamp_offset_frames,
+                _ => panic!("expected a TDT window decoder"),
             };
             let mut result = transcribe_cpp::Transcript::default();
             // Identical token IDs must survive across adjacent owned windows.
             result.tokens.push(transcribe_cpp::Token {
                 id: 42,
                 p: 0.8,
-                t0_ms: i64::from(ext.timestamp_offset_frames) * 80,
-                t1_ms: i64::from(ext.timestamp_offset_frames) * 80 + 80,
+                t0_ms: i64::from(offset) * 80,
+                t1_ms: i64::from(offset) * 80 + 80,
                 ..Default::default()
             });
             Ok(result)
@@ -822,5 +998,78 @@ mod tests {
             assert_eq!(ext.finalize, i == 2);
         }
         assert!(audio.capacity() <= BUFFERED_MAX_SAMPLES as usize);
+    }
+
+    const FLUID_PRO: &str = "Straylight-dev/fluid-speech-pro-gguf/fluid-speech-pro-Q8_0.gguf";
+
+    fn fluid_render(samples: usize) -> (String, Vec<(usize, ParakeetTdtWindowOptions)>) {
+        let journal = PcmJournal::create().unwrap();
+        journal.append(&vec![0.0; samples]).unwrap();
+        journal.close().unwrap();
+        let mut reader = journal.reader().unwrap();
+        let mut session = RecordingInference {
+            variant: Some("tdt-0.6b-v3"),
+            ..Default::default()
+        };
+        let config = TdtRunConfig {
+            model_id: FLUID_PRO.into(),
+            language: None,
+        };
+        let mut accumulator = TdtAccumulator::new(&session, &config).unwrap();
+        let mut audio = Vec::with_capacity(accumulator.max_input_samples());
+        let text = accumulator
+            .render(
+                &mut session,
+                &config,
+                &journal,
+                &mut reader,
+                &mut audio,
+                samples as u64,
+            )
+            .unwrap();
+        assert!(audio.capacity() <= MAX_MODEL_SAMPLES as usize);
+        let calls = session
+            .calls
+            .into_iter()
+            .map(|(len, opts)| match opts.family {
+                Some(RunExtension::ParakeetTdtWindow(ext)) => (len, ext),
+                _ => panic!("Fluid Flow must use the stateless window decoder"),
+            })
+            .collect();
+        (text, calls)
+    }
+
+    #[test]
+    fn fluid_short_recording_decodes_once_with_lead_in() {
+        let (text, calls) = fluid_render(16_000);
+        assert_eq!(text, "42");
+        assert_eq!(calls.len(), 1);
+        let (len, ext) = &calls[0];
+        assert_eq!(*len, 20_480); // 4,000 lead-in + 16,000 real, frame-aligned
+        assert_eq!((ext.decode_start_frame, ext.decode_end_frame), (0, 16));
+        assert_eq!(ext.timestamp_offset_frames, 0);
+        assert!(!ext.finalize_tail);
+    }
+
+    #[test]
+    fn fluid_long_recording_uses_fifteen_second_windows_and_overlap_tail() {
+        let (text, calls) = fluid_render(400_001);
+        assert_eq!(text, "42,42");
+        let summary: Vec<_> = calls
+            .iter()
+            .map(|(len, e)| {
+                (
+                    *len,
+                    e.decode_start_frame,
+                    e.decode_end_frame,
+                    e.timestamp_offset_frames,
+                    e.finalize_tail,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [(238_080, 0, 186, 0, false), (195_201, 1, 152, 161, true),]
+        );
     }
 }
