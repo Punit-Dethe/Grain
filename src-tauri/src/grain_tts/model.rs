@@ -6,6 +6,7 @@
 //! To change the model, replace this file: its pinned [`FILES`], its
 //! [`VOICES`] and [`Voice`]. Nothing else in Grain imports `ptts` or `xn`.
 
+use crate::grain_model_files::PinnedFile;
 use std::path::Path;
 
 /// The default voice (installed with the model): the file stem under the
@@ -15,36 +16,28 @@ pub(crate) const VOICE: &str = "Zoey";
 /// The model's folder under the app's `models/` directory.
 pub(super) const FOLDER: [&str; 2] = ["grain-tts", "phonon-31m-en"];
 
-pub(crate) struct ModelFile {
-    /// Path inside the model folder.
-    pub(super) name: &'static str,
-    pub(super) url: &'static str,
-    pub(super) bytes: u64,
-    pub(super) sha256: &'static str,
-}
-
 /// Pinned to exact Hugging Face commits and verified by size + SHA-256.
-pub(super) const FILES: [ModelFile; 4] = [
-    ModelFile {
+pub(super) const FILES: [PinnedFile; 4] = [
+    PinnedFile {
         name: "config.json",
         url: "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/config.json",
         bytes: 4_634,
         sha256: "b5d0f88353638370d94035b7d73d7d6577c0554d78f8d7ecfd40490aae39ae85",
     },
-    ModelFile {
+    PinnedFile {
         name: "tokenizer.json",
         url: "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/tokenizer.json",
         bytes: 277_967,
         sha256: "691a00068fa7b989f2f3e5ae5daa2d1a5bb319f2d5360deafcfb19a8bb6e7936",
     },
-    ModelFile {
+    PinnedFile {
         name: "voices/Zoey.safetensors",
         url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/NbpkqMVS3CJeq2j8.safetensors",
         bytes: 256_136,
         sha256: "97c7f8c253413574406ab80dd23f49c3ebb2517163b00a9bf86b9c4cf43e7e23",
     },
     // The big one last, so the small files fail fast on a bad connection.
-    ModelFile {
+    PinnedFile {
         name: "model.q8.gguf",
         url: "https://huggingface.co/gradium/phonon-31m-en/resolve/92741c5b07d085ff840e26fea8ce43110b87852f/model.q8.gguf",
         bytes: 64_512_352,
@@ -60,7 +53,7 @@ pub(crate) struct VoicePreset {
     pub(crate) accent: &'static str,
     /// "female" or "male".
     pub(crate) gender: &'static str,
-    pub(super) file: ModelFile,
+    pub(super) file: PinnedFile,
 }
 
 const VOICE_BYTES: u64 = 256_136;
@@ -72,7 +65,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Zoey",
         accent: "us",
         gender: "female",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Zoey.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/NbpkqMVS3CJeq2j8.safetensors",
             bytes: VOICE_BYTES,
@@ -83,7 +76,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Harper",
         accent: "us",
         gender: "female",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Harper.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/4SZHfMpw-p46Ywgs.safetensors",
             bytes: VOICE_BYTES,
@@ -94,7 +87,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Hadley",
         accent: "us",
         gender: "female",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Hadley.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/bXwrkHhURL1VFJdG.safetensors",
             bytes: VOICE_BYTES,
@@ -105,7 +98,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Delia",
         accent: "us",
         gender: "female",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Delia.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/nGzMHMPAWGaJFHOo.safetensors",
             bytes: VOICE_BYTES,
@@ -116,7 +109,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Maeve",
         accent: "gb",
         gender: "female",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Maeve.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/6PWnV0Nq4wu7RVBT.safetensors",
             bytes: VOICE_BYTES,
@@ -127,7 +120,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Pippa",
         accent: "gb",
         gender: "female",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Pippa.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/uem82D50GRv2Dwma.safetensors",
             bytes: VOICE_BYTES,
@@ -138,7 +131,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Bryony",
         accent: "gb",
         gender: "female",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Bryony.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/gfP44RlHwr2kEwk7.safetensors",
             bytes: VOICE_BYTES,
@@ -149,7 +142,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Micah",
         accent: "us",
         gender: "male",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Micah.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/40QrMVgAxFiUnP9f.safetensors",
             bytes: VOICE_BYTES,
@@ -160,7 +153,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Miles",
         accent: "us",
         gender: "male",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Miles.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/d9XCyhjo4JhkHF1d.safetensors",
             bytes: VOICE_BYTES,
@@ -171,7 +164,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Preston",
         accent: "us",
         gender: "male",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Preston.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/qIxlZ7Ei8KvWlyQH.safetensors",
             bytes: VOICE_BYTES,
@@ -182,7 +175,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Trevor",
         accent: "us",
         gender: "male",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Trevor.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/0zLApsZfVLLNaEGl.safetensors",
             bytes: VOICE_BYTES,
@@ -193,7 +186,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Hugh",
         accent: "gb",
         gender: "male",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Hugh.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/YyKcxPG7iIgS3jsK.safetensors",
             bytes: VOICE_BYTES,
@@ -204,7 +197,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Edwin",
         accent: "gb",
         gender: "male",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Edwin.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/zUCxzrOrugTSis03.safetensors",
             bytes: VOICE_BYTES,
@@ -215,7 +208,7 @@ pub(crate) const VOICES: [VoicePreset; 14] = [
         name: "Teddy",
         accent: "gb",
         gender: "male",
-        file: ModelFile {
+        file: PinnedFile {
             name: "voices/Teddy.safetensors",
             url: "https://huggingface.co/gradium/phonon-voices/resolve/0ee17205f254b5abc43b266c8a0f215565c352f7/voices/Zn7g6NxLqXlJb7Qi.safetensors",
             bytes: VOICE_BYTES,

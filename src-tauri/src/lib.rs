@@ -76,6 +76,7 @@ mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled i
 mod grain_pilot; // [GRAIN] Grain Pilot: the Agent in the user's own browser through the Grain Pilot extension
 mod grain_browser_link; // [GRAIN] Grain Pilot: native messaging link to the browser extension
 mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
+mod grain_model_files; // [GRAIN] pinned, verified files for Grain's own models (talk-back voice, Meet diarizer)
 
 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
 // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on

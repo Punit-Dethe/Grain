@@ -20,16 +20,19 @@ use super::recorder::{DeviceOpener, Recording, SourceKind};
 use super::sources::{self, SourceDevice, SourceSettings};
 use super::storage::{self, SessionState};
 use super::transcript::{self, TranscriptRevision};
+use crate::grain_model_files::{self, PinnedFile};
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 
 /// The diarizer: Nemotron 3 Diarization Q8_0 (Streaming Sortformer v3, 8
 /// speakers, OpenMDW-1.1), the model family FluidMeet and Glimpse use. Pinned
 /// by revision, size and SHA-256.
-const DIARIZER_FILE: &str = "nemotron-3-diarization-Q8_0.gguf";
-const DIARIZER_URL: &str = "https://huggingface.co/Glimpse-Dictation/Nemotron-3-Diarization-gguf/resolve/273ebb0e65377f74576768257cd11f00c248c39d/nemotron-3-diarization-Q8_0.gguf";
-const DIARIZER_SHA256: &str = "877ff9e77e829e30158528cfaabf56188fca11d05349e09821b3033a97d31688";
-const DIARIZER_BYTES: u64 = 105_936_416;
+const DIARIZER: PinnedFile = PinnedFile {
+    name: "nemotron-3-diarization-Q8_0.gguf",
+    url: "https://huggingface.co/Glimpse-Dictation/Nemotron-3-Diarization-gguf/resolve/273ebb0e65377f74576768257cd11f00c248c39d/nemotron-3-diarization-Q8_0.gguf",
+    bytes: 105_936_416,
+    sha256: "877ff9e77e829e30158528cfaabf56188fca11d05349e09821b3033a97d31688",
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct SourceStatus {
@@ -144,12 +147,11 @@ pub(super) fn meetings_root(app: &AppHandle) -> Result<PathBuf, String> {
         .join("meetings"))
 }
 
-fn diarizer_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn diarizer_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::portable::app_data_dir(app)
         .map_err(|e| e.to_string())?
         .join("models")
-        .join("grain-meet")
-        .join(DIARIZER_FILE))
+        .join("grain-meet"))
 }
 
 fn snapshot(state: &State) -> MeetStatus {
@@ -416,10 +418,11 @@ pub fn meet_process(app: AppHandle, session_id: String) -> Result<(), String> {
     if storage::load_manifest(&dir)?.state != SessionState::Recorded {
         return Err("Finish the recording before processing it".into());
     }
-    let diarizer = diarizer_path(&app)?;
-    if !diarizer.is_file() {
+    let diarizer_dir = diarizer_dir(&app)?;
+    if !DIARIZER.present_in(&diarizer_dir) {
         return Err("Download the speaker model first".into());
     }
+    let diarizer = diarizer_dir.join(DIARIZER.name);
     let model_id = crate::settings::get_settings(&app).selected_model;
     crate::tdt_flow::validate_model(&model_id, false).map_err(|_| {
         "Meeting transcription needs a Parakeet TDT 0.6B v2 or v3 model selected".to_string()
@@ -626,7 +629,7 @@ pub async fn meet_playback_audio(app: AppHandle, session_id: String) -> Result<S
 #[tauri::command]
 #[specta::specta]
 pub fn meet_diarizer_installed(app: AppHandle) -> Result<bool, String> {
-    Ok(diarizer_path(&app)?.is_file())
+    Ok(DIARIZER.present_in(&diarizer_dir(&app)?))
 }
 
 /// Download the pinned speaker model, verifying its size and SHA-256 before
@@ -634,12 +637,8 @@ pub fn meet_diarizer_installed(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn meet_download_diarizer(app: AppHandle) -> Result<(), String> {
-    use futures_util::StreamExt;
-    use sha2::{Digest, Sha256};
-    use std::io::Write;
-
-    let path = diarizer_path(&app)?;
-    if path.is_file() {
+    let dir = diarizer_dir(&app)?;
+    if DIARIZER.present_in(&dir) {
         return Ok(());
     }
     if DOWNLOADING.swap(true, Ordering::AcqRel) {
@@ -652,62 +651,26 @@ pub async fn meet_download_diarizer(app: AppHandle) -> Result<(), String> {
         }
     }
     let _reset = Reset;
-    let dir = path
-        .parent()
-        .expect("model path has a folder")
-        .to_path_buf();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the model folder: {e}"))?;
-    let partial = dir.join(format!("{DIARIZER_FILE}.partial"));
     let client = app.state::<reqwest::Client>().inner().clone();
-    let response = client
-        .get(DIARIZER_URL)
-        .timeout(std::time::Duration::from_secs(30 * 60))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| format!("Could not download the speaker model: {e}"))?;
-    let mut file = std::fs::File::create(&partial)
-        .map_err(|e| format!("Could not save the speaker model: {e}"))?;
-    let mut hasher = Sha256::new();
-    let mut downloaded = 0u64;
-    let mut stream = response.bytes_stream();
-    let result: Result<(), String> = async {
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("The speaker model download failed: {e}"))?;
-            downloaded += chunk.len() as u64;
-            if downloaded > DIARIZER_BYTES {
-                return Err("The speaker model is larger than expected".into());
-            }
-            hasher.update(&chunk);
-            file.write_all(&chunk)
-                .map_err(|e| format!("Could not save the speaker model: {e}"))?;
-            let _ = MeetDiarizerProgress {
-                downloaded,
-                total: DIARIZER_BYTES,
-            }
-            .emit(&app);
+    grain_model_files::download(&client, &DIARIZER, &dir, |downloaded| {
+        let _ = MeetDiarizerProgress {
+            downloaded,
+            total: DIARIZER.bytes,
         }
-        file.sync_all()
-            .map_err(|e| format!("Could not save the speaker model: {e}"))?;
-        let digest = format!("{:x}", hasher.finalize());
-        if downloaded != DIARIZER_BYTES || digest != DIARIZER_SHA256 {
-            return Err("The downloaded speaker model failed verification".into());
-        }
-        Ok(())
-    }
-    .await;
-    drop(file);
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&partial);
-        return Err(error);
-    }
-    std::fs::rename(&partial, &path)
-        .map_err(|e| format!("Could not install the speaker model: {e}"))
+        .emit(&app);
+    })
+    .await
+    .map_err(|e| format!("Could not download the speaker model: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diarizer_is_pinned() {
+        assert!(DIARIZER.is_pinned());
+    }
 
     #[test]
     fn event_names_are_stable() {

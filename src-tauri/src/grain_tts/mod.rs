@@ -19,8 +19,9 @@ mod text;
 pub(crate) use model::{init_threads, VoicePreset, VOICES};
 pub(crate) use text::step_line;
 
+use crate::grain_model_files;
 use log::{info, warn};
-use model::{ModelFile, Voice, FILES, VOICE};
+use model::{Voice, FILES, VOICE};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -33,7 +34,7 @@ pub(crate) fn preset(name: &str) -> Option<&'static VoicePreset> {
 }
 
 fn voice_ready(dir: &Path, voice: &VoicePreset) -> bool {
-    std::fs::metadata(dir.join(voice.file.name)).is_ok_and(|meta| meta.len() == voice.file.bytes)
+    voice.file.present_in(dir)
 }
 
 /// The voice to speak with: the chosen preset once its file is here, else the
@@ -71,8 +72,7 @@ pub(crate) fn fetch_voice(app: &AppHandle, voice: &'static VoicePreset, preview:
                 return;
             }
             let client = app.state::<reqwest::Client>().inner().clone();
-            let path = dir.join(voice.file.name);
-            let result = download_verified(&client, &voice.file, &path).await;
+            let result = grain_model_files::download(&client, &voice.file, &dir, |_| {}).await;
             FETCHING_VOICE.store(false, Ordering::Release);
             if let Err(e) = result {
                 warn!(
@@ -151,9 +151,7 @@ fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn installed(dir: &Path) -> bool {
-    FILES.iter().all(|file| {
-        std::fs::metadata(dir.join(file.name)).is_ok_and(|meta| meta.len() == file.bytes)
-    })
+    FILES.iter().all(|file| file.present_in(dir))
 }
 
 /// Stop any speech now (a first-step line too). Cheap and safe to call from
@@ -538,64 +536,11 @@ async fn install(app: &AppHandle) -> Result<(), String> {
     }
     let _reset = Reset;
     let client = app.state::<reqwest::Client>().inner().clone();
-    for file in &FILES {
-        let path = dir.join(file.name);
-        if std::fs::metadata(&path).is_ok_and(|meta| meta.len() == file.bytes) {
-            continue;
-        }
-        download_verified(&client, file, &path).await?;
+    for file in FILES.iter().filter(|file| !file.present_in(&dir)) {
+        grain_model_files::download(&client, file, &dir, |_| {}).await?;
     }
     info!("[GRAIN] talk-back: voice installed at {}", dir.display());
     Ok(())
-}
-
-async fn download_verified(
-    client: &reqwest::Client,
-    file: &ModelFile,
-    path: &Path,
-) -> Result<(), String> {
-    use futures_util::StreamExt;
-    use sha2::{Digest, Sha256};
-    use std::io::Write;
-
-    let folder = path.parent().expect("model file has a folder");
-    std::fs::create_dir_all(folder).map_err(|e| format!("could not create {folder:?}: {e}"))?;
-    let partial = path.with_extension("partial");
-    let response = client
-        .get(file.url)
-        .timeout(Duration::from_secs(30 * 60))
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| format!("{}: {e}", file.name))?;
-    let mut out = std::fs::File::create(&partial).map_err(|e| format!("{}: {e}", file.name))?;
-    let mut hasher = Sha256::new();
-    let mut downloaded = 0u64;
-    let mut stream = response.bytes_stream();
-    let result: Result<(), String> = async {
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| format!("{}: {e}", file.name))?;
-            downloaded += chunk.len() as u64;
-            if downloaded > file.bytes {
-                return Err(format!("{} is larger than expected", file.name));
-            }
-            hasher.update(&chunk);
-            out.write_all(&chunk)
-                .map_err(|e| format!("{}: {e}", file.name))?;
-        }
-        out.sync_all().map_err(|e| format!("{}: {e}", file.name))?;
-        if downloaded != file.bytes || format!("{:x}", hasher.finalize()) != file.sha256 {
-            return Err(format!("{} failed verification", file.name));
-        }
-        Ok(())
-    }
-    .await;
-    drop(out);
-    if let Err(error) = result {
-        let _ = std::fs::remove_file(&partial);
-        return Err(error);
-    }
-    std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", file.name))
 }
 
 #[cfg(test)]
@@ -638,9 +583,7 @@ mod tests {
 
     #[test]
     fn files_are_pinned() {
-        assert!(FILES
-            .iter()
-            .all(|f| f.url.contains("/resolve/") && f.sha256.len() == 64));
+        assert!(FILES.iter().all(grain_model_files::PinnedFile::is_pinned));
         assert_eq!(FILES.last().unwrap().name, "model.q8.gguf");
     }
 
@@ -655,7 +598,7 @@ mod tests {
                 voice.file.name,
                 format!("voices/{}.safetensors", voice.name)
             );
-            assert!(voice.file.url.contains("/resolve/") && voice.file.sha256.len() == 64);
+            assert!(voice.file.is_pinned());
             assert!(matches!(voice.accent, "us" | "gb"));
         }
         let female = VOICES.iter().filter(|v| v.gender == "female").count();
