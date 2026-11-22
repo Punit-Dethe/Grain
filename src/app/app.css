@@ -5525,6 +5525,53 @@ html[data-theme="light"] .dropdown-compact-menu {
   height: 18px;
 }
 
+/* Pause / resume, beside Stop: shaped like the live source buttons. */
+.meet-pause-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--meet-dock-button-height);
+  padding-inline: 13px 16px;
+  border-radius: var(--meet-dock-button-radius);
+  color: var(--text-1);
+  background-color: var(--meet-dock-button-bg);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    transform 140ms var(--ease-out);
+}
+
+.meet-pause-action:hover {
+  background-color: var(--meet-dock-button-hover);
+}
+
+.meet-pause-action:active {
+  transform: scale(0.97);
+}
+
+.meet-pause-action[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+  transform: none;
+}
+
+.meet-pause-action .icon.sm {
+  width: 16px;
+  height: 16px;
+}
+
+/* Paused: the live dot greys out and the held clock dims. */
+.meet-record-live.is-paused .meet-record-dot {
+  background: var(--text-4);
+}
+
+.meet-record-live.is-paused .meet-record-clock {
+  color: var(--text-3);
+}
+
 /* Level meter: thin bars stacked bottom to top, no colour; the signal
    darkens them from the bottom up. */
 .meet-meter {
@@ -7019,6 +7066,7 @@ html[data-theme="light"] .meet-dock-inner {
   .meet-source-control button,
   .meet-source-control button svg,
   .meet-record-action,
+  .meet-pause-action,
   .dropdown-compact-option,
   .meet-toolbar,
   .meet-toolbar-main,

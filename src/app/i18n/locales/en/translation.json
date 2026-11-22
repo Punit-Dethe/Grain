@@ -52,6 +52,9 @@
     "recallStarting": "Starting…",
     "recallStop": "Stop",
     "recallRecording": "Recording",
+    "recallPaused": "Paused",
+    "recallPause": "Pause recording",
+    "recallResume": "Resume recording",
     "recallMuteMic": "Mute microphone",
     "recallUnmuteMic": "Unmute microphone",
     "recallMuteSystem": "Mute system audio",
@@ -1143,7 +1146,11 @@
         "label": "Recording controls",
         "start": "Start recording",
         "starting": "Starting…",
-        "stop": "Stop recording"
+        "stop": "Stop recording",
+        "pause": "Pause",
+        "resume": "Resume",
+        "pauseLabel": "Pause recording",
+        "resumeLabel": "Resume recording"
       },
       "sources": {
         "label": "Recording sources",

@@ -18,7 +18,9 @@ import {
   FileText,
   Users,
   MicOff,
+  Pause,
   Pencil,
+  Play,
   Search,
   VolumeOff,
   X,
@@ -272,7 +274,7 @@ function LiveSource({
   );
 }
 
-type CaptureCommand = "sources" | "start" | "stop";
+type CaptureCommand = "sources" | "start" | "stop" | "pause";
 
 function CaptureDock({ meet }: { meet: MeetController }) {
   const { t } = useTranslation();
@@ -344,7 +346,9 @@ function CaptureDock({ meet }: { meet: MeetController }) {
         >
           {recording ? (
             <>
-              <span className="meet-record-live">
+              <span
+                className={`meet-record-live${recording.paused ? " is-paused" : ""}`}
+              >
                 <span className="meet-record-dot" aria-hidden="true" />
                 <span
                   className="meet-record-clock"
@@ -418,6 +422,32 @@ function CaptureDock({ meet }: { meet: MeetController }) {
                 />
               </div>
             </>
+          )}
+          {recording && (
+            <button
+              className="meet-pause-action"
+              type="button"
+              aria-disabled={pending !== null}
+              aria-label={
+                recording.paused
+                  ? t("ui2.meet.studio.resumeLabel")
+                  : t("ui2.meet.studio.pauseLabel")
+              }
+              onClick={() => {
+                if (pending === null) {
+                  void run("pause", () => meet.setPaused(!recording.paused));
+                }
+              }}
+            >
+              {recording.paused ? (
+                <Play className="icon sm" aria-hidden="true" />
+              ) : (
+                <Pause className="icon sm" aria-hidden="true" />
+              )}
+              {recording.paused
+                ? t("ui2.meet.studio.resume")
+                : t("ui2.meet.studio.pause")}
+            </button>
           )}
           <button
             className="button primary meet-record-action"

@@ -44,6 +44,7 @@ export interface MeetController {
   setSources: (settings: SourceSettings) => Promise<void>;
   startRecording: (title: string | null) => Promise<string>;
   stopRecording: () => Promise<MeetingSummary>;
+  setPaused: (paused: boolean) => Promise<void>;
   /** Mute or unmute one source of the recording in progress. */
   setSourceMuted: (kind: SourceKind, muted: boolean) => Promise<void>;
   process: (sessionId: string) => Promise<void>;
@@ -256,6 +257,10 @@ export function useMeetController(): MeetController {
     [],
   );
 
+  const setPaused = useCallback(async (paused: boolean) => {
+    unwrap(await commands.meetSetPaused(paused));
+  }, []);
+
   const warmPlayback = useCallback(async (sessionId: string) => {
     unwrap(await commands.meetPlaybackAudio(sessionId));
   }, []);
@@ -271,6 +276,7 @@ export function useMeetController(): MeetController {
     setSources,
     startRecording,
     stopRecording,
+    setPaused,
     process,
     cancelProcessing,
     renameMeeting,

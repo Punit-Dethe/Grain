@@ -831,6 +831,27 @@ html[data-window="agent-panel"] body {
   filter: brightness(1.08);
 }
 
+/* Pause / resume: a quiet round button beside Stop. */
+.agr-pause {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff14;
+  color: var(--agc-ink);
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.agr-pause:hover:not(:disabled) {
+  background: #ffffff22;
+}
+
 /* While recording: the clock and Stop on one bar, the source cards below. */
 .agr-live {
   gap: 14px;
@@ -867,6 +888,17 @@ html[data-window="agent-panel"] body {
   to {
     box-shadow: 0 0 0 6px #ff6b5e00;
   }
+}
+
+/* Paused: the dot stops and greys out, the clock dims and holds. */
+.agr-clock.is-paused .agr-rec-dot {
+  background: var(--agc-muted);
+  box-shadow: none;
+  animation: none;
+}
+
+.agr-clock.is-paused .agr-clock-time {
+  color: var(--agc-muted);
 }
 
 .agr-clock-label {
