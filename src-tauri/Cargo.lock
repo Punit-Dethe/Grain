@@ -10205,7 +10205,7 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 [[package]]
 name = "xn"
 version = "0.2.15"
-source = "git+https://github.com/Punit-Dethe/xn.git?rev=30bfa373d636fec8687b2a9ab50a9ca926d511d7#30bfa373d636fec8687b2a9ab50a9ca926d511d7"
+source = "git+https://github.com/Punit-Dethe/xn.git?rev=9820468f7ab7332ebe98b27bd1f2cd03e43b46c6#30bfa373d636fec8687b2a9ab50a9ca926d511d7"
 dependencies = [
  "byteorder",
  "half",

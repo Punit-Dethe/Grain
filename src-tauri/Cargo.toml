@@ -273,8 +273,8 @@ transcribe-cpp-sys = { git = "https://github.com/Punit-Dethe/transcribe.cpp.git"
 tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 # [GRAIN] xn with run-time AVX2 kernel dispatch (Punit-Dethe/xn, branch
-# cpu/runtime-avx2-dispatch on top of 0.2.15). Not sent to Gradium yet.
-xn = { git = "https://github.com/Punit-Dethe/xn.git", rev = "30bfa373d636fec8687b2a9ab50a9ca926d511d7" }
+# cpu/runtime-avx2-dispatch on top of 0.2.15), proposed as gradium-ai/xn#142.
+xn = { git = "https://github.com/Punit-Dethe/xn.git", rev = "9820468f7ab7332ebe98b27bd1f2cd03e43b46c6" }
 
 [dev-dependencies]
 grain-recall = { path = "../crates/grain-recall", features = ["specta", "fixtures"] }

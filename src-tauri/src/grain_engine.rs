@@ -748,35 +748,10 @@ mod tests {
         }
     }
 
-    /// This process's peak working set in MiB (Windows only; for the memory
-    /// measurement below).
-    fn peak_working_set_mib() -> u64 {
-        let out = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!("(Get-Process -Id {}).PeakWorkingSet64", std::process::id()),
-            ])
-            .output()
-            .expect("powershell");
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse::<u64>()
-            .expect("peak working set")
-            / (1024 * 1024)
-    }
-
     /// The real diarizer and `minutes` of a looped 16 kHz mono WAV, for the
-    /// ignored model checks below. Env: GRAIN_DIAR_NATIVE_DIR (ggml modules),
+    /// ignored model check below. Env: GRAIN_DIAR_NATIVE_DIR (ggml modules),
     /// GRAIN_DIARIZER (gguf), GRAIN_DIAR_WAV.
     fn diarizer_fixture(minutes: usize) -> (Diarizer, Vec<f32>) {
-        let (diarizer, clip) = diarizer_and_clip();
-        let total = minutes * 60 * ANALYSIS_SAMPLE_RATE as usize;
-        (diarizer, clip.iter().copied().cycle().take(total).collect())
-    }
-
-    /// The real diarizer and the WAV clip itself.
-    fn diarizer_and_clip() -> (Diarizer, Vec<f32>) {
         let model = PathBuf::from(std::env::var("GRAIN_DIARIZER").expect("GRAIN_DIARIZER"));
         let wav = std::env::var("GRAIN_DIAR_WAV").expect("GRAIN_DIAR_WAV");
         let mut reader = hound::WavReader::open(&wav).unwrap();
@@ -795,7 +770,8 @@ mod tests {
         )
         .unwrap();
         let (diarizer, _) = load_diarizer(&model, Backend::Cpu, DeviceSelector::Auto).unwrap();
-        (diarizer, clip)
+        let total = minutes * 60 * ANALYSIS_SAMPLE_RATE as usize;
+        (diarizer, clip.iter().copied().cycle().take(total).collect())
     }
 
     fn offline_options() -> DiarizeOptions {
@@ -808,9 +784,9 @@ mod tests {
         }
     }
 
-    fn sorted(mut segments: Vec<SpeakerSegment>) -> Vec<(i32, i64, i64)> {
+    fn sorted(segments: Vec<SpeakerSegment>) -> Vec<(i32, i64, i64)> {
         let mut rows: Vec<_> = segments
-            .drain(..)
+            .into_iter()
             .map(|s| (s.speaker_id, s.t0_ms, s.t1_ms))
             .collect();
         rows.sort_unstable();
@@ -840,52 +816,6 @@ mod tests {
         );
         assert!(!want.is_empty());
         assert_eq!(got, want);
-    }
-
-    /// Diarizer peak memory over N minutes of audio. GRAIN_DIAR_MODE=run is
-    /// the old one-shot run on the whole track in memory; `stream` is the
-    /// worker's block-streamed path from a file. One length per process (a
-    /// peak only grows):
-    /// `GRAIN_DIAR_MODE=stream GRAIN_DIAR_MINUTES=60 cargo test --lib grain_engine::tests::diarize_peak_memory -- --ignored --nocapture`
-    #[test]
-    #[ignore = "requires a diarizer model and a 16 kHz mono WAV"]
-    fn diarize_peak_memory() {
-        let minutes: usize = std::env::var("GRAIN_DIAR_MINUTES")
-            .expect("GRAIN_DIAR_MINUTES")
-            .parse()
-            .unwrap();
-        let stream = std::env::var("GRAIN_DIAR_MODE").as_deref() == Ok("stream");
-        let (mut diarizer, clip) = diarizer_and_clip();
-        let total = minutes * 60 * ANALYSIS_SAMPLE_RATE as usize;
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("track.f32le");
-        let samples = total as u64;
-        let pcm = if stream {
-            // Written clip by clip: the whole track is never in memory.
-            use std::io::Write;
-            let mut out = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
-            for sample in clip.iter().cycle().take(total) {
-                out.write_all(&sample.to_le_bytes()).unwrap();
-            }
-            out.flush().unwrap();
-            Vec::new()
-        } else {
-            clip.iter().copied().cycle().take(total).collect()
-        };
-        let loaded = peak_working_set_mib();
-        let started = std::time::Instant::now();
-        let segments = if stream {
-            diarize_file(&mut diarizer.session, &path, samples, &offline_options()).unwrap()
-        } else {
-            diarizer.session.run(&pcm, &offline_options()).unwrap()
-        };
-        println!(
-            "{} {minutes} min: peak before {loaded} MiB, after {} MiB, {} segments in {:.1} s",
-            if stream { "stream" } else { "run" },
-            peak_working_set_mib(),
-            segments.len(),
-            started.elapsed().as_secs_f32()
-        );
     }
 
     fn request_options(request: &Request) -> DiarizeOptions {

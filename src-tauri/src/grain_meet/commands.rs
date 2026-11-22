@@ -152,10 +152,6 @@ pub(super) fn meetings_root(app: &AppHandle) -> Result<PathBuf, String> {
         .join("meetings"))
 }
 
-fn diarizer_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    SPEAKER_MODEL.dir(app)
-}
-
 fn snapshot(state: &State) -> MeetStatus {
     MeetStatus {
         recording: state.active.as_ref().map(|recording| RecordingStatus {
@@ -420,7 +416,7 @@ pub fn meet_process(app: AppHandle, session_id: String) -> Result<(), String> {
     if storage::load_manifest(&dir)?.state != SessionState::Recorded {
         return Err("Finish the recording before processing it".into());
     }
-    let diarizer_dir = diarizer_dir(&app)?;
+    let diarizer_dir = SPEAKER_MODEL.dir(&app)?;
     if !DIARIZER.present_in(&diarizer_dir) {
         return Err("Download the speaker model first".into());
     }

@@ -4,8 +4,8 @@
 //! Grain uses); [`text`] turns markdown replies into speakable sentences.
 //!
 //! Nothing is resident while idle. Every speech is one job on its own
-//! short-lived thread: it loads the model, streams PCM into the default output
-//! device, then drops the model and the device. One job speaks at a time. The
+//! short-lived thread: it loads the model, streams PCM into the chosen output
+//! (or the system default), then drops the model and the device. One job speaks at a time. The
 //! only reuse: when a job ends while the next one is already waiting (a
 //! first-step line followed by its reply), the loaded model is handed straight
 //! to it instead of being dropped and loaded again.
@@ -156,9 +156,12 @@ pub(crate) const MODEL: ModelFiles = ModelFiles {
     in_use: busy,
 };
 
-/// A speech job is alive or waiting, so the model files may be open.
+/// A speech job is alive or waiting, or a voice preset is downloading, so the
+/// model's files may be open.
 fn busy() -> bool {
-    WAITING.load(Ordering::SeqCst) > 0 || SPEAKING.try_lock().is_err()
+    WAITING.load(Ordering::SeqCst) > 0
+        || SPEAKING.try_lock().is_err()
+        || FETCHING_VOICE.load(Ordering::Acquire)
 }
 
 fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -613,8 +616,8 @@ impl SpeechFeed {
                             && rest[i + 1..].starts_with(char::is_whitespace))
                 })
                 .map(|(i, c)| i + c.len_utf8())
-                .filter(|&end| rest[..end].matches("```").count() % 2 == 0)
-                .last()
+                .filter(|&end| rest[..end].matches("```").count().is_multiple_of(2))
+                .next_back()
                 .unwrap_or(0)
         };
         if cut == 0 && state.done {
@@ -631,16 +634,10 @@ impl SpeechFeed {
 pub(crate) fn ensure_installed(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = install(&app).await {
+        if let Err(e) = grain_model_files::install(&app, GrainModel::TalkBackVoice).await {
             warn!("[GRAIN] talk-back: voice download failed: {e}");
         }
     });
-}
-
-async fn install(app: &AppHandle) -> Result<(), String> {
-    grain_model_files::install(app, GrainModel::TalkBackVoice).await?;
-    info!("[GRAIN] talk-back: voice ready");
-    Ok(())
 }
 
 #[cfg(test)]

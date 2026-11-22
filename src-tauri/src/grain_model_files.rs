@@ -42,6 +42,8 @@ impl PinnedFile {
     }
 }
 
+const CANCELLED: &str = "download cancelled";
+
 fn partial_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".partial");
@@ -108,8 +110,6 @@ pub(crate) async fn download(
     std::fs::rename(&partial, &path).map_err(|e| format!("{}: {e}", file.name))
 }
 
-const CANCELLED: &str = "download cancelled";
-
 // ── Grain's extra models ────────────────────────────────────────────────────
 
 /// One of Grain's own models (outside Handy's speech-to-text catalog).
@@ -160,7 +160,7 @@ impl GrainModel {
     }
 }
 
-/// A model's download in flight.
+/// A model's download (or delete) in flight; `running` makes them exclusive.
 struct Job {
     running: AtomicBool,
     cancel: AtomicBool,
@@ -329,9 +329,7 @@ pub fn grain_model_cancel(model: GrainModel) {
 #[specta::specta]
 pub fn grain_model_delete(app: AppHandle, model: GrainModel) -> Result<GrainModelStatus, String> {
     let files = model.files();
-    if model.job().running.load(Ordering::Acquire) {
-        return Err("Cancel the download first".into());
-    }
+    let job = model.job();
     if (files.in_use)() {
         return Err(match model {
             GrainModel::SpeakerDetection => {
@@ -341,12 +339,19 @@ pub fn grain_model_delete(app: AppHandle, model: GrainModel) -> Result<GrainMode
         }
         .into());
     }
-    let dir = files.dir(&app)?;
-    match std::fs::remove_dir_all(&dir) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("Could not delete the model: {error}")),
+    // Hold the job so no download starts while the folder is removed.
+    if job.running.swap(true, Ordering::AcqRel) {
+        return Err("Cancel the download first".into());
     }
+    let removed = files
+        .dir(&app)
+        .and_then(|dir| match std::fs::remove_dir_all(&dir) {
+            Ok(()) => Ok(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(dir),
+            Err(error) => Err(format!("Could not delete the model: {error}")),
+        });
+    job.running.store(false, Ordering::Release);
+    let dir = removed?;
     // An emptied parent folder (e.g. `grain-tts/`) goes too; a non-empty one stays.
     if files.folder.len() > 1 {
         if let Some(parent) = dir.parent() {
