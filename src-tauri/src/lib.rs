@@ -1233,17 +1233,22 @@ pub fn run(cli_args: CliArgs) {
             // If start_hidden but tray is disabled, we must show the window
             // anyway. Without a tray icon, the dock is the only way back in.
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-            if should_show_main_window_on_launch(
+            let show = should_show_main_window_on_launch(
                 should_show_after_update,
                 should_force_show,
                 should_hide,
                 tray_available,
-            ) {
+            );
+            if show {
                 show_main_window(&app_handle);
-            } else {
-                // [GRAIN] Initialize global systems (shortcuts, enigo) here too,
-                // so they work before the hidden frontend finishes mounting.
-                // Both commands are idempotent.
+            }
+            // [GRAIN] The backend owns starting the runtime (shortcuts, enigo):
+            // on a hidden launch, and on any launch once setup is finished.
+            // Leaving it to the UI left the Agent and every shortcut dead until
+            // the main window had loaded (seconds in dev), or forever when it
+            // was closed first. During onboarding the UI starts them itself.
+            // Both commands are idempotent, so the UI's later call is a no-op.
+            if !show || (!should_force_show && grain_onboarding::setup_finished(&app_handle)) {
                 let _ = commands::initialize_shortcuts(app_handle.clone());
                 let _ = commands::initialize_enigo(app_handle.clone());
             }
