@@ -87,7 +87,7 @@ mod imp {
     /// shape so the pointer need not land on the few visible pixels.
     const HIT: (f64, f64) = (180.0, 12.0);
     /// How long the pointer must rest before the notch opens.
-    const FILL: Duration = Duration::from_millis(650);
+    const FILL: Duration = Duration::from_millis(500);
     /// Auto-hide: the sliver slides down from above the screen edge (and back
     /// up) in this long; the fill starts once it is down.
     const SLIDE: Duration = Duration::from_millis(180);

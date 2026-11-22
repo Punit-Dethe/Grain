@@ -121,7 +121,7 @@ const MODE_LABEL = {
 } as const;
 /** Hover time that opens a listening or working notch (FILL in
  * grain_notch_sliver.rs). */
-const HOVER_OPEN_MS = 650;
+const HOVER_OPEN_MS = 500;
 
 const toPayload = (messages: ChatMessage[]): AgentMessage[] =>
   messages.map((m) => ({ role: m.role, content: m.content, ui: m.ui ?? null }));
