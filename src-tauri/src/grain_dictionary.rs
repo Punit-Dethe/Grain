@@ -43,7 +43,14 @@ mod windows_watch {
     use std::time::Duration;
 
     const SAMPLE: Duration = Duration::from_millis(250);
-    const SAMPLES: usize = 40;
+    /// How long the field is watched after an insertion (20 s), so a slow
+    /// correction is still caught.
+    const SAMPLES: usize = 80;
+    /// A correction is offered only once the edit has stopped changing for
+    /// this long. Shorter caught words half-way through being retyped; a late
+    /// suggestion costs nothing.
+    const SETTLE: Duration = Duration::from_millis(2_500);
+    const SETTLE_SAMPLES: usize = (SETTLE.as_millis() / SAMPLE.as_millis()) as usize;
 
     pub(crate) struct Watch {
         id: u32,
@@ -117,7 +124,7 @@ mod windows_watch {
                         } else {
                             0
                         };
-                        if stable >= 3 {
+                        if stable >= SETTLE_SAMPLES {
                             if let Some((original, corrected)) = correction {
                                 crate::grain_overlay::show_dictionary_suggestion(
                                     &app, self.id, original, corrected,
