@@ -2,28 +2,31 @@ import { useLayoutEffect, useState, type RefObject } from "react";
 
 /** Stroke width of the hover trace, in CSS px. */
 const STROKE = 1.5;
+/** Dark rim kept between the trace and the shell's edge, so the line never
+ * touches the desktop behind and stays visible on a light background
+ * (TRACE_INSET in grain_notch_sliver.rs). */
+const INSET = 1.5;
 
 type Box = { w: number; h: number; r: number };
 
-/** The two halves of the shell's outline, each starting at the bottom centre
- * and running round a bottom corner, up its side and along the top edge to
- * the top centre, where the two ends meet. */
+/** The two halves of the shell's outline, inset by [`INSET`], each starting
+ * at the bottom centre and running round a bottom corner and up its side to
+ * the top edge. */
 function halves({ w, h, r }: Box): [string, string] {
-  const s = STROKE / 2;
+  const o = INSET + STROKE / 2;
   const cx = w / 2;
   const radius = Math.min(r, h, cx);
-  const ri = Math.max(radius - s, 0);
-  const side = h - radius > s ? ` V ${s}` : "";
-  const bottom = h - s;
+  const ri = Math.max(radius - o, 0);
+  const bottom = h - o;
   const corner = h - radius;
   return [
-    `M ${cx} ${bottom} H ${radius} A ${ri} ${ri} 0 0 1 ${s} ${corner}${side} H ${cx}`,
-    `M ${cx} ${bottom} H ${w - radius} A ${ri} ${ri} 0 0 0 ${w - s} ${corner}${side} H ${cx}`,
+    `M ${cx} ${bottom} H ${radius} A ${ri} ${ri} 0 0 1 ${o} ${corner} V 0`,
+    `M ${cx} ${bottom} H ${w - radius} A ${ri} ${ri} 0 0 0 ${w - o} ${corner} V 0`,
   ];
 }
 
 /** Hover timer for a listening or working notch: a light line traces the
- * shell's outline from the bottom centre until both ends meet at the top
+ * shell's outline from the bottom centre up both sides to the top edge
  * (BAR and FILL in grain_notch_sliver.rs draw the same on the native sliver).
  * Mounted only while an early open is possible, so its size observer lives
  * no longer than that. */

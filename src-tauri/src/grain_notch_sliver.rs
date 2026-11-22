@@ -5,9 +5,8 @@
 //! premultiplied pixels, created on the main thread so tao's message loop
 //! drives it. It costs nothing at idle (no timer, no hook, no polling). While
 //! the pointer rests on it a light line traces its outline from the bottom
-//! centre; when the two ends meet at the top (or on a click) the Agent notch
-//! opens from this same spot. The WebView
-//! is pre-created when the hover starts and destroyed again if it is abandoned.
+//! centre up both sides; when it reaches the top edge (or on a click) the
+//! Agent notch opens from this same spot. The WebView is pre-created when the hover starts and destroyed again if it is abandoned.
 //!
 //! With `agent_notch_autohide` the sliver is drawn out of sight above the top
 //! edge (its hover target stays) and slides down when the pointer arrives, the
@@ -105,6 +104,9 @@ mod imp {
     const BASE: [f64; 3] = [3.0, 3.0, 5.0];
     const TRACK: [f64; 3] = [30.0, 30.0, 35.0];
     const BAR: [f64; 3] = [206.0, 206.0, 214.0];
+    /// Dark rim, in CSS px, between the hover trace and the sliver's edge
+    /// (`INSET` in AgentNotchTrace.tsx).
+    const TRACE_INSET: f64 = 1.5;
     /// The working gradient, cycled: orange, amber, yellow.
     const WORK: [[f64; 3]; 3] = [
         [255.0, 122.0, 24.0],
@@ -560,10 +562,13 @@ mod imp {
         let pad = 9.0 * zoom;
         let (bar_top, bar_bottom) = (1.75 * zoom, 4.0 * zoom);
         let (bar_left, bar_right) = (cx - half + pad, cx + half - pad);
-        // The hover trace (`.agent-notch-trace` in agent.css).
+        // The hover trace (`.agent-notch-trace` in agent.css): a dark rim of
+        // TRACE_INSET keeps it off the edge, so it shows on a light desktop.
+        use std::f64::consts::FRAC_PI_2;
         let stroke = 1.5 * zoom;
-        let corner_end = (half - radius) + radius * std::f64::consts::FRAC_PI_2;
-        let trace_length = corner_end + half;
+        let inset = TRACE_INSET * zoom;
+        let center_radius = (radius - inset - stroke / 2.0).max(0.0);
+        let trace_length = (half - radius) + center_radius * FRAC_PI_2;
         let mut pixels = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
             // In shape space: the shape is drawn `lift` px higher.
@@ -599,31 +604,24 @@ mod imp {
                     }
                 }
                 if let Some(progress) = progress {
-                    // The hover trace: a line runs from the bottom centre both
-                    // ways round the outline (bottom edge, corner arc, then the
-                    // top edge back in) until its ends meet at the top centre.
-                    // `along` is arc length from the bottom centre.
-                    let reach = (1.0 - (1.0 - progress).powi(2)) * trace_length;
-                    let inner = (0.5 - (distance + stroke)).clamp(0.0, 1.0);
-                    let ring = ((coverage - inner) / coverage).clamp(0.0, 1.0);
-                    let ring_along = if py <= sh - radius {
-                        corner_end
-                    } else {
+                    // The hover trace: a line just inside the edge runs at a
+                    // constant speed from the bottom centre both ways, round
+                    // the corners and up to the top edge. `along` is arc length
+                    // from the bottom centre.
+                    let reach = progress * trace_length;
+                    let band = (0.5 - (distance + inset)).clamp(0.0, 1.0)
+                        - (0.5 - (distance + inset + stroke)).clamp(0.0, 1.0);
+                    if band > 0.0 {
                         let qx = dx - (half - radius);
-                        if qx <= 0.0 {
+                        let along = if py <= sh - radius {
+                            trace_length
+                        } else if qx <= 0.0 {
                             dx
                         } else {
                             let qy = py - (sh - radius);
-                            let angle = qx.atan2(qy).clamp(0.0, std::f64::consts::FRAC_PI_2);
-                            (half - radius) + radius * angle
-                        }
-                    };
-                    let top = span(py, 0.0, stroke);
-                    let top_along = corner_end + (half - dx);
-                    for (band, along) in [(ring, ring_along), (top, top_along)] {
-                        if band <= 0.0 {
-                            continue;
-                        }
+                            let angle = qx.atan2(qy).clamp(0.0, FRAC_PI_2);
+                            (half - radius) + center_radius * angle
+                        };
                         let lit = band * (reach - along + 0.5).clamp(0.0, 1.0);
                         for i in 0..3 {
                             color[i] += (TRACK[i] - color[i]) * band;
