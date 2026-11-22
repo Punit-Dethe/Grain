@@ -4,9 +4,9 @@
 //! No WebView: it is a layered Win32 popup painted from a few kilobytes of
 //! premultiplied pixels, created on the main thread so tao's message loop
 //! drives it. It costs nothing at idle (no timer, no hook, no polling). While
-//! the pointer rests on it a light line traces its outline from the bottom
-//! centre up both sides; when it reaches the top edge (or on a click) the
-//! Agent notch opens from this same spot. The WebView is pre-created when the hover starts and destroyed again if it is abandoned.
+//! the pointer rests on it a light bar fills left to right; when the bar is
+//! full (or on a click) the Agent notch opens from this same spot. The WebView
+//! is pre-created when the hover starts and destroyed again if it is abandoned.
 //!
 //! With `agent_notch_autohide` the sliver is drawn out of sight above the top
 //! edge (its hover target stays) and slides down when the pointer arrives, the
@@ -104,9 +104,9 @@ mod imp {
     const BASE: [f64; 3] = [3.0, 3.0, 5.0];
     const TRACK: [f64; 3] = [30.0, 30.0, 35.0];
     const BAR: [f64; 3] = [206.0, 206.0, 214.0];
-    /// Dark rim, in CSS px, between the hover trace and the sliver's edge
-    /// (`INSET` in AgentNotchTrace.tsx).
-    const TRACE_INSET: f64 = 1.5;
+    /// Share of each half of the hover fill that fades out at its end: the
+    /// outer fifths of the whole bar, as the mask on `.agent-notch-fill`.
+    const TAPER: f64 = 0.4;
     /// The working gradient, cycled: orange, amber, yellow.
     const WORK: [[f64; 3]; 3] = [
         [255.0, 122.0, 24.0],
@@ -541,7 +541,7 @@ mod imp {
 
     /// Premultiplied BGRA pixels: the shape flush with the top edge, bottom
     /// corners rounded and anti-aliased, the working line (while a request
-    /// runs, `work` is its phase) and the hover trace. Everything else is
+    /// runs, `work` is its phase) and the hover fill bar. Everything else is
     /// alpha 1/255: invisible, but it still takes the hover. `shown` slides the
     /// whole shape up past the top edge (0 is out of sight).
     fn render(
@@ -561,14 +561,10 @@ mod imp {
         let cx = width as f64 / 2.0;
         let pad = 9.0 * zoom;
         let (bar_top, bar_bottom) = (1.75 * zoom, 4.0 * zoom);
+        // The hover fill is thinner than the working line, centred on it
+        // (`.agent-notch-fill` in agent.css).
+        let (fill_top, fill_bottom) = (2.125 * zoom, 3.625 * zoom);
         let (bar_left, bar_right) = (cx - half + pad, cx + half - pad);
-        // The hover trace (`.agent-notch-trace` in agent.css): a dark rim of
-        // TRACE_INSET keeps it off the edge, so it shows on a light desktop.
-        use std::f64::consts::FRAC_PI_2;
-        let stroke = 1.5 * zoom;
-        let inset = TRACE_INSET * zoom;
-        let center_radius = (radius - inset - stroke / 2.0).max(0.0);
-        let trace_length = (half - radius) + center_radius * FRAC_PI_2;
         let mut pixels = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
             // In shape space: the shape is drawn `lift` px higher.
@@ -604,28 +600,25 @@ mod imp {
                     }
                 }
                 if let Some(progress) = progress {
-                    // The hover trace: a line just inside the edge runs at a
-                    // constant speed from the bottom centre both ways, round
-                    // the corners and up to the top edge. `along` is arc length
-                    // from the bottom centre.
-                    let reach = progress * trace_length;
-                    let band = (0.5 - (distance + inset)).clamp(0.0, 1.0)
-                        - (0.5 - (distance + inset + stroke)).clamp(0.0, 1.0);
-                    if band > 0.0 {
-                        let qx = dx - (half - radius);
-                        let along = if py <= sh - radius {
-                            trace_length
-                        } else if qx <= 0.0 {
-                            dx
+                    let row = span(py, fill_top, fill_bottom);
+                    if row > 0.0 {
+                        let eased = 1.0 - (1.0 - progress).powi(2);
+                        // The fill grows from the centre out to both ends.
+                        let reach = (bar_right - bar_left) / 2.0 * eased;
+                        // Over the working line the hover fill alone shows.
+                        let track = if work.is_some() {
+                            0.0
                         } else {
-                            let qy = py - (sh - radius);
-                            let angle = qx.atan2(qy).clamp(0.0, FRAC_PI_2);
-                            (half - radius) + center_radius * angle
+                            row * span(px, bar_left, bar_right)
                         };
-                        let lit = band * (reach - along + 0.5).clamp(0.0, 1.0);
+                        // Tapered ends: the fill fades out over the outer
+                        // TAPER of each half, scaling with it as it grows.
+                        let taper =
+                            ((reach - (px - cx).abs()) / (reach * TAPER).max(1e-6)).clamp(0.0, 1.0);
+                        let fill = row * span(px, cx - reach, cx + reach) * taper;
                         for i in 0..3 {
-                            color[i] += (TRACK[i] - color[i]) * band;
-                            color[i] += (BAR[i] - color[i]) * lit;
+                            color[i] += (TRACK[i] - color[i]) * track;
+                            color[i] += (BAR[i] - color[i]) * fill;
                         }
                     }
                 }

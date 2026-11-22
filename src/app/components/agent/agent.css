@@ -1658,49 +1658,56 @@ html[data-window="agent-panel"] body {
   }
 }
 
-/* Hovering a listening or working notch traces its outline, as the resting
-   sliver does (BAR and FILL in grain_notch_sliver.rs); traced, the chat opens
-   early. */
+/* Hovering a listening or working notch fills a bar, as the resting sliver
+   does (BAR and FILL in grain_notch_sliver.rs); full, the chat opens early. */
 .agent-notch:not(.is-reply):not([data-opened]):not(.is-closing) {
   cursor: pointer;
 }
 
-/* The hover timer traces the shell's outline, just inside its edge: from the
-   bottom centre, both ways round the corners and up the sides to the top
-   edge, at a constant speed (as the native sliver does). */
-.agent-notch-trace {
+.agent-notch-fill {
   position: absolute;
-  inset: 0;
-  overflow: visible;
-  pointer-events: none;
+  left: 16px;
+  right: 16px;
+  bottom: 4px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: #ceced6;
+  /* Tapered ends: the bar thins out to nothing over its outer fifths. The
+     mask scales with the bar, so the ends stay soft while it grows (TAPER in
+     grain_notch_sliver.rs). */
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 20%,
+    #000 80%,
+    transparent
+  );
+  transform: scaleX(0);
+  /* Grows from the centre out, like the native sliver's fill. */
+  transform-origin: center;
   opacity: 0;
-  transition: opacity 160ms ease;
+  pointer-events: none;
+  transition:
+    transform 160ms ease,
+    opacity 160ms ease;
 }
 
-.agent-notch-trace path {
-  fill: none;
-  stroke-width: 1.5px;
+.agent-notch[data-phase="working"] .agent-notch-fill,
+.agent-notch[data-phase="speaking"] .agent-notch-fill {
+  left: 9px;
+  right: 9px;
+  top: 2.125px;
+  bottom: auto;
+  height: 1.5px;
 }
 
-.agent-notch-trace-track {
-  stroke: #1e1e23;
-}
-
-.agent-notch-trace-line {
-  stroke: #ceced6;
-  stroke-dasharray: 1 1;
-  stroke-dashoffset: 1;
-  transition: stroke-dashoffset 160ms ease;
-}
-
-.agent-notch[data-hover] .agent-notch-trace {
+/* Ease-out, matching the native sliver's 1 - (1 - p)^2. */
+.agent-notch[data-hover] .agent-notch-fill {
   opacity: 1;
-  transition: opacity 120ms ease;
-}
-
-.agent-notch[data-hover] .agent-notch-trace-line {
-  stroke-dashoffset: 0;
-  transition: stroke-dashoffset 500ms linear;
+  transform: scaleX(1);
+  transition:
+    transform 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    opacity 120ms ease;
 }
 
 /* Opened while still listening: the request has not been heard yet. */
@@ -1710,9 +1717,8 @@ html[data-window="agent-panel"] body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-notch-trace-line,
-  .agent-notch[data-hover] .agent-notch-trace-line {
-    transition: none;
+  .agent-notch-fill {
+    transition: opacity 120ms ease;
   }
 }
 

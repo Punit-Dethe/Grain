@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AgentNotchTrace } from "./AgentNotchTrace";
 import {
   ArrowUp,
   ChevronLeft,
@@ -1350,7 +1349,7 @@ export function AgentPanel() {
           />
         )}
         {!revealed && <span className="agent-notch-work" aria-hidden />}
-        {canOpenEarly && <AgentNotchTrace shell={shellRef} />}
+        {canOpenEarly && <span className="agent-notch-fill" aria-hidden />}
         {/* One header for both states: the compact status crossfades into the
             brand while the shell grows, so nothing pops in or out. */}
         <header className="agent-notch-header">
