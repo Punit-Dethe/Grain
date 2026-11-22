@@ -232,6 +232,8 @@ export function useComposio() {
   const mounted = useRef(false);
   const operation = useRef(false);
   const pending = useRef<string | null>(null);
+  /** Bumped by every status a user action applies. */
+  const changes = useRef(0);
 
   const loadCatalog = useCallback(async () => {
     const entries = unwrapResult(await commands.composioCatalog());
@@ -242,10 +244,28 @@ export function useComposio() {
     mounted.current = true;
     void (async () => {
       try {
-        const next = unwrapResult(await commands.composioStatus(true));
+        // Saved state first so the page paints at once; the catalog comes
+        // from its on-disk copy.
+        const saved = unwrapResult(await commands.composioStatus(false));
         if (!mounted.current) return;
-        setStatus(next);
-        if (next.configured) await loadCatalog();
+        setStatus(saved);
+        if (!saved.configured) return;
+        // Checking for accounts removed elsewhere needs the network, so it
+        // runs alongside and only replaces the list if nothing changed it since.
+        const seen = changes.current;
+        void commands
+          .composioStatus(true)
+          .then((result) => {
+            if (
+              mounted.current &&
+              !operation.current &&
+              changes.current === seen &&
+              result.status === "ok"
+            )
+              setStatus(result.data);
+          })
+          .catch(() => {});
+        await loadCatalog();
       } catch (reason) {
         if (mounted.current) setError(String(reason));
       }
@@ -281,6 +301,7 @@ export function useComposio() {
   };
 
   const apply = (next: ComposioStatus) => {
+    changes.current += 1;
     if (mounted.current) setStatus(next);
   };
 

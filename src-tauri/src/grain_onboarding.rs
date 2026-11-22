@@ -173,6 +173,25 @@ fn onboarding_after_model_check(completed: bool, permissions_blocked: bool) -> O
     }
 }
 
+/// Setup is finished, so the app runtime (shortcuts, input controller) may
+/// start without waiting for the UI. Mirrors the `Done` step of
+/// [`resolve_onboarding_state`] minus its async permission probe; a denied
+/// Windows microphone is handled by the caller's forced-onboarding check.
+pub(crate) fn setup_finished(app: &AppHandle) -> bool {
+    if cfg!(feature = "agent-harness") {
+        return true;
+    }
+    if force_onboarding_for_development() || !get_settings(app).onboarding_completed {
+        return false;
+    }
+    app.try_state::<Arc<ModelManager>>().is_some_and(|models| {
+        models
+            .get_available_models()
+            .iter()
+            .any(|model| model.is_downloaded)
+    })
+}
+
 pub(crate) fn complete_setup(app: &AppHandle) -> Result<(), String> {
     app.state::<Arc<grain_core::AppContext>>()
         .complete_onboarding()

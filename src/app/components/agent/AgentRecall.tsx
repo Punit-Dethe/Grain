@@ -12,6 +12,8 @@ import {
   ChevronDown,
   Mic,
   MicOff,
+  Pause,
+  Play,
   Square,
   Volume2,
   VolumeOff,
@@ -180,22 +182,48 @@ export function AgentRecall({
     void run(() => commands.meetStopRecording()).then((ok) => setSaved(ok));
   const toggle = (kind: SourceKind, muted: boolean) =>
     void run(() => commands.meetSetSourceMuted(kind, muted));
+  const setPaused = (paused: boolean) =>
+    void run(() => commands.meetSetPaused(paused));
 
   if (recording) {
-    const elapsed = recording.elapsed_ms + Math.max(0, now - receivedAt);
+    const paused = (live ?? recording).paused;
+    // Between status updates the clock runs on locally; paused, it holds.
+    const elapsed = paused
+      ? (live ?? recording).elapsed_ms
+      : recording.elapsed_ms + Math.max(0, now - receivedAt);
     const sourceOf = (kind: SourceKind) =>
       (live ?? recording).sources.find((source) => source.kind === kind) ??
       null;
+    const pauseLabel = paused
+      ? t("agent.recallResume")
+      : t("agent.recallPause");
     return (
       <div className="agr agr-live">
         <div className="agr-live-bar">
-          <div className="agr-clock" role="timer">
+          <div
+            className={`agr-clock${paused ? " is-paused" : ""}`}
+            role="timer"
+          >
             <span className="agr-rec-dot" aria-hidden="true" />
             <span className="agr-clock-label">
-              {t("agent.recallRecording")}
+              {paused ? t("agent.recallPaused") : t("agent.recallRecording")}
             </span>
             <time className="agr-clock-time">{formatElapsed(elapsed)}</time>
           </div>
+          <button
+            type="button"
+            className="agr-pause"
+            disabled={pending}
+            aria-label={pauseLabel}
+            title={pauseLabel}
+            onClick={() => setPaused(!paused)}
+          >
+            {paused ? (
+              <Play size={13} fill="currentColor" />
+            ) : (
+              <Pause size={13} fill="currentColor" />
+            )}
+          </button>
           <button
             type="button"
             className="agr-stop"

@@ -18,8 +18,8 @@
 //!
 //! # Shape
 //!
-//! Launch checks run in Rust so they still happen when the main WebView was
-//! never created (start-hidden) or was destroyed on close. Only the small,
+//! Launch checks run in Rust so they never depend on the main WebView having
+//! loaded its page. Only the small,
 //! serializable [`UpdateInfo`] is cached; the updater's live [`Update`] handle is
 //! never retained across an arbitrary user pause.
 

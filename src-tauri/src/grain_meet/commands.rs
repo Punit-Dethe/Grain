@@ -65,7 +65,10 @@ pub struct SourceStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
 pub struct RecordingStatus {
     pub session_id: String,
+    /// Recorded time: paused time is not counted.
     pub elapsed_ms: u64,
+    /// [GRAIN] Paused: every source is closed and the clock is stopped.
+    pub paused: bool,
     pub sources: Vec<SourceStatus>,
     pub error: Option<String>,
 }
@@ -156,7 +159,8 @@ fn snapshot(state: &State) -> MeetStatus {
     MeetStatus {
         recording: state.active.as_ref().map(|recording| RecordingStatus {
             session_id: recording.session_id.clone(),
-            elapsed_ms: recording.started.elapsed().as_millis() as u64,
+            elapsed_ms: recording.elapsed().as_millis() as u64,
+            paused: recording.paused(),
             sources: recording
                 .progress
                 .sources
@@ -366,6 +370,21 @@ pub async fn meet_stop_recording(app: AppHandle) -> Result<MeetingSummary, Strin
         }
     }
     summary(&dir, &manifest)
+}
+
+/// [GRAIN] Pause or resume the recording in progress. Pausing closes every
+/// source and stops the clock; the paused time is left out of the meeting.
+/// Mutes are kept. Stopping while paused saves what was recorded.
+#[tauri::command]
+#[specta::specta]
+pub fn meet_set_paused(app: AppHandle, paused: bool) -> Result<(), String> {
+    state()
+        .active
+        .as_mut()
+        .ok_or("No meeting is recording")?
+        .set_paused(paused)?;
+    emit_status(&app);
+    Ok(())
 }
 
 /// [GRAIN] Mute or unmute one source of the recording in progress. Muting

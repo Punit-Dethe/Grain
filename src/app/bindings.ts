@@ -975,8 +975,10 @@ async composioRemoveApiKey() : Promise<Result<ComposioStatus, string>> {
 }
 },
 /**
- * Apps the user can connect, most used first. Fetched when the page asks
- * and not kept afterwards.
+ * Apps the user can connect, most used first. Served from the on-disk copy
+ * when there is one, so the page opens at once; a copy older than
+ * [`CATALOG_MAX_AGE`] is refreshed in the background for the next visit.
+ * Nothing is held in memory between calls.
  */
 async composioCatalog() : Promise<Result<ComposioCatalogEntry[], string>> {
     try {
@@ -2011,6 +2013,19 @@ async meetSetSources(settings: SourceSettings) : Promise<Result<null, string>> {
 async meetSetSourceMuted(kind: SourceKind, muted: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("meet_set_source_muted", { kind, muted }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Pause or resume the recording in progress. Pausing closes every
+ * source and stops the clock; the paused time is left out of the meeting.
+ * Mutes are kept. Stopping while paused saves what was recorded.
+ */
+async meetSetPaused(paused: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_set_paused", { paused }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3111,7 +3126,15 @@ setup_json: string }
 export type RecordingError = { error_type: string; detail: string | null }
 export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
-export type RecordingStatus = { session_id: string; elapsed_ms: number; sources: SourceStatus[]; error: string | null }
+export type RecordingStatus = { session_id: string; 
+/**
+ * Recorded time: paused time is not counted.
+ */
+elapsed_ms: number; 
+/**
+ * [GRAIN] Paused: every source is closed and the clock is stopped.
+ */
+paused: boolean; sources: SourceStatus[]; error: string | null }
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
  * resolved against the OS. Lives in the SDK because it crosses the wire inside

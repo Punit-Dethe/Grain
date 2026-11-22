@@ -11,6 +11,11 @@
 //! becomes a `SourceLost` gap. Windows loopback delivers nothing while no sound
 //! plays, so a late resume is a `Silent` gap (known silence, kept compact on
 //! disk), never a fault. A device that reports a failure is reopened.
+//!
+//! [GRAIN] Pausing closes every source (the microphone shows as free) and cuts
+//! the paused span out of the meeting clock: the recording carries on from the
+//! same point on resume, so playback and the transcript have no dead air and
+//! the tracks stay aligned. Mutes are kept across a pause.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -64,6 +69,11 @@ pub(crate) struct Progress {
     /// Grows when a source that began switched off is turned on mid-recording.
     pub sources: Mutex<Vec<Arc<SourceProgress>>>,
     pub error: Mutex<Option<String>>,
+    /// [GRAIN] Start of the pause being entered, as meeting-clock ns + 1 (0
+    /// when not pausing). Set before the writer is told, so audio that arrives
+    /// after the pause is dropped even while the writer is still waiting on
+    /// the queue; the writer clears it when it resumes.
+    pausing: AtomicU64,
 }
 
 /// Opens one source's capture stream. Dropping the returned value closes it.
@@ -109,6 +119,10 @@ pub(crate) struct Recording {
     stop: Arc<AtomicBool>,
     control: Sender<Control>,
     writer: Option<std::thread::JoinHandle<Result<Manifest, String>>>,
+    /// [GRAIN] When the current pause began, if paused.
+    paused_at: Option<Instant>,
+    /// [GRAIN] Total length of the pauses that have ended.
+    paused_total: Duration,
 }
 
 /// Asks the writer thread to change the set of sources while it records.
@@ -118,6 +132,11 @@ enum Control {
         name: String,
         reply: SyncSender<Result<(), String>>,
     },
+    /// [GRAIN] Close every source; audio that arrives from `at` on is dropped.
+    Pause { at: Instant },
+    /// [GRAIN] Reopen the sources that are not muted; the time since the pause
+    /// is cut from the meeting clock.
+    Resume { at: Instant },
 }
 
 /// A cloneable way to turn a source on mid-recording without holding the
@@ -260,6 +279,7 @@ impl Recording {
         let progress = Arc::new(Progress {
             sources: Mutex::new(list.iter().map(|s| Arc::clone(&s.progress)).collect()),
             error: Mutex::new(None),
+            pausing: AtomicU64::new(0),
         });
         let (control, commands) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -289,7 +309,50 @@ impl Recording {
             stop,
             control,
             writer: Some(writer),
+            paused_at: None,
+            paused_total: Duration::ZERO,
         })
+    }
+
+    /// [GRAIN] Paused by the user.
+    pub(crate) fn paused(&self) -> bool {
+        self.paused_at.is_some()
+    }
+
+    /// [GRAIN] Recorded time: wall time since the start, minus every pause.
+    pub(crate) fn elapsed(&self) -> Duration {
+        let now = Instant::now();
+        let current = self
+            .paused_at
+            .map_or(Duration::ZERO, |at| now.saturating_duration_since(at));
+        now.saturating_duration_since(self.started)
+            .saturating_sub(self.paused_total)
+            .saturating_sub(current)
+    }
+
+    /// [GRAIN] Pause or resume the whole recording. A no-op when already there.
+    pub(crate) fn set_paused(&mut self, paused: bool) -> Result<(), String> {
+        if paused == self.paused() {
+            return Ok(());
+        }
+        let at = Instant::now();
+        let command = if paused {
+            self.progress
+                .pausing
+                .store(since_origin(self.started, at) + 1, Ordering::Release);
+            Control::Pause { at }
+        } else {
+            Control::Resume { at }
+        };
+        self.control
+            .send(command)
+            .map_err(|_| "The recording has ended".to_string())?;
+        if paused {
+            self.paused_at = Some(at);
+        } else if let Some(since) = self.paused_at.take() {
+            self.paused_total += at.saturating_duration_since(since);
+        }
+        Ok(())
     }
 
     /// The live progress of one source, if it is being recorded.
@@ -408,68 +471,82 @@ fn write_loop(
     opener: impl Opener,
 ) -> Result<Manifest, String> {
     let mut failure: Option<String> = None;
-    let write = |writer: &mut SessionWriter, sources: &mut [Source], mut frame: Frame| {
-        let source = &mut sources[frame.source];
-        source.last_arrival = frame.arrived;
-        source.progress.active.store(true, Ordering::Release);
-        if source.progress.muted.load(Ordering::Acquire) {
-            frame.samples.fill(0.0);
-        }
-        let peak = frame
-            .samples
-            .iter()
-            .fold(0.0f32, |m, s| m.max(s.abs()))
-            .min(1.0);
-        let lost = source.dropped.swap(0, Ordering::AcqRel);
-        let end = writer.manifest().tracks[source.track as usize].end_ns();
-        let len = (frame.samples.len() / usize::from(frame.channels)) as u64;
-        source.meter_peak = source.meter_peak.max(peak);
-        source.meter_frames += len;
-        if source.meter_frames >= u64::from(frame.rate) / LEVEL_WINDOWS_PER_SECOND {
-            source
-                .progress
-                .level
-                .store(source.meter_peak.to_bits(), Ordering::Release);
-            source.meter_peak = 0.0;
-            source.meter_frames = 0;
-        }
-        let arrival_start =
-            since_origin(origin, frame.arrived).saturating_sub(frames_ns(len, frame.rate));
-        let resumed = std::mem::take(&mut source.resume_gap);
-        let discontinuity = if std::mem::take(&mut source.lost) {
-            Some(GapReason::SourceLost)
-        } else if resumed {
-            Some(GapReason::Silent)
-        } else if lost > 0 {
-            log::warn!("Meeting capture dropped {lost} frames: the writer fell behind");
-            Some(GapReason::Overflow)
-        } else if source.kind == SourceKind::SystemAudio
-            && end > 0
-            && arrival_start > end + super::storage::GAP_ROTATE_NS
-        {
-            Some(GapReason::Silent)
-        } else {
-            None
-        };
-        let start_ns = if discontinuity.is_some() || end == 0 {
-            arrival_start.max(end)
-        } else {
-            end
-        };
-        let block = Block {
-            start_ns,
-            sample_rate: frame.rate,
-            channels: frame.channels,
-            samples: &frame.samples,
-            discontinuity,
-        };
-        writer.append(source.track, block)?;
-        source.progress.frames_ns.store(
-            writer.manifest().tracks[source.track as usize].end_ns(),
-            Ordering::Release,
-        );
-        Ok::<(), String>(())
+    // [GRAIN] The last pause that ended, in meeting-clock ns: audio still
+    // queued from inside it is dropped after the resume.
+    let mut last_pause: Option<(u64, u64)> = None;
+    let in_pause = |arrived: Instant, last_pause: Option<(u64, u64)>| {
+        let at = since_origin(origin, arrived);
+        let from = progress.pausing.load(Ordering::Acquire);
+        (from != 0 && at + 1 >= from) || last_pause.is_some_and(|(a, b)| at >= a && at < b)
     };
+    // [GRAIN] Pause state: when the current pause began, and the total paused
+    // time already cut from the meeting clock.
+    let mut paused_since: Option<Instant> = None;
+    let mut cut_ns: u64 = 0;
+    let write =
+        |writer: &mut SessionWriter, sources: &mut [Source], mut frame: Frame, cut_ns: u64| {
+            let source = &mut sources[frame.source];
+            source.last_arrival = frame.arrived;
+            source.progress.active.store(true, Ordering::Release);
+            if source.progress.muted.load(Ordering::Acquire) {
+                frame.samples.fill(0.0);
+            }
+            let peak = frame
+                .samples
+                .iter()
+                .fold(0.0f32, |m, s| m.max(s.abs()))
+                .min(1.0);
+            let lost = source.dropped.swap(0, Ordering::AcqRel);
+            let end = writer.manifest().tracks[source.track as usize].end_ns();
+            let len = (frame.samples.len() / usize::from(frame.channels)) as u64;
+            source.meter_peak = source.meter_peak.max(peak);
+            source.meter_frames += len;
+            if source.meter_frames >= u64::from(frame.rate) / LEVEL_WINDOWS_PER_SECOND {
+                source
+                    .progress
+                    .level
+                    .store(source.meter_peak.to_bits(), Ordering::Release);
+                source.meter_peak = 0.0;
+                source.meter_frames = 0;
+            }
+            let arrival_start = since_origin(origin, frame.arrived)
+                .saturating_sub(frames_ns(len, frame.rate))
+                .saturating_sub(cut_ns);
+            let resumed = std::mem::take(&mut source.resume_gap);
+            let discontinuity = if std::mem::take(&mut source.lost) {
+                Some(GapReason::SourceLost)
+            } else if resumed {
+                Some(GapReason::Silent)
+            } else if lost > 0 {
+                log::warn!("Meeting capture dropped {lost} frames: the writer fell behind");
+                Some(GapReason::Overflow)
+            } else if source.kind == SourceKind::SystemAudio
+                && end > 0
+                && arrival_start > end + super::storage::GAP_ROTATE_NS
+            {
+                Some(GapReason::Silent)
+            } else {
+                None
+            };
+            let start_ns = if discontinuity.is_some() || end == 0 {
+                arrival_start.max(end)
+            } else {
+                end
+            };
+            let block = Block {
+                start_ns,
+                sample_rate: frame.rate,
+                channels: frame.channels,
+                samples: &frame.samples,
+                discontinuity,
+            };
+            writer.append(source.track, block)?;
+            source.progress.frames_ns.store(
+                writer.manifest().tracks[source.track as usize].end_ns(),
+                Ordering::Release,
+            );
+            Ok::<(), String>(())
+        };
     loop {
         if stop.load(Ordering::Acquire) {
             break;
@@ -490,7 +567,67 @@ fn write_loop(
                             name,
                         )
                     };
+                    // Turned on while paused: it opens with everything else
+                    // on resume.
+                    if result.is_ok() && paused_since.is_some() {
+                        if let Some(source) = sources.iter_mut().find(|s| s.kind == kind) {
+                            source.capture = None;
+                            source.progress.active.store(false, Ordering::Release);
+                        }
+                    }
                     let _ = reply.send(result);
+                }
+                Control::Pause { at } => {
+                    paused_since = Some(at);
+                    for source in &mut sources {
+                        source.capture = None;
+                        source.progress.active.store(false, Ordering::Release);
+                    }
+                }
+                Control::Resume { at } => {
+                    let Some(since) = paused_since.take() else {
+                        continue;
+                    };
+                    let (from, to) = (since_origin(origin, since), since_origin(origin, at));
+                    last_pause = Some((from, to));
+                    // Only this pause's mark: a newer pause may already be set.
+                    let _ = progress.pausing.compare_exchange(
+                        from + 1,
+                        0,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    );
+                    cut_ns += at.saturating_duration_since(since).as_nanos() as u64;
+                    if failure.is_some() {
+                        continue;
+                    }
+                    for (index, source) in sources.iter_mut().enumerate() {
+                        if source.closed_by_mute {
+                            continue;
+                        }
+                        if source.progress.muted.load(Ordering::Acquire) {
+                            // Muted during the pause: stays closed until unmuted.
+                            source.closed_by_mute = true;
+                            continue;
+                        }
+                        source.last_arrival = Instant::now();
+                        source.failed.store(false, Ordering::Release);
+                        match opener.open(
+                            source.kind,
+                            deliver_to(sender.clone(), index, Arc::clone(&source.dropped)),
+                            Arc::clone(&source.failed),
+                        ) {
+                            Ok(capture) => source.capture = Some(capture),
+                            Err(error) => {
+                                // The reopen loop below keeps retrying it.
+                                log::warn!(
+                                    "Meeting {:?} could not be resumed: {error}",
+                                    source.kind
+                                );
+                                source.failed.store(true, Ordering::Release);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -499,7 +636,11 @@ fn write_loop(
                 if failure.is_some() {
                     continue;
                 }
-                if let Err(error) = write(&mut writer, &mut sources, frame) {
+                // Delivered after the pause began, before the device closed.
+                if in_pause(frame.arrived, last_pause) {
+                    continue;
+                }
+                if let Err(error) = write(&mut writer, &mut sources, frame, cut_ns) {
                     log::error!("Meeting recording stopped: {error}");
                     *progress.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(error.clone());
                     failure = Some(error);
@@ -511,7 +652,8 @@ fn write_loop(
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
-        if failure.is_some() {
+        // While paused every source stays closed: no mute changes, no reopens.
+        if failure.is_some() || paused_since.is_some() {
             continue;
         }
         // A muted source is closed; unmuting reopens it.
@@ -583,8 +725,11 @@ fn write_loop(
     }
     drop(sender);
     while let Ok(frame) = frames.try_recv() {
+        if in_pause(frame.arrived, last_pause) {
+            continue;
+        }
         if failure.is_none() {
-            if let Err(error) = write(&mut writer, &mut sources, frame) {
+            if let Err(error) = write(&mut writer, &mut sources, frame, cut_ns) {
                 failure = Some(error);
             }
         }
@@ -671,6 +816,62 @@ mod tests {
         assert_eq!(mic.chunks.iter().map(|c| c.frames).sum::<u64>(), 48_000);
         assert_eq!(system.chunks.iter().map(|c| c.frames).sum::<u64>(), 48_000);
         assert_eq!(system.chunks[0].channels, 2);
+    }
+
+    /// Wait until the writer has recorded `ns` of `kind`.
+    fn wait_recorded(recording: &Recording, kind: SourceKind, ns: u64) {
+        let start = Instant::now();
+        while recording
+            .source(kind)
+            .is_none_or(|s| s.frames_ns.load(Ordering::Acquire) < ns)
+            && start.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_pause_drops_its_audio_and_cuts_its_time() {
+        let root = tempfile::tempdir().unwrap();
+        let opener = FakeOpener::default();
+        let mut recording = Recording::begin(root.path(), "Call", &both(), opener.clone()).unwrap();
+        push(&opener.latest(SourceKind::Microphone).0, 1.0, 48_000, 1);
+        wait_recorded(&recording, SourceKind::Microphone, 1_000_000_000);
+
+        // Muted during the pause: it must stay closed on resume.
+        recording.set_paused(true).unwrap();
+        assert!(recording.paused());
+        recording
+            .source(SourceKind::SystemAudio)
+            .unwrap()
+            .muted
+            .store(true, Ordering::Release);
+        // A late callback from the closing device: dropped, not recorded.
+        std::thread::sleep(Duration::from_millis(20));
+        push(&opener.latest(SourceKind::Microphone).0, 0.5, 48_000, 1);
+        std::thread::sleep(Duration::from_millis(300));
+        let frozen = recording.elapsed();
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(recording.elapsed().as_millis(), frozen.as_millis());
+
+        let mic_opens = opener.opens(SourceKind::Microphone);
+        let system_opens = opener.opens(SourceKind::SystemAudio);
+        recording.set_paused(false).unwrap();
+        let start = Instant::now();
+        while opener.opens(SourceKind::Microphone) == mic_opens
+            && start.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(opener.opens(SourceKind::Microphone), mic_opens + 1);
+        assert_eq!(opener.opens(SourceKind::SystemAudio), system_opens);
+        push(&opener.latest(SourceKind::Microphone).0, 1.0, 48_000, 1);
+        let manifest = recording.finish().unwrap();
+
+        let mic = &manifest.tracks[0];
+        assert_eq!(mic.chunks.iter().map(|c| c.frames).sum::<u64>(), 96_000);
+        // The paused span is cut: the track is two seconds long, not longer.
+        assert!(mic.end_ns() <= 2_050_000_000, "end {}", mic.end_ns());
     }
 
     #[test]

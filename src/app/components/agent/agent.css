@@ -831,6 +831,27 @@ html[data-window="agent-panel"] body {
   filter: brightness(1.08);
 }
 
+/* Pause / resume: a quiet round button beside Stop. */
+.agr-pause {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff14;
+  color: var(--agc-ink);
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.agr-pause:hover:not(:disabled) {
+  background: #ffffff22;
+}
+
 /* While recording: the clock and Stop on one bar, the source cards below. */
 .agr-live {
   gap: 14px;
@@ -867,6 +888,17 @@ html[data-window="agent-panel"] body {
   to {
     box-shadow: 0 0 0 6px #ff6b5e00;
   }
+}
+
+/* Paused: the dot stops and greys out, the clock dims and holds. */
+.agr-clock.is-paused .agr-rec-dot {
+  background: var(--agc-muted);
+  box-shadow: none;
+  animation: none;
+}
+
+.agr-clock.is-paused .agr-clock-time {
+  color: var(--agc-muted);
 }
 
 .agr-clock-label {
@@ -1669,9 +1701,19 @@ html[data-window="agent-panel"] body {
   left: 16px;
   right: 16px;
   bottom: 4px;
-  height: 2px;
+  height: 1.5px;
   border-radius: 999px;
   background: #ceced6;
+  /* Tapered ends: the bar thins out to nothing over its outer fifths. The
+     mask scales with the bar, so the ends stay soft while it grows (TAPER in
+     grain_notch_sliver.rs). */
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 20%,
+    #000 80%,
+    transparent
+  );
   transform: scaleX(0);
   /* Grows from the centre out, like the native sliver's fill. */
   transform-origin: center;
@@ -1686,16 +1728,17 @@ html[data-window="agent-panel"] body {
 .agent-notch[data-phase="speaking"] .agent-notch-fill {
   left: 9px;
   right: 9px;
-  top: 1.75px;
+  top: 2.125px;
   bottom: auto;
-  height: 2.25px;
+  height: 1.5px;
 }
 
+/* Ease-out, matching the native sliver's 1 - (1 - p)^2. */
 .agent-notch[data-hover] .agent-notch-fill {
   opacity: 1;
   transform: scaleX(1);
   transition:
-    transform 650ms linear,
+    transform 500ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
     opacity 120ms ease;
 }
 

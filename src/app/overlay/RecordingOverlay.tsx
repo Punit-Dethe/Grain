@@ -520,10 +520,13 @@ export function RecordingOverlay() {
   ) {
     return (
       <div dir={direction} className={`ov-stage ${position}`}>
-        <DictionaryOffer
+        {/* Appears like the other overlay cards: a short rise and scale-in. */}
+        <div
           key={presentation.dictionary.id}
-          suggestion={presentation.dictionary}
-        />
+          className="grain-overlay-motion grain-copy-motion"
+        >
+          <DictionaryOffer suggestion={presentation.dictionary} />
+        </div>
       </div>
     );
   }

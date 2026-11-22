@@ -4,8 +4,8 @@
 //! No WebView: it is a layered Win32 popup painted from a few kilobytes of
 //! premultiplied pixels, created on the main thread so tao's message loop
 //! drives it. It costs nothing at idle (no timer, no hook, no polling). While
-//! the pointer rests on it a light bar fills left to right; when the bar is
-//! full (or on a click) the Agent notch opens from this same spot. The WebView
+//! the pointer rests on it a thin light bar grows from the centre out; when it
+//! is full (or on a click) the Agent notch opens from this same spot. The WebView
 //! is pre-created when the hover starts and destroyed again if it is abandoned.
 //!
 //! With `agent_notch_autohide` the sliver is drawn out of sight above the top
@@ -87,7 +87,7 @@ mod imp {
     /// shape so the pointer need not land on the few visible pixels.
     const HIT: (f64, f64) = (180.0, 12.0);
     /// How long the pointer must rest before the notch opens.
-    const FILL: Duration = Duration::from_millis(650);
+    const FILL: Duration = Duration::from_millis(500);
     /// Auto-hide: the sliver slides down from above the screen edge (and back
     /// up) in this long; the fill starts once it is down.
     const SLIDE: Duration = Duration::from_millis(180);
@@ -104,6 +104,9 @@ mod imp {
     const BASE: [f64; 3] = [3.0, 3.0, 5.0];
     const TRACK: [f64; 3] = [30.0, 30.0, 35.0];
     const BAR: [f64; 3] = [206.0, 206.0, 214.0];
+    /// Share of each half of the hover fill that fades out at its end: the
+    /// outer fifths of the whole bar, as the mask on `.agent-notch-fill`.
+    const TAPER: f64 = 0.4;
     /// The working gradient, cycled: orange, amber, yellow.
     const WORK: [[f64; 3]; 3] = [
         [255.0, 122.0, 24.0],
@@ -558,6 +561,9 @@ mod imp {
         let cx = width as f64 / 2.0;
         let pad = 9.0 * zoom;
         let (bar_top, bar_bottom) = (1.75 * zoom, 4.0 * zoom);
+        // The hover fill is thinner than the working line, centred on it
+        // (`.agent-notch-fill` in agent.css).
+        let (fill_top, fill_bottom) = (2.125 * zoom, 3.625 * zoom);
         let (bar_left, bar_right) = (cx - half + pad, cx + half - pad);
         let mut pixels = Vec::with_capacity((width * height) as usize);
         for y in 0..height {
@@ -594,7 +600,7 @@ mod imp {
                     }
                 }
                 if let Some(progress) = progress {
-                    let row = span(py, bar_top, bar_bottom);
+                    let row = span(py, fill_top, fill_bottom);
                     if row > 0.0 {
                         let eased = 1.0 - (1.0 - progress).powi(2);
                         // The fill grows from the centre out to both ends.
@@ -605,7 +611,11 @@ mod imp {
                         } else {
                             row * span(px, bar_left, bar_right)
                         };
-                        let fill = row * span(px, cx - reach, cx + reach);
+                        // Tapered ends: the fill fades out over the outer
+                        // TAPER of each half, scaling with it as it grows.
+                        let taper =
+                            ((reach - (px - cx).abs()) / (reach * TAPER).max(1e-6)).clamp(0.0, 1.0);
+                        let fill = row * span(px, cx - reach, cx + reach) * taper;
                         for i in 0..3 {
                             color[i] += (TRACK[i] - color[i]) * track;
                             color[i] += (BAR[i] - color[i]) * fill;
