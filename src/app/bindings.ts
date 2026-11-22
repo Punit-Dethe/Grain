@@ -2018,6 +2018,19 @@ async meetSetSourceMuted(kind: SourceKind, muted: boolean) : Promise<Result<null
 }
 },
 /**
+ * [GRAIN] Pause or resume the recording in progress. Pausing closes every
+ * source and stops the clock; the paused time is left out of the meeting.
+ * Mutes are kept. Stopping while paused saves what was recorded.
+ */
+async meetSetPaused(paused: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("meet_set_paused", { paused }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Start recording the enabled sources into a new meeting. Returns its id.
  */
 async meetStartRecording(title: string | null) : Promise<Result<string, string>> {
@@ -3112,7 +3125,15 @@ setup_json: string }
 export type RecordingError = { error_type: string; detail: string | null }
 export type RecordingReady = null
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
-export type RecordingStatus = { session_id: string; elapsed_ms: number; sources: SourceStatus[]; error: string | null }
+export type RecordingStatus = { session_id: string; 
+/**
+ * Recorded time: paused time is not counted.
+ */
+elapsed_ms: number; 
+/**
+ * [GRAIN] Paused: every source is closed and the clock is stopped.
+ */
+paused: boolean; sources: SourceStatus[]; error: string | null }
 /**
  * [GRAIN] What to actually paint — the user's `theme` preference already
  * resolved against the OS. Lives in the SDK because it crosses the wire inside

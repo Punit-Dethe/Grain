@@ -1584,6 +1584,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::commands::meet_sources,
             grain_meet::commands::meet_set_sources,
             grain_meet::commands::meet_set_source_muted,
+            grain_meet::commands::meet_set_paused,
             grain_meet::commands::meet_start_recording,
             grain_meet::commands::meet_stop_recording,
             grain_meet::commands::meet_process,
