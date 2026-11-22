@@ -656,8 +656,14 @@ function Recordings({
   filters: RecordingFilters;
 }) {
   const { t, i18n } = useTranslation();
-  const recordingId = meet.status.recording?.session_id;
-  const now = useSecondTick(Boolean(recordingId));
+  const liveRecording = meet.status.recording;
+  const recordingId = liveRecording?.session_id;
+  const now = useSecondTick(Boolean(liveRecording && !liveRecording.paused));
+  // Recorded time, not wall time: a pause holds the clock and is left out.
+  const recordedMs = liveRecording
+    ? liveRecording.elapsed_ms +
+      (liveRecording.paused ? 0 : Math.max(0, now - meet.statusAt))
+    : 0;
   const groups = useMemo(
     () => groupByDay(meet.meetings, new Date(), filters),
     [meet.meetings, filters],
@@ -747,9 +753,7 @@ function Recordings({
                   </span>
                   <span className="meet-row-duration">
                     {formatClock(
-                      state === "recording"
-                        ? now - meeting.created_unix_ms
-                        : meeting.duration_ms,
+                      state === "recording" ? recordedMs : meeting.duration_ms,
                     )}
                   </span>
                   <span className="meet-row-go" aria-hidden="true">

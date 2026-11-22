@@ -1,8 +1,8 @@
 //! [GRAIN] Open the main window on a page, from the backend (an Agent link to
 //! a meeting).
 //!
-//! The main window is destroyed on close to free RAM, so a route sent as an
-//! event alone could be lost while the window is being rebuilt. The route is
+//! The main window's page may still be loading (just after launch, or after
+//! a rare rebuild), so a route sent as an event alone could be lost. The route is
 //! parked in a one-slot mailbox instead: the backend shows the window and
 //! emits `MainWindowRoute`; the page takes the route on that event or when it
 //! mounts, whichever comes first. Taking empties the slot.

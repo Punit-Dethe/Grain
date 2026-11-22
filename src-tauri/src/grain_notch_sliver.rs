@@ -4,8 +4,8 @@
 //! No WebView: it is a layered Win32 popup painted from a few kilobytes of
 //! premultiplied pixels, created on the main thread so tao's message loop
 //! drives it. It costs nothing at idle (no timer, no hook, no polling). While
-//! the pointer rests on it a light bar fills left to right; when the bar is
-//! full (or on a click) the Agent notch opens from this same spot. The WebView
+//! the pointer rests on it a thin light bar grows from the centre out; when it
+//! is full (or on a click) the Agent notch opens from this same spot. The WebView
 //! is pre-created when the hover starts and destroyed again if it is abandoned.
 //!
 //! With `agent_notch_autohide` the sliver is drawn out of sight above the top

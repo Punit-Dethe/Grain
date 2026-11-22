@@ -514,9 +514,10 @@ fn catalog_entry(item: &Value) -> Option<ComposioCatalogEntry> {
     })
 }
 
-/// Apps the user can connect, most used first. Served from the on-disk copy when there is one, so the page opens at once;
-/// a copy older than [`CATALOG_MAX_AGE`] is refreshed in the background for
-/// the next visit. Nothing is held in memory between calls.
+/// Apps the user can connect, most used first. Served from the on-disk copy
+/// when there is one, so the page opens at once; a copy older than
+/// [`CATALOG_MAX_AGE`] is refreshed in the background for the next visit.
+/// Nothing is held in memory between calls.
 #[tauri::command]
 #[specta::specta]
 pub async fn composio_catalog(
@@ -529,7 +530,11 @@ pub async fn composio_catalog(
         if age > CATALOG_MAX_AGE && !CATALOG_REFRESHING.swap(true, Ordering::AcqRel) {
             tauri::async_runtime::spawn(async move {
                 if let Ok(fresh) = fetch_catalog(&key).await {
-                    store_catalog(&app, &key, &fresh).await;
+                    // The key may have been removed or replaced meanwhile;
+                    // never write a catalog back for a key that is gone.
+                    if read_key().await.ok().flatten().as_deref() == Some(key.as_str()) {
+                        store_catalog(&app, &key, &fresh).await;
+                    }
                 }
                 CATALOG_REFRESHING.store(false, Ordering::Release);
             });

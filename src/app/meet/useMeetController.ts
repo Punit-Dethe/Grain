@@ -34,6 +34,9 @@ function unwrap<T>(
 
 export interface MeetController {
   status: MeetStatus;
+  /** When `status` arrived (ms since epoch): a recording's clock runs on
+   * from `elapsed_ms` at this moment unless it is paused. */
+  statusAt: number;
   meetings: MeetingSummary[];
   loading: boolean;
   loadError: string | null;
@@ -82,7 +85,12 @@ export function useMeetAiAvailable(): boolean | null {
 
 export function useMeetController(): MeetController {
   const osType = useOsType();
-  const [status, setStatus] = useState<MeetStatus>(IDLE);
+  const [status, setStatusState] = useState<MeetStatus>(IDLE);
+  const [statusAt, setStatusAt] = useState(0);
+  const setStatus = useCallback((next: MeetStatus) => {
+    setStatusState(next);
+    setStatusAt(Date.now());
+  }, []);
   const [meetings, setMeetings] = useState<MeetingSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -117,7 +125,7 @@ export function useMeetController(): MeetController {
         setLoading(false);
       }
     }
-  }, []);
+  }, [setStatus]);
 
   const refreshSources = useCallback(async () => {
     if (savingSources.current) return;
@@ -157,7 +165,7 @@ export function useMeetController(): MeetController {
       window.removeEventListener("focus", onFocus);
       void statusListener.then((cleanup) => cleanup());
     };
-  }, [reload, refreshSources]);
+  }, [reload, refreshSources, setStatus]);
 
   const setSources = useCallback(async (settings: SourceSettings) => {
     // A device refresh started before this write may have read the old settings.
@@ -267,6 +275,7 @@ export function useMeetController(): MeetController {
 
   return {
     status,
+    statusAt,
     meetings,
     loading,
     loadError,
