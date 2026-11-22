@@ -51,6 +51,11 @@ fn chosen_voice(app: &AppHandle, dir: &Path) -> &'static str {
     }
 }
 
+/// Where speech plays: the chosen output, or `None` for the system default.
+fn chosen_output(app: &AppHandle) -> Option<String> {
+    crate::settings::get_settings(app).agent_voice_output
+}
+
 static FETCHING_VOICE: AtomicBool = AtomicBool::new(false);
 
 /// Download a preset's file in the background when it is missing; with
@@ -219,6 +224,7 @@ pub(crate) fn speak(
     start(
         dir,
         voice,
+        chosen_output(app),
         Source::Text(text),
         Policy::Reply,
         generation,
@@ -247,6 +253,7 @@ pub(crate) fn speak_feed(
     start(
         dir,
         voice,
+        chosen_output(app),
         Source::Feed(feed),
         Policy::Reply,
         generation,
@@ -285,6 +292,7 @@ pub(crate) fn speak_step(
     start(
         dir,
         voice,
+        chosen_output(app),
         Source::Text(text),
         Policy::Step { stops },
         generation,
@@ -297,6 +305,7 @@ pub(crate) fn speak_step(
 fn start(
     dir: PathBuf,
     voice: &'static str,
+    output: Option<String>,
     source: Source,
     policy: Policy,
     generation: u64,
@@ -307,7 +316,7 @@ fn start(
     let spawned = std::thread::Builder::new()
         .name("grain-tts".into())
         .spawn(move || {
-            run(&dir, voice, &source, policy, generation);
+            run(&dir, voice, output.as_deref(), &source, policy, generation);
             let _ = LIVE.compare_exchange(generation, 0, Ordering::SeqCst, Ordering::SeqCst);
             on_end(generation);
         });
@@ -324,7 +333,14 @@ fn start(
 
 /// The body of one job: wait for the voice, speak, then hand the model on to a
 /// job already waiting, or drop it.
-fn run(dir: &Path, voice: &str, source: &Source, policy: Policy, generation: u64) {
+fn run(
+    dir: &Path,
+    voice: &str,
+    output: Option<&str>,
+    source: &Source,
+    policy: Policy,
+    generation: u64,
+) {
     let mut slot = SPEAKING.lock().unwrap_or_else(|e| e.into_inner());
     WAITING.fetch_sub(1, Ordering::SeqCst);
     let mut model = slot.take();
@@ -335,7 +351,7 @@ fn run(dir: &Path, voice: &str, source: &Source, policy: Policy, generation: u64
     if !keep(false) {
         info!("[GRAIN] talk-back: replaced before it started");
     } else {
-        match say(dir, voice, model.take(), source, &keep) {
+        match say(dir, voice, output, model.take(), source, &keep) {
             Ok(loaded) => model = Some(loaded),
             Err(e) => warn!("[GRAIN] talk-back failed: {e}"),
         }
@@ -353,13 +369,11 @@ fn run(dir: &Path, voice: &str, source: &Source, policy: Policy, generation: u64
 fn say(
     dir: &Path,
     voice: &str,
+    output: Option<&str>,
     parked: Option<Voice>,
     source: &Source,
     keep: &dyn Fn(bool) -> bool,
 ) -> Result<Voice, String> {
-    use rodio::buffer::SamplesBuffer;
-    use rodio::{ChannelCount, DeviceSinkBuilder, Player, SampleRate};
-
     let started = Instant::now();
     let tts = match parked {
         Some(tts) if tts.name() == voice => tts,
@@ -371,13 +385,8 @@ fn say(
         return Ok(tts);
     }
 
-    let rate = SampleRate::new(tts.sample_rate()).ok_or("the voice model has no sample rate")?;
-    let mono = ChannelCount::new(1).expect("1 is non-zero");
-    let mut device = DeviceSinkBuilder::from_default_device()
-        .and_then(DeviceSinkBuilder::open_stream)
-        .map_err(|e| format!("no audio output: {e}"))?;
-    device.log_on_drop(false);
-    let player = Player::connect_new(device.mixer());
+    let rate = tts.sample_rate();
+    let speaker = std::cell::RefCell::new(Speaker::open(output, rate)?);
 
     let first_audio = std::cell::Cell::new(None::<Duration>);
     let seconds = std::cell::Cell::new(0.0f32);
@@ -393,8 +402,10 @@ fn say(
             if first_audio.get().is_none() {
                 first_audio.set(Some(started.elapsed()));
             }
-            seconds.set(seconds.get() + pcm.len() as f32 / rate.get() as f32);
-            player.append(SamplesBuffer::new(mono, rate, pcm));
+            seconds.set(seconds.get() + pcm.len() as f32 / rate as f32);
+            let mut speaker = speaker.borrow_mut();
+            speaker.recover(output)?;
+            speaker.append(pcm);
         }
         Ok(true)
     };
@@ -425,8 +436,9 @@ fn say(
             finished
         }
     };
+    let mut speaker = speaker.into_inner();
     if !finished {
-        player.stop();
+        speaker.stop();
         info!(
             "[GRAIN] talk-back: stopped after {} ms ({:.1} s spoken)",
             started.elapsed().as_millis(),
@@ -441,14 +453,105 @@ fn say(
         seconds.get(),
         started.elapsed().as_millis()
     );
-    while !player.empty() {
+    while !speaker.empty() {
         if !keep(true) {
-            player.stop();
+            speaker.stop();
             break;
         }
+        speaker.recover(output)?;
         std::thread::sleep(Duration::from_millis(40));
     }
     Ok(tts)
+}
+
+/// The output one speech plays on. It keeps a copy of the audio still queued,
+/// so when the device is lost (unplugged, or the system default moved while
+/// following it) it reopens on the chosen output, or the new default, and
+/// replays the unheard rest there. Dropped with the speech.
+struct Speaker {
+    // Field order: the player detaches before its device closes.
+    player: rodio::Player,
+    _sink: rodio::MixerDeviceSink,
+    lost: Arc<AtomicBool>,
+    /// Pieces appended but not finished playing, oldest first.
+    queued: std::collections::VecDeque<Vec<f32>>,
+    rate: u32,
+}
+
+impl Speaker {
+    fn open(output: Option<&str>, rate: u32) -> Result<Self, String> {
+        use rodio::cpal::ErrorKind;
+        let device = match output {
+            Some(id) => crate::grain_audio::output_device(Some(id)).or_else(|e| {
+                warn!("[GRAIN] talk-back: {e}; using the default output");
+                crate::grain_audio::output_device(None)
+            }),
+            None => crate::grain_audio::output_device(None),
+        }?;
+        let lost = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&lost);
+        let mut sink = rodio::DeviceSinkBuilder::from_device(device)
+            .map_err(|e| format!("no audio output: {e}"))?
+            .with_error_callback(move |error: rodio::cpal::Error| {
+                if matches!(
+                    error.kind(),
+                    ErrorKind::StreamInvalidated | ErrorKind::DeviceNotAvailable
+                ) {
+                    info!("[GRAIN] talk-back: output lost ({error}); reopening");
+                    flag.store(true, Ordering::Release);
+                }
+            })
+            .open_stream()
+            .map_err(|e| format!("no audio output: {e}"))?;
+        sink.log_on_drop(false);
+        Ok(Self {
+            player: rodio::Player::connect_new(sink.mixer()),
+            _sink: sink,
+            lost,
+            queued: Default::default(),
+            rate,
+        })
+    }
+
+    fn buffer(&self, pcm: Vec<f32>) -> rodio::buffer::SamplesBuffer {
+        let mono = rodio::ChannelCount::new(1).expect("1 is non-zero");
+        let rate = rodio::SampleRate::new(self.rate).expect("the voice has a sample rate");
+        rodio::buffer::SamplesBuffer::new(mono, rate, pcm)
+    }
+
+    fn trim(&mut self) {
+        while self.queued.len() > self.player.len() {
+            self.queued.pop_front();
+        }
+    }
+
+    fn append(&mut self, pcm: Vec<f32>) {
+        self.trim();
+        self.player.append(self.buffer(pcm.clone()));
+        self.queued.push_back(pcm);
+    }
+
+    /// Reopen after a lost device; the piece that was playing restarts.
+    fn recover(&mut self, output: Option<&str>) -> Result<(), String> {
+        if !self.lost.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        self.trim();
+        let queued = std::mem::take(&mut self.queued);
+        *self = Speaker::open(output, self.rate)?;
+        for pcm in queued {
+            self.append(pcm);
+        }
+        Ok(())
+    }
+
+    fn empty(&self) -> bool {
+        self.player.empty()
+    }
+
+    fn stop(&self) {
+        self.player.stop();
+    }
 }
 
 // ── Streamed reply (EXPERIMENT, revertable) ─────────────────────────────────

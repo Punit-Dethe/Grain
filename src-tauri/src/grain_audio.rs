@@ -3,6 +3,47 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::Manager;
 
+/// Every audio output, default marked. Recall lists them for system audio,
+/// talk-back for where the voice plays. Ids are cpal device ids.
+pub(crate) fn output_devices() -> Result<Vec<crate::grain_meet::sources::SourceDevice>, String> {
+    use rodio::cpal::traits::{DeviceTrait, HostTrait};
+    let host = rodio::cpal::default_host();
+    let default_id = host.default_output_device().and_then(|d| d.id().ok());
+    let devices = host
+        .output_devices()
+        .map_err(|e| format!("Could not list audio outputs: {e}"))?;
+    Ok(devices
+        .filter_map(|device| {
+            let id = device.id().ok()?;
+            let name = device.description().ok()?.name().to_owned();
+            Some(crate::grain_meet::sources::SourceDevice {
+                is_default: default_id.as_ref() == Some(&id),
+                id: id.to_string(),
+                name,
+            })
+        })
+        .collect())
+}
+
+/// The output with this id; `None` is the system default *as a default
+/// stream*, so the OS reports when the default moves (cpal then invalidates
+/// the stream, and its owner reopens on the new default).
+pub(crate) fn output_device(device_id: Option<&str>) -> Result<rodio::cpal::Device, String> {
+    use rodio::cpal::traits::HostTrait;
+    let host = rodio::cpal::default_host();
+    match device_id {
+        Some(id) => {
+            let id: rodio::cpal::DeviceId =
+                id.parse().map_err(|_| "Unknown audio output".to_string())?;
+            host.device_by_id(&id)
+                .ok_or_else(|| "The chosen audio output is not available".to_string())
+        }
+        None => host
+            .default_output_device()
+            .ok_or_else(|| "There is no audio output".to_string()),
+    }
+}
+
 /// Handy's capture VAD selection, shared by Grain's separate mode callers.
 pub(crate) fn capture_vad_policy(
     enabled: bool,

@@ -1039,6 +1039,8 @@
         "compactVoiceDescription": "While a reply is read aloud, the notch stays small with a blue bar instead of opening. Hover or click it to read the reply; it closes when the voice ends.",
         "voice": "Voice",
         "voiceModel": "Voice model",
+        "voiceOutput": "Play on",
+        "voiceOutputDescription": "The speakers or headphones that read replies aloud. System default follows your computer's default output, also when it changes.",
         "voiceDescription": "The voice that reads replies aloud. A new voice downloads the first time you pick it (a quarter of a megabyte), then says a short hello so you can hear it.",
         "voiceAccent": { "us": "American", "gb": "British" },
         "voiceGender": { "female": "Female", "male": "Male" },

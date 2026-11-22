@@ -255,6 +255,8 @@ const settingUpdaters: {
   agent_compact_voice: (value) =>
     commands.changeAgentCompactVoiceSetting(value as boolean),
   agent_voice: (value) => commands.changeAgentVoiceSetting(value as string),
+  agent_voice_output: (value) =>
+    commands.changeAgentVoiceOutputSetting((value as string | null) ?? null),
   agent_dynamic_ui: (value) =>
     commands.changeAgentDynamicUiSetting(value as boolean),
   agent_polished_ui: (value) =>

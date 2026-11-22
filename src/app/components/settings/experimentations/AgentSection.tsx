@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { commands, type AgentVoicePreset } from "@/bindings";
+import { commands, type AgentVoicePreset, type SourceDevice } from "@/bindings";
+import { deviceOptions } from "../deviceOptions";
 import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { useSettings } from "../../../hooks/useSettings";
@@ -27,6 +28,47 @@ function VoiceModelRow({ talkBack }: { talkBack: boolean }) {
         if (talkBack) void updateSetting("agent_talk_back", false);
       }}
     />
+  );
+}
+
+/** Where talk-back plays. "System default" follows the default output, also
+ * when it changes mid-reply. The list is re-read when the window regains
+ * focus (devices come and go). */
+function VoiceOutputPicker() {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const [devices, setDevices] = useState<SourceDevice[]>([]);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      void commands.agentVoiceOutputs().then((result) => {
+        if (live && result.status === "ok") setDevices(result.data);
+      });
+    load();
+    window.addEventListener("focus", load);
+    return () => {
+      live = false;
+      window.removeEventListener("focus", load);
+    };
+  }, []);
+  const selected = getSetting("agent_voice_output") ?? "";
+  return (
+    <SettingContainer
+      title={t("ui2.settings.agent.voiceOutput")}
+      description={t("ui2.settings.agent.voiceOutputDescription")}
+      descriptionMode="tooltip"
+      grouped
+    >
+      <Dropdown
+        options={deviceOptions(devices, selected, t)}
+        selectedValue={selected}
+        onSelect={(value) =>
+          void updateSetting("agent_voice_output", value || null)
+        }
+        disabled={isUpdating("agent_voice_output")}
+        ariaLabel={t("ui2.settings.agent.voiceOutput")}
+      />
+    </SettingContainer>
   );
 }
 
@@ -119,6 +161,8 @@ export function AgentSection() {
           <VoiceModelRow talkBack={talkBack} />
 
           {talkBack && <VoicePicker />}
+
+          {talkBack && <VoiceOutputPicker />}
 
           {talkBack && (
             <ToggleSwitch

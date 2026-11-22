@@ -671,6 +671,28 @@ pub fn agent_voice_presets() -> Vec<AgentVoicePreset> {
         .collect()
 }
 
+/// [GRAIN] Audio outputs talk-back can play on, default marked.
+#[tauri::command]
+#[specta::specta]
+pub fn agent_voice_outputs() -> Result<Vec<crate::grain_meet::sources::SourceDevice>, String> {
+    crate::grain_audio::output_devices()
+}
+
+/// [GRAIN] Where talk-back plays: a device id from `agent_voice_outputs`, or
+/// `None` to follow the system default. Applies from the next speech. See
+/// `Settings::agent_voice_output`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_voice_output_setting(
+    app: AppHandle,
+    device_id: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_voice_output = device_id;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Pick the talk-back voice. A preset not yet on disk downloads in
 /// the background (256 KB); then it says a short line so you hear it. See
 /// `Settings::agent_voice`.

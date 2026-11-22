@@ -837,6 +837,11 @@ pub struct AppSettings {
     /// An unknown or missing one falls back to the default.
     #[serde(default = "default_agent_voice")]
     pub agent_voice: String,
+    /// [GRAIN] Where talk-back plays: a cpal output device id, or `None` to
+    /// follow the system default (also when it changes mid-reply). A chosen
+    /// device that is gone falls back to the default.
+    #[serde(default)]
+    pub agent_voice_output: Option<String>,
     /// [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
     /// interactive view (`grain_agent_canvas`). ON by default; off sends no
     /// view vocabulary to the model (fewer tokens) and replies are plain chat.
@@ -1690,6 +1695,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_talk_back: false,
         agent_compact_voice: true,
         agent_voice: default_agent_voice(),
+        agent_voice_output: None,
         agent_dynamic_ui: true,
         agent_polished_ui: true,
         agent_chat_width: default_agent_chat_width(),

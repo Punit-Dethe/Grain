@@ -189,42 +189,19 @@ impl Drop for MicCapture {
 #[cfg(windows)]
 mod loopback {
     use super::*;
-    use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use rodio::cpal::traits::{DeviceTrait, StreamTrait};
     use rodio::cpal::{self, SampleFormat};
     use std::sync::mpsc;
 
     pub fn list_outputs() -> Result<Vec<SourceDevice>, String> {
-        let host = cpal::default_host();
-        let default_id = host.default_output_device().and_then(|d| d.id().ok());
-        let devices = host
-            .output_devices()
-            .map_err(|e| format!("Could not list audio outputs: {e}"))?;
-        Ok(devices
-            .filter_map(|device| {
-                let id = device.id().ok()?;
-                let name = device.description().ok()?.name().to_owned();
-                Some(SourceDevice {
-                    is_default: default_id.as_ref() == Some(&id),
-                    id: id.to_string(),
-                    name,
-                })
-            })
-            .collect())
+        crate::grain_audio::output_devices()
     }
 
+    /// Following the default, the stream is a default stream: when the
+    /// default output moves, cpal invalidates it (`StreamInvalidated`, not a
+    /// reroute), `failed` is set and the recorder reopens on the new default.
     fn device(device_id: Option<&str>) -> Result<cpal::Device, String> {
-        let host = cpal::default_host();
-        match device_id {
-            Some(id) => {
-                let id: cpal::DeviceId =
-                    id.parse().map_err(|_| "Unknown audio output".to_string())?;
-                host.device_by_id(&id)
-                    .ok_or_else(|| "The chosen audio output is not available".to_string())
-            }
-            None => host
-                .default_output_device()
-                .ok_or_else(|| "There is no audio output to record".to_string()),
-        }
+        crate::grain_audio::output_device(device_id)
     }
 
     pub fn output_name(device_id: Option<&str>) -> String {

@@ -39,6 +39,7 @@ import {
   GrainModelProgressBar,
   useGrainModel,
 } from "../components/settings/GrainModelRow";
+import { deviceOptions } from "../components/settings/deviceOptions";
 import { SummaryTab } from "../meet/SummaryTab";
 import { MeetSettingsPage } from "./MeetSettingsPage";
 import { hashForRoute } from "../navigation";
@@ -154,22 +155,7 @@ function SourceControl({
   const pickerDisabled = !choice || pending || unsupported;
   const toggleDisabled = pickerDisabled || locked;
   const selected = choice?.device_id ?? "";
-  const fallback = devices.find((device) => device.is_default);
-  const options = [
-    {
-      value: "",
-      label: fallback
-        ? t("ui2.meet.sources.followDefaultNamed", { name: fallback.name })
-        : t("ui2.meet.sources.followDefault"),
-    },
-    ...devices.map((device) => ({ value: device.id, label: device.name })),
-  ];
-  if (selected && !devices.some((device) => device.id === selected)) {
-    options.push({
-      value: selected,
-      label: t("ui2.meet.sources.disconnected"),
-    });
-  }
+  const options = deviceOptions(devices, selected, t);
 
   let toggleTitle = enabled
     ? t("ui2.meet.sources.turnOff", { source: name })

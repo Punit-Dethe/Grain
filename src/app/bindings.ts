@@ -658,6 +658,30 @@ async changeAgentVoiceSetting(voice: string) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Audio outputs talk-back can play on, default marked.
+ */
+async agentVoiceOutputs() : Promise<Result<SourceDevice[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_voice_outputs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Where talk-back plays: a device id from `agent_voice_outputs`, or
+ * `None` to follow the system default. Applies from the next speech. See
+ * `Settings::agent_voice_output`.
+ */
+async changeAgentVoiceOutputSetting(deviceId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_voice_output_setting", { deviceId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Dynamic UI: Agent replies may carry an interactive view. See
  * `Settings::agent_dynamic_ui`.
  */
@@ -2566,6 +2590,12 @@ agent_compact_voice?: boolean;
  * An unknown or missing one falls back to the default.
  */
 agent_voice?: string; 
+/**
+ * [GRAIN] Where talk-back plays: a cpal output device id, or `None` to
+ * follow the system default (also when it changes mid-reply). A chosen
+ * device that is gone falls back to the default.
+ */
+agent_voice_output?: string | null; 
 /**
  * [GRAIN] Dynamic UI (experiment): an Agent chat reply may carry an
  * interactive view (`grain_agent_canvas`). ON by default; off sends no
