@@ -616,8 +616,7 @@ impl SpeechFeed {
                             && rest[i + 1..].starts_with(char::is_whitespace))
                 })
                 .map(|(i, c)| i + c.len_utf8())
-                .filter(|&end| rest[..end].matches("```").count().is_multiple_of(2))
-                .next_back()
+                .rfind(|&end| rest[..end].matches("```").count().is_multiple_of(2))
                 .unwrap_or(0)
         };
         if cut == 0 && state.done {
