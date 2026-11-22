@@ -119,12 +119,6 @@ function trackStatusNote(status: TrackStatus, t: T): string | null {
   if ("SpeakersUnavailable" in status) {
     return t("ui2.meet.status.speakersUnavailable");
   }
-  if ("TooLong" in status) {
-    return t("ui2.meet.status.tooLong", {
-      minutes: status.TooLong.minutes,
-      limit: status.TooLong.limit_minutes,
-    });
-  }
   return t("ui2.meet.status.failed", { reason: status.Failed.reason });
 }
 

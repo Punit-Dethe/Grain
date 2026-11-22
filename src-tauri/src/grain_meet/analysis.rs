@@ -14,7 +14,7 @@ use rubato::{Fft, FixedSync, Indexing, Resampler, WindowFunction};
 
 use super::storage::{chunk_path, Chunk, Track};
 use crate::grain_audio_journal::PcmJournal;
-use crate::grain_engine::{ANALYSIS_SAMPLE_RATE, MAX_ANALYSIS_SAMPLES};
+use crate::grain_engine::ANALYSIS_SAMPLE_RATE;
 
 const RATE: u64 = ANALYSIS_SAMPLE_RATE as u64;
 /// FluidMeet's `epochJoinSilenceSeconds`.
@@ -51,7 +51,6 @@ impl Piece {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unprepared {
     Empty,
-    TooLong { minutes: u64, limit_minutes: u64 },
     Failed(String),
 }
 
@@ -134,8 +133,8 @@ fn runs(track: &Track) -> Vec<&[Chunk]> {
     runs
 }
 
-/// Write a track's analysis file. Checks the 90-minute cap from the manifest
-/// before reading any audio.
+/// Write a track's analysis file (any length: the diarizer streams it in
+/// blocks, so its memory does not grow with the track).
 pub fn prepare(session: &Path, track: &Track) -> Result<TrackAnalysis, Unprepared> {
     let runs = runs(track);
     if runs.is_empty() {
@@ -150,12 +149,6 @@ pub fn prepare(session: &Path, track: &Track) -> Result<TrackAnalysis, Unprepare
         {
             total += SEPARATOR_SAMPLES;
         }
-    }
-    if total > MAX_ANALYSIS_SAMPLES {
-        return Err(Unprepared::TooLong {
-            minutes: total / (60 * RATE),
-            limit_minutes: MAX_ANALYSIS_SAMPLES / (60 * RATE),
-        });
     }
     let failed = |error: String| Unprepared::Failed(error);
     let journal = PcmJournal::create()
@@ -703,19 +696,9 @@ mod tests {
     }
 
     #[test]
-    fn the_cap_is_checked_before_any_audio_is_read() {
+    fn a_track_without_chunks_is_empty() {
         let root = tempfile::tempdir().unwrap();
-        let (dir, mut manifest) = record(root.path(), &[(0, 16_000, 1, 16_000)]);
-        // Pretend the run is 91 minutes; its audio is never opened.
-        manifest.tracks[0].chunks[0].frames = 91 * 60 * 16_000;
-        let error = prepare(&dir, &manifest.tracks[0]).err().unwrap();
-        assert_eq!(
-            error,
-            Unprepared::TooLong {
-                minutes: 91,
-                limit_minutes: 90
-            }
-        );
+        let (dir, manifest) = record(root.path(), &[(0, 16_000, 1, 16_000)]);
         let mut empty = manifest.clone();
         empty.tracks[0].chunks.clear();
         assert_eq!(

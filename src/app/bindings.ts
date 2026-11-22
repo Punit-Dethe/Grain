@@ -3212,10 +3212,6 @@ export type TrackStatus = "Complete" |
  */
 { Failed: { reason: string } } | 
 /**
- * Longer than the per-track processing cap; its audio is kept.
- */
-{ TooLong: { minutes: number; limit_minutes: number } } | 
-/**
  * The track holds no audio.
  */
 "Empty"

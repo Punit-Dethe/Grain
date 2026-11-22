@@ -40,11 +40,6 @@ pub enum TrackStatus {
     Failed {
         reason: String,
     },
-    /// Longer than the per-track processing cap; its audio is kept.
-    TooLong {
-        minutes: u64,
-        limit_minutes: u64,
-    },
     /// The track holds no audio.
     Empty,
 }

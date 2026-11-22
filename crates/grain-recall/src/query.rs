@@ -359,12 +359,6 @@ fn track_note(track: u32, status: &TrackStatus) -> Option<String> {
         TrackStatus::Failed { reason } => {
             Some(format!("track {track}: not transcribed ({reason})"))
         }
-        TrackStatus::TooLong {
-            minutes,
-            limit_minutes,
-        } => Some(format!(
-            "track {track}: {minutes} min is over the {limit_minutes} min limit; not transcribed"
-        )),
     }
 }
 

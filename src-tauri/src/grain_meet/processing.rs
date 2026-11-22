@@ -261,15 +261,6 @@ fn assemble_track(
     let analysis = match prepared {
         Ok(analysis) => analysis,
         Err(Unprepared::Empty) => return empty(TrackStatus::Empty),
-        Err(Unprepared::TooLong {
-            minutes,
-            limit_minutes,
-        }) => {
-            return empty(TrackStatus::TooLong {
-                minutes: *minutes,
-                limit_minutes: *limit_minutes,
-            })
-        }
         Err(Unprepared::Failed(reason)) => {
             return empty(TrackStatus::Failed {
                 reason: reason.clone(),

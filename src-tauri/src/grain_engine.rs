@@ -14,14 +14,6 @@ use transcribe_cpp::{Backend, DiarizeOptions, SpeakerSegment};
 /// Analysis audio is 16 kHz mono float32 PCM, the native diarizer contract.
 pub const ANALYSIS_SAMPLE_RATE: u32 = 16_000;
 
-/// Grain's per-track processing cap: 90 minutes (86.4 M float32 samples).
-/// Like FluidMeet, a track is diarized as one run so speaker slots stay
-/// continuous; it is never cut into independently diarized pieces. 90 minutes
-/// keeps one run's measured worker peak (about 1.2 GiB per hour of audio)
-/// under the 2 GiB processing target. Longer tracks are kept but refused for
-/// processing with this limit stated.
-pub const MAX_ANALYSIS_SAMPLES: u64 = 90 * 60 * ANALYSIS_SAMPLE_RATE as u64;
-
 /// The native role a worker load creates.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
@@ -129,13 +121,6 @@ fn analysis_samples(audio: &Path) -> Result<u64, String> {
     let samples = metadata.len() / 4;
     if samples == 0 {
         return Err("Analysis audio is empty".into());
-    }
-    if samples > MAX_ANALYSIS_SAMPLES {
-        return Err(format!(
-            "Analysis audio is {} minutes; one track can be processed for at most {} minutes",
-            samples / (60 * u64::from(ANALYSIS_SAMPLE_RATE)),
-            MAX_ANALYSIS_SAMPLES / (60 * u64::from(ANALYSIS_SAMPLE_RATE)),
-        ));
     }
     Ok(samples)
 }
@@ -671,14 +656,6 @@ mod tests {
         assert!(diarize_request(&empty, DiarizeOptions::default())
             .unwrap_err()
             .contains("empty"));
-        // The 90-minute cap, checked from the size alone.
-        let long = dir.path().join("long.f32le");
-        std::fs::File::create(&long)
-            .unwrap()
-            .set_len((MAX_ANALYSIS_SAMPLES + 1) * 4)
-            .unwrap();
-        let error = diarize_request(&long, DiarizeOptions::default()).unwrap_err();
-        assert!(error.contains("at most 90 minutes"), "{error}");
     }
 
     /// Every block of an analysis file, joined (blocks of `block` samples).

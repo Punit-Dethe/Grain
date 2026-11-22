@@ -1294,7 +1294,6 @@
       "status": {
         "empty": "A track has no audio.",
         "speakersUnavailable": "Speakers could not be identified; the text is shown without them.",
-        "tooLong": "A track is {{minutes}} minutes long; tracks of up to {{limit}} minutes can be transcribed. Its audio is kept.",
         "failed": "A track could not be transcribed: {{reason}}"
       }
     }
