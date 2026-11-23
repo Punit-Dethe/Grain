@@ -339,6 +339,8 @@ fn run_session(
                 }
             }
             Ok(WorkerCommand::Finish) => {
+                let finish_at = Instant::now();
+                let decoded_before = accumulator.decoded_windows();
                 let total = journal.frame_count();
                 // Fluid-profile models pad sub-second audio to 1 s instead.
                 let fluid = crate::grain_models::uses_fluid_flow(&config.model_id);
@@ -357,10 +359,13 @@ fn run_session(
                     ) {
                         Ok(text) => {
                             log::info!(
-                                "[GRAIN] Flow finalized {} samples via {} window decodes in {:.2}s",
+                                "[GRAIN] Flow finalized {} samples via {} window decodes in {:.2}s; \
+                                 after Stop: {} decode(s) in {} ms",
                                 total,
                                 accumulator.decoded_windows(),
-                                started.elapsed().as_secs_f64()
+                                started.elapsed().as_secs_f64(),
+                                accumulator.decoded_windows() - decoded_before,
+                                finish_at.elapsed().as_millis()
                             );
                             return WorkerOutput::success(text);
                         }

@@ -309,6 +309,8 @@ impl ShortcutAction for RealtimeTranscribeAction {
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        // Stop-to-paste stage timings, logged once per dictation.
+        let stop_at = std::time::Instant::now();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let post_process = self.post_process_override.load(Ordering::Relaxed);
         let stop_context = (crate::settings::get_settings(app).context_awareness_enabled
@@ -334,6 +336,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // Snapshot before the stop so a cancel landing during the extra
         // recording buffer (or later, mid-pipeline) is observed.
         let cancel_generation = rm.cancel_generation();
+        let spawned_ms = stop_at.elapsed().as_millis();
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone(), Arc::clone(&tm));
 
@@ -358,7 +361,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // Drain the rolling worker → final assembled transcript. Always done,
             // even under Prompt Record, so the worker never leaks — its text is
             // just unused in that case (it mixed content + instruction).
+            let recorder_ms = stop_at.elapsed().as_millis();
             let rolling = rt.finish_session();
+            let decoded_ms = stop_at.elapsed().as_millis();
             let rolling_text = rolling
                 .as_ref()
                 .map(|output| output.text.as_str())
@@ -437,6 +442,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // Original/AI comparison is only meaningful when the raw side is
             // not overwritten by the text that will be pasted.
             let transcription_text = final_text;
+            let cleaned_ms = stop_at.elapsed().as_millis();
             let processed = if let Some(error) = pipeline_error.as_ref() {
                 error!("[GRAIN] {error}");
                 ProcessedTranscription {
@@ -457,6 +463,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             };
             let suppress_trailing_space = processed.suppress_trailing_space;
             let final_text = processed.final_text;
+            let processed_ms = stop_at.elapsed().as_millis();
 
             // Deliver text before WAV export and history I/O. Neither is needed
             // by the paste path, and both can take noticeable time on slow disks.
@@ -473,6 +480,14 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     change_tray_icon(&ah, TrayIconState::Idle);
                 }
             }
+            log::info!(
+                "[GRAIN] Stop timing ({:.1}s audio): stop handler {spawned_ms} ms, \
+                 recorder stopped {recorder_ms} ms, final decode done {decoded_ms} ms, \
+                 text cleanup done {cleaned_ms} ms, post-process done {processed_ms} ms, \
+                 pasted {} ms (cumulative from Stop)",
+                audio_len as f64 / 16_000.0,
+                stop_at.elapsed().as_millis()
+            );
 
             if audio_len > 0 {
                 let file_name = format!("grain-{}.wav", chrono::Utc::now().timestamp());
