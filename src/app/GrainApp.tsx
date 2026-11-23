@@ -8,7 +8,7 @@ import {
 import { WindowChrome } from "./components/WindowChrome";
 import { platform } from "@tauri-apps/plugin-os";
 import { useTranslation } from "react-i18next";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, {
@@ -566,6 +566,41 @@ function NextShell() {
     useSettings();
   const hasInitializedRuntime = useRef(false);
   const [quickPanelOpen, setQuickPanelOpen] = useState(false);
+
+  useEffect(() => {
+    const subscriptions = Promise.allSettled([
+      events.recordingError.listen(({ payload }) => {
+        if (payload.error_type === "microphone_permission_denied") {
+          toast.error(t("errors.micPermissionDeniedTitle"), {
+            description: t("errors.micPermissionDenied.generic"),
+          });
+        } else if (payload.error_type === "no_input_device") {
+          toast.error(t("errors.noInputDeviceTitle"), {
+            description: t("errors.noInputDevice"),
+          });
+        } else {
+          toast.error(
+            t("errors.recordingFailed", {
+              error: payload.detail ?? t("errors.unknown", "Unknown error"),
+            }),
+          );
+        }
+      }),
+      events.pasteError.listen(() => {
+        toast.error(t("errors.pasteFailedTitle"), {
+          description: t("errors.pasteFailed"),
+        });
+      }),
+    ]);
+
+    return () => {
+      void subscriptions.then((listeners) => {
+        for (const listener of listeners) {
+          if (listener.status === "fulfilled") listener.value();
+        }
+      });
+    };
+  }, [t]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? "dark" : "light";
