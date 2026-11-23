@@ -1481,11 +1481,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::connections::mcp_connection_stop,
             grain_mcp::connections::mcp_connection_logs,
             grain_mcp::connections::mcp_connection_test,
-            grain_mcp::browse::mcp_browse_status,
-            grain_mcp::browse::mcp_browse_install,
-            grain_mcp::browse::mcp_browse_pair,
-            grain_mcp::browse::mcp_browse_open_store,
-            grain_mcp::browse::mcp_browse_uninstall,
             shortcut::change_lazy_stream_close_setting,
             // [GRAIN] change_vad_enabled_setting intentionally not registered;
             // upstream #1738 filler-word toggle is.
