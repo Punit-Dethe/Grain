@@ -264,11 +264,7 @@ pub enum OverlayStyle {
 }
 
 fn default_overlay_style() -> OverlayStyle {
-    if cfg!(target_os = "linux") {
-        OverlayStyle::None
-    } else {
-        OverlayStyle::Live
-    }
+    OverlayStyle::Live
 }
 
 /// Normalize legacy placement and retire the removed pill renderer setting.
@@ -954,6 +950,12 @@ fn default_pill_show_app_icon() -> bool {
 #[cfg(test)]
 mod overlay_migration_tests {
     use super::*;
+
+    #[test]
+    fn fresh_settings_show_the_live_overlay() {
+        let settings = get_default_settings();
+        assert_eq!(settings.overlay_style, OverlayStyle::Live);
+    }
 
     #[test]
     fn legacy_positions_keep_enabled_state_and_normalize_the_edge() {

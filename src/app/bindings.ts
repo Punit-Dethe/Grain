@@ -1280,6 +1280,17 @@ async agentOpenSummon(generation: number) : Promise<Result<null, string>> {
 }
 },
 /**
+ * Open the chat from settings when the desktop cannot deliver global shortcuts.
+ */
+async agentOpenChat() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_open_chat") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Start dictating into the open chat's composer: one utterance with
  * the selected dictation model, like a summon, but the chat stays open.
  */

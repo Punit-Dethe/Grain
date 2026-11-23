@@ -24,10 +24,12 @@ use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::context_screen::CapturedImage;
 use crate::grain_llm_fallback::ProviderOutcome;
+#[cfg(not(target_os = "linux"))]
 use crate::input::EnigoState;
 use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
@@ -1074,7 +1076,15 @@ fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
     if bounds_match_win32(window, x, y, w, h) || set_bounds_win32(window, x, y, w, h) {
         return;
     }
-    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    // A native Wayland toplevel is positioned by its compositor. Keep sizing it
+    // so the window can still grow from the listening card into the chat.
+    #[cfg(target_os = "linux")]
+    let can_position = !crate::utils::is_wayland();
+    #[cfg(not(target_os = "linux"))]
+    let can_position = true;
+    if can_position {
+        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    }
     let _ = window.set_size(tauri::LogicalSize::new(w, h));
 }
 
@@ -1451,6 +1461,36 @@ fn hand_opened(app: &AppHandle) -> bool {
         .is_some_and(|state| state.opened.load(Ordering::SeqCst))
 }
 
+/// Open the chat from settings when the desktop cannot deliver global shortcuts.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_open_chat(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Open Agent from Grain's main window.".into());
+    }
+    if !get_settings(&app).agent_enabled {
+        return Err("Turn on Agent before opening the chat.".into());
+    }
+    let handle = app.clone();
+    let (opened, result) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        open_notch(&handle);
+        let window = handle.get_webview_window(PANEL_LABEL);
+        if let Some(window) = &window {
+            if reply_shown(&handle) && !ordinary_dictation_live(&handle) {
+                let _ = window.set_focus();
+            }
+        }
+        let _ = opened.send(window.is_some_and(|window| window.is_visible().unwrap_or(false)));
+    })
+    .map_err(|error| error.to_string())?;
+    if result.await.unwrap_or(false) {
+        Ok(())
+    } else {
+        Err("Could not open the Agent window.".into())
+    }
+}
+
 /// The shell size the hand-opened notch is animating to, in CSS px.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
 pub struct AgentNotchShape {
@@ -1576,12 +1616,19 @@ mod terminal_capture_tests {
     }
 }
 
+/// Linux uses an empty context until the focused selection can be read safely.
+/// Ctrl+C in a terminal would interrupt its foreground process.
+#[cfg(target_os = "linux")]
+fn capture_selection(_: &AppHandle) -> Option<String> {
+    None
+}
+
 /// Synthesise a platform copy and read the resulting selection off the clipboard,
 /// restoring the user's original clipboard afterwards (the capture is invisible).
 /// Returns `None` if nothing usable was selected, input simulation is unavailable,
 /// or the clipboard didn't change.
-// Shared invisible selection capture for Agent and extension requests.
-pub(crate) fn capture_selection_result(app: &AppHandle) -> Result<Option<String>, String> {
+#[cfg(not(target_os = "linux"))]
+fn capture_selection_result(app: &AppHandle) -> Result<Option<String>, String> {
     // A synthetic Ctrl+C is an interrupt in a terminal. In development the
     // terminal can also own this very process, so copying its selection would
     // terminate Grain (and cargo) instead of opening the Agent.
@@ -1644,7 +1691,8 @@ pub(crate) fn capture_selection_result(app: &AppHandle) -> Result<Option<String>
         .filter(|s| !s.is_empty()))
 }
 
-pub(crate) fn capture_selection(app: &AppHandle) -> Option<String> {
+#[cfg(not(target_os = "linux"))]
+fn capture_selection(app: &AppHandle) -> Option<String> {
     match capture_selection_result(app) {
         Ok(selection) => selection,
         Err(error) => {

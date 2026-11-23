@@ -1,4 +1,5 @@
 import { ChineseScriptSetting } from "@/components/settings/DecodeSettings";
+import { platform } from "@tauri-apps/plugin-os";
 import { useTranslation } from "react-i18next";
 import { AppendTrailingSpace } from "@/components/settings/AppendTrailingSpace";
 import { AutoSubmit } from "@/components/settings/AutoSubmit";
@@ -35,7 +36,11 @@ export function OutputPane() {
         <ClipboardHandlingSetting descriptionMode="tooltip" grouped />
         <ToggleSwitch
           label={t("ui2.settings.pasteCatch.title")}
-          description={t("ui2.settings.pasteCatch.description")}
+          description={
+            platform() === "linux"
+              ? t("ui2.settings.pasteCatch.descriptionLinux")
+              : t("ui2.settings.pasteCatch.description")
+          }
           descriptionMode="tooltip"
           grouped
           checked={pasteCatch}

@@ -12,6 +12,8 @@
     }
   },
   "agent": {
+    "openChat": "Open Agent",
+    "openChatDescription": "Open the chat without a global shortcut.",
     "brand": "Grain Assist",
     "notchStarting": "Starting…",
     "notchListening": "Listening…",
@@ -1112,7 +1114,8 @@
       },
       "pasteCatch": {
         "title": "Recover missed text insertion",
-        "description": "If Grain can’t insert a transcript, it offers to copy it. The transcript is copied after a short countdown unless you decline."
+        "description": "If Grain can’t insert a transcript, it offers to copy it. The transcript is copied after a short countdown unless you decline.",
+        "descriptionLinux": "If text insertion fails, Grain offers to copy the transcript. The clipboard changes when you choose Copy."
       }
     },
     "appearance": {

@@ -117,12 +117,18 @@ pub(crate) async fn paste_transcription(
     suppress_trailing_space: bool,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         let watch = crate::grain_dictionary::prepare(&app, &text, suppress_trailing_space);
+        #[cfg(target_os = "linux")]
+        let recovery = crate::paste_catch::prepare_manual_recovery(&app, &text);
         let result = utils::paste_with_options(text, app.clone(), suppress_trailing_space);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if let (Ok(()), Some(watch)) = (&result, watch) {
-            watch.start(app);
+            watch.start(app.clone());
+        }
+        #[cfg(target_os = "linux")]
+        if let (Err(_), Some(recovery)) = (&result, recovery) {
+            crate::paste_catch::offer_manual_recovery(&app, recovery);
         }
         result
     })

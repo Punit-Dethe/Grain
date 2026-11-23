@@ -53,9 +53,10 @@ for older macOS deployment targets. ONNX Runtime is no longer required.
 
 #### Linux
 
-The WebKit DMABUF crash workaround defaults to enabled and respects an explicit
-`WEBKIT_DISABLE_DMABUF_RENDERER=0` override. Set the override only when diagnosing
-renderer compatibility; leaving it unset keeps crash protection on.
+Grain keeps the WebKitGTK compositor on shared memory for WebKitGTK 2.54 and
+newer so transparent overlays render fully. Older versions retain the DMA-BUF
+disable workaround. Explicit `WEBKIT_DISABLE_DMABUF_RENDERER` or
+`WEBKIT_DMABUF_RENDERER_FORCE_SHM` settings override this policy.
 
 - Build essentials
 - ALSA development libraries
@@ -125,6 +126,12 @@ bun install
 ```bash
 bun tauri dev
 ```
+
+On Linux, start and stop dictation with `Ctrl+Alt+Space`. For an existing
+profile with overlays disabled, select **Live** in the application settings.
+On a desktop that cannot register Grain's shortcut, bind the installed
+`handy --toggle-transcription` command in the desktop's keyboard settings.
+Launch Grain before using that command.
 
 ### 4. Build for Production
 

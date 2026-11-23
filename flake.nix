@@ -164,7 +164,6 @@
 
             preFixup = ''
               gappsWrapperArgs+=(
-                --set-default WEBKIT_DISABLE_DMABUF_RENDERER 1
                 --set ALSA_PLUGIN_DIR "${combinedAlsaPlugins}"
                 # A Nix store install is immutable; updates must come from Nix.
                 --set GRAIN_DISABLE_UPDATER 1

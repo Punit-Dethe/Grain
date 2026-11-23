@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { platform } from "@tauri-apps/plugin-os";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { commands, type AgentVoicePreset, type SourceDevice } from "@/bindings";
 import { deviceOptions } from "../deviceOptions";
 import { Dropdown } from "../../ui/Dropdown";
@@ -137,6 +139,28 @@ export function AgentSection() {
             grouped
             descriptionMode="tooltip"
           />
+          {platform() === "linux" && (
+            <SettingContainer
+              title={t("agent.openChat")}
+              description={t("agent.openChatDescription")}
+              grouped
+            >
+              <button
+                className="button"
+                type="button"
+                onClick={() => {
+                  void commands
+                    .agentOpenChat()
+                    .then((result) => {
+                      if (result.status === "error") toast.error(result.error);
+                    })
+                    .catch((error) => toast.error(String(error)));
+                }}
+              >
+                {t("common.open")}
+              </button>
+            </SettingContainer>
+          )}
 
           <ToggleSwitch
             label={t("ui2.settings.agent.screenImage")}
