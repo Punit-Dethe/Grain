@@ -114,40 +114,24 @@ jobs:
           python -m unittest discover -s scripts -p test_transcribe_fork.py
           python scripts/transcribe_fork.py --check --metadata --official --target "${{ inputs.target }}"
 
-      - name: install dependencies (ubuntu 24.04 x64)
-        if: contains(inputs.platform, 'ubuntu-24.04') && !contains(inputs.platform, 'arm')
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev libgtk-layer-shell0 libgtk-layer-shell-dev \
-            libwebkit2gtk-4.1-0=2.44.0-2 \
-            libwebkit2gtk-4.1-dev=2.44.0-2 \
-            libjavascriptcoregtk-4.1-0=2.44.0-2 \
-            libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-            gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-            gir1.2-webkit2-4.1=2.44.0-2
-
-      - name: install dependencies (ubuntu 24.04 arm64)
-        if: contains(inputs.platform, 'ubuntu-24.04-arm')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev libgtk-layer-shell0 libgtk-layer-shell-dev xdg-utils
-
-      - name: install dependencies (ubuntu 22.04)
-        if: contains(inputs.platform, 'ubuntu-22.04') && !contains(inputs.platform, 'arm')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev libgtk-layer-shell0 libgtk-layer-shell-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev \
+            libxtst-dev libxrandr-dev libgtk-layer-shell-dev xdg-utils
 
       - name: Verify gtk-layer-shell runtime dependency (Ubuntu)
         if: contains(inputs.platform, 'ubuntu')
         run: |
           dpkg-query -W -f='${Status}\n' libgtk-layer-shell0 | grep -q "install ok installed"
-          ldconfig -p | grep -q "libgtk-layer-shell.so.0"
+          ldconfig -p | grep -F 'libgtk-layer-shell.so.0' > /dev/null
 
       - name: Verify OpenBLAS runtime dependency (Ubuntu)
         if: contains(inputs.platform, 'ubuntu')
         run: |
-          ldconfig -p | grep -q "libopenblas.so.0"
+          ldconfig -p | grep -F 'libopenblas.so.0' > /dev/null
 
       - name: Install Vulkan SDK (Windows x64)
         if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64')
@@ -341,6 +325,23 @@ jobs:
           echo "CMAKE_CXX_COMPILER_TARGET=aarch64-pc-windows-msvc" >> $env:GITHUB_ENV
           echo "CL=/EHsc" >> $env:GITHUB_ENV
 
+      - name: Prepare AppImage bundler
+        if: runner.os == 'Linux' && contains(inputs.build-args, 'appimage')
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            x86_64) arch=x86_64; digest=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d ;;
+            aarch64) arch=aarch64; digest=620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff ;;
+            *) exit 1 ;;
+          esac
+          tools_dir="${XDG_CACHE_HOME:-$HOME/.cache}/tauri"
+          mkdir -p "$tools_dir"
+          tool="$tools_dir/linuxdeploy-$arch.AppImage"
+          curl -fsSL --retry 3 -o "$tool" \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-$arch.AppImage"
+          printf '%s  %s\n' "$digest" "$tool" | sha256sum -c -
+          chmod +x "$tool"
+
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:
@@ -357,6 +358,8 @@ jobs:
           AZURE_TENANT_ID: ${{ inputs.sign-binaries && secrets.AZURE_TENANT_ID || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # Exclude host graphics libraries during packaging, before Tauri signs the file.
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: libwayland-client.so*;libvulkan.so*
           # Disable -march=native and all SIMD instruction sets above SSE4.2 for
           # x86_64 builds. Without this, CPUs lacking AVX/FMA (e.g. Celeron N2920,
           # FX-8350) crash with SIGILL. The Vulkan backend handles heavy compute
@@ -404,78 +407,75 @@ jobs:
             src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app
           retention-days: 30
 
-      - name: Install FUSE for AppImage processing
-        if: contains(inputs.platform, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fuse libfuse2
-
-      - name: Remove libwayland-client.so from AppImage
-        if: contains(inputs.platform, 'ubuntu')
-        run: |
-          # Find the AppImage file
-          APPIMAGE_PATH=$(find src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/appimage -name "*.AppImage" | head -1)
-
-          if [ -n "$APPIMAGE_PATH" ]; then
-            echo "Processing AppImage: $APPIMAGE_PATH"
-
-            # Make AppImage executable
-            chmod +x "$APPIMAGE_PATH"
-
-            # Extract AppImage
-            cd "$(dirname "$APPIMAGE_PATH")"
-            APPIMAGE_NAME=$(basename "$APPIMAGE_PATH")
-
-            # Extract using the AppImage itself
-            "./$APPIMAGE_NAME" --appimage-extract
-
-            # Remove libwayland-client.so files
-            echo "Removing libwayland-client.so files..."
-            find squashfs-root -name "libwayland-client.so*" -type f -delete
-
-            # List what was removed for verification
-            echo "Files remaining in lib directories:"
-            find squashfs-root -name "lib*" -type d | head -5 | while read dir; do
-              echo "Contents of $dir:"
-              ls "$dir" | grep -E "(wayland|fuse)" || echo "  No wayland/fuse libraries found"
-            done
-
-            # Detect architecture and get appropriate appimagetool
-            if [[ "$(uname -m)" == "aarch64" ]]; then
-              APPIMAGETOOL_ARCH="aarch64"
-            else
-              APPIMAGETOOL_ARCH="x86_64"
-            fi
-
-            wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${APPIMAGETOOL_ARCH}.AppImage"
-            chmod +x "appimagetool-${APPIMAGETOOL_ARCH}.AppImage"
-
-            # Repackage AppImage with no-appstream to avoid warnings
-            ARCH="${APPIMAGETOOL_ARCH}" "./appimagetool-${APPIMAGETOOL_ARCH}.AppImage" --no-appstream squashfs-root "$APPIMAGE_NAME"
-
-            # Clean up
-            rm -rf squashfs-root "appimagetool-${APPIMAGETOOL_ARCH}.AppImage"
-
-            echo "libwayland-client.so removed from AppImage successfully"
-          else
-            echo "No AppImage found to process"
-          fi
-
-      - name: Verify Debian OpenSSL runtime dependency
-        if: contains(inputs.platform, 'ubuntu')
+      - name: Resolve Linux bundle directory
+        if: runner.os == 'Linux'
+        id: linux-bundles
         shell: bash
+        env:
+          BUILD_ARGS: ${{ inputs.build-args }}
+          RUST_TARGET: ${{ inputs.target }}
+          PROFILE: ${{ steps.build-profile.outputs.profile }}
         run: |
           base="${CARGO_TARGET_DIR:-src-tauri/target}"
-          if [[ -n "${{ inputs.target }}" ]]; then
-            base="$base/${{ inputs.target }}"
+          if [[ " $BUILD_ARGS " == *' --target '* || " $BUILD_ARGS " == *' --target='* ]]; then
+            base="$base/$RUST_TARGET"
           fi
+          echo "dir=$base/$PROFILE/bundle" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Linux bundles
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          BUILD_ARGS: ${{ inputs.build-args }}
+          BUNDLES: ${{ steps.linux-bundles.outputs.dir }}
+        run: |
           shopt -s nullglob
-          for deb in "$base/${{ steps.build-profile.outputs.profile }}/bundle/deb/"*.deb; do
+          debs=("$BUNDLES/deb/"*.deb)
+          images=("$BUNDLES/appimage/"*.AppImage)
+          rpms=("$BUNDLES/rpm/"*.rpm)
+          for format in deb appimage rpm; do
+            if [[ "$BUILD_ARGS" != *"$format"* ]]; then
+              continue
+            fi
+            case "$format" in
+              deb) count=${#debs[@]} ;;
+              appimage) count=${#images[@]} ;;
+              rpm) count=${#rpms[@]} ;;
+            esac
+            if (( count == 0 )); then
+              echo "Missing requested $format bundle in $BUNDLES" >&2
+              exit 1
+            fi
+          done
+
+          for deb in "${debs[@]}"; do
             depends="$(dpkg-deb -f "$deb" Depends)"
             if ! printf '%s\n' "$depends" | grep -Eq '(^|,)[[:space:]]*libssl3t64[[:space:]]*\|[[:space:]]*libssl3[[:space:]]*(,|$)'; then
               echo "ERROR: $deb must declare libssl3t64 | libssl3. Depends: $depends"
               exit 1
             fi
+            contents="$(dpkg-deb --fsys-tarfile "$deb" | tar -tf -)"
+            for pattern in 'usr/lib/Grain/libtranscribe\.so\.' 'usr/lib/Grain/libggml-cpu' 'silero-vad-.*\.gguf'; do
+              if ! grep -E "$pattern" <<< "$contents" > /dev/null; then
+                echo "Missing $pattern in $deb" >&2
+                exit 1
+              fi
+            done
+          done
+
+          for image in "${images[@]}"; do
+            image="$(realpath "$image")"
+            workdir="$(mktemp -d)"
+            (
+              cd "$workdir"
+              "$image" --appimage-extract > /dev/null
+              forbidden="$(find squashfs-root \( -name 'libwayland-client.so*' -o -name 'libvulkan.so*' \) -print -quit)"
+              if [[ -n "$forbidden" ]]; then
+                echo "Host graphics library bundled in $image: $forbidden" >&2
+                exit 1
+              fi
+            )
+            rm -rf "$workdir"
           done
 
       - name: Upload artifacts (Linux)
@@ -484,9 +484,10 @@ jobs:
         with:
           name: ${{ inputs.asset-prefix }}-${{ inputs.platform }}-${{ inputs.target }}
           path: |
-            src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/deb/*.deb
-            src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/appimage/*.AppImage
-            src-tauri/target/${{ steps.build-profile.outputs.profile }}/bundle/rpm/*.rpm
+            ${{ steps.linux-bundles.outputs.dir }}/deb/*.deb
+            ${{ steps.linux-bundles.outputs.dir }}/appimage/*.AppImage
+            ${{ steps.linux-bundles.outputs.dir }}/rpm/*.rpm
+          if-no-files-found: error
           retention-days: 30
 
       - name: Resolve Windows artifact path

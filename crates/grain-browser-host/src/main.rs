@@ -10,14 +10,17 @@
 //! extension's connection and Grain both do. When Grain is not running it
 //! exits at once and the extension tries again later.
 
+#[cfg(any(windows, test))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Largest message accepted from either side. Browsers cap host → extension
 /// messages at 1 MB; extension → host messages are page reads, kept well
 /// below this.
+#[cfg(any(windows, test))]
 const MAX_MESSAGE: u32 = 8 * 1024 * 1024;
 
 /// Read one framed message; `None` at a clean end of stream.
+#[cfg(any(windows, test))]
 async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> std::io::Result<Option<Vec<u8>>> {
     let mut length = [0u8; 4];
     match reader.read_exact(&mut length).await {
@@ -37,12 +40,14 @@ async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> std::io::Result<
     Ok(Some(body))
 }
 
+#[cfg(any(windows, test))]
 async fn write_frame<W: AsyncWriteExt + Unpin>(writer: &mut W, body: &[u8]) -> std::io::Result<()> {
     writer.write_all(&(body.len() as u32).to_ne_bytes()).await?;
     writer.write_all(body).await?;
     writer.flush().await
 }
 
+#[cfg(windows)]
 async fn relay<R, W>(mut from: R, mut to: W) -> std::io::Result<()>
 where
     R: AsyncReadExt + Unpin,
