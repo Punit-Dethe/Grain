@@ -212,6 +212,21 @@ pub(crate) fn prepare(
     text: &str,
     may_intercept: bool,
 ) -> Preparation {
+    let started = std::time::Instant::now();
+    let preparation = prepare_probe(app, settings, text, may_intercept);
+    info!(
+        "[GRAIN] Paste Catch probe took {} ms",
+        started.elapsed().as_millis()
+    );
+    preparation
+}
+
+fn prepare_probe(
+    app: &AppHandle,
+    settings: &AppSettings,
+    text: &str,
+    may_intercept: bool,
+) -> Preparation {
     if !cfg!(windows) || !settings.paste_catch_enabled {
         return Preparation::Passthrough;
     }

@@ -117,9 +117,15 @@ pub(crate) async fn paste_transcription(
     suppress_trailing_space: bool,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let started = std::time::Instant::now();
         #[cfg(windows)]
         let watch = crate::grain_dictionary::prepare(&app, &text, suppress_trailing_space);
+        let probed_ms = started.elapsed().as_millis();
         let result = utils::paste_with_options(text, app.clone(), suppress_trailing_space);
+        log::info!(
+            "[GRAIN] Paste timing: dictionary probe {probed_ms} ms, paste call done {} ms",
+            started.elapsed().as_millis()
+        );
         #[cfg(windows)]
         if let (Ok(()), Some(watch)) = (&result, watch) {
             watch.start(app);
