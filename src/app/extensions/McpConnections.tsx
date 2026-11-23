@@ -141,6 +141,8 @@ export function McpConnections({
   const [logsById, setLogsById] = useState<Record<string, LocalMcpLogs>>({});
   const [browse, setBrowse] = useState<BrowseSetupStatus | null>(null);
   const [browseNote, setBrowseNote] = useState<string | null>(null);
+  const [browseCode, setBrowseCode] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
   const [uninstallingBrowse, setUninstallingBrowse] = useState(false);
 
   const live = useRef(false);
@@ -513,6 +515,8 @@ export function McpConnections({
     void run("browse", async () => {
       const res = unwrapResult(await commands.mcpBrowsePair());
       if (live.current) {
+        setBrowseCode(res.code ?? null);
+        setCopiedCode(false);
         setBrowseNote(res.message);
         if (res.paired) {
           const checked = unwrapResult(await commands.mcpBrowseStatus(true));
@@ -521,18 +525,41 @@ export function McpConnections({
       }
     });
 
+  const openBrowseStore = () =>
+    void run("browse", async () => {
+      unwrapResult(await commands.mcpBrowseOpenStore());
+    });
+
+  const copyBrowseCode = async () => {
+    if (!browseCode) return;
+    try {
+      await navigator.clipboard.writeText(browseCode);
+      if (live.current) {
+        setCopiedCode(true);
+        setTimeout(() => {
+          if (live.current) setCopiedCode(false);
+        }, 2000);
+      }
+    } catch {
+      /* ignore clipboard error */
+    }
+  };
+
   const checkBrowseExtension = () =>
     void run("browse", async () => {
       const checked = unwrapResult(await commands.mcpBrowseStatus(true));
       if (live.current) {
         setBrowse(checked);
+        if (checked.extensionConnected || checked.extensionPaired) {
+          setBrowseCode(null);
+        }
         setBrowseNote(
           checked.extensionConnected
-            ? "Browser extension connected and ready."
+            ? "Browser extension paired & connected. Enable Browser Control below to use it."
             : checked.extensionPaired
-              ? "Browser extension paired (waiting for Chrome/Edge/Brave to open)."
+              ? "Browser extension paired (waiting for Chrome/Edge/Brave to connect)."
               : (checked.note ??
-                "Extension not paired yet. Click Pair browser extension."),
+                "Extension not paired yet. Click Get pairing code."),
         );
       }
     });
@@ -542,6 +569,7 @@ export function McpConnections({
       unwrapResult(await commands.mcpBrowseUninstall());
       if (live.current) {
         setUninstallingBrowse(false);
+        setBrowseCode(null);
         setBrowseNote(null);
       }
     });
@@ -943,6 +971,19 @@ export function McpConnections({
                       ? `Native Rust browser bridge${browse.version ? ` (v${browse.version})` : ""} — background tab groups, 2FA handoff, 0 MB idle.`
                       : "Let the Agent act in your signed-in Chrome, Edge, or Brave tabs — ~3 MB native Rust binary, 0 MB idle, swap or remove anytime."}
                   </p>
+                  {browseCode && (
+                    <div className="mcp-pair-code-box" role="status">
+                      <span>Pairing code:</span>
+                      <code className="mcp-pair-code">{browseCode}</code>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        onClick={() => void copyBrowseCode()}
+                      >
+                        {copiedCode ? "Copied" : "Copy"}
+                      </button>
+                    </div>
+                  )}
                   {browseNote && (
                     <p className="mcp-test-ok" role="status">
                       {browseNote}
@@ -972,8 +1013,16 @@ export function McpConnections({
                         onClick={pairBrowse}
                       >
                         {busy === "browse"
-                          ? "Opening..."
-                          : "Pair browser extension"}
+                          ? "Generating..."
+                          : "Get pairing code"}
+                      </button>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={openBrowseStore}
+                      >
+                        Chrome extension
                       </button>
                       <button
                         className="button ghost"

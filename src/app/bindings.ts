@@ -1179,6 +1179,14 @@ async mcpBrowsePair() : Promise<Result<BrowsePairResult, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async mcpBrowseOpenStore() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_browse_open_store") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async mcpBrowseUninstall() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_browse_uninstall") };

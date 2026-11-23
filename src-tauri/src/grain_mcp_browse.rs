@@ -28,10 +28,12 @@ use super::{connections, local};
 
 const MANIFEST_URL: &str = "https://anoma.ly/release/browse/cli/stable.json";
 const DOWNLOAD_ORIGIN: &str = "https://anoma.ly";
+pub(super) const CHROME_WEB_STORE_URL: &str =
+    "https://chromewebstore.google.com/detail/mfnicocicmmlkpjnaffgihfjhdgjkdjg";
 const CONNECTION_NAME: &str = "Browser (OpenCode Browse)";
 const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 const MAX_ARCHIVE_BYTES: usize = 32 * 1024 * 1024;
-const PAIR_GRACE_WAIT: Duration = Duration::from_secs(3);
+const PAIR_CODE_TIMEOUT: Duration = Duration::from_secs(12);
 const PAIR_MAX_LIFETIME: Duration = Duration::from_secs(180);
 
 #[cfg(windows)]
@@ -398,25 +400,53 @@ async fn probe_browse_cli(
     let Ok(val) = serde_json::from_str::<serde_json::Value>(text.trim()) else {
         return (None, None, None, None);
     };
+    parse_status_json(&val)
+}
+
+fn parse_status_json(
+    val: &serde_json::Value,
+) -> (Option<String>, Option<bool>, Option<bool>, Option<String>) {
     let version = val
-        .get("version")
+        .pointer("/setup/version")
         .and_then(|v| v.as_str())
-        .or_else(|| val.pointer("/install/version").and_then(|v| v.as_str()))
+        .or_else(|| val.pointer("/relay/version").and_then(|v| v.as_str()))
+        .or_else(|| val.get("version").and_then(|v| v.as_str()))
         .map(str::to_owned);
-    let paired = val
-        .pointer("/extension/paired")
-        .and_then(|v| v.as_bool())
-        .or_else(|| val.get("paired").and_then(|v| v.as_bool()));
-    let connected = val
-        .pointer("/extension/connected")
-        .and_then(|v| v.as_bool())
-        .or_else(|| val.get("connected").and_then(|v| v.as_bool()));
-    let note = val
-        .pointer("/extension/message")
+    let pairing_state = val
+        .get("pairingState")
         .and_then(|v| v.as_str())
-        .or_else(|| val.get("message").and_then(|v| v.as_str()))
+        .or_else(|| {
+            val.pointer("/extension/pairingState")
+                .and_then(|v| v.as_str())
+        });
+    let paired = match pairing_state {
+        Some("paired") => Some(true),
+        Some("unpaired") => Some(false),
+        _ => val.pointer("/extension/paired").and_then(|v| v.as_bool()),
+    };
+    let connected = val.get("connected").and_then(|v| v.as_bool()).or_else(|| {
+        val.pointer("/extension/connected")
+            .and_then(|v| v.as_bool())
+    });
+    let note = val
+        .get("nextStep")
+        .and_then(|v| v.as_str())
+        .or_else(|| val.pointer("/extension/nextStep").and_then(|v| v.as_str()))
         .map(str::to_owned);
     (version, paired, connected, note)
+}
+
+fn parse_pairing_code(line: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix("Pairing code:")?.trim();
+    let code = rest.split_whitespace().next()?;
+    if code.len() >= 4
+        && code.len() <= 32
+        && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        Some(code.to_owned())
+    } else {
+        None
+    }
 }
 
 fn find_browse_record(app: &AppHandle) -> Result<Option<(String, String, bool)>, String> {
@@ -553,6 +583,8 @@ pub async fn mcp_browse_pair(
     app: AppHandle,
     window: WebviewWindow,
 ) -> Result<BrowsePairResult, String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
     crate::grain_commands::require_main_window(&window)?;
     let Some((binary_path, _)) = detect_binary(&app)? else {
         return Err("Install Browser Control first before pairing the Chrome extension.".into());
@@ -567,61 +599,73 @@ pub async fn mcp_browse_pair(
         let _ = prev.send(());
     }
 
+    // Use `browse pair --wait-seconds 180` directly: it starts the local relay
+    // if needed, prints a 1-time pairing code (valid 10m) immediately on stdout,
+    // and never copies binaries to ~/.local/bin or touches other AI agents.
     let mut cmd = new_command(&binary_path);
-    cmd.args(["install", "--agent", "none", "--no-modify-path"]);
+    cmd.args(["pair", "--wait-seconds", "180"]);
     let mut child = cmd
         .spawn()
-        .map_err(|error| format!("Could not launch Browse pairing flow: {error}"))?;
+        .map_err(|error| format!("Could not launch Browse pairing: {error}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Could not read pairing output from Browse.")?;
+    let mut lines = BufReader::new(stdout).lines();
+
+    let found_code = tokio::time::timeout(PAIR_CODE_TIMEOUT, async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some(code) = parse_pairing_code(&line) {
+                return Some(code);
+            }
+        }
+        None
+    })
+    .await
+    .map_err(|_| "Timed out waiting for Browse to generate a pairing code.".to_string())?;
+
+    let Some(code) = found_code else {
+        let _ = child.kill().await;
+        return Err("Browse exited before printing a pairing code. Check status or retry.".into());
+    };
 
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     *active_pair_slot().lock().unwrap_or_else(|e| e.into_inner()) = Some(cancel_tx);
 
-    // Wait briefly: if the extension is already installed, pairing finishes within ~2s.
-    // Otherwise `browse install` has opened Chrome Web Store and stays alive up to 3m
-    // in the background to complete pairing as soon as the user clicks "Add to Chrome".
-    let fast = tokio::time::timeout(PAIR_GRACE_WAIT, child.wait()).await;
-    match fast {
-        Ok(Ok(status)) => {
-            *active_pair_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
-            if status.success() {
-                Ok(BrowsePairResult {
-                    paired: true,
-                    message: "Browser extension paired. You can now enable Browser Control below."
-                        .into(),
-                    code: None,
-                })
-            } else {
-                Err(
-                    "Browse pairing exited before completing. Check your browser and try again."
-                        .into(),
-                )
+    // Keep draining stdout in the background while `browse pair` waits for the
+    // browser extension to redeem the code (up to 3 minutes).
+    tokio::spawn(async move {
+        let drain = async {
+            while let Ok(Some(_)) = lines.next_line().await {}
+            let _ = child.wait().await;
+        };
+        tokio::select! {
+            _ = cancel_rx => {
+                let _ = child.kill().await;
             }
+            _ = tokio::time::sleep(PAIR_MAX_LIFETIME) => {
+                let _ = child.kill().await;
+            }
+            _ = drain => {}
         }
-        Ok(Err(error)) => {
-            *active_pair_slot().lock().unwrap_or_else(|e| e.into_inner()) = None;
-            Err(format!("Browse pairing failed: {error}"))
-        }
-        Err(_) => {
-            // Still waiting on the user to install/approve in Chrome Web Store.
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = cancel_rx => {
-                        let _ = child.kill().await;
-                    }
-                    _ = tokio::time::sleep(PAIR_MAX_LIFETIME) => {
-                        let _ = child.kill().await;
-                    }
-                    _ = child.wait() => {}
-                }
-            });
-            Ok(BrowsePairResult {
-                paired: false,
-                message: "Opened your browser — add the \"OpenCode Browse\" extension (pairing finishes automatically once installed), then enable Browser Control below."
-                    .into(),
-                code: None,
-            })
-        }
-    }
+    });
+
+    Ok(BrowsePairResult {
+        paired: false,
+        message: "In Chrome/Edge/Brave: click the browse extension icon → Options → Pair with a code (or click \"Connect to it\" at the bottom of the welcome page), paste this code, and click Connect.".into(),
+        code: Some(code),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn mcp_browse_open_store(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    crate::grain_commands::require_main_window(&window)?;
+    app.opener()
+        .open_url(CHROME_WEB_STORE_URL, None::<&str>)
+        .map_err(|error| format!("Could not open Chrome Web Store: {error}"))
 }
 
 #[tauri::command]
@@ -725,5 +769,27 @@ mod tests {
             url: "http://127.0.0.1:19988/mcp".into(),
             headers: Default::default(),
         }));
+    }
+
+    #[test]
+    fn pairing_code_and_status_json_parsers_match_real_browse_output() {
+        assert_eq!(
+            parse_pairing_code("Pairing code: EB7R-DY40"),
+            Some("EB7R-DY40".into())
+        );
+        assert_eq!(parse_pairing_code("Other output"), None);
+
+        let status = serde_json::json!({
+            "connected": true,
+            "pairingState": "paired",
+            "nextStep": null,
+            "relay": { "version": "0.1.5" },
+            "setup": { "version": "0.1.5" }
+        });
+        let (ver, paired, connected, note) = parse_status_json(&status);
+        assert_eq!(ver.as_deref(), Some("0.1.5"));
+        assert_eq!(paired, Some(true));
+        assert_eq!(connected, Some(true));
+        assert_eq!(note, None);
     }
 }

@@ -159,6 +159,24 @@
 .mcp-test-ok {
   color: var(--text-1);
 }
+.mcp-pair-code-box {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline-soft);
+  background: var(--bg-3);
+}
+.mcp-pair-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-1);
+}
 .mcp-logs-box {
   width: 100%;
   margin-top: 8px;
