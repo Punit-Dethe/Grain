@@ -10,15 +10,15 @@
 use crate::{Window, FRAME_SAMPLES};
 
 pub const MAX_MODEL_SAMPLES: u64 = 240_000;
-pub const CONTENT_SAMPLES: u64 = 238_080;
-pub const OVERLAP_SAMPLES: u64 = 32_000;
-pub const STRIDE_SAMPLES: u64 = CONTENT_SAMPLES - OVERLAP_SAMPLES;
+const CONTENT_SAMPLES: u64 = 238_080;
+const OVERLAP_SAMPLES: u64 = 32_000;
+const STRIDE_SAMPLES: u64 = CONTENT_SAMPLES - OVERLAP_SAMPLES;
 /// FluidVoice: "Mac capture opens on ~0.17 s of dead audio; 0.25 s of silence
 /// first lets Parakeet catch the first word." Short final decode only.
-pub const LEAD_IN_SAMPLES: u64 = 4_000;
+const LEAD_IN_SAMPLES: u64 = 4_000;
 /// FluidVoice pads sub-second recordings with trailing silence to 1 s before
 /// the final decode, rather than discarding them.
-pub const MIN_FINAL_SAMPLES: u64 = 16_000;
+const MIN_FINAL_SAMPLES: u64 = 16_000;
 
 impl Window {
     fn is_whole_recording(self) -> bool {

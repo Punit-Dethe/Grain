@@ -10,10 +10,7 @@ pub use buffered::{
     BufferedCursor, BUFFERED_LEFT_FRAMES, BUFFERED_MAX_SAMPLES, BUFFERED_OWNED_FRAMES,
     BUFFERED_RIGHT_FRAMES,
 };
-pub use fluid::{
-    FluidCursor, CONTENT_SAMPLES, LEAD_IN_SAMPLES, MAX_MODEL_SAMPLES, MIN_FINAL_SAMPLES,
-    OVERLAP_SAMPLES, STRIDE_SAMPLES,
-};
+pub use fluid::{FluidCursor, MAX_MODEL_SAMPLES};
 pub use merge::merge_tokens;
 
 pub const SAMPLE_RATE: u64 = 16_000;

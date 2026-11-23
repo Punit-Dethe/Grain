@@ -96,8 +96,7 @@ pub(crate) struct StructuredResult {
     pub windows: Vec<WindowEvidence>,
 }
 
-/// One recording's bounded-audio token accumulator. Transcript tokens and, when
-/// explicitly requested, native evidence grow with output; audio stays on disk.
+/// Window geometry: stateful buffered (v2/v3) or FluidVoice's independent windows.
 enum Planner {
     Buffered(BufferedCursor),
     Fluid(FluidCursor),
@@ -126,6 +125,8 @@ impl Planner {
     }
 }
 
+/// One recording's bounded-audio token accumulator. Transcript tokens and, when
+/// explicitly requested, native evidence grow with output; audio stays on disk.
 pub(crate) struct TdtAccumulator {
     planner: Planner,
     stable_tokens: Vec<Token>,
@@ -165,7 +166,9 @@ impl TdtAccumulator {
             ));
         }
         Ok(Self {
-            planner: if crate::grain_models::uses_fluid_flow(&config.model_id) {
+            // Structured callers (meetings) read per-window native evidence, which
+            // must not overlap, so they keep the buffered planner for every model.
+            planner: if !retain_evidence && crate::grain_models::uses_fluid_flow(&config.model_id) {
                 Planner::Fluid(FluidCursor::default())
             } else {
                 Planner::Buffered(BufferedCursor::default())
@@ -1037,6 +1040,39 @@ mod tests {
             })
             .collect();
         (text, calls)
+    }
+
+    #[test]
+    fn fluid_model_structured_output_keeps_non_overlapping_buffered_windows() {
+        let journal = PcmJournal::create().unwrap();
+        journal.append(&vec![0.0; 400_001]).unwrap();
+        journal.close().unwrap();
+        let mut reader = journal.reader().unwrap();
+        let mut session = RecordingInference {
+            variant: Some("tdt-0.6b-v3"),
+            ..Default::default()
+        };
+        let config = TdtRunConfig {
+            model_id: FLUID_PRO.into(),
+            language: None,
+        };
+        let mut accumulator = TdtAccumulator::new_structured(&session, &config).unwrap();
+        let mut audio = Vec::with_capacity(accumulator.max_input_samples());
+        let result = accumulator
+            .render_structured(
+                &mut session,
+                &config,
+                &journal,
+                &mut reader,
+                &mut audio,
+                400_001,
+            )
+            .unwrap();
+        assert!(result.windows.len() > 1);
+        assert!(session.calls.iter().all(|(_, options)| matches!(
+            options.family,
+            Some(RunExtension::ParakeetTdtBuffered(_))
+        )));
     }
 
     #[test]
