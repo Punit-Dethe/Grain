@@ -56,9 +56,8 @@ mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the ho
 mod grain_anthropic;
 mod grain_app_route; // [GRAIN] open the main window on a page from the backend (Agent meeting links)
 mod grain_audio;
-mod grain_browser_link; // [GRAIN] Grain Pilot: native messaging link to the browser extension
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
-mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Pilot, Recall)
+mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Recall)
 mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
 mod grain_dictionary;
 mod grain_engine;
@@ -72,7 +71,6 @@ mod grain_models; // [GRAIN] extra STT models appended to the catalog (Fluid Spe
 mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebView)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
-mod grain_pilot; // [GRAIN] Grain Pilot: the Agent in the user's own browser through the Grain Pilot extension
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_recall_agent; // [GRAIN] Recall for the Agent: read-only meeting tools, in-process
 mod grain_recall_mcp; // [GRAIN] Recall MCP: AI app access switch + one-click connect
@@ -1329,8 +1327,7 @@ pub fn run(cli_args: CliArgs) {
             show_main_window(app);
         }
         if let tauri::RunEvent::Exit = &event {
-            // [GRAIN] Close Grain Pilot's browser link and any warm local stdio MCPs.
-            grain_pilot::stop_at_exit();
+            // [GRAIN] Close any warm local stdio MCPs.
             grain_mcp::local::stop_at_exit();
         }
         // [GRAIN] Closing the settings window only hides it. Keep the
@@ -1434,7 +1431,6 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_polished_ui_setting, // [GRAIN]
             grain_commands::agent_chat_size,                // [GRAIN] resizable chat
             grain_commands::set_agent_chat_size,            // [GRAIN]
-            grain_pilot::change_pilot_enabled_setting,      // [GRAIN] Grain Pilot on/off
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
             grain_commands::change_meet_auto_title_setting, // [GRAIN]
             grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]

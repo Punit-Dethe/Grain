@@ -860,11 +860,6 @@ pub struct AppSettings {
     pub agent_chat_width: u32,
     #[serde(default = "default_agent_chat_height")]
     pub agent_chat_height: u32,
-    /// [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
-    /// the Grain Pilot extension. OFF by default; off removes it from the
-    /// Agent's tool directory and closes the browser link.
-    #[serde(default)]
-    pub pilot_enabled: bool,
     /// [GRAIN] Recall for the Agent: the Agent may search and read the user's
     /// recorded meetings (in-process, read-only). OFF by default because the
     /// Agent's AI provider may be a cloud model; off removes Recall from the
@@ -1700,7 +1695,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_polished_ui: true,
         agent_chat_width: default_agent_chat_width(),
         agent_chat_height: default_agent_chat_height(),
-        pilot_enabled: false,
         recall_agent_enabled: false,
         meet_auto_summary: false,
         meet_auto_transcribe: false,

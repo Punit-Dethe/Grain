@@ -1,7 +1,0 @@
-{
-  "content": "[14]<a >Skip to content />\nSign in to GitHub\n[1]<label for=login_field>Username or email address />\n[2]<input type=text name=login id=login_field />\n[3]<label for=password>Password />\n[4]<input secret type=password />\n[5]<a id=forgot-password>Forgot password? />\n[6]<input type=submit name=commit value=Sign in />\nor\n[15]<button type=submit />\n\t[16]<span >Continue with Google />\n[17]<button type=submit />\n\t[18]<span >Continue with Apple />\nNew to GitHub?\n[7]<a >Create an account />\n[19]<button type=button />\n\t[20]<span >Sign in with a passkey />\n[8]<a >Terms />\n[9]<a >Privacy />\n[10]<a >Docs />\n[11]<a >Contact GitHub Support />\n[12]<button type=button>Manage cookies />\n[13]<button type=button>Do not share my personal information />",
-  "footer": "[End of page]",
-  "header": "Current Page: [Sign in to GitHub · GitHub](https://github.com/login)\nPage info: 921x920px viewport, 921x920px total page size, 0.0 pages above, 0.0 pages below, 1.0 total pages, at 0% of page\n\nInteractive elements from top layer of the current page (full page):\n\n[Start of page]",
-  "title": "Sign in to GitHub · GitHub",
-  "url": "https://github.com/login"
-}

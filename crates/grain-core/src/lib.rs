@@ -61,6 +61,5 @@ pub mod tool_schema;
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{DaemonEvent, SessionMode};
 pub use settings::{AppSettings, PostProcessProvider, SecretMap};
-// [GRAIN] Link policy for links Grain hands to Grain Pilot. Pure.
+// [GRAIN] Link policy for links Grain hands to the OS default handler. Pure.
 pub mod links;
-pub mod pilot;

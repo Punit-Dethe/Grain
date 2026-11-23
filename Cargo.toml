@@ -12,7 +12,6 @@ members = [
     "crates/grain-core",
     "crates/grain-sdk",
     "crates/grain-tdt",
-    "crates/grain-browser-host",
     "crates/grain-recall",
     "crates/grain-recall-mcp",
 ]

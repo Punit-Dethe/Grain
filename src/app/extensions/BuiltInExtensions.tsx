@@ -3,13 +3,11 @@ import { commands, type McpProviderStatus } from "@/bindings";
 import { Switch } from "@/components/ui/Switch";
 import { filterExtensions, unwrapResult } from "./extensionRuntime";
 import exaIcon from "./icons/exa.png";
-import pilotIcon from "./icons/pilot.svg";
 import recallIcon from "./icons/recall.svg";
 import "./extensions.css";
 
 const icons = new Map<string, string>([
   ["exa", exaIcon],
-  ["pilot", pilotIcon],
   ["recall", recallIcon],
 ]);
 

@@ -244,19 +244,18 @@ jobs:
           Write-Host "HANDY_VC_REDIST_DIRS=$dirs"
           Add-Content -Path $env:GITHUB_ENV -Value "HANDY_VC_REDIST_DIRS=$dirs"
 
-      # Helper exes Grain expects beside its own exe: Grain Pilot's native
-      # messaging host (its browser extension reaches Grain through it) and
-      # Recall's MCP reader (AI apps start it to read meetings). They are
-      # separate binaries, so tauri build would not ship them on its own;
-      # tauri.helpers.conf.json bundles the copies staged here.
-      - name: Build the helper exes (Pilot browser host, Recall MCP reader)
+      # Helper exes Grain expects beside its own exe: Recall's MCP reader (AI
+      # apps start it to read meetings). It is a separate binary, so tauri
+      # build would not ship it on its own; tauri.helpers.conf.json bundles the
+      # copy staged here.
+      - name: Build the helper exes (Recall MCP reader)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          cargo build --release --locked -p grain-browser-host -p grain-recall-mcp
+          cargo build --release --locked -p grain-recall-mcp
           if ($LASTEXITCODE -ne 0) { throw "helper exe build failed" }
           New-Item -ItemType Directory -Force -Path src-tauri/helpers | Out-Null
-          foreach ($exe in 'grain-browser-host.exe', 'grain-recall-mcp.exe') {
+          foreach ($exe in 'grain-recall-mcp.exe') {
             $built = Join-Path $env:CARGO_TARGET_DIR "release\$exe"
             if (-not (Test-Path -LiteralPath $built)) { throw "$exe not found at $built" }
             Copy-Item -LiteralPath $built -Destination "src-tauri/helpers/$exe" -Force

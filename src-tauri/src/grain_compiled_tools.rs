@@ -1,5 +1,5 @@
 //! [GRAIN] Agent tool providers compiled into Grain, beside MCP connections:
-//! Grain Pilot and Grain Recall.
+//! Grain Recall.
 //!
 //! One place answers, for every compiled provider, the questions the Agent
 //! loop asks of a tool provider: is it on, what is its directory entry, its
@@ -12,7 +12,6 @@ use grain_core::execution::ActionOutcome;
 use grain_sdk::action::ActionRisk;
 use tauri::AppHandle;
 
-use crate::grain_pilot as pilot;
 use crate::grain_recall_agent as recall;
 
 /// One catalogue row: the retrieval record plus the model-facing definition.
@@ -76,14 +75,12 @@ pub(crate) fn catalog_tool(
 
 /// Whether `extension_id` names a compiled provider (rather than `mcp.*`).
 pub(crate) fn is_compiled(extension_id: &str) -> bool {
-    extension_id == pilot::EXTENSION_ID || extension_id == recall::EXTENSION_ID
+    extension_id == recall::EXTENSION_ID
 }
 
 /// Whether a compiled provider is on. `None` for an id that is not compiled.
 pub(crate) fn enabled(app: &AppHandle, extension_id: &str) -> Option<bool> {
-    if extension_id == pilot::EXTENSION_ID {
-        Some(pilot::is_enabled(app))
-    } else if extension_id == recall::EXTENSION_ID {
+    if extension_id == recall::EXTENSION_ID {
         Some(recall::is_enabled(app))
     } else {
         None
@@ -92,8 +89,7 @@ pub(crate) fn enabled(app: &AppHandle, extension_id: &str) -> Option<bool> {
 
 /// Directory entries of the compiled providers that are on.
 pub(crate) fn directory(app: &AppHandle) -> Vec<ExtensionDirectoryEntry> {
-    let mut entries = Vec::with_capacity(2);
-    entries.extend(pilot::directory(app));
+    let mut entries = Vec::with_capacity(1);
     entries.extend(recall::directory(app));
     entries
 }
@@ -101,9 +97,7 @@ pub(crate) fn directory(app: &AppHandle) -> Vec<ExtensionDirectoryEntry> {
 /// A compiled provider's tool set and digest. `None` for an id that is not
 /// compiled. No I/O.
 pub(crate) fn catalog(extension_id: &str) -> Option<(String, Vec<CatalogTool>)> {
-    if extension_id == pilot::EXTENSION_ID {
-        Some(pilot::catalog())
-    } else if extension_id == recall::EXTENSION_ID {
+    if extension_id == recall::EXTENSION_ID {
         Some(recall::catalog())
     } else {
         None
@@ -114,9 +108,7 @@ pub(crate) fn catalog(extension_id: &str) -> Option<(String, Vec<CatalogTool>)> 
 /// `None` when the provider is off (or the id is not compiled). Compiled
 /// digests only change with a new build.
 pub(crate) fn current_digest(app: &AppHandle, extension_id: &str) -> Option<String> {
-    if extension_id == pilot::EXTENSION_ID {
-        pilot::is_enabled(app).then(grain_core::pilot::catalog_digest)
-    } else if extension_id == recall::EXTENSION_ID {
+    if extension_id == recall::EXTENSION_ID {
         recall::is_enabled(app).then(recall::catalog_digest)
     } else {
         None
@@ -130,9 +122,7 @@ pub(crate) async fn call(
     action_id: &str,
     arguments: &serde_json::Value,
 ) -> ActionOutcome {
-    if extension_id == pilot::EXTENSION_ID {
-        pilot::call(app, action_id, arguments).await
-    } else if extension_id == recall::EXTENSION_ID {
+    if extension_id == recall::EXTENSION_ID {
         recall::call(app, action_id, arguments).await
     } else {
         ActionOutcome::Failed {

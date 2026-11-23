@@ -119,7 +119,6 @@ def main() -> int:
             f"{HELPERS_CONF.name} -- no helper exe would be installed"
         )
     for package, feature in (
-        ("grain-browser-host", "Grain Pilot"),
         ("grain-recall-mcp", "Recall's AI apps (MCP)"),
     ):
         if f"{package}.exe" not in bundled:

@@ -1257,13 +1257,11 @@ pub async fn mcp_provider_status(
 /// them. Each has its own Agent switch in settings.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum BuiltIn {
-    /// Drives the user's own browser through the Grain Pilot extension.
-    Pilot,
     /// Lets the Agent read Recall meetings, in-process (`grain_recall_agent`).
     Recall,
 }
 
-const BUILT_INS: [BuiltIn; 2] = [BuiltIn::Pilot, BuiltIn::Recall];
+const BUILT_INS: [BuiltIn; 1] = [BuiltIn::Recall];
 
 impl BuiltIn {
     fn from_id(id: &str) -> Option<Self> {
@@ -1273,52 +1271,44 @@ impl BuiltIn {
     /// Extensions page id.
     fn id(self) -> &'static str {
         match self {
-            BuiltIn::Pilot => "pilot",
             BuiltIn::Recall => "recall",
         }
     }
 
     fn name(self) -> &'static str {
         match self {
-            BuiltIn::Pilot => grain_core::pilot::PROVIDER_NAME,
             BuiltIn::Recall => crate::grain_recall_agent::PROVIDER_NAME,
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            BuiltIn::Pilot => "Let the Agent do things in your own browser, signed in as you, through the Grain Pilot extension (Chrome, Edge and Brave).",
             BuiltIn::Recall => "Let the Agent search and read your recorded meetings. Read-only; meeting text goes to the Agent's AI provider only when it looks something up. AI apps like Claude are set up in Recall settings.",
         }
     }
 
     fn setup_url(self) -> &'static str {
         match self {
-            BuiltIn::Pilot => "https://github.com/alibaba/page-agent",
             BuiltIn::Recall => "",
         }
     }
 
     fn enabled(self, settings: &crate::settings::AppSettings) -> bool {
         match self {
-            BuiltIn::Pilot => settings.pilot_enabled,
             BuiltIn::Recall => settings.recall_agent_enabled,
         }
     }
 
     fn set_enabled(self, settings: &mut crate::settings::AppSettings, enabled: bool) {
         match self {
-            BuiltIn::Pilot => settings.pilot_enabled = enabled,
             BuiltIn::Recall => settings.recall_agent_enabled = enabled,
         }
     }
 
-    /// Make sure what it runs is present: the error says how to fix it. For
-    /// Pilot this registers the browser host and opens the link. Recall runs
-    /// nothing: its tools read files only during an Agent call.
-    async fn prepare(self, app: &AppHandle) -> Result<(), String> {
+    /// Make sure what it runs is present: the error says how to fix it. Recall
+    /// runs nothing: its tools read files only during an Agent call.
+    async fn prepare(self, _app: &AppHandle) -> Result<(), String> {
         match self {
-            BuiltIn::Pilot => crate::grain_pilot::prepare(app).await.map(|_| ()),
             BuiltIn::Recall => Ok(()),
         }
     }
@@ -1326,16 +1316,13 @@ impl BuiltIn {
     /// Switched off (still connected): stop what it runs.
     fn switched_off(self) {
         match self {
-            BuiltIn::Pilot => crate::grain_pilot::stop_in_background(),
             BuiltIn::Recall => {}
         }
     }
 
-    /// Disconnected: forget everything it kept (Pilot's browser host
-    /// registration).
-    fn disconnected(self, app: &AppHandle) {
+    /// Disconnected: forget everything it kept.
+    fn disconnected(self, _app: &AppHandle) {
         match self {
-            BuiltIn::Pilot => crate::grain_pilot::disconnect_in_background(app),
             BuiltIn::Recall => {}
         }
     }

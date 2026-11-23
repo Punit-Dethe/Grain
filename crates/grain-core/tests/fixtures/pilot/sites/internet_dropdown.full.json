@@ -1,7 +1,0 @@
-{
-  "content": "[5]<a >Skip to content />\n[1]<a aria-label=The Internet: home />\nDropdown List\n[2]<select value=\"Please select an option\" id=dropdown>Please select an option\nOption 1\nOption 2 />\nPowered by\n[3]<a target=_blank>Elemental Selenium />\nand\n[4]<a target=_blank>Sauce Labs />",
-  "footer": "[End of page]",
-  "header": "Current Page: [The Internet](https://the-internet.herokuapp.com/dropdown)\nPage info: 921x920px viewport, 921x920px total page size, 0.0 pages above, 0.0 pages below, 1.0 total pages, at 0% of page\n\nInteractive elements from top layer of the current page (full page):\n\n[Start of page]",
-  "title": "The Internet",
-  "url": "https://the-internet.herokuapp.com/dropdown"
-}

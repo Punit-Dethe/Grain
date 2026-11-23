@@ -115,3 +115,6 @@ __pycache__/
 # Website repository (separate git repo)
 website/
 
+# Grain Pilot standalone MCP + browser extension repository (separate git repo)
+/grain-pilot/
+

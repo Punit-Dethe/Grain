@@ -718,18 +718,6 @@ async setAgentChatSize(width: number, height: number) : Promise<AgentChatSize> {
     return await TAURI_INVOKE("set_agent_chat_size", { width, height });
 },
 /**
- * [GRAIN] Turn Grain Pilot on or off. Off removes its tools from the Agent on
- * the next model round and closes the browser link.
- */
-async changePilotEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_pilot_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Recall: summarise each meeting once its transcript is published. OFF
  * by default; see `Settings::meet_auto_summary`.
  */
@@ -2678,12 +2666,6 @@ agent_polished_ui?: boolean;
  * notch window holds; generated views size themselves and ignore it.
  */
 agent_chat_width?: number; agent_chat_height?: number; 
-/**
- * [GRAIN] Grain Pilot: the Agent acting in the user's own browser through
- * the Grain Pilot extension. OFF by default; off removes it from the
- * Agent's tool directory and closes the browser link.
- */
-pilot_enabled?: boolean; 
 /**
  * [GRAIN] Recall for the Agent: the Agent may search and read the user's
  * recorded meetings (in-process, read-only). OFF by default because the
