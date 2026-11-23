@@ -1,6 +1,7 @@
 import type { TFunction } from "i18next";
 import { catalog } from "@handy-computer/models";
 import type { ModelInfo } from "@/bindings";
+import { EXTRA_ASR } from "@/handy-models/lib/models/catalog";
 import { repoIdOf } from "@/handy-models/lib/models/source";
 import {
   getTranslatedModelDescription,
@@ -21,9 +22,9 @@ const quantOf = (filename: string): string | null => {
 };
 
 const CATALOG_BY_REPO = new Map(
-  catalog.models
-    .filter((m) => m.role === "asr")
-    .map((m) => [m.repository, m] as const),
+  [...catalog.models.filter((m) => m.role === "asr"), ...EXTRA_ASR].map(
+    (m) => [m.repository, m] as const,
+  ),
 );
 
 /** An app model as the table shows it, joined to its catalog entry by repo. */

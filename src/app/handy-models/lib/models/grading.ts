@@ -1,5 +1,4 @@
 import {
-  catalog,
   modelMatchesLanguage,
   type CatalogModel,
   type MachineTier,
@@ -9,6 +8,7 @@ import {
   geoMean,
   gradeFor,
   gradeForError,
+  waitFor,
   type Grade,
   type PickRole,
 } from "@/handy-models/lib/models/catalog";
@@ -50,7 +50,7 @@ export const makeGrading = (
       const error = averageError(m, langs);
       return error == null ? UNGRADED : gradeForError(error);
     },
-    wait: (m) => (m ? catalog.modelWaitSeconds(m, tier) : undefined),
+    wait: (m) => (m ? waitFor(m, tier) : undefined),
     missing,
   };
 };

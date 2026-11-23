@@ -21,12 +21,57 @@ export const CURATED_ASR: CatalogModel[] = catalog.curatedModels.filter(
   (m) => m.role === "asr",
 );
 
+interface ExtraScores {
+  /** Error % per language; unlisted languages stay ungraded ("?"). */
+  errors: Record<string, number>;
+  /** Seconds after a 30-second dictation. */
+  waitSeconds: number;
+}
+
+/**
+ * Grain's extra models (src-tauri/src/grain_models.rs) aren't in the package's
+ * benchmark. Each borrows its base model's entry under its own id and
+ * repository, with Grain's own scores. Keep in sync with grain_models.rs.
+ */
+const EXTRA_MODELS: {
+  base: string;
+  model: Pick<CatalogModel, "id" | "name" | "repository">;
+  scores: ExtraScores;
+}[] = [
+  {
+    base: "parakeet-tdt-0.6b-v3",
+    model: {
+      id: "grain-fluid-speech-pro",
+      name: "Fluid Speech Pro",
+      repository: "Straylight-dev/fluid-speech-pro-gguf",
+    },
+    // English at or above Parakeet v3 (A−); dictation returns well under 2 s.
+    scores: { errors: { en: 4.5 }, waitSeconds: 1 },
+  },
+];
+
+const EXTRA_SCORES = new Map<string, ExtraScores>();
+
+/** Grain's extra speech models, shaped as catalog entries. */
+export const EXTRA_ASR: CatalogModel[] = EXTRA_MODELS.flatMap(
+  ({ base, model, scores }) => {
+    const entry = catalog.models.find((m) => m.id === base);
+    if (!entry) return [];
+    EXTRA_SCORES.set(model.id, scores);
+    return [{ ...entry, ...model, curated: false }];
+  },
+);
+
 /** Measured word (or character) error for one language, in percent. */
 export const errorFor = (
   model: CatalogModel,
   language: string,
-): number | undefined =>
-  catalog.data.results[model.id]?.accuracy[languageIdentity(language)]?.error;
+): number | undefined => {
+  const extra = EXTRA_SCORES.get(model.id);
+  if (extra) return extra.errors[languageIdentity(language)];
+  return catalog.data.results[model.id]?.accuracy[languageIdentity(language)]
+    ?.error;
+};
 
 export interface Grade {
   letter: GradeLetter;
@@ -47,6 +92,12 @@ const minus = (label: string) => label.replace("-", "−");
 export const gradeFor = (model: CatalogModel, language: string): Grade => {
   if (!modelMatchesLanguage(model, language))
     return { letter: "none", label: "—", unsupported: true };
+  if (EXTRA_SCORES.has(model.id)) {
+    const error = errorFor(model, language);
+    return error == null
+      ? { letter: "none", label: "?" }
+      : gradeForError(error);
+  }
   const grade = catalog.languageAccuracyGrade(model, language);
   if (!grade) return { letter: "none", label: "?" };
   return { letter: grade.letter, label: minus(grade.label) };
@@ -59,7 +110,11 @@ export const gradeForError = (error: number): Grade => {
 };
 
 /** Seconds after a 30-second dictation, on this machine's tier. */
-const waitFor = (model: CatalogModel, tier: MachineTier): number | undefined =>
+export const waitFor = (
+  model: CatalogModel,
+  tier: MachineTier,
+): number | undefined =>
+  EXTRA_SCORES.get(model.id)?.waitSeconds ??
   catalog.modelWaitSeconds(model, tier);
 
 /** Several languages: the geometric mean of their errors. */

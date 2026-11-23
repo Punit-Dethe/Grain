@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ModelInfo } from "@/bindings";
 import { catalog, modelMatchesLanguage } from "@handy-computer/models";
-import { CURATED_ASR, groupModels, picksFor } from "./lib/models/catalog";
+import {
+  CURATED_ASR,
+  gradeFor,
+  groupModels,
+  picksFor,
+  waitFor,
+} from "./lib/models/catalog";
+import { speedLevel } from "./components/shared/SpeedBars";
 import { toTableModel } from "./components/shared/modelTable/tableModel";
 import { downloadStateOf } from "./lib/models/downloadState";
 import type { TFunction } from "i18next";
@@ -75,5 +82,28 @@ describe("Handy catalogue integration", () => {
       downloadStateOf({ ...state, verifyingModels: { [m.id]: true } }, m.id)
         .state,
     ).toBe("checking");
+  });
+});
+
+describe("Grain extra models", () => {
+  it("grades Fluid Speech Pro A− in English with full speed", () => {
+    const entry = toTableModel(
+      {
+        ...model(false),
+        id: "Straylight-dev/fluid-speech-pro-gguf/fluid-speech-pro-Q8_0.gguf",
+        source: {
+          HuggingFace: {
+            repo_id: "Straylight-dev/fluid-speech-pro-gguf",
+            revision: "fe8969ed6265df26f01a56f932076e4969bb1689",
+          },
+        },
+        is_custom: false,
+      } as ModelInfo,
+      t,
+    );
+    expect(entry.model?.name).toBe("Fluid Speech Pro");
+    expect(gradeFor(entry.model!, "en").label).toBe("A−");
+    expect(gradeFor(entry.model!, "de").label).toBe("?");
+    expect(speedLevel(waitFor(entry.model!, "gpu" as never))).toBe(4);
   });
 });
