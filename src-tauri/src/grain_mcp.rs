@@ -464,6 +464,9 @@ mod destination;
 #[path = "grain_mcp_local.rs"]
 pub mod local;
 
+#[path = "grain_mcp_browse.rs"]
+pub mod browse;
+
 #[path = "grain_mcp_composio.rs"]
 pub mod composio;
 #[path = "grain_mcp_tool_cache.rs"]

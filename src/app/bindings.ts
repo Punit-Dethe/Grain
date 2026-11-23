@@ -1155,6 +1155,38 @@ async mcpConnectionTest(id: string, expectedRevision: string) : Promise<Result<M
     else return { status: "error", error: e  as any };
 }
 },
+async mcpBrowseStatus(probeExtension: boolean) : Promise<Result<BrowseSetupStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_browse_status", { probeExtension }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpBrowseInstall() : Promise<Result<BrowseSetupStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_browse_install") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpBrowsePair() : Promise<Result<BrowsePairResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_browse_pair") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpBrowseUninstall() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_browse_uninstall") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_lazy_stream_close_setting", { enabled }) };
@@ -2730,6 +2762,8 @@ export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+export type BrowsePairResult = { paired: boolean; message: string; code: string | null }
+export type BrowseSetupStatus = { installed: boolean; managedByGrain: boolean; binaryPath: string | null; version: string | null; connectionId: string | null; connectionRevision: string | null; enabled: boolean; extensionPaired: boolean | null; extensionConnected: boolean | null; note: string | null }
 export type ChineseScript = "as_transcribed" | "simplified" | "traditional_tw" | "traditional_hk"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type ClipboardOffer = { id: number; expires_at_ms: number }

@@ -11,6 +11,7 @@ import {
 import { Box, Globe, Plus, Server, Square, Terminal } from "lucide-react";
 import {
   commands,
+  type BrowseSetupStatus,
   type ConnectionView,
   type LocalMcpLogs,
   type McpDiscoveryResult,
@@ -138,6 +139,9 @@ export function McpConnections({
     Record<string, { ok: boolean; text: string }>
   >({});
   const [logsById, setLogsById] = useState<Record<string, LocalMcpLogs>>({});
+  const [browse, setBrowse] = useState<BrowseSetupStatus | null>(null);
+  const [browseNote, setBrowseNote] = useState<string | null>(null);
+  const [uninstallingBrowse, setUninstallingBrowse] = useState(false);
 
   const live = useRef(false);
   const request = useRef(0);
@@ -173,7 +177,13 @@ export function McpConnections({
 
   const refresh = useCallback(async () => {
     const serial = ++request.current;
-    const records = unwrapResult(await commands.mcpConnectionsList());
+    const [records, browseStatus] = await Promise.all([
+      commands.mcpConnectionsList().then(unwrapResult),
+      commands
+        .mcpBrowseStatus(false)
+        .then(unwrapResult)
+        .catch(() => null),
+    ]);
     const next = await Promise.all(
       records.map(async (row): Promise<Row> => {
         try {
@@ -188,7 +198,10 @@ export function McpConnections({
         }
       }),
     );
-    if (live.current && serial === request.current) setRows(next);
+    if (live.current && serial === request.current) {
+      setRows(next);
+      if (browseStatus) setBrowse(browseStatus);
+    }
   }, []);
 
   useEffect(() => {
@@ -481,11 +494,67 @@ export function McpConnections({
     );
   };
 
+  const installBrowse = () =>
+    void run("browse", async () => {
+      const next = unwrapResult(await commands.mcpBrowseInstall());
+      if (live.current) {
+        setBrowse(next);
+        setBrowseNote(
+          next.version
+            ? `Installed OpenCode Browse v${next.version}. Next, pair the browser extension.`
+            : "Added OpenCode Browse to your local MCP servers. Pair the browser extension if needed.",
+        );
+      }
+    });
+
+  const pairBrowse = () =>
+    void run("browse", async () => {
+      const res = unwrapResult(await commands.mcpBrowsePair());
+      if (live.current) {
+        setBrowseNote(res.message);
+        if (res.paired) {
+          const checked = unwrapResult(await commands.mcpBrowseStatus(true));
+          if (live.current) setBrowse(checked);
+        }
+      }
+    });
+
+  const checkBrowseExtension = () =>
+    void run("browse", async () => {
+      const checked = unwrapResult(await commands.mcpBrowseStatus(true));
+      if (live.current) {
+        setBrowse(checked);
+        setBrowseNote(
+          checked.extensionConnected
+            ? "Browser extension connected and ready."
+            : checked.extensionPaired
+              ? "Browser extension paired (waiting for Chrome/Edge/Brave to open)."
+              : (checked.note ??
+                "Extension not paired yet. Click Pair browser extension."),
+        );
+      }
+    });
+
+  const uninstallBrowse = () =>
+    void run("browse", async () => {
+      unwrapResult(await commands.mcpBrowseUninstall());
+      if (live.current) {
+        setUninstallingBrowse(false);
+        setBrowseNote(null);
+      }
+    });
+
   const matching = rows.filter((row) =>
     `${row.name} ${row.url} ${row.command ?? ""} ${row.args.join(" ")} ${row.transport}`
       .toLowerCase()
       .includes(query.toLowerCase().trim()),
   );
+
+  const browseMatchesQuery =
+    !query.trim() ||
+    "browser control opencode browse chrome edge brave local mcp".includes(
+      query.toLowerCase().trim(),
+    );
 
   const transportBadge = (kind: string) => {
     if (kind === "stdio") return "Local command";
@@ -837,7 +906,7 @@ export function McpConnections({
         </form>
       )}
       {children(
-        (loading || error || matching.length > 0) && (
+        (loading || error || matching.length > 0 || browseMatchesQuery) && (
           <section
             className="mcp-connections mcp-custom-connections"
             aria-labelledby={titleId}
@@ -855,6 +924,105 @@ export function McpConnections({
                 </button>
               )}
             </header>
+            {browse && browseMatchesQuery && (
+              <article className="mcp-connection-row mcp-custom-row mcp-browse-card">
+                <div className="mcp-connection-copy">
+                  <div className="mcp-custom-heading">
+                    <span className="mcp-preset-icon" aria-hidden="true">
+                      <Globe size={17} />
+                    </span>
+                    <h3>Browser Control</h3>
+                    <span className="mcp-transport-badge">
+                      Recommended &middot; OpenCode Browse
+                    </span>
+                  </div>
+                  <p>
+                    {browse.installed && browse.connectionId
+                      ? `Native Rust browser bridge${browse.version ? ` (v${browse.version})` : ""} — background tab groups, 2FA handoff, 0 MB idle.`
+                      : "Let the Agent act in your signed-in Chrome, Edge, or Brave tabs — ~3 MB native Rust binary, 0 MB idle, swap or remove anytime."}
+                  </p>
+                  {browseNote && (
+                    <p className="mcp-test-ok" role="status">
+                      {browseNote}
+                    </p>
+                  )}
+                </div>
+                <div className="mcp-connection-actions">
+                  {!browse.installed || !browse.connectionId ? (
+                    <button
+                      className="button primary"
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={installBrowse}
+                    >
+                      {busy === "browse"
+                        ? "Installing..."
+                        : browse.installed
+                          ? "Add to Grain"
+                          : "Install & Add"}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        className="button primary"
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={pairBrowse}
+                      >
+                        {busy === "browse"
+                          ? "Opening..."
+                          : "Pair browser extension"}
+                      </button>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={checkBrowseExtension}
+                      >
+                        Check status
+                      </button>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => setUninstallingBrowse(true)}
+                      >
+                        Uninstall
+                      </button>
+                    </>
+                  )}
+                </div>
+                {uninstallingBrowse && (
+                  <div className="mcp-connection-confirm">
+                    <p>
+                      Remove Browser Control from Grain
+                      {browse.managedByGrain
+                        ? " and delete Grain's managed browse binary"
+                        : ""}
+                      ? You can reinstall or add any other browser MCP anytime.
+                    </p>
+                    <div className="mcp-connection-actions">
+                      <button
+                        type="button"
+                        className="button danger"
+                        disabled={busy !== null}
+                        onClick={uninstallBrowse}
+                      >
+                        Uninstall Browser Control
+                      </button>
+                      <button
+                        type="button"
+                        className="button ghost"
+                        disabled={busy !== null}
+                        onClick={() => setUninstallingBrowse(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </article>
+            )}
             {loading ? (
               <p role="status">Loading MCP connections…</p>
             ) : matching.length === 0 ? (
