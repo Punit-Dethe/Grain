@@ -33,6 +33,9 @@ use std::sync::Mutex;
 use grain_sdk::{DaemonEvent, PILL_ICON_PX};
 use tauri::AppHandle;
 
+#[cfg(any(target_os = "linux", test))]
+mod linux;
+
 /// Bytes in one icon: fixed, so a cache file needs no header and the wire
 /// payload needs no dimensions.
 pub const ICON_BYTES: usize = PILL_ICON_PX * PILL_ICON_PX * 4;
@@ -255,9 +258,35 @@ static RESOLVE_GEN: AtomicU64 = AtomicU64::new(0);
 ///
 /// Clears the pill when the surface cannot be named, so a previous session's
 /// icon never leads into a new one.
+#[cfg(not(target_os = "linux"))]
 pub fn emit_for_session(app: &AppHandle) {
     *SHOWING.lock().unwrap() = None;
     resolve_and_emit(app, true, true);
+}
+
+#[cfg(target_os = "linux")]
+pub fn emit_for_session(app: &AppHandle) {
+    let settings = crate::settings::get_settings(app);
+    if !settings.pill_show_app_icon
+        || settings.overlay_style == crate::settings::OverlayStyle::None
+        || crate::utils::is_wayland()
+    {
+        return;
+    }
+
+    let generation = RESOLVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(rgba) = linux::foreground_icon() else {
+            return;
+        };
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if RESOLVE_GEN.load(Ordering::Relaxed) == generation {
+                emit(&handle, Some(encode(&rgba)));
+            }
+        });
+    });
 }
 
 /// How long to wait before asking a browser again for an address it had not

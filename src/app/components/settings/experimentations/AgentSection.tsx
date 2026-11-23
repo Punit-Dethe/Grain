@@ -114,6 +114,7 @@ function VoicePicker() {
 
 export function AgentSection() {
   const { t } = useTranslation();
+  const os = platform();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = getSetting("agent_enabled") ?? true;
   const screenImage = getSetting("agent_screen_image") ?? false;
@@ -139,7 +140,7 @@ export function AgentSection() {
             grouped
             descriptionMode="tooltip"
           />
-          {platform() === "linux" && (
+          {os === "linux" && (
             <SettingContainer
               title={t("agent.openChat")}
               description={t("agent.openChatDescription")}
@@ -162,15 +163,17 @@ export function AgentSection() {
             </SettingContainer>
           )}
 
-          <ToggleSwitch
-            label={t("ui2.settings.agent.screenImage")}
-            description={t("ui2.settings.agent.screenImageDescription")}
-            descriptionMode="tooltip"
-            grouped
-            checked={screenImage}
-            isUpdating={isUpdating("agent_screen_image")}
-            onChange={(v) => updateSetting("agent_screen_image", v)}
-          />
+          {os === "windows" && (
+            <ToggleSwitch
+              label={t("ui2.settings.agent.screenImage")}
+              description={t("ui2.settings.agent.screenImageDescription")}
+              descriptionMode="tooltip"
+              grouped
+              checked={screenImage}
+              isUpdating={isUpdating("agent_screen_image")}
+              onChange={(v) => updateSetting("agent_screen_image", v)}
+            />
+          )}
 
           <ToggleSwitch
             label={t("ui2.settings.agent.talkBack")}

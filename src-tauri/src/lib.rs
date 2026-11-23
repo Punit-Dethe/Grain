@@ -45,6 +45,8 @@ mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, swi
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
 mod grain_events;
+#[cfg(target_os = "linux")]
+pub mod grain_linux;
 mod grain_file_transcription; // [GRAIN] typed payloads for the webview event surface (see the module docs)
                               // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
                               // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
@@ -467,6 +469,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         settings::get_settings(&app_handle).overlay_style != settings::OverlayStyle::None,
     );
     overlay::create_recording_overlay(&app_handle);
+    #[cfg(target_os = "linux")]
+    grain_overlay::listen_for_capture_failures(app_handle);
     // [GRAIN] One shared reqwest::Client for outbound AI text requests.
     // reqwest::Client is designed to be cloned/shared — it manages a connection pool,
     // TLS sessions, and keep-alive internally. Building one per request throws all of
@@ -511,17 +515,16 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle, false);
 
     let mut tray_builder = TrayIconBuilder::new()
-        .icon(
-            Image::from_path(
-                app_handle
-                    .path()
-                    .resolve(initial_icon_path, tauri::path::BaseDirectory::Resource)
-                    .unwrap(),
-            )
-            .unwrap(),
-        )
         .tooltip(tray::tray_tooltip())
         .icon_as_template(true);
+    match app_handle
+        .path()
+        .resolve(initial_icon_path, tauri::path::BaseDirectory::Resource)
+        .and_then(Image::from_path)
+    {
+        Ok(icon) => tray_builder = tray_builder.icon(icon),
+        Err(error) => log::warn!("Could not read the tray icon: {error}"),
+    }
 
     // Windows notification-area convention: left click opens the app, right click
     // shows the menu. Elsewhere (macOS menu bar, Linux) the menu stays on left click.
@@ -610,9 +613,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             }
             _ => {}
         })
-        .build(app_handle)
-        .unwrap();
-    app_handle.manage(tray);
+        .build(app_handle);
+    match tray {
+        Ok(tray) => {
+            app_handle.manage(tray);
+        }
+        Err(error) => log::warn!("Grain could not create its tray icon: {error}"),
+    }
 
     // Initialize tray menu with idle state
     utils::update_tray_menu(app_handle, None);
@@ -1233,7 +1240,11 @@ pub fn run(cli_args: CliArgs) {
 
             // If start_hidden but tray is disabled, we must show the window
             // anyway. Without a tray icon, the dock is the only way back in.
-            let tray_available = settings.show_tray_icon && !cli_args.no_tray;
+            let tray_available = settings.show_tray_icon
+                && !cli_args.no_tray
+                && app_handle.try_state::<tauri::tray::TrayIcon>().is_some();
+            #[cfg(target_os = "linux")]
+            let tray_available = tray_available && (!should_hide || grain_linux::has_tray_host());
             let show = should_show_main_window_on_launch(
                 should_show_after_update,
                 should_force_show,

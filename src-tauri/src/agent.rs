@@ -1616,11 +1616,11 @@ mod terminal_capture_tests {
     }
 }
 
-/// Linux uses an empty context until the focused selection can be read safely.
-/// Ctrl+C in a terminal would interrupt its foreground process.
+/// Read the focused edit control directly. Ctrl+C in a terminal would interrupt
+/// its foreground process.
 #[cfg(target_os = "linux")]
 fn capture_selection(_: &AppHandle) -> Option<String> {
-    None
+    crate::grain_dictionary::read_focused_selection()
 }
 
 /// Synthesise a platform copy and read the resulting selection off the clipboard,

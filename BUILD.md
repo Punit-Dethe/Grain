@@ -65,17 +65,20 @@ disable workaround. Explicit `WEBKIT_DISABLE_DMABUF_RENDERER` or
   ```bash
   # Ubuntu/Debian
   sudo apt update
-  sudo apt install build-essential libasound2-dev pkg-config libssl-dev libvulkan-dev vulkan-tools glslc libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-layer-shell0 libgtk-layer-shell-dev patchelf cmake
+  sudo apt install build-essential cmake pkg-config patchelf libasound2-dev \
+    libssl-dev libvulkan-dev vulkan-tools glslc libopenblas-dev libgtk-3-dev \
+    libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libgtk-layer-shell-dev \
+    libx11-dev libxtst-dev libxrandr-dev xdg-utils
 
   # Fedora/RHEL
   sudo dnf groupinstall "Development Tools"
-  sudo dnf install alsa-lib-devel pkgconf openssl-devel vulkan-devel \
+  sudo dnf install alsa-lib-devel pkgconf openssl-devel vulkan-devel openblas-devel \
     gtk3-devel webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel \
     gtk-layer-shell gtk-layer-shell-devel \
     cmake
 
   # Arch Linux
-  sudo pacman -S base-devel alsa-lib pkgconf openssl vulkan-devel \
+  sudo pacman -S base-devel alsa-lib pkgconf openssl vulkan-devel openblas \
     gtk3 webkit2gtk-4.1 libappindicator-gtk3 librsvg gtk-layer-shell \
     cmake
   ```
@@ -158,29 +161,60 @@ can be reused without downloading them again. Launch normally with
 
 ## Linux Install (from source)
 
-The raw binary (`src-tauri/target/release/Grain`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.
-
-**Install from the deb bundle** (works on any Linux distro):
-
-```bash
-cd /tmp
-ar x /path/to/Grain/src-tauri/target/release/bundle/deb/Grain_*_amd64.deb data.tar.gz
-tar xzf data.tar.gz
-sudo cp usr/bin/Grain /usr/bin/
-sudo cp -r usr/lib/Grain /usr/lib/
-sudo cp -r usr/share/icons/hicolor/* /usr/share/icons/hicolor/
-sudo cp usr/share/applications/Grain.desktop /usr/share/applications/
-```
-
-After subsequent rebuilds, copy the binary and refresh the private runtime libraries:
+On Ubuntu or Debian, build and install the actual package with its resources and
+Recall MCP helper. Run these commands from the repository root after installing
+the prerequisites above. This local build skips updater signing.
 
 ```bash
-sudo cp src-tauri/target/release/Grain /usr/bin/
-sudo mkdir -p /usr/lib/Grain
-sudo cp -a src-tauri/transcribe-libs/. /usr/lib/Grain/
+bun install --frozen-lockfile
+cargo build --locked --release -p grain-recall-mcp --target-dir target
+install -Dm755 target/release/grain-recall-mcp \
+  "src-tauri/helpers/grain-recall-mcp-$(rustc --print host-tuple)"
+CARGO_TARGET_DIR="$PWD/src-tauri/target" bun run tauri build --bundles deb \
+  --config '{"bundle":{"createUpdaterArtifacts":false,"externalBin":["helpers/grain-recall-mcp"]}}'
+version=$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')
+sudo apt install "./src-tauri/target/release/bundle/deb/Grain_${version}_$(dpkg --print-architecture).deb"
 ```
 
-Resources only need re-copying if they change upstream (new icons, sounds, etc.).
+Launch **Grain** from the desktop menu. For a quicker visual pass, launch the
+real development application from the repository root:
+
+```bash
+bun run dev:asr
+```
+
+## Linux desktop acceptance
+
+Record the distribution, desktop, and `XDG_SESSION_TYPE` with any failure.
+Run the checklist in your normal session first. If your login screen offers
+both X11 and Wayland, repeat the shortcut, paste, overlay, and Agent checks in
+both sessions.
+
+| Check | What to try |
+| --- | --- |
+| Install and launch | Open Grain from the launcher, choose a microphone and model, and check that the app reopens from the launcher after closing its window. Try start-hidden if your desktop has a tray and if it lacks one. Run `handy --list-devices` on the installed build and confirm a CPU device is listed. |
+| Dictation and quick stop | Use `Ctrl+Alt+Space` to start and stop. Speak a full sentence in Standard and again with a Flow-capable model. Try a brief tap, a held shortcut, and two recordings in a row. Check that the pill clears after each run, the text reaches the editor, and history has the transcript. If the shortcut does not register on Wayland, bind `handy --toggle-transcription` as a desktop shortcut and repeat with Grain running. |
+| Recording overlay | Select **Live** in Application settings. Check recording, processing, and any live preview on a streaming model. Verify that typing focus stays in the editor. The pill can show the active app icon on X11 when the app provides one. Expect the status dot on Wayland. |
+| Copy recovery | In Output settings, select **External script** and point it at an executable shell script containing `exit 1`. Dictate and stop. Check that **Copy to clipboard?** appears. Confirm that Copy puts the transcript on the clipboard, and that declining or letting the next offer expire preserves the prior clipboard. Restore your usual paste method afterward. |
+| Dictionary | Enable **Learn from edits** in Tools. Dictate into an accessible text field, then replace one word and pause. Verify the confirmation appears and that saving adds the corrected word. Repeat with another word and decline. |
+| Agent | Open Agent from AI settings and send a typed message. Test its shortcut, voice capture, expansion, dismissal, and reopening. Summon it with text selected in an accessible editor, then try from a terminal running `sleep 30` and verify the terminal command continues. |
+| Recall and MCP | Record a short microphone-only meeting, stop, play it back, and reopen it. Turn on Recall access for an AI client using the installed package. Restart the client and test reading the meeting while Grain is closed, then turn access off and confirm the client cannot read it. For hosted MCP sign-in, test cancel, connection, and restart with the desktop credential store unlocked. |
+| Other desktop paths | Import a short audio file, open the resulting history entry, and test export. Switch input or output devices, change display scaling if available, and try launching after login with autostart enabled. |
+
+To create the executable for the copy recovery check, run this and paste the
+printed path into the external script setting:
+
+```bash
+paste_failure=$(mktemp)
+printf '#!/bin/sh\nexit 1\n' > "$paste_failure"
+chmod +x "$paste_failure"
+printf '%s\n' "$paste_failure"
+```
+
+For AppImage, also test the extracted-and-run path if you use it and confirm
+Recall still works after the original Grain window closes. Debian, RPM, and Nix
+installs get updates from their installation source. Test-build artifacts can be
+generated with **Build Test** → **linux-only** once the branch is on GitHub.
 
 ## Troubleshooting
 

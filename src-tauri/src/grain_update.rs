@@ -181,6 +181,16 @@ fn surface_update(app: &AppHandle, update: &UpdateInfo) {
     crate::show_main_window(app);
 }
 
+fn supports_in_app_updates() -> bool {
+    if crate::utils::env_flag_enabled("GRAIN_DISABLE_UPDATER") {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    return std::env::var_os("APPIMAGE").is_some_and(|path| Path::new(&path).is_file());
+    #[cfg(not(target_os = "linux"))]
+    true
+}
+
 /// Is there a newer release?
 ///
 /// `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
@@ -193,8 +203,12 @@ fn surface_update(app: &AppHandle, update: &UpdateInfo) {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<UpdateInfo>, String> {
-    if crate::utils::env_flag_enabled("GRAIN_DISABLE_UPDATER") {
-        return Ok(None);
+    if !supports_in_app_updates() {
+        return if force {
+            Err("Update Grain through the source you installed it from.".into())
+        } else {
+            Ok(None)
+        };
     }
     if !force && !crate::settings::get_settings(&app).update_checks_enabled {
         return Ok(None);
@@ -235,8 +249,8 @@ pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<Upda
 #[tauri::command]
 #[specta::specta]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
-    if crate::utils::env_flag_enabled("GRAIN_DISABLE_UPDATER") {
-        return Err("Updates are managed by the package manager".to_string());
+    if !supports_in_app_updates() {
+        return Err("Update Grain through the source you installed it from.".into());
     }
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater

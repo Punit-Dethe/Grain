@@ -645,7 +645,7 @@ fn wired(state: McpClientState) -> bool {
 struct Context {
     places: Places,
     data_dir: PathBuf,
-    server: Option<PathBuf>,
+    server: Option<Server>,
 }
 
 impl Context {
@@ -653,7 +653,7 @@ impl Context {
         Ok(Self {
             places: Places::detect(app)?,
             data_dir: crate::portable::app_data_dir(app).map_err(|e| e.to_string())?,
-            server: server_path(),
+            server: find_server(),
         })
     }
 
@@ -664,11 +664,14 @@ impl Context {
     /// The launch line written into configs. Without a bundled server the
     /// expected install path is still shown, so the setup text is useful.
     fn launch(&self) -> Launch {
-        let server = self
-            .server
-            .clone()
-            .unwrap_or_else(|| PathBuf::from(SERVER_EXE));
-        Launch::new(&server, &self.data_dir)
+        let Some(server) = &self.server else {
+            return Launch::new(Path::new(SERVER_EXE), &self.data_dir);
+        };
+        let mut launch = Launch::new(&server.command, &self.data_dir);
+        if server.appimage {
+            launch.args.insert(0, "--recall-mcp".into());
+        }
+        launch
     }
 
     fn status(&self) -> RecallMcpStatus {
@@ -682,7 +685,7 @@ impl Context {
             server_path: self
                 .server
                 .as_ref()
-                .map(|p| p.to_string_lossy().into_owned()),
+                .map(|server| server.command.to_string_lossy().into_owned()),
             clients: CLIENTS
                 .iter()
                 .map(|&c| client_status(&self.places, c, &launch))
@@ -726,14 +729,29 @@ impl Context {
     }
 }
 
-/// The bundled server: `GRAIN_RECALL_MCP` when set (development), otherwise
-/// next to Grain's own executable, where the installer puts it.
-fn server_path() -> Option<PathBuf> {
+struct Server {
+    command: PathBuf,
+    appimage: bool,
+}
+
+/// AppImage mounts disappear when Grain exits. Register the AppImage itself
+/// to launch its bundled helper from a fresh mount with the same access gate.
+fn find_server() -> Option<Server> {
     if let Some(path) = std::env::var_os("GRAIN_RECALL_MCP") {
-        return Some(PathBuf::from(path)).filter(|p| p.is_file());
+        let command = PathBuf::from(path);
+        return command.is_file().then_some(Server { command, appimage: false });
     }
-    let next_to_app = std::env::current_exe().ok()?.parent()?.join(SERVER_EXE);
-    next_to_app.is_file().then_some(next_to_app)
+    let executable = std::env::current_exe().ok()?;
+    let command = executable.with_file_name(SERVER_EXE);
+    if !command.is_file() {
+        return None;
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(image) = std::env::var_os("APPIMAGE") {
+        let command = PathBuf::from(image).canonicalize().ok()?;
+        return command.is_file().then_some(Server { command, appimage: true });
+    }
+    Some(Server { command, appimage: false })
 }
 
 async fn blocking<T: Send + 'static>(

@@ -14,6 +14,11 @@ mod linux_field;
 #[cfg(target_os = "linux")]
 use linux_field::Field;
 
+#[cfg(target_os = "linux")]
+pub(crate) fn read_focused_selection() -> Option<String> {
+    tauri::async_runtime::block_on(Field::selected_text())
+}
+
 #[cfg(windows)]
 struct Field(Vec<i32>);
 

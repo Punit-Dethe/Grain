@@ -350,14 +350,18 @@ impl ShortcutAction for RealtimeTranscribeAction {
             let stopped = rm.stop_recording(&binding_id, cancel_generation);
             let Some(samples) = stopped else {
                 rt.cancel_session();
-                if !rm.was_cancelled_since(cancel_generation) {
-                    crate::bridge::emit(
-                        &ah,
-                        DaemonEvent::ModelError {
-                            error: "Audio capture failed; no partial transcript was produced"
-                                .to_string(),
-                        },
-                    );
+                emit_processing_complete(&ah, session_id);
+                if current_session_id() == session_id {
+                    change_tray_icon(&ah, TrayIconState::Idle);
+                    if !rm.was_cancelled_since(cancel_generation) {
+                        crate::bridge::emit(
+                            &ah,
+                            DaemonEvent::ModelError {
+                                error: "Audio capture failed; no partial transcript was produced"
+                                    .to_string(),
+                            },
+                        );
+                    }
                 }
                 return;
             };

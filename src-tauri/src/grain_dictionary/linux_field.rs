@@ -21,12 +21,36 @@ pub(super) struct Field {
 impl Field {
     pub(super) async fn open() -> Option<(Self, String)> {
         // Bound discovery so a slow provider does not hold up dictation delivery.
-        tokio::time::timeout(DISCOVERY_TIMEOUT, Self::discover())
-            .await
-            .ok()?
+        tokio::time::timeout(DISCOVERY_TIMEOUT, async {
+            let field = Self::discover().await?;
+            let before = field.read_focused().await?;
+            Some((field, before))
+        })
+        .await
+        .ok()?
     }
 
-    async fn discover() -> Option<(Self, String)> {
+    pub(super) async fn selected_text() -> Option<String> {
+        tokio::time::timeout(DISCOVERY_TIMEOUT, async {
+            let field = Self::discover().await?;
+            if !field.is_focused_editable().await? || field.text.get_n_selections().await.ok()? != 1
+            {
+                return None;
+            }
+            let (start, end) = field.text.get_selection(0).await.ok()?;
+            let chars = end.checked_sub(start)?;
+            if start < 0 || !(1..=MAX_FIELD_CHARS).contains(&chars) {
+                return None;
+            }
+            let selection = field.text.get_text(start, end).await.ok()?;
+            (selection.len() <= MAX_FIELD_CHARS as usize * 4 && !selection.trim().is_empty())
+                .then(|| selection.trim().to_owned())
+        })
+        .await
+        .ok()?
+    }
+
+    async fn discover() -> Option<Self> {
         let bus = AccessibilityConnection::new().await.ok()?;
         let desktop = bus.root_accessible_on_registry().await.ok()?;
         let apps = desktop.get_children().await.ok()?;
@@ -65,9 +89,7 @@ impl Field {
             .build()
             .await
             .ok()?;
-        let field = Self { accessible, text };
-        let before = field.read().await?;
-        Some((field, before))
+        Some(Self { accessible, text })
     }
 
     pub(super) async fn read(&self) -> Option<String> {
@@ -76,16 +98,20 @@ impl Field {
             .ok()?
     }
 
-    async fn read_focused(&self) -> Option<String> {
+    async fn is_focused_editable(&self) -> Option<bool> {
         // Some toolkits provide text for password and terminal controls too.
         if !matches!(
             self.accessible.get_role().await.ok()?,
             Role::Entry | Role::Text
         ) {
-            return None;
+            return Some(false);
         }
         let state = self.accessible.get_state().await.ok()?;
-        if !state.contains(State::Focused) || !state.contains(State::Editable) {
+        Some(state.contains(State::Focused) && state.contains(State::Editable))
+    }
+
+    async fn read_focused(&self) -> Option<String> {
+        if !self.is_focused_editable().await? {
             return None;
         }
         let chars = self.text.character_count().await.ok()?;

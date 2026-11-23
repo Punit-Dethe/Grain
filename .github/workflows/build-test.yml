@@ -48,7 +48,9 @@ jobs:
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
       build-args: ${{ matrix.args }}
-      sign-binaries: true
+      # macOS test packages use ad hoc signing so the build can be tested
+      # even while the Developer ID certificate is unavailable.
+      sign-binaries: ${{ !contains(matrix.platform, 'macos') }}
       asset-prefix: "handy-test"
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}

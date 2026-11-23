@@ -352,7 +352,7 @@ pub(crate) fn prepare_manual_recovery(app: &AppHandle, text: &str) -> Option<(u3
     let settings = get_settings(app);
     if !settings.paste_catch_enabled
         || settings.overlay_style == crate::settings::OverlayStyle::None
-        || !method_verifiable(settings.paste_method)
+        || settings.paste_method == PasteMethod::None
         || text.trim().is_empty()
     {
         return None;

@@ -320,6 +320,7 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
+            | DaemonEvent::ModelError { .. }
             | DaemonEvent::AsrStreamText { .. }
     ) {
         return;
@@ -330,6 +331,18 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
 }
 
 fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
+    match event {
+        DaemonEvent::PasteError { .. } => {
+            show_status_notice(app, "Could not paste");
+            return;
+        }
+        DaemonEvent::ModelError { error } => {
+            log::warn!("Dictation failed: {error}");
+            show_status_notice(app, "Could not transcribe");
+            return;
+        }
+        _ => {}
+    }
     match event {
         DaemonEvent::OverlayConfig { position } => {
             let _ = app.emit_to("recording_overlay", "grain-overlay-position", position);
@@ -347,7 +360,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::PasteMissedClear { .. }
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
-            | DaemonEvent::PasteError { .. }
             | DaemonEvent::AsrStreamText { .. }
     ) {
         return;
@@ -357,7 +369,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
     };
     let mut show = None;
     let mut hide = false;
-    let mut expiry = None;
     let mut transcribing = false;
     {
         let mut value = ctx.presentation.lock().unwrap();
@@ -413,17 +424,6 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                     hide = true;
                 }
             }
-            DaemonEvent::PasteError { .. } => {
-                value.notice = Some("Could not paste".into());
-                if !value.visible {
-                    value.clear_capture();
-                    value.state = "notice".into();
-                    value.visible = crate::settings::get_settings(app).overlay_style
-                        != crate::settings::OverlayStyle::None;
-                    show = Some("notice");
-                }
-                expiry = Some(ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1);
-            }
             DaemonEvent::PillIcon { rgba } => {
                 value.icon = rgba
                     .as_ref()
@@ -451,29 +451,91 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
     if hide {
         crate::overlay::hide_recording_overlay(app);
     }
-    if let Some(generation) = expiry {
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            let handle = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                let Some(ctx) = handle.try_state::<OverlayContext>() else {
-                    return;
-                };
-                let mut value = ctx.presentation.lock().unwrap();
-                let Some(hide) =
-                    value.expire_notice(generation, ctx.notice_generation.load(Ordering::Acquire))
-                else {
-                    return;
-                };
-                publish(&handle, &value);
-                drop(value);
-                if hide {
-                    crate::overlay::hide_recording_overlay(&handle);
-                }
-            });
-        });
+}
+
+/// Display a failed capture even when its recording window has already closed.
+fn show_status_notice(app: &AppHandle, message: &'static str) {
+    if crate::settings::get_settings(app).overlay_style == crate::settings::OverlayStyle::None {
+        return;
     }
+    let Some(ctx) = app.try_state::<OverlayContext>() else {
+        return;
+    };
+    let mut value = ctx.presentation.lock().unwrap();
+    value.notice = Some(message.into());
+    let show = !value.visible;
+    if show {
+        value.clear_capture();
+        value.state = "notice".into();
+        value.visible = true;
+    }
+    let generation = ctx.notice_generation.fetch_add(1, Ordering::AcqRel) + 1;
+    publish(app, &value);
+    drop(value);
+    if show {
+        crate::overlay::show_overlay_state(app, "notice");
+    }
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(ctx) = handle.try_state::<OverlayContext>() else {
+                return;
+            };
+            let mut value = ctx.presentation.lock().unwrap();
+            let Some(hide) =
+                value.expire_notice(generation, ctx.notice_generation.load(Ordering::Acquire))
+            else {
+                return;
+            };
+            publish(&handle, &value);
+            drop(value);
+            if hide {
+                crate::overlay::hide_recording_overlay(&handle);
+            }
+        });
+    });
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn listen_for_capture_failures(app: &AppHandle) {
+    use tauri::Listener;
+
+    let handle = app.clone();
+    app.listen("recording-error", move |event| {
+        let error = serde_json::from_str::<crate::grain_events::RecordingError>(event.payload()).ok();
+        let message = match error.as_ref().map(|error| error.error_type.as_str()) {
+            Some("no_input_device") => "No microphone found",
+            Some("microphone_permission_denied") => "Microphone access denied",
+            _ => "Could not start recording",
+        };
+        queue_capture_failure(&handle, message);
+    });
+    let handle = app.clone();
+    app.listen("transcription-error", move |_| {
+        queue_capture_failure(&handle, "Could not transcribe");
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn queue_capture_failure(app: &AppHandle, message: &'static str) {
+    let generation = app
+        .state::<OverlayContext>()
+        .capture_generation
+        .load(Ordering::Acquire);
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if handle
+            .state::<OverlayContext>()
+            .capture_generation
+            .load(Ordering::Acquire)
+            == generation
+        {
+            show_status_notice(&handle, message);
+        }
+    });
 }
 
 #[cfg(any(windows, target_os = "linux"))]

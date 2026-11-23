@@ -342,6 +342,40 @@ jobs:
           printf '%s  %s\n' "$digest" "$tool" | sha256sum -c -
           chmod +x "$tool"
 
+      - name: Prepare bundle options
+        id: bundle-options
+        shell: bash
+        env:
+          BUILD_ARGS: ${{ inputs.build-args }}
+          RUST_TARGET: ${{ inputs.target }}
+          SIGN_BINARIES: ${{ inputs.sign-binaries }}
+          RELEASE_ID: ${{ inputs.release-id }}
+        run: |
+          if [[ "$RUNNER_OS" == 'Linux' || "$RUNNER_OS" == 'macOS' ]]; then
+            cargo build --locked --release -p grain-recall-mcp --target "$RUST_TARGET" \
+              --target-dir "$RUNNER_TEMP/grain-helpers"
+            mkdir -p src-tauri/helpers
+            install -m755 "$RUNNER_TEMP/grain-helpers/$RUST_TARGET/release/grain-recall-mcp" \
+              "src-tauri/helpers/grain-recall-mcp-$RUST_TARGET"
+          fi
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          bundle = {}
+          if os.environ['RUNNER_OS'] in ('Linux', 'macOS'):
+              bundle['externalBin'] = ['helpers/grain-recall-mcp']
+          if os.environ['SIGN_BINARIES'] == 'false' and not os.environ['RELEASE_ID']:
+              bundle['createUpdaterArtifacts'] = False
+          args = os.environ['BUILD_ARGS']
+          if bundle:
+              config = Path('src-tauri/tauri.ci.conf.json')
+              config.write_text(json.dumps({'bundle': bundle}), encoding='utf-8')
+              args += f' --config {config.as_posix()}'
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              print(f'args={args.strip()}', file=output)
+          PY
+
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:
@@ -374,20 +408,21 @@ jobs:
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
-          args: ${{ inputs.build-args }}
+          # Tauri treats an empty but defined Apple credential as supplied.
+          tauriScript: >-
+            ${{ runner.os == 'macOS' && !inputs.sign-binaries &&
+            'env -u APPLE_ID -u APPLE_ID_PASSWORD -u APPLE_PASSWORD -u APPLE_TEAM_ID -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD -u APPLE_SIGNING_IDENTITY bun run tauri' || '' }}
+          args: ${{ steps.bundle-options.outputs.args }}
 
-      - name: Verify macOS dylib bundling
-        if: inputs.target == 'x86_64-apple-darwin'
+      - name: Verify macOS app bundle
+        if: runner.os == 'macOS'
         shell: bash
         run: |
-          APP=$(find src-tauri/target -name "*.app" -type d | head -1)
-          echo "=== Frameworks contents ==="
-          ls -la "$APP/Contents/Frameworks/" | grep onnx || true
-          echo "=== Binary linked libs ==="
-          otool -L "$APP/Contents/MacOS/handy" | grep onnx || true
-          echo "=== Checking all @rpath deps are satisfied ==="
+          APP=$(find "src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos" -maxdepth 1 -name '*.app' -type d -print -quit)
+          test -n "$APP" && test -x "$APP/Contents/MacOS/grain-recall-mcp"
+          codesign --verify --deep --strict "$APP"
           # Extract every @rpath lib the binary needs
-          otool -L "$APP/Contents/MacOS/handy" | grep '@rpath/' | awk '{print $1}' | while read dep; do
+          otool -L "$APP/Contents/MacOS/handy" | awk '$1 ~ /^@rpath\// { print $1 }' | while read -r dep; do
             libname=$(basename "$dep")
             if [ ! -f "$APP/Contents/Frameworks/$libname" ]; then
               echo "MISSING: $libname not found in Frameworks/"
@@ -448,6 +483,9 @@ jobs:
             fi
           done
 
+          if (( ${#debs[@]} > 0 )); then
+            sudo apt-get install -y xvfb xauth
+          fi
           for deb in "${debs[@]}"; do
             depends="$(dpkg-deb -f "$deb" Depends)"
             if ! printf '%s\n' "$depends" | grep -Eq '(^|,)[[:space:]]*libssl3t64[[:space:]]*\|[[:space:]]*libssl3[[:space:]]*(,|$)'; then
@@ -455,9 +493,32 @@ jobs:
               exit 1
             fi
             contents="$(dpkg-deb --fsys-tarfile "$deb" | tar -tf -)"
-            for pattern in 'usr/lib/Grain/libtranscribe\.so\.' 'usr/lib/Grain/libggml-cpu' 'silero-vad-.*\.gguf'; do
+            for pattern in 'usr/lib/Grain/libtranscribe\.so\.' 'usr/lib/Grain/libggml-cpu' 'silero-vad-.*\.gguf' 'usr/bin/grain-recall-mcp$'; do
               if ! grep -E "$pattern" <<< "$contents" > /dev/null; then
                 echo "Missing $pattern in $deb" >&2
+                exit 1
+              fi
+            done
+            (
+              unpacked="$(mktemp -d)"
+              trap 'rm -rf "$unpacked"' EXIT
+              dpkg-deb -x "$deb" "$unpacked"
+              devices="$(env -u LD_LIBRARY_PATH XDG_CONFIG_HOME="$unpacked/config" \
+                XDG_DATA_HOME="$unpacked/data" timeout 30s xvfb-run -a \
+                "$unpacked/usr/bin/handy" --list-devices)"
+              printf '%s\n' "$devices"
+              grep -iF 'kind=cpu' <<< "$devices" > /dev/null
+            )
+          done
+
+          if (( ${#rpms[@]} > 0 )); then
+            sudo apt-get install -y rpm
+          fi
+          for rpm in "${rpms[@]}"; do
+            contents="$(rpm -qlp "$rpm")"
+            for pattern in '/usr/lib/Grain/libtranscribe\.so\.' '/usr/lib/Grain/libggml-cpu' '/usr/bin/grain-recall-mcp$'; do
+              if ! grep -E "$pattern" <<< "$contents" > /dev/null; then
+                echo "Missing $pattern in $rpm" >&2
                 exit 1
               fi
             done
@@ -469,6 +530,7 @@ jobs:
             (
               cd "$workdir"
               "$image" --appimage-extract > /dev/null
+              test -x squashfs-root/usr/bin/grain-recall-mcp
               forbidden="$(find squashfs-root \( -name 'libwayland-client.so*' -o -name 'libvulkan.so*' \) -print -quit)"
               if [[ -n "$forbidden" ]]; then
                 echo "Host graphics library bundled in $image: $forbidden" >&2

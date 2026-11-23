@@ -101,11 +101,13 @@ pub fn get_icon_path(_theme: AppTheme, state: TrayIconState, warning: bool) -> &
 }
 
 pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
-    let tray = app.state::<TrayIcon>();
-    let theme = get_current_theme(app);
-
     // Store current state
     app.state::<CurrentTrayIconState>().set(icon);
+    // [GRAIN] The Linux desktop can start without a usable tray.
+    let Some(tray) = app.try_state::<TrayIcon>() else {
+        return;
+    };
+    let theme = get_current_theme(app);
 
     let warning = crate::secure_input::tray_warning_active(app);
     let icon_path = get_icon_path(theme, icon, warning);
@@ -152,6 +154,10 @@ fn version_label() -> String {
 }
 
 pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
+    // [GRAIN] The tray is optional on desktops without a tray host.
+    let Some(tray) = app.try_state::<TrayIcon>() else {
+        return;
+    };
     let state = app.state::<CurrentTrayIconState>().get();
     let settings = settings::get_settings(app);
 
@@ -289,7 +295,6 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
         tooltip = format!("{} — {}", tooltip, warning_item.text().unwrap_or_default());
     }
 
-    let tray = app.state::<TrayIcon>();
     let _ = tray.set_menu(Some(menu));
     let _ = tray.set_tooltip(Some(tooltip));
 }
@@ -302,7 +307,10 @@ fn last_transcript_text(entry: &HistoryEntry) -> &str {
 }
 
 pub fn set_tray_visibility(app: &AppHandle, visible: bool) {
-    let tray = app.state::<TrayIcon>();
+    // [GRAIN] Settings remain usable if tray creation failed.
+    let Some(tray) = app.try_state::<TrayIcon>() else {
+        return;
+    };
     if let Err(e) = tray.set_visible(visible) {
         error!("Failed to set tray visibility: {}", e);
     } else {

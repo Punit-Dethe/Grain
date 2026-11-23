@@ -95,7 +95,7 @@ impl Failure {
 // ── Extension surface ──────────────────────────────────────────────────────
 
 pub(crate) fn is_enabled(app: &AppHandle) -> bool {
-    crate::settings::get_settings(app).pilot_enabled
+    cfg!(windows) && crate::settings::get_settings(app).pilot_enabled
 }
 
 /// [GRAIN] Turn Grain Pilot on or off. Off removes its tools from the Agent on
@@ -103,6 +103,9 @@ pub(crate) fn is_enabled(app: &AppHandle) -> bool {
 #[tauri::command]
 #[specta::specta]
 pub fn change_pilot_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    if enabled && !cfg!(windows) {
+        return Err("The bundled Grain Pilot browser link is available on Windows.".into());
+    }
     let mut settings = crate::settings::get_settings(&app);
     settings.pilot_enabled = enabled;
     crate::settings::write_settings(&app, settings);
