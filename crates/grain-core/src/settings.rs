@@ -1504,7 +1504,10 @@ pub fn get_default_settings() -> AppSettings {
     // Dictation uses one shortcut for every selected model.
     #[cfg(target_os = "macos")]
     let default_shortcut = "option+space";
-    #[cfg(not(target_os = "macos"))]
+    // Match Handy's Linux default to avoid desktop and input method shortcuts.
+    #[cfg(target_os = "linux")]
+    let default_shortcut = "ctrl+alt+space";
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let default_shortcut = "alt+space";
 
     let mut bindings = HashMap::new();
@@ -2056,11 +2059,13 @@ mod binding_migration_tests {
     }
 
     #[test]
-    fn dictation_owns_alt_space_and_flow_has_no_binding() {
+    fn dictation_has_one_platform_default_for_standard_and_flow() {
         let settings = get_default_settings();
         #[cfg(target_os = "macos")]
         let expected = "option+space";
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
+        let expected = "ctrl+alt+space";
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let expected = "alt+space";
         assert_eq!(settings.bindings["transcribe"].current_binding, expected);
         assert_eq!(settings.bindings["transcribe"].default_binding, expected);
@@ -2075,12 +2080,12 @@ mod binding_migration_tests {
         old_flow.id = "transcribe_realtime".into();
         old_flow.current_binding = "f9".into();
         settings.bindings.insert(old_flow.id.clone(), old_flow);
-        stored_as(
-            &mut settings,
-            "transcribe",
-            "ctrl+alt+space",
-            "ctrl+alt+space",
-        );
+        let old_default = if cfg!(target_os = "linux") {
+            "alt+space"
+        } else {
+            "ctrl+alt+space"
+        };
+        stored_as(&mut settings, "transcribe", old_default, old_default);
         assert!(ensure_post_process_defaults(&mut settings));
         assert!(!settings.bindings.contains_key("transcribe_realtime"));
         assert_eq!(
