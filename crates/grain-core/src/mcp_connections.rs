@@ -483,7 +483,10 @@ impl ConnectionRegistry {
         if let Some(bytes) = &bytes {
             let disk: DiskFile =
                 serde_json::from_slice(bytes).map_err(|_| RegistryError::InvalidState)?;
-            if disk.schema != DISK_SCHEMA || disk.connections.len() > MAX_CONNECTIONS {
+            let valid_empty_v1 = disk.schema == 1 && disk.connections.is_empty();
+            if (!valid_empty_v1 && disk.schema != DISK_SCHEMA)
+                || disk.connections.len() > MAX_CONNECTIONS
+            {
                 return Err(RegistryError::InvalidState);
             }
             let mut accounts = HashSet::new();
@@ -1163,7 +1166,7 @@ mod tests {
         let original: Value = serde_json::from_slice(&bytes(dir.path())).unwrap();
         let mut variants = vec![
             json!({"schema":3,"connections":[]}),
-            json!({"schema":1,"connections":[]}),
+            json!({"schema":0,"connections":[]}),
             json!({"schema":2,"connections":[],"secret":"s"}),
         ];
         let mut value = original.clone();

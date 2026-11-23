@@ -53,8 +53,8 @@ export function ExtensionsPage() {
                   <ComposioConnected composio={composio} query={query} />
                 </div>
               </section>
-              <ComposioBrowse composio={composio} query={query} />
               {customConnections}
+              <ComposioBrowse composio={composio} query={query} />
             </>
           )}
         </McpConnections>

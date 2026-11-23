@@ -177,13 +177,16 @@ export function McpConnections({
 
   const refresh = useCallback(async () => {
     const serial = ++request.current;
-    const [records, browseStatus] = await Promise.all([
-      commands.mcpConnectionsList().then(unwrapResult),
-      commands
-        .mcpBrowseStatus(false)
-        .then(unwrapResult)
-        .catch(() => null),
-    ]);
+    const browsePromise = commands
+      .mcpBrowseStatus(false)
+      .then(unwrapResult)
+      .catch(() => null);
+    const recordsPromise = commands.mcpConnectionsList().then(unwrapResult);
+    const browseStatus = await browsePromise;
+    if (live.current && serial === request.current && browseStatus) {
+      setBrowse(browseStatus);
+    }
+    const records = await recordsPromise;
     const next = await Promise.all(
       records.map(async (row): Promise<Row> => {
         try {
@@ -200,7 +203,6 @@ export function McpConnections({
     );
     if (live.current && serial === request.current) {
       setRows(next);
-      if (browseStatus) setBrowse(browseStatus);
     }
   }, []);
 
