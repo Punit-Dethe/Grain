@@ -8,10 +8,12 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Box, Plus } from "lucide-react";
+import { Box, Globe, Plus, Server, Square, Terminal } from "lucide-react";
 import {
   commands,
   type ConnectionView,
+  type LocalMcpLogs,
+  type McpDiscoveryResult,
   type McpProviderStatus,
 } from "@/bindings";
 import { signInCancelled, unwrapResult } from "./extensionRuntime";
@@ -19,14 +21,76 @@ import "./mcp-presets.css";
 import "./mcp-connections.css";
 
 type Connection = ConnectionView;
+type TransportKind = "stdio" | "local-http" | "remote";
 type AccountStatus = Pick<
   McpProviderStatus,
   "connected" | "enabled" | "state" | "client_id_configured"
 >;
 type Row = Connection & { account?: AccountStatus; statusError?: string };
+type EnvEntry = { key: string; value: string; stored?: boolean };
+
 const owner = (row: Connection) => [row.id, row.revision] as const;
 const cancelSignIn = (row: Connection) =>
   commands.mcpCancelSignIn("configured-" + row.id).then(unwrapResult);
+
+/** Split a command-line argument string into argv tokens respecting quotes. */
+function splitArgs(raw: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let inToken = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      inToken = true;
+    } else if (/\s/.test(ch)) {
+      if (inToken) {
+        args.push(current);
+        current = "";
+        inToken = false;
+      }
+    } else {
+      current += ch;
+      inToken = true;
+    }
+  }
+  if (inToken) args.push(current);
+  return args;
+}
+
+function formatArgs(args: string[]): string {
+  return args
+    .map((arg) => (/[\s"']/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg))
+    .join(" ");
+}
+
+function commandPreview(row: Connection): string {
+  if (!row.command) return "";
+  const rest = formatArgs(row.args);
+  return rest ? `${row.command} ${rest}` : row.command;
+}
+
+const EXAMPLE_JSON = JSON.stringify(
+  {
+    mcpServers: {
+      browse: {
+        command: "browse",
+        args: ["mcp"],
+      },
+    },
+  },
+  null,
+  2,
+);
 
 export function McpConnections({
   query,
@@ -54,14 +118,27 @@ export function McpConnections({
   const [editing, setEditing] = useState<Connection | null>(null);
   const [adding, setAdding] = useState(false);
   const [jsonMode, setJsonMode] = useState(false);
+  const [transport, setTransport] = useState<TransportKind>("stdio");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [authentication, setAuthentication] = useState("oauth");
   const [headers, setHeaders] = useState<Connection["headers"]>({});
   const [oauthClient, setOAuthClient] =
     useState<Connection["oauthClient"]>(null);
+  const [command, setCommand] = useState("");
+  const [argsText, setArgsText] = useState("");
+  const [cwd, setCwd] = useState("");
+  const [envRows, setEnvRows] = useState<EnvEntry[]>([]);
+  const [authHeaderName, setAuthHeaderName] = useState("");
+  const [authHeaderValue, setAuthHeaderValue] = useState("");
   const [json, setJson] = useState("");
   const [removing, setRemoving] = useState<string | null>(null);
+  const [confirmingEnable, setConfirmingEnable] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<
+    Record<string, { ok: boolean; text: string }>
+  >({});
+  const [logsById, setLogsById] = useState<Record<string, LocalMcpLogs>>({});
+
   const live = useRef(false);
   const request = useRef(0);
   const active = useRef(false);
@@ -70,18 +147,29 @@ export function McpConnections({
   const addButton = useRef<HTMLButtonElement>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const confirmRemoval = useRef<HTMLButtonElement | null>(null);
+  const confirmEnableButton = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (removing) confirmRemoval.current?.focus();
   }, [removing]);
 
   useEffect(() => {
-    if (!adding && !removing && !busy && returnFocus.current) {
+    if (confirmingEnable) confirmEnableButton.current?.focus();
+  }, [confirmingEnable]);
+
+  useEffect(() => {
+    if (
+      !adding &&
+      !removing &&
+      !confirmingEnable &&
+      !busy &&
+      returnFocus.current
+    ) {
       const target = returnFocus.current;
       returnFocus.current = null;
       (target.isConnected ? target : addButton.current)?.focus();
     }
-  }, [adding, removing, busy]);
+  }, [adding, removing, confirmingEnable, busy]);
 
   const refresh = useCallback(async () => {
     const serial = ++request.current;
@@ -165,51 +253,142 @@ export function McpConnections({
     }
   };
 
+  const buildFormPayload = (): string => {
+    if (transport === "stdio") {
+      const envKeys: string[] = [];
+      const env: Record<string, string> = {};
+      for (const entry of envRows) {
+        const key = entry.key.trim();
+        if (!key) continue;
+        if (!envKeys.includes(key)) envKeys.push(key);
+        if (entry.value.length > 0 || !entry.stored) {
+          env[key] = entry.value;
+        }
+      }
+      const payload: Record<string, unknown> = {
+        transport: "stdio",
+        name: name.trim(),
+        command: command.trim(),
+        args: splitArgs(argsText),
+        ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
+        ...(envKeys.length ? { envKeys } : {}),
+        ...(Object.keys(env).length ? { env } : {}),
+      };
+      return JSON.stringify(payload, null, 2);
+    }
+    if (transport === "local-http") {
+      const payload: Record<string, unknown> = {
+        transport: "local-http",
+        name: name.trim(),
+        url: url.trim(),
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...(authHeaderName.trim() && authHeaderValue.trim()
+          ? {
+              authHeader: {
+                name: authHeaderName.trim(),
+                value: authHeaderValue.trim(),
+              },
+            }
+          : {}),
+      };
+      return JSON.stringify(payload, null, 2);
+    }
+    return JSON.stringify(
+      {
+        transport: "remote",
+        name: name.trim(),
+        url: url.trim(),
+        authentication: { type: authentication },
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...(oauthClient ? { oauthClient } : {}),
+      },
+      null,
+      2,
+    );
+  };
+
   const openForm = (row: Connection | null, trigger: HTMLButtonElement) => {
     returnFocus.current = trigger;
     setEditing(row);
     setAdding(true);
     setJsonMode(false);
+    const kind: TransportKind =
+      row?.transport === "remote" ||
+      row?.transport === "local-http" ||
+      row?.transport === "stdio"
+        ? row.transport
+        : "stdio";
+    setTransport(kind);
     setName(row?.name ?? "");
     setUrl(row?.url ?? "");
     setAuthentication(row?.authentication ?? "oauth");
     setHeaders(row?.headers ?? {});
     setOAuthClient(row?.oauthClient ?? null);
+    setCommand(row?.command ?? "");
+    setArgsText(row ? formatArgs(row.args) : "");
+    setCwd(row?.cwd ?? "");
+    setEnvRows(
+      (row?.envKeys ?? []).map((key) => ({ key, value: "", stored: true })),
+    );
+    setAuthHeaderName("");
+    setAuthHeaderValue("");
     setJson(
-      JSON.stringify(
-        {
-          name: row?.name ?? "",
-          url: row?.url ?? "",
-          authentication: { type: row?.authentication ?? "oauth" },
-          ...(Object.keys(row?.headers ?? {}).length
-            ? { headers: row?.headers }
-            : {}),
-          ...(row?.oauthClient ? { oauthClient: row.oauthClient } : {}),
-        },
-        null,
-        2,
-      ),
+      row
+        ? JSON.stringify(
+            row.transport === "stdio"
+              ? {
+                  transport: "stdio",
+                  name: row.name,
+                  command: row.command ?? "",
+                  args: row.args,
+                  ...(row.cwd ? { cwd: row.cwd } : {}),
+                  ...(row.envKeys.length ? { envKeys: row.envKeys } : {}),
+                }
+              : row.transport === "local-http"
+                ? {
+                    transport: "local-http",
+                    name: row.name,
+                    url: row.url,
+                    ...(Object.keys(row.headers).length
+                      ? { headers: row.headers }
+                      : {}),
+                  }
+                : {
+                    transport: "remote",
+                    name: row.name,
+                    url: row.url,
+                    authentication: { type: row.authentication },
+                    ...(Object.keys(row.headers).length
+                      ? { headers: row.headers }
+                      : {}),
+                    ...(row.oauthClient
+                      ? { oauthClient: row.oauthClient }
+                      : {}),
+                  },
+            null,
+            2,
+          )
+        : EXAMPLE_JSON,
     );
     setError(null);
   };
 
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const definitionJson = jsonMode
-      ? json
-      : JSON.stringify({
-          name,
-          url,
-          authentication: { type: authentication },
-          ...(Object.keys(headers).length ? { headers } : {}),
-          ...(oauthClient ? { oauthClient } : {}),
-        });
+    const definitionJson = jsonMode ? json : buildFormPayload();
     void run("form", async () => {
-      unwrapResult(
-        await (editing
-          ? commands.mcpConnectionReplace(...owner(editing), definitionJson)
-          : commands.mcpConnectionImport(definitionJson)),
-      );
+      if (editing) {
+        unwrapResult(
+          await commands.mcpConnectionReplace(
+            ...owner(editing),
+            definitionJson,
+          ),
+        );
+      } else if (jsonMode) {
+        unwrapResult(await commands.mcpConnectionImportBundle(definitionJson));
+      } else {
+        unwrapResult(await commands.mcpConnectionImport(definitionJson));
+      }
       if (live.current) setAdding(false);
     });
   };
@@ -232,9 +411,95 @@ export function McpConnections({
     );
   };
 
+  const saveLocalAuth = (
+    event: FormEvent<HTMLFormElement>,
+    row: Connection,
+  ) => {
+    event.preventDefault();
+    if (active.current) return;
+    const data = new FormData(event.currentTarget);
+    const headerName = String(data.get("headerName") ?? "");
+    const headerValue = String(data.get("headerValue") ?? "");
+    event.currentTarget.reset();
+    void run(row.id, () =>
+      commands
+        .mcpConnectionSetLocalAuth(...owner(row), headerName, headerValue)
+        .then(unwrapResult),
+    );
+  };
+
+  const testConnection = (row: Connection) =>
+    void run(row.id, async () => {
+      try {
+        const result: McpDiscoveryResult = unwrapResult(
+          await commands.mcpConnectionTest(...owner(row)),
+        );
+        if (live.current) {
+          setTestResults((prev) => ({
+            ...prev,
+            [row.id]: {
+              ok: true,
+              text:
+                result.tool_count === 0
+                  ? "Connected · 0 tools advertised"
+                  : `Connected · ${result.tool_count} tool${result.tool_count === 1 ? "" : "s"} discovered`,
+            },
+          }));
+        }
+      } catch (reason) {
+        if (live.current) {
+          setTestResults((prev) => ({
+            ...prev,
+            [row.id]: { ok: false, text: String(reason) },
+          }));
+        }
+        throw reason;
+      }
+    });
+
+  const loadLogs = (row: Connection) =>
+    void run(row.id, async () => {
+      const logs = unwrapResult(
+        await commands.mcpConnectionLogs(...owner(row)),
+      );
+      if (live.current) {
+        setLogsById((prev) => ({ ...prev, [row.id]: logs }));
+      }
+    });
+
+  const toggleEnabled = (row: Row, trigger: HTMLButtonElement) => {
+    const nextEnabled = !row.account?.enabled;
+    if (nextEnabled && row.transport === "stdio") {
+      returnFocus.current = trigger;
+      setConfirmingEnable(row.id);
+      return;
+    }
+    void run(row.id, () =>
+      commands
+        .mcpConnectionSetEnabled(...owner(row), nextEnabled)
+        .then(unwrapResult),
+    );
+  };
+
   const matching = rows.filter((row) =>
-    `${row.name} ${row.url}`.toLowerCase().includes(query.toLowerCase().trim()),
+    `${row.name} ${row.url} ${row.command ?? ""} ${row.args.join(" ")} ${row.transport}`
+      .toLowerCase()
+      .includes(query.toLowerCase().trim()),
   );
+
+  const transportBadge = (kind: string) => {
+    if (kind === "stdio") return "Local command";
+    if (kind === "local-http") return "Local HTTP";
+    return "Remote";
+  };
+
+  const transportIcon = (kind: string) => {
+    if (kind === "stdio") return <Terminal size={17} />;
+    if (kind === "local-http") return <Server size={17} />;
+    if (kind === "remote") return <Globe size={17} />;
+    return <Box size={17} />;
+  };
+
   return (
     <>
       <div className="extensions-head">
@@ -274,133 +539,282 @@ export function McpConnections({
               checked={jsonMode}
               disabled={busy !== null}
               onChange={(event) => {
-                if (event.target.checked)
-                  setJson(
-                    JSON.stringify(
-                      {
-                        name,
-                        url,
-                        authentication: { type: authentication },
-                        ...(Object.keys(headers).length ? { headers } : {}),
-                        ...(oauthClient ? { oauthClient } : {}),
-                      },
-                      null,
-                      2,
-                    ),
-                  );
-                else {
-                  try {
-                    const value = JSON.parse(json);
-                    if (
-                      !value ||
-                      Object.keys(value)
-                        .filter(
-                          (key) => !["headers", "oauthClient"].includes(key),
-                        )
-                        .sort()
-                        .join() !== "authentication,name,url" ||
-                      typeof value.name !== "string" ||
-                      typeof value.url !== "string" ||
-                      !value.authentication ||
-                      Object.keys(value.authentication).join() !== "type" ||
-                      !["oauth", "none"].includes(value.authentication.type) ||
-                      (value.headers !== undefined &&
-                        (!value.headers ||
-                          typeof value.headers !== "object" ||
-                          Array.isArray(value.headers) ||
-                          Object.values(value.headers).some(
-                            (item) => typeof item !== "string",
-                          ))) ||
-                      (value.oauthClient != null &&
-                        (Object.keys(value.oauthClient).sort().join() !==
-                          "clientId,issuer" ||
-                          typeof value.oauthClient.clientId !== "string" ||
-                          typeof value.oauthClient.issuer !== "string"))
-                    )
-                      throw new Error(
-                        "Use name, url and authentication.type before switching to the form.",
-                      );
-                    setName(value.name);
-                    setUrl(value.url);
-                    setAuthentication(value.authentication.type);
-                    setHeaders(value.headers ?? {});
-                    setOAuthClient(value.oauthClient ?? null);
-                  } catch (reason) {
-                    setError(String(reason));
-                    return;
-                  }
+                if (event.target.checked) {
+                  setJson(editing ? buildFormPayload() : EXAMPLE_JSON);
                 }
                 setError(null);
                 setJsonMode(event.target.checked);
               }}
             />{" "}
-            Enter JSON instead
+            Paste JSON (supports standard <code>mcpServers</code> config)
           </label>
           {jsonMode ? (
             <label>
-              Connection JSON
+              MCP JSON
               <textarea
                 required
                 value={json}
-                maxLength={8192}
+                maxLength={65536}
                 spellCheck={false}
                 disabled={busy !== null}
                 onChange={(event) => setJson(event.target.value)}
-                rows={7}
+                rows={9}
               />
               <small>
-                Use name, url and authentication.type (oauth or none). Optional
-                headers and oauthClient are public provider configuration;
-                credentials are entered separately.
+                Paste a Claude Desktop / Cursor <code>mcpServers</code> block or
+                a single server definition. Environment values and local auth
+                headers are saved directly to the OS credential vault.
               </small>
             </label>
           ) : (
             <>
+              <div
+                className="mcp-transport-tabs"
+                role="radiogroup"
+                aria-label="MCP transport"
+              >
+                {(
+                  [
+                    ["stdio", "Local command (Stdio)"],
+                    ["local-http", "Local server (HTTP)"],
+                    ["remote", "Remote (HTTPS)"],
+                  ] as const
+                ).map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="radio"
+                    aria-checked={transport === kind}
+                    className={`button mcp-transport-tab ${transport === kind ? "primary" : "ghost"}`}
+                    disabled={busy !== null}
+                    onClick={() => setTransport(kind)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <label>
                 Name
                 <input
                   required
                   value={name}
-                  placeholder="e.g. Team tools"
+                  placeholder={
+                    transport === "stdio"
+                      ? "e.g. Browser (Browse)"
+                      : transport === "local-http"
+                        ? "e.g. Local Playwright"
+                        : "e.g. Team tools"
+                  }
                   maxLength={120}
                   autoFocus
                   disabled={busy !== null}
                   onChange={(event) => setName(event.target.value)}
                 />
               </label>
-              <label>
-                MCP server URL
-                <input
-                  required
-                  type="url"
-                  pattern="https://.*"
-                  value={url}
-                  placeholder="https://example.com/mcp"
-                  disabled={busy !== null}
-                  onChange={(event) => setUrl(event.target.value)}
-                />
-                <small>Remote HTTPS servers using Streamable HTTP.</small>
-              </label>
-              <label>
-                Authentication
-                <select
-                  value={authentication}
-                  disabled={busy !== null}
-                  onChange={(event) => {
-                    setAuthentication(event.target.value);
-                    if (event.target.value === "none") setOAuthClient(null);
-                  }}
-                >
-                  <option value="oauth">Browser sign-in (OAuth)</option>
-                  <option value="none">No authentication</option>
-                </select>
-              </label>
+              {transport === "stdio" && (
+                <>
+                  <label>
+                    Command
+                    <input
+                      required
+                      value={command}
+                      placeholder="e.g. browse, npx, uvx, or C:\path\to\server.exe"
+                      maxLength={512}
+                      spellCheck={false}
+                      disabled={busy !== null}
+                      onChange={(event) => setCommand(event.target.value)}
+                    />
+                    <small>
+                      Executed directly without a shell; starts on demand and
+                      stops automatically after 3 minutes idle.
+                    </small>
+                  </label>
+                  <label>
+                    Arguments (optional)
+                    <input
+                      value={argsText}
+                      placeholder="e.g. mcp  or  -y @playwright/mcp --extension"
+                      spellCheck={false}
+                      disabled={busy !== null}
+                      onChange={(event) => setArgsText(event.target.value)}
+                    />
+                    <small>
+                      Space-separated; wrap paths containing spaces in double
+                      quotes.
+                    </small>
+                  </label>
+                  <label>
+                    Working directory (optional)
+                    <input
+                      value={cwd}
+                      placeholder="Absolute folder path (optional)"
+                      maxLength={1024}
+                      spellCheck={false}
+                      disabled={busy !== null}
+                      onChange={(event) => setCwd(event.target.value)}
+                    />
+                  </label>
+                  <div className="mcp-env-editor">
+                    <div className="mcp-env-header">
+                      <span>Environment variables (stored in OS vault)</span>
+                      <button
+                        type="button"
+                        className="button ghost"
+                        disabled={busy !== null || envRows.length >= 32}
+                        onClick={() =>
+                          setEnvRows((prev) => [
+                            ...prev,
+                            { key: "", value: "" },
+                          ])
+                        }
+                      >
+                        Add variable
+                      </button>
+                    </div>
+                    {envRows.map((entry, index) => (
+                      <div className="mcp-env-row" key={index}>
+                        <input
+                          aria-label="Variable name"
+                          placeholder="API_KEY"
+                          value={entry.key}
+                          spellCheck={false}
+                          disabled={busy !== null}
+                          onChange={(event) =>
+                            setEnvRows((prev) =>
+                              prev.map((item, i) =>
+                                i === index
+                                  ? { ...item, key: event.target.value }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                        <input
+                          aria-label="Variable value"
+                          type="password"
+                          autoComplete="new-password"
+                          placeholder={
+                            entry.stored
+                              ? "Stored in vault (leave blank to keep)"
+                              : "Value"
+                          }
+                          value={entry.value}
+                          disabled={busy !== null}
+                          onChange={(event) =>
+                            setEnvRows((prev) =>
+                              prev.map((item, i) =>
+                                i === index
+                                  ? { ...item, value: event.target.value }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="button ghost"
+                          disabled={busy !== null}
+                          onClick={() =>
+                            setEnvRows((prev) =>
+                              prev.filter((_, i) => i !== index),
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {transport === "local-http" && (
+                <>
+                  <label>
+                    Local MCP URL
+                    <input
+                      required
+                      type="url"
+                      pattern="https?://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?(/.*)?"
+                      value={url}
+                      placeholder="http://127.0.0.1:8931/mcp"
+                      disabled={busy !== null}
+                      onChange={(event) => setUrl(event.target.value)}
+                    />
+                    <small>
+                      Loopback addresses only (<code>localhost</code>,{" "}
+                      <code>127.0.0.1</code>, or <code>[::1]</code>).
+                    </small>
+                  </label>
+                  <div className="mcp-env-row">
+                    <label>
+                      Auth header name (optional)
+                      <input
+                        value={authHeaderName}
+                        placeholder="Authorization"
+                        spellCheck={false}
+                        disabled={busy !== null}
+                        onChange={(event) =>
+                          setAuthHeaderName(event.target.value)
+                        }
+                      />
+                    </label>
+                    <label>
+                      Auth header value (vault)
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={authHeaderValue}
+                        placeholder={
+                          editing?.hasAuthHeader
+                            ? "Stored in vault (leave blank to keep)"
+                            : "Bearer …"
+                        }
+                        disabled={busy !== null}
+                        onChange={(event) =>
+                          setAuthHeaderValue(event.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                </>
+              )}
+              {transport === "remote" && (
+                <>
+                  <label>
+                    MCP server URL
+                    <input
+                      required
+                      type="url"
+                      pattern="https://.*"
+                      value={url}
+                      placeholder="https://example.com/mcp"
+                      disabled={busy !== null}
+                      onChange={(event) => setUrl(event.target.value)}
+                    />
+                    <small>Remote HTTPS servers using Streamable HTTP.</small>
+                  </label>
+                  <label>
+                    Authentication
+                    <select
+                      value={authentication}
+                      disabled={busy !== null}
+                      onChange={(event) => {
+                        setAuthentication(event.target.value);
+                        if (event.target.value === "none") setOAuthClient(null);
+                      }}
+                    >
+                      <option value="oauth">Browser sign-in (OAuth)</option>
+                      <option value="none">No authentication</option>
+                    </select>
+                  </label>
+                </>
+              )}
             </>
           )}
           {editing && (
             <p>
-              Changing the server URL or authentication signs out the old
-              connection and disables it.
+              Changing the server URL, command, arguments, or authentication
+              resets the connection and disables it until re-enabled.
             </p>
           )}
           <div className="mcp-connection-actions">
@@ -447,32 +861,62 @@ export function McpConnections({
               <p>
                 {rows.length
                   ? "No MCP connections match your search."
-                  : "Add your first MCP to make its tools available to the Agent."}
+                  : "Add a local or remote MCP to make its tools available to the Agent."}
               </p>
             ) : (
-              matching.map((row) => (
-                <article
-                  className="mcp-connection-row mcp-custom-row"
-                  key={row.id}
-                >
-                  <div className="mcp-connection-copy">
-                    <div className="mcp-custom-heading">
-                      <span className="mcp-preset-icon" aria-hidden="true">
-                        <Box size={17} />
-                      </span>
-                      <h3>{row.name}</h3>
-                    </div>
-                    <p className="mcp-connection-url">{row.url}</p>
-                    {(row.statusError || !row.account?.connected) && (
+              matching.map((row) => {
+                const isStdio = row.transport === "stdio";
+                const isLocalHttp = row.transport === "local-http";
+                const isRemoteOAuth =
+                  row.transport === "remote" && row.authentication === "oauth";
+                const testInfo = testResults[row.id];
+                const logs = logsById[row.id];
+                return (
+                  <article
+                    className="mcp-connection-row mcp-custom-row"
+                    key={row.id}
+                  >
+                    <div className="mcp-connection-copy">
+                      <div className="mcp-custom-heading">
+                        <span className="mcp-preset-icon" aria-hidden="true">
+                          {transportIcon(row.transport)}
+                        </span>
+                        <h3>{row.name}</h3>
+                        <span className="mcp-transport-badge">
+                          {transportBadge(row.transport)}
+                        </span>
+                      </div>
+                      <p className="mcp-connection-url">
+                        {isStdio ? <code>{commandPreview(row)}</code> : row.url}
+                      </p>
                       <p>
-                        {row.statusError ??
-                          (row.authentication === "none"
-                            ? "No account needed"
-                            : row.account?.state ===
-                                  "needs_client_credentials" ||
-                                row.account?.state === "disconnected"
-                              ? "Sign in to connect your account"
-                              : row.account?.state.replace(/_/g, " "))}{" "}
+                        {row.statusError ? (
+                          row.statusError
+                        ) : isStdio ? (
+                          <>
+                            {row.runtime.running
+                              ? `Running${row.runtime.pid ? ` (PID ${row.runtime.pid})` : ""}`
+                              : row.runtime.lastError
+                                ? "Last start failed"
+                                : "Idle (0 MB)"}
+                            {row.envKeys.length > 0 &&
+                              ` · ${row.envKeys.length} env var${row.envKeys.length === 1 ? "" : "s"}`}
+                          </>
+                        ) : isLocalHttp ? (
+                          <>
+                            Loopback server
+                            {row.hasAuthHeader ? " · Auth header saved" : ""}
+                          </>
+                        ) : row.authentication === "none" ? (
+                          "No account needed"
+                        ) : row.account?.connected ? (
+                          "Connected"
+                        ) : row.account?.state === "needs_client_credentials" ||
+                          row.account?.state === "disconnected" ? (
+                          "Sign in to connect your account"
+                        ) : (
+                          row.account?.state.replace(/_/g, " ")
+                        )}{" "}
                         &middot;{" "}
                         {row.account?.enabled
                           ? "Enabled"
@@ -480,22 +924,49 @@ export function McpConnections({
                             ? "Disabled"
                             : "Status unavailable"}
                       </p>
-                    )}
-                  </div>
-                  <div className="mcp-connection-actions">
-                    {connecting === row.id ? (
-                      <button
-                        className="button"
-                        type="button"
-                        disabled={cancelling}
-                        onClick={() => void cancel(row)}
-                      >
-                        {cancelling ? "Cancelling..." : "Cancel sign-in"}
-                      </button>
-                    ) : (
-                      <>
-                        {row.authentication === "oauth" &&
-                          !row.account?.connected && (
+                      {testInfo && (
+                        <p
+                          className={
+                            testInfo.ok
+                              ? "mcp-test-ok"
+                              : "extension-inline-error"
+                          }
+                          role="status"
+                        >
+                          {testInfo.text}
+                        </p>
+                      )}
+                    </div>
+                    <div className="mcp-connection-actions">
+                      {connecting === row.id ? (
+                        <button
+                          className="button"
+                          type="button"
+                          disabled={cancelling}
+                          onClick={() => void cancel(row)}
+                        >
+                          {cancelling ? "Cancelling..." : "Cancel sign-in"}
+                        </button>
+                      ) : (
+                        <>
+                          {isStdio && row.runtime.running && (
+                            <button
+                              className="button ghost"
+                              type="button"
+                              disabled={busy !== null}
+                              onClick={() =>
+                                void run(row.id, () =>
+                                  commands
+                                    .mcpConnectionStop(...owner(row))
+                                    .then(unwrapResult),
+                                )
+                              }
+                            >
+                              <Square size={12} aria-hidden="true" />
+                              Stop
+                            </button>
+                          )}
+                          {isRemoteOAuth && !row.account?.connected && (
                             <button
                               className="button primary"
                               type="button"
@@ -505,186 +976,331 @@ export function McpConnections({
                               Connect
                             </button>
                           )}
-                        {row.account &&
-                          (row.authentication === "none" ||
-                            row.account.connected) && (
-                            <button
-                              className="button"
-                              type="button"
-                              disabled={busy !== null}
-                              onClick={() =>
-                                void run(row.id, () =>
-                                  commands
-                                    .mcpConnectionSetEnabled(
-                                      ...owner(row),
-                                      !row.account?.enabled,
-                                    )
-                                    .then(unwrapResult),
-                                )
-                              }
-                            >
-                              {row.account.enabled ? "Disable" : "Enable"}
-                            </button>
-                          )}
-                      </>
-                    )}
-                  </div>
-                  <details className="mcp-preset-settings mcp-custom-settings">
-                    <summary>Manage connection</summary>
-                    <div className="mcp-connection-actions">
-                      {row.account?.connected && (
-                        <button
-                          className="button ghost"
-                          type="button"
-                          disabled={busy !== null}
-                          onClick={() => connect(row)}
-                        >
-                          Sign in again
-                        </button>
+                          {row.account &&
+                            (!isRemoteOAuth || row.account.connected) && (
+                              <button
+                                className="button"
+                                type="button"
+                                disabled={busy !== null}
+                                onClick={(event) =>
+                                  toggleEnabled(row, event.currentTarget)
+                                }
+                              >
+                                {row.account.enabled ? "Disable" : "Enable"}
+                              </button>
+                            )}
+                        </>
                       )}
-                      {row.account?.connected && (
-                        <button
-                          className="button ghost"
-                          type="button"
-                          disabled={busy !== null}
-                          onClick={() =>
-                            void run(row.id, () =>
-                              commands
-                                .mcpConnectionDisconnect(...owner(row))
-                                .then(unwrapResult),
-                            )
-                          }
-                        >
-                          Sign out
-                        </button>
-                      )}
-                      <button
-                        className="button ghost"
-                        type="button"
-                        disabled={busy !== null}
-                        onClick={(event) => openForm(row, event.currentTarget)}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        disabled={busy !== null}
-                        onClick={(event) => {
-                          returnFocus.current = event.currentTarget;
-                          setRemoving(row.id);
-                        }}
-                      >
-                        Remove
-                      </button>
                     </div>
-                    {removing === row.id && (
+                    {confirmingEnable === row.id && isStdio && (
                       <div className="mcp-connection-confirm">
+                        <p>Allow Grain to run this local command on demand?</p>
+                        <p className="mcp-connection-url">
+                          <code>{commandPreview(row)}</code>
+                          {row.cwd ? (
+                            <>
+                              {" "}
+                              in <code>{row.cwd}</code>
+                            </>
+                          ) : null}
+                        </p>
                         <p>
-                          Remove {row.name}? Its tools will be disabled and its
-                          saved account cleared.
+                          It will only start when the Agent calls its tools and
+                          stops automatically after 3 minutes idle.
                         </p>
                         <div className="mcp-connection-actions">
                           <button
-                            ref={confirmRemoval}
+                            ref={confirmEnableButton}
                             type="button"
-                            className="button danger"
+                            className="button primary"
                             disabled={busy !== null}
                             onClick={() =>
                               void run(row.id, async () => {
                                 unwrapResult(
-                                  await commands.mcpConnectionRemove(
+                                  await commands.mcpConnectionSetEnabled(
                                     ...owner(row),
+                                    true,
                                   ),
                                 );
-                                if (live.current) setRemoving(null);
+                                if (live.current) setConfirmingEnable(null);
                               })
                             }
                           >
-                            Remove connection
+                            Allow &amp; Enable
                           </button>
                           <button
                             type="button"
                             className="button ghost"
                             disabled={busy !== null}
-                            onClick={() => setRemoving(null)}
+                            onClick={() => setConfirmingEnable(null)}
                           >
-                            Keep connection
+                            Cancel
                           </button>
                         </div>
                       </div>
                     )}
-                    {row.authentication === "oauth" && (
-                      <details className="mcp-client-settings">
-                        <summary>
-                          OAuth app credentials{" "}
-                          {row.account?.client_id_configured
-                            ? "(configured)"
-                            : "(optional)"}
-                        </summary>
-                        <p>
-                          Only needed if this server requires your own OAuth
-                          app. Secrets go to the system vault.
-                        </p>
-                        <p className="mcp-connection-url">
-                          Register redirect URI:{" "}
-                          <code>http://127.0.0.1:31938/mcp/oauth/callback</code>
-                        </p>
-                        <form
-                          className="mcp-connection-form"
-                          onSubmit={(event) => saveClient(event, row)}
+                    <details className="mcp-preset-settings mcp-custom-settings">
+                      <summary>Manage connection</summary>
+                      <div className="mcp-connection-actions">
+                        {(!isRemoteOAuth || row.account?.connected) && (
+                          <button
+                            className="button ghost"
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={() => testConnection(row)}
+                          >
+                            Test
+                          </button>
+                        )}
+                        {isStdio && (
+                          <button
+                            className="button ghost"
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={() => loadLogs(row)}
+                          >
+                            Logs
+                          </button>
+                        )}
+                        {row.account?.connected && isRemoteOAuth && (
+                          <button
+                            className="button ghost"
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={() => connect(row)}
+                          >
+                            Sign in again
+                          </button>
+                        )}
+                        {row.account?.connected && isRemoteOAuth && (
+                          <button
+                            className="button ghost"
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={() =>
+                              void run(row.id, () =>
+                                commands
+                                  .mcpConnectionDisconnect(...owner(row))
+                                  .then(unwrapResult),
+                              )
+                            }
+                          >
+                            Sign out
+                          </button>
+                        )}
+                        <button
+                          className="button ghost"
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={(event) =>
+                            openForm(row, event.currentTarget)
+                          }
                         >
-                          <label>
-                            Client ID
-                            <input
-                              name="clientId"
-                              required
-                              autoComplete="off"
-                              disabled={busy !== null}
-                            />
-                          </label>
-                          <label>
-                            Client secret (if required)
-                            <input
-                              name="clientSecret"
-                              type="password"
-                              autoComplete="new-password"
-                              disabled={busy !== null}
-                            />
-                          </label>
+                          Edit
+                        </button>
+                        <button
+                          className="button ghost"
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={(event) => {
+                            returnFocus.current = event.currentTarget;
+                            setRemoving(row.id);
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      {logs && isStdio && (
+                        <div className="mcp-logs-box">
+                          {logs.lastError && (
+                            <p className="extension-inline-error">
+                              {logs.lastError}
+                            </p>
+                          )}
+                          <pre>
+                            {logs.stderr.length > 0
+                              ? logs.stderr.join("\n")
+                              : "No stderr output recorded yet."}
+                          </pre>
+                        </div>
+                      )}
+                      {removing === row.id && (
+                        <div className="mcp-connection-confirm">
+                          <p>
+                            Remove {row.name}? Its tools will be disabled, any
+                            running process stopped, and saved secrets cleared.
+                          </p>
                           <div className="mcp-connection-actions">
                             <button
-                              className="button"
-                              type="submit"
+                              ref={confirmRemoval}
+                              type="button"
+                              className="button danger"
                               disabled={busy !== null}
+                              onClick={() =>
+                                void run(row.id, async () => {
+                                  unwrapResult(
+                                    await commands.mcpConnectionRemove(
+                                      ...owner(row),
+                                    ),
+                                  );
+                                  if (live.current) setRemoving(null);
+                                })
+                              }
                             >
-                              Save app credentials
+                              Remove connection
                             </button>
-                            {row.account?.client_id_configured && (
-                              <button
-                                className="button ghost"
-                                type="button"
-                                disabled={busy !== null}
-                                onClick={() =>
-                                  void run(row.id, () =>
-                                    commands
-                                      .mcpConnectionClearClientCredentials(
-                                        ...owner(row),
-                                      )
-                                      .then(unwrapResult),
-                                  )
-                                }
-                              >
-                                Reset app credentials
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              className="button ghost"
+                              disabled={busy !== null}
+                              onClick={() => setRemoving(null)}
+                            >
+                              Keep connection
+                            </button>
                           </div>
-                        </form>
-                      </details>
-                    )}
-                  </details>
-                </article>
-              ))
+                        </div>
+                      )}
+                      {isLocalHttp && (
+                        <details className="mcp-client-settings">
+                          <summary>
+                            Local auth header{" "}
+                            {row.hasAuthHeader ? "(configured)" : "(optional)"}
+                          </summary>
+                          <p>
+                            Optional header sent only to this loopback server.
+                            Stored in the OS credential vault.
+                          </p>
+                          <form
+                            className="mcp-connection-form"
+                            onSubmit={(event) => saveLocalAuth(event, row)}
+                          >
+                            <label>
+                              Header name
+                              <input
+                                name="headerName"
+                                required
+                                placeholder="Authorization"
+                                autoComplete="off"
+                                disabled={busy !== null}
+                              />
+                            </label>
+                            <label>
+                              Header value
+                              <input
+                                name="headerValue"
+                                required
+                                type="password"
+                                placeholder="Bearer …"
+                                autoComplete="new-password"
+                                disabled={busy !== null}
+                              />
+                            </label>
+                            <div className="mcp-connection-actions">
+                              <button
+                                className="button"
+                                type="submit"
+                                disabled={busy !== null}
+                              >
+                                Save auth header
+                              </button>
+                              {row.hasAuthHeader && (
+                                <button
+                                  className="button ghost"
+                                  type="button"
+                                  disabled={busy !== null}
+                                  onClick={() =>
+                                    void run(row.id, () =>
+                                      commands
+                                        .mcpConnectionSetLocalAuth(
+                                          ...owner(row),
+                                          "",
+                                          "",
+                                        )
+                                        .then(unwrapResult),
+                                    )
+                                  }
+                                >
+                                  Clear auth header
+                                </button>
+                              )}
+                            </div>
+                          </form>
+                        </details>
+                      )}
+                      {isRemoteOAuth && (
+                        <details className="mcp-client-settings">
+                          <summary>
+                            OAuth app credentials{" "}
+                            {row.account?.client_id_configured
+                              ? "(configured)"
+                              : "(optional)"}
+                          </summary>
+                          <p>
+                            Only needed if this server requires your own OAuth
+                            app. Secrets go to the system vault.
+                          </p>
+                          <p className="mcp-connection-url">
+                            Register redirect URI:{" "}
+                            <code>
+                              http://127.0.0.1:31938/mcp/oauth/callback
+                            </code>
+                          </p>
+                          <form
+                            className="mcp-connection-form"
+                            onSubmit={(event) => saveClient(event, row)}
+                          >
+                            <label>
+                              Client ID
+                              <input
+                                name="clientId"
+                                required
+                                autoComplete="off"
+                                disabled={busy !== null}
+                              />
+                            </label>
+                            <label>
+                              Client secret (if required)
+                              <input
+                                name="clientSecret"
+                                type="password"
+                                autoComplete="new-password"
+                                disabled={busy !== null}
+                              />
+                            </label>
+                            <div className="mcp-connection-actions">
+                              <button
+                                className="button"
+                                type="submit"
+                                disabled={busy !== null}
+                              >
+                                Save app credentials
+                              </button>
+                              {row.account?.client_id_configured && (
+                                <button
+                                  className="button ghost"
+                                  type="button"
+                                  disabled={busy !== null}
+                                  onClick={() =>
+                                    void run(row.id, () =>
+                                      commands
+                                        .mcpConnectionClearClientCredentials(
+                                          ...owner(row),
+                                        )
+                                        .then(unwrapResult),
+                                    )
+                                  }
+                                >
+                                  Reset app credentials
+                                </button>
+                              )}
+                            </div>
+                          </form>
+                        </details>
+                      )}
+                    </details>
+                  </article>
+                );
+              })
             )}
           </section>
         ),

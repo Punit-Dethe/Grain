@@ -1043,6 +1043,14 @@ async mcpConnectionImport(definitionJson: string) : Promise<Result<ConnectionVie
     else return { status: "error", error: e  as any };
 }
 },
+async mcpConnectionImportBundle(definitionJson: string) : Promise<Result<ConnectionView[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_import_bundle", { definitionJson }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async mcpConnectionReplace(id: string, expectedRevision: string, definitionJson: string) : Promise<Result<ConnectionView, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connection_replace", { id, expectedRevision, definitionJson }) };
@@ -1102,6 +1110,46 @@ async mcpConnectionSetClientCredentials(id: string, expectedRevision: string, cl
 async mcpConnectionClearClientCredentials(id: string, expectedRevision: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("mcp_connection_clear_client_credentials", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionSetLocalEnv(id: string, expectedRevision: string, env: Partial<{ [key in string]: string }>) : Promise<Result<ConnectionView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_set_local_env", { id, expectedRevision, env }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionSetLocalAuth(id: string, expectedRevision: string, headerName: string, headerValue: string) : Promise<Result<ConnectionView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_set_local_auth", { id, expectedRevision, headerName, headerValue }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionStop(id: string, expectedRevision: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_stop", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionLogs(id: string, expectedRevision: string) : Promise<Result<LocalMcpLogs, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_logs", { id, expectedRevision }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async mcpConnectionTest(id: string, expectedRevision: string) : Promise<Result<McpDiscoveryResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("mcp_connection_test", { id, expectedRevision }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2716,10 +2764,10 @@ connected_account_id: string | null;
  */
 enabled: boolean }
 /**
- * Host UI projection, deliberately omitting vault/account IDs and numeric u64
- * revisions (JavaScript numbers cannot represent all supported revisions).
+ * Host UI projection, deliberately omitting vault/account IDs, secret values,
+ * and numeric u64 revisions (JavaScript numbers cannot represent all revisions).
  */
-export type ConnectionView = { id: string; revision: string; name: string; url: string; authentication: string; headers: Partial<{ [key in string]: string }>; oauthClient: McpPublicOAuthClient | null; state: string }
+export type ConnectionView = { id: string; revision: string; transport: string; name: string; url: string; authentication: string; headers: Partial<{ [key in string]: string }>; oauthClient: McpPublicOAuthClient | null; command: string | null; args: string[]; cwd: string | null; envKeys: string[]; hasAuthHeader: boolean; runtime: LocalMcpRuntimeStatus; state: string }
 /**
  * [GRAIN] One context-awareness profile, as the settings UI needs it.
  * 
@@ -2902,6 +2950,8 @@ export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_
 key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+export type LocalMcpLogs = { running: boolean; pid: number | null; lastError: string | null; stderr: string[] }
+export type LocalMcpRuntimeStatus = { running: boolean; pid: number | null; lastError: string | null }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * A route is waiting: call `take_main_window_route`.

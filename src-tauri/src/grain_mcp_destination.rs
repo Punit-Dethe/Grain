@@ -15,14 +15,21 @@ use rmcp::transport::auth::{
 const MAX_DNS_ADDRESSES: usize = 64;
 const MAX_OAUTH_BYTES: usize = 1024 * 1024;
 const REFUSAL: &str = "MCP destination is not an allowed public HTTPS service";
+const LOCAL_REFUSAL: &str =
+    "Local MCP destination must be a loopback address (localhost, 127.0.0.1, or [::1])";
 
 fn refusal() -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, REFUSAL)
 }
 
+fn local_refusal() -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, LOCAL_REFUSAL)
+}
+
 #[derive(Clone)]
 pub(super) enum Policy {
     Public,
+    LocalLoopback,
     // Only explicitly owned acceptance peers, absent from release builds.
     // The caller must first validate the harness marker and scoped TLS client.
     #[cfg(any(test, feature = "agent-harness"))]
@@ -31,12 +38,23 @@ pub(super) enum Policy {
 
 impl Policy {
     pub(super) fn validate(&self, url: &Url) -> Result<(), io::Error> {
-        if url.scheme() != "https"
-            || !url.username().is_empty()
+        if !url.username().is_empty()
             || url.password().is_some()
             || url.fragment().is_some()
             || url.port() == Some(0)
         {
+            return Err(match self {
+                Self::LocalLoopback => local_refusal(),
+                _ => refusal(),
+            });
+        }
+        if matches!(self, Self::LocalLoopback) {
+            if !matches!(url.scheme(), "http" | "https") {
+                return Err(local_refusal());
+            }
+            return validate_loopback_host(url);
+        }
+        if url.scheme() != "https" {
             return Err(refusal());
         }
         #[cfg(any(test, feature = "agent-harness"))]
@@ -55,7 +73,19 @@ impl Policy {
     }
 
     pub(super) fn validate_uri(&self, uri: &str) -> Result<(), io::Error> {
-        self.validate(&Url::parse(uri).map_err(|_| refusal())?)
+        self.validate(&Url::parse(uri).map_err(|_| match self {
+            Self::LocalLoopback => local_refusal(),
+            _ => refusal(),
+        })?)
+    }
+}
+
+fn validate_loopback_host(url: &Url) -> Result<(), io::Error> {
+    let host = url.host_str().ok_or_else(local_refusal)?;
+    if host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "[::1]" {
+        Ok(())
+    } else {
+        Err(local_refusal())
     }
 }
 
@@ -141,6 +171,30 @@ pub(super) fn public_builder(builder: reqwest_mcp::ClientBuilder) -> reqwest_mcp
         .https_only(true)
         .no_proxy()
         .dns_resolver(Arc::new(PublicDns(SystemDns)))
+}
+
+struct LoopbackDns;
+impl Resolve for LoopbackDns {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            if host.eq_ignore_ascii_case("localhost") {
+                let addrs = vec![
+                    std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+                    std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, 0)),
+                ];
+                return Ok(Box::new(addrs.into_iter()) as Addrs);
+            }
+            Err(local_refusal().into())
+        })
+    }
+}
+
+pub(super) fn loopback_builder(builder: reqwest_mcp::ClientBuilder) -> reqwest_mcp::ClientBuilder {
+    builder
+        .redirect(reqwest_mcp::redirect::Policy::none())
+        .no_proxy()
+        .dns_resolver(Arc::new(LoopbackDns))
 }
 
 // The SDK owns discovery, registration, exchange and refresh. This is only its
@@ -474,5 +528,41 @@ mod tests {
         ] {
             assert!(policy.validate_uri(uri).is_err(), "{uri}");
         }
+    }
+
+    #[tokio::test]
+    async fn local_loopback_policy_and_dns_reject_non_loopback_destinations() {
+        for ok in [
+            "http://127.0.0.1:8931/mcp",
+            "http://localhost:3000/mcp",
+            "http://[::1]:8080/mcp",
+            "https://127.0.0.1:8443/mcp",
+        ] {
+            Policy::LocalLoopback.validate_uri(ok).unwrap();
+        }
+        for bad in [
+            "http://0.0.0.0:8080/mcp",
+            "http://127.0.0.2:8080/mcp",
+            "http://192.168.1.5:8080/mcp",
+            "http://example.com/mcp",
+            "https://example.com/mcp",
+            "http://a.localhost:8080/mcp",
+            "http://user:pass@127.0.0.1:8080/mcp",
+            "http://127.0.0.1:0/mcp",
+            "ws://127.0.0.1:8080/mcp",
+        ] {
+            assert!(Policy::LocalLoopback.validate_uri(bad).is_err(), "{bad}");
+        }
+        let addrs: Vec<_> = LoopbackDns
+            .resolve(Name::from_str("localhost").unwrap())
+            .await
+            .unwrap()
+            .collect();
+        assert_eq!(addrs.len(), 2);
+        assert!(addrs.iter().all(|addr| addr.ip().is_loopback()));
+        assert!(LoopbackDns
+            .resolve(Name::from_str("example.com").unwrap())
+            .await
+            .is_err());
     }
 }

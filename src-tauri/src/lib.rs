@@ -50,34 +50,34 @@ mod grain_file_transcription; // [GRAIN] typed payloads for the webview event su
                               // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
                               // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
                               // the alias keeps every `crate::llm_client::` path working.
+mod grain_agent_canvas; // [GRAIN] generated views in the Agent chat (experiment)
+mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
+mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the host
 mod grain_anthropic;
+mod grain_app_route; // [GRAIN] open the main window on a page from the backend (Agent meeting links)
 mod grain_audio;
+mod grain_browser_link; // [GRAIN] Grain Pilot: native messaging link to the browser extension
 mod grain_capture; // [GRAIN] shared first-sample readiness for owned capture callers
+mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Pilot, Recall)
 mod grain_dictation_routing; // [GRAIN] model-selected Dictation action resolution
 mod grain_dictionary;
 mod grain_engine;
 mod grain_history_audio;
 mod grain_llm_client;
-mod grain_tool_schema; // [GRAIN] tool schemas a provider will accept (wire copy only)
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_mcp; // [GRAIN] stateless hosted MCP development providers (2026-07-28 only)
 mod grain_meet; // [GRAIN] Grain Meet: durable meeting sessions and processing
-mod grain_recall_mcp; // [GRAIN] Recall MCP: AI app access switch + one-click connect
-mod grain_app_route; // [GRAIN] open the main window on a page from the backend (Agent meeting links)
-mod grain_recall_agent; // [GRAIN] Recall for the Agent: read-only meeting tools, in-process
-mod grain_agent_canvas; // [GRAIN] generated views in the Agent chat (experiment)
-mod grain_agent_history; // [GRAIN] the Agent notch's chats + mode
-mod grain_agent_link; // [GRAIN] link buttons in Agent replies, opened by the host
+mod grain_model_files;
+mod grain_models; // [GRAIN] extra STT models appended to the catalog (Fluid Speech Pro)
 mod grain_notch_sliver; // [GRAIN] native always-on Agent notch sliver (no WebView)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_overlay; // [GRAIN] presentation adapter; handy/overlay.rs owns native window lifecycle
-mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-mod grain_compiled_tools; // [GRAIN] registry of Agent tool providers compiled into Grain (Pilot, Recall)
 mod grain_pilot; // [GRAIN] Grain Pilot: the Agent in the user's own browser through the Grain Pilot extension
-mod grain_browser_link; // [GRAIN] Grain Pilot: native messaging link to the browser extension
-mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking
-mod grain_models; // [GRAIN] extra STT models appended to the catalog (Fluid Speech Pro)
-mod grain_model_files; // [GRAIN] pinned, verified files for Grain's own models (talk-back voice, Meet diarizer)
+mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
+mod grain_recall_agent; // [GRAIN] Recall for the Agent: read-only meeting tools, in-process
+mod grain_recall_mcp; // [GRAIN] Recall MCP: AI app access switch + one-click connect
+mod grain_tool_schema; // [GRAIN] tool schemas a provider will accept (wire copy only)
+mod grain_tts; // [GRAIN] Agent talk-back: on-device Phonon TTS, loaded only while speaking // [GRAIN] pinned, verified files for Grain's own models (talk-back voice, Meet diarizer)
 
 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
 // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
@@ -1269,8 +1269,7 @@ pub fn run(cli_args: CliArgs) {
                 // next open is instant (no WebView rebuild / React reload). Other
                 // Grain windows still close-to-destroy. With --no-tray, closing
                 // is meant to quit, so that close goes through.
-                if window.label() == "main" && !window.app_handle().state::<CliArgs>().no_tray
-                {
+                if window.label() == "main" && !window.app_handle().state::<CliArgs>().no_tray {
                     api.prevent_close();
                     let _ = window.hide();
                 }
@@ -1330,8 +1329,9 @@ pub fn run(cli_args: CliArgs) {
             show_main_window(app);
         }
         if let tauri::RunEvent::Exit = &event {
-            // [GRAIN] Close Grain Pilot's browser link.
+            // [GRAIN] Close Grain Pilot's browser link and any warm local stdio MCPs.
             grain_pilot::stop_at_exit();
+            grain_mcp::local::stop_at_exit();
         }
         // [GRAIN] Closing the settings window only hides it. Keep the
         // process alive in the tray so dictation/rolling/pill keep working —
@@ -1426,17 +1426,17 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_talk_back_setting, // [GRAIN]
             grain_commands::change_agent_compact_voice_setting, // [GRAIN]
-            grain_commands::agent_voice_presets, // [GRAIN]
-            grain_commands::change_agent_voice_setting, // [GRAIN]
-            grain_commands::agent_voice_outputs, // [GRAIN]
+            grain_commands::agent_voice_presets,            // [GRAIN]
+            grain_commands::change_agent_voice_setting,     // [GRAIN]
+            grain_commands::agent_voice_outputs,            // [GRAIN]
             grain_commands::change_agent_voice_output_setting, // [GRAIN]
             grain_commands::change_agent_dynamic_ui_setting, // [GRAIN]
             grain_commands::change_agent_polished_ui_setting, // [GRAIN]
-            grain_commands::agent_chat_size, // [GRAIN] resizable chat
-            grain_commands::set_agent_chat_size, // [GRAIN]
-            grain_pilot::change_pilot_enabled_setting, // [GRAIN] Grain Pilot on/off
+            grain_commands::agent_chat_size,                // [GRAIN] resizable chat
+            grain_commands::set_agent_chat_size,            // [GRAIN]
+            grain_pilot::change_pilot_enabled_setting,      // [GRAIN] Grain Pilot on/off
             grain_commands::change_meet_auto_summary_setting, // [GRAIN]
-            grain_commands::change_meet_auto_title_setting,   // [GRAIN]
+            grain_commands::change_meet_auto_title_setting, // [GRAIN]
             grain_commands::change_meet_auto_transcribe_setting, // [GRAIN]
             grain_commands::change_scrap_that_enabled_setting,
             grain_commands::change_paste_catch_enabled_setting,
@@ -1467,6 +1467,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::composio::composio_set_enabled,
             grain_mcp::connections::mcp_connections_list,
             grain_mcp::connections::mcp_connection_import,
+            grain_mcp::connections::mcp_connection_import_bundle,
             grain_mcp::connections::mcp_connection_replace,
             grain_mcp::connections::mcp_connection_remove,
             grain_mcp::connections::mcp_connection_set_enabled,
@@ -1475,6 +1476,11 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_mcp::connections::mcp_connection_disconnect,
             grain_mcp::connections::mcp_connection_set_client_credentials,
             grain_mcp::connections::mcp_connection_clear_client_credentials,
+            grain_mcp::connections::mcp_connection_set_local_env,
+            grain_mcp::connections::mcp_connection_set_local_auth,
+            grain_mcp::connections::mcp_connection_stop,
+            grain_mcp::connections::mcp_connection_logs,
+            grain_mcp::connections::mcp_connection_test,
             shortcut::change_lazy_stream_close_setting,
             // [GRAIN] change_vad_enabled_setting intentionally not registered;
             // upstream #1738 filler-word toggle is.
@@ -1594,18 +1600,18 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_meet::commands::meet_rename,
             grain_meet::commands::meet_delete,
             grain_meet::commands::meet_playback_audio,
-            grain_model_files::grain_model_status,   // [GRAIN] Grain's own models
+            grain_model_files::grain_model_status, // [GRAIN] Grain's own models
             grain_model_files::grain_model_download, // [GRAIN]
-            grain_model_files::grain_model_cancel,   // [GRAIN]
-            grain_model_files::grain_model_delete,   // [GRAIN]
-            grain_meet::ai::meet_ai_available,    // [GRAIN]
-            grain_meet::ai::meet_summary,         // [GRAIN]
+            grain_model_files::grain_model_cancel, // [GRAIN]
+            grain_model_files::grain_model_delete, // [GRAIN]
+            grain_meet::ai::meet_ai_available,     // [GRAIN]
+            grain_meet::ai::meet_summary,          // [GRAIN]
             grain_meet::ai::meet_generate_summary, // [GRAIN]
-            grain_recall_mcp::recall_mcp_status,      // [GRAIN]
+            grain_recall_mcp::recall_mcp_status,   // [GRAIN]
             grain_recall_mcp::recall_mcp_set_enabled, // [GRAIN]
-            grain_recall_mcp::recall_mcp_connect,     // [GRAIN]
-            grain_recall_mcp::recall_mcp_disconnect,  // [GRAIN]
-            grain_app_route::take_main_window_route,  // [GRAIN]
+            grain_recall_mcp::recall_mcp_connect,  // [GRAIN]
+            grain_recall_mcp::recall_mcp_disconnect, // [GRAIN]
+            grain_app_route::take_main_window_route, // [GRAIN]
         ])
         .events(collect_events![
             grain_app_route::MainWindowRoute,
@@ -1640,7 +1646,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             grain_events::PasteError,
             grain_theme::ThemeChanged,
             grain_meet::commands::MeetStatusChanged, // [GRAIN]
-            grain_model_files::GrainModelProgress, // [GRAIN]
+            grain_model_files::GrainModelProgress,   // [GRAIN]
         ])
 }
 

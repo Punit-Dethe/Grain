@@ -100,10 +100,10 @@ earshot = "1.2.2"
 libc = "0.2"
 # [GRAIN] retain streaming LLM responses and upstream #1548 compression.
 reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate"] }
-# [GRAIN] Development-only remote MCP client. v3 is the first official Rust SDK
-# for the stateless 2026-07-28 lifecycle. Keep features client-only: no stdio,
-# child-process, server, or Dynamic UI surface is linked.
-rmcp = { version = "=3.5.0", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client-reqwest"] }
+# [GRAIN] MCP client (remote HTTPS, local loopback HTTP, and local stdio child processes).
+# v3 is the first official Rust SDK for the stateless 2026-07-28 lifecycle.
+rmcp = { version = "=3.5.0", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client-reqwest", "transport-child-process"] }
+process-wrap = { version = "10.0", features = ["tokio1"] }
 # [GRAIN] Standard native OAuth primitives; already locked through rmcp.
 # Use the bounded host HTTP adapter, no additional default HTTP client features.
 oauth2 = { version = "=5.0.0", default-features = false }

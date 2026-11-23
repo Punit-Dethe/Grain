@@ -1,17 +1,27 @@
 //! Pure MCP connection admission and host-owned identity. No client, DNS,
 //! persistence, credential or approval is created by parsing metadata.
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::Path;
 
-use grain_sdk::mcp::{McpAuthentication, McpHeaders, McpPublicOAuthClient, RemoteMcpConnection};
+use grain_sdk::mcp::{McpAuthentication, McpConnection, McpHeaders, McpPublicOAuthClient};
 use grain_sdk::network::is_canonical_host;
 use serde::Serialize;
+
+pub const MAX_STDIO_ARGS: usize = 64;
+pub const MAX_STDIO_ENV_VARS: usize = 32;
+pub const MAX_STDIO_ENV_TOTAL_BYTES: usize = 32 * 1024;
+pub const MAX_STDIO_ENV_VALUE_BYTES: usize = 4096;
+pub const MAX_LOCAL_AUTH_VALUE_BYTES: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContractError {
     InvalidJson,
     InvalidMetadata,
     InvalidEndpoint,
+    InvalidLocalEndpoint,
+    InvalidStdio,
     InvalidIdentity,
     InvalidHeaders,
     InvalidOAuthClient,
@@ -23,6 +33,8 @@ impl fmt::Display for ContractError {
             Self::InvalidJson => "MCP connection must use the supported JSON fields and types.",
             Self::InvalidMetadata => "MCP connection display metadata is invalid.",
             Self::InvalidEndpoint => "MCP endpoint must be HTTPS on a DNS host without local names, embedded credentials, query or fragment.",
+            Self::InvalidLocalEndpoint => "Local HTTP MCP endpoint must use http:// or https:// on localhost, 127.0.0.1, or [::1] without embedded credentials, query or fragment.",
+            Self::InvalidStdio => "Local command MCP requires a valid executable command, bounded arguments, an absolute working directory (if set), and valid environment variable names.",
             Self::InvalidIdentity => "MCP connection/account/source identity is invalid.",
             Self::InvalidHeaders => "MCP headers must be bounded public provider options; authentication, routing and protocol headers belong to Grain.",
             Self::InvalidOAuthClient => "MCP public OAuth clients require OAuth, a public client ID and an exact HTTPS issuer; secrets and endpoint overrides are not supported.",
@@ -48,10 +60,61 @@ pub fn validate_oauth_client(
     Ok(())
 }
 
-pub fn account_binding_changed(old: &RemoteMcpConnection, new: &RemoteMcpConnection) -> bool {
-    old.url != new.url
-        || old.authentication != new.authentication
-        || old.oauth_client != new.oauth_client
+pub fn account_binding_changed(old: &McpConnection, new: &McpConnection) -> bool {
+    match (old, new) {
+        (
+            McpConnection::Remote {
+                url: old_url,
+                authentication: old_auth,
+                oauth_client: old_client,
+                ..
+            },
+            McpConnection::Remote {
+                url: new_url,
+                authentication: new_auth,
+                oauth_client: new_client,
+                ..
+            },
+        ) => old_url != new_url || old_auth != new_auth || old_client != new_client,
+        (
+            McpConnection::LocalHttp { url: old_url, .. },
+            McpConnection::LocalHttp { url: new_url, .. },
+        ) => old_url != new_url,
+        (
+            McpConnection::Stdio {
+                command: old_cmd,
+                args: old_args,
+                cwd: old_cwd,
+                env_keys: old_env,
+                ..
+            },
+            McpConnection::Stdio {
+                command: new_cmd,
+                args: new_args,
+                cwd: new_cwd,
+                env_keys: new_env,
+                ..
+            },
+        ) => old_cmd != new_cmd || old_args != new_args || old_cwd != new_cwd || old_env != new_env,
+        _ => true,
+    }
+}
+
+pub fn is_secret_header_name(lower_name: &str) -> bool {
+    matches!(
+        lower_name,
+        "authorization" | "proxy-authorization" | "cookie" | "set-cookie"
+    ) || [
+        "auth",
+        "token",
+        "secret",
+        "api-key",
+        "apikey",
+        "password",
+        "credential",
+    ]
+    .iter()
+    .any(|p| lower_name.contains(p))
 }
 
 /// Header names are lower-case to avoid case aliases. Values are public package
@@ -116,21 +179,117 @@ pub fn validate_headers(headers: &McpHeaders) -> Result<(), ContractError> {
             ]
             .iter()
             .any(|p| name.starts_with(p))
-            || [
-                "auth",
-                "token",
-                "secret",
-                "api-key",
-                "apikey",
-                "password",
-                "credential",
-            ]
-            .iter()
-            .any(|p| name.contains(p))
+            || is_secret_header_name(name)
         {
             return Err(ContractError::InvalidHeaders);
         }
     }
+    Ok(())
+}
+
+/// Validates a vault-stored authentication header for a local loopback HTTP MCP
+/// (for example `authorization: Bearer ...` or `x-api-key: ...`).
+pub fn validate_local_auth_header(
+    name: &str,
+    value: &str,
+) -> Result<(String, String), ContractError> {
+    let lower = name.trim().to_ascii_lowercase();
+    let val = value.trim();
+    if lower.is_empty()
+        || lower.len() > 64
+        || http::header::HeaderName::from_bytes(lower.as_bytes()).is_err()
+        || val.is_empty()
+        || val.len() > MAX_LOCAL_AUTH_VALUE_BYTES
+        || !val.bytes().all(|b| (32..=126).contains(&b))
+        || http::header::HeaderValue::from_str(val).is_err()
+        || [
+            "host",
+            "connection",
+            "content-length",
+            "content-type",
+            "transfer-encoding",
+            "accept",
+            "origin",
+            "referer",
+            "upgrade",
+        ]
+        .contains(&lower.as_str())
+        || lower.starts_with("mcp-")
+        || lower.starts_with("sec-")
+    {
+        return Err(ContractError::InvalidHeaders);
+    }
+    Ok((lower, val.to_owned()))
+}
+
+pub fn valid_env_key(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 128
+        && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_')
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'_')
+}
+
+pub fn validate_env_map(env: &BTreeMap<String, String>) -> Result<(), ContractError> {
+    if env.len() > MAX_STDIO_ENV_VARS {
+        return Err(ContractError::InvalidStdio);
+    }
+    let mut total = 0usize;
+    for (k, v) in env {
+        if !valid_env_key(k) || v.len() > MAX_STDIO_ENV_VALUE_BYTES || v.bytes().any(|b| b == 0) {
+            return Err(ContractError::InvalidStdio);
+        }
+        total = total.saturating_add(k.len() + v.len());
+        if total > MAX_STDIO_ENV_TOTAL_BYTES {
+            return Err(ContractError::InvalidStdio);
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_stdio(
+    command: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    env_keys: &mut Vec<String>,
+) -> Result<(), ContractError> {
+    if !display_text(command, 512) || command.bytes().any(|b| b == 0) {
+        return Err(ContractError::InvalidStdio);
+    }
+    if args.len() > MAX_STDIO_ARGS {
+        return Err(ContractError::InvalidStdio);
+    }
+    for arg in args {
+        if arg.len() > 2048
+            || arg.chars().any(|ch| {
+                ch == '\0'
+                    || ch == '\r'
+                    || ch == '\n'
+                    || ch.is_control()
+                    || crate::execution::is_hidden_result_character(ch)
+            })
+        {
+            return Err(ContractError::InvalidStdio);
+        }
+    }
+    if let Some(dir) = cwd {
+        if !display_text(dir, 1024) || dir.bytes().any(|b| b == 0) || !Path::new(dir).is_absolute()
+        {
+            return Err(ContractError::InvalidStdio);
+        }
+    }
+    if env_keys.len() > MAX_STDIO_ENV_VARS {
+        return Err(ContractError::InvalidStdio);
+    }
+    let mut seen = BTreeSet::new();
+    for key in env_keys.iter() {
+        if !valid_env_key(key) || !seen.insert(key.clone()) {
+            return Err(ContractError::InvalidStdio);
+        }
+    }
+    *env_keys = seen.into_iter().collect();
     Ok(())
 }
 
@@ -183,6 +342,63 @@ pub(crate) fn canonical_endpoint(raw: &str) -> Result<String, ContractError> {
     }
     if canonical.len() > 2048 {
         return Err(ContractError::InvalidEndpoint);
+    }
+    Ok(canonical)
+}
+
+/// Validates a strictly local loopback HTTP/HTTPS endpoint (`localhost`,
+/// `127.0.0.1`, or `[::1]`). Never accepts LAN, wildcard (`0.0.0.0`), or public hosts.
+pub fn canonical_loopback_endpoint(raw: &str) -> Result<String, ContractError> {
+    if raw.len() > 2048
+        || raw.contains('\\')
+        || raw.chars().any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return Err(ContractError::InvalidLocalEndpoint);
+    }
+    let url = url::Url::parse(raw).map_err(|_| ContractError::InvalidLocalEndpoint)?;
+    let authority = raw
+        .split_once("://")
+        .map(|(_, rest)| rest.split('/').next().unwrap_or(rest));
+    if !matches!(url.scheme(), "http" | "https")
+        || authority.is_none_or(|part| part.is_empty())
+        || authority.is_some_and(|part| part.contains('@'))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.port() == Some(0)
+    {
+        return Err(ContractError::InvalidLocalEndpoint);
+    }
+    let is_loopback = match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip == std::net::Ipv4Addr::LOCALHOST,
+        Some(url::Host::Ipv6(ip)) => ip == std::net::Ipv6Addr::LOCALHOST,
+        None => false,
+    };
+    if !is_loopback {
+        return Err(ContractError::InvalidLocalEndpoint);
+    }
+    // Reject non-canonical numeric/octal IPv4 spellings like 2130706433 or 0x7f000001.
+    if let Some(auth) = authority {
+        let host_part = if let Some(rest) = auth.strip_prefix('[') {
+            rest.split(']').next().unwrap_or("")
+        } else {
+            auth.split(':').next().unwrap_or("")
+        };
+        if !(host_part.eq_ignore_ascii_case("localhost")
+            || host_part == "127.0.0.1"
+            || host_part == "::1")
+        {
+            return Err(ContractError::InvalidLocalEndpoint);
+        }
+    }
+    let mut canonical = url.to_string();
+    if url.path() == "/" {
+        canonical.pop();
+    }
+    if canonical.len() > 2048 {
+        return Err(ContractError::InvalidLocalEndpoint);
     }
     Ok(canonical)
 }
@@ -277,7 +493,7 @@ mod tests {
     use serde_json::{json, Value};
 
     fn wire() -> Value {
-        json!({"name":"Calendar","url":"https://mcp.example.com/mcp",
+        json!({"transport":"remote","name":"Calendar","url":"https://mcp.example.com/mcp",
             "authentication":{"type":"oauth"}})
     }
 
@@ -291,8 +507,11 @@ mod tests {
         value["oauthClient"] =
             json!({"clientId":"public-client", "issuer":"https://issuer.example/tenant/"});
         let accepted = admit(&value).unwrap();
+        let McpConnection::Remote { oauth_client, .. } = accepted.definition() else {
+            panic!("expected remote");
+        };
         assert_eq!(
-            accepted.definition().oauth_client.as_ref().unwrap().issuer,
+            oauth_client.as_ref().unwrap().issuer,
             "https://issuer.example/tenant/"
         );
         assert_eq!(serde_json::to_value(accepted.definition()).unwrap(), value);
@@ -349,7 +568,10 @@ mod tests {
         let mut value = wire();
         value["headers"] = json!({"x-mcp-toolsets":"all", "notion-version":"2025-09-03"});
         let accepted = admit(&value).unwrap();
-        assert_eq!(accepted.definition().headers["x-mcp-toolsets"], "all");
+        let McpConnection::Remote { headers, .. } = accepted.definition() else {
+            panic!("expected remote");
+        };
+        assert_eq!(headers["x-mcp-toolsets"], "all");
         assert_eq!(serde_json::to_value(accepted.definition()).unwrap(), value);
         for name in [
             "Authorization",
@@ -426,14 +648,13 @@ mod tests {
             ConnectionDefinition::parse(raw.as_bytes()),
             Err(RegistryError::InvalidInput(ContractError::InvalidJson))
         );
-        value["url"] = json!(format!("https://mcp.example.com/{}", "p".repeat(1900)));
-        value["headers"] = serde_json::to_value(
-            (0..4)
-                .map(|n| (format!("x-opt-{n}"), "\"".repeat(500)))
-                .collect::<McpHeaders>(),
-        )
-        .unwrap();
-        assert_eq!(admit(&value), Err(RegistryError::Limit));
+        let big = json!({
+            "transport": "stdio",
+            "name": "Big",
+            "command": "node",
+            "args": vec!["a".repeat(1000); 12],
+        });
+        assert_eq!(admit(&big), Err(RegistryError::Limit));
     }
 
     #[test]
@@ -507,8 +728,6 @@ mod tests {
             canonical_endpoint(&format!("https://mcp.example.com/{}", "a".repeat(2048))),
             Err(ContractError::InvalidEndpoint)
         );
-        // URL percent encoding expands Unicode paths; the normalized value
-        // must retain the same bound so an accepted connection round-trips.
         assert_eq!(
             canonical_endpoint(&format!("https://mcp.example.com/{}", "é".repeat(500))),
             Err(ContractError::InvalidEndpoint)
@@ -516,6 +735,70 @@ mod tests {
         let mut value = wire();
         value["url"] = json!("https://user:secret@mcp.example.com");
         assert!(!admit(&value).unwrap_err().to_string().contains("secret"));
+    }
+
+    #[test]
+    fn loopback_endpoints_allow_only_strict_loopback_hosts() {
+        for (raw, expected) in [
+            ("http://127.0.0.1:8931/mcp", "http://127.0.0.1:8931/mcp"),
+            ("HTTP://LOCALHOST:3000/", "http://localhost:3000"),
+            ("http://[::1]:8080/mcp", "http://[::1]:8080/mcp"),
+            ("https://127.0.0.1:8443/mcp", "https://127.0.0.1:8443/mcp"),
+        ] {
+            assert_eq!(canonical_loopback_endpoint(raw).unwrap(), expected);
+        }
+        for bad in [
+            "http://0.0.0.0:8080/mcp",
+            "http://127.0.0.2:8080/mcp",
+            "http://192.168.1.10:8080/mcp",
+            "http://10.0.0.5:8080/mcp",
+            "http://a.localhost:8080/mcp",
+            "http://2130706433:8080/mcp",
+            "http://0x7f000001:8080/mcp",
+            "https://mcp.example.com/mcp",
+            "http://user:pass@127.0.0.1:8080/mcp",
+            "http://127.0.0.1:8080/mcp?token=abc",
+            "http://127.0.0.1:0/mcp",
+            "ws://127.0.0.1:8080/mcp",
+        ] {
+            assert_eq!(
+                canonical_loopback_endpoint(bad),
+                Err(ContractError::InvalidLocalEndpoint),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn stdio_validation_checks_command_args_cwd_and_env_keys() {
+        let valid = json!({
+            "transport": "stdio",
+            "name": "Browse",
+            "command": "browse",
+            "args": ["mcp", "--flag=hello world"],
+            "envKeys": ["Z_KEY", "A_KEY"]
+        });
+        let admitted = admit(&valid).unwrap();
+        let McpConnection::Stdio { env_keys, .. } = admitted.definition() else {
+            panic!("expected stdio");
+        };
+        assert_eq!(env_keys, &["A_KEY", "Z_KEY"]);
+
+        for bad in [
+            json!({"transport":"stdio","name":"Bad","command":""}),
+            json!({"transport":"stdio","name":"Bad","command":" cmd"}),
+            json!({"transport":"stdio","name":"Bad","command":"cmd","args":["ok\nbad"]}),
+            json!({"transport":"stdio","name":"Bad","command":"cmd","cwd":"relative/path"}),
+            json!({"transport":"stdio","name":"Bad","command":"cmd","envKeys":["1BAD"]}),
+            json!({"transport":"stdio","name":"Bad","command":"cmd","envKeys":["BAD-KEY"]}),
+            json!({"transport":"stdio","name":"Bad","command":"cmd","envKeys":["DUP","DUP"]}),
+        ] {
+            assert_eq!(
+                admit(&bad),
+                Err(RegistryError::InvalidInput(ContractError::InvalidStdio)),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Bounded custom MCP metadata persistence. No transport, credential, consent,
 //! worker or enabled state is created here. Host acquisition must still approve
-//! network/account access before connecting. One short-lived OS lock per save.
+//! network/account/command access before connecting. One short-lived OS lock per save.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
@@ -8,23 +8,26 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use grain_sdk::mcp::{RemoteMcpConnection, MCP_CONNECTION_MAX_BYTES};
+use grain_sdk::mcp::{McpAuthentication, McpConnection, McpHeaders, MCP_CONNECTION_MAX_BYTES};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::mcp::{
-    account_binding_changed, canonical_endpoint, display_text, validate_headers,
-    validate_oauth_client, ConnectionIdentity, ConnectionSource, ContractError,
+    account_binding_changed, canonical_endpoint, canonical_loopback_endpoint, display_text,
+    is_secret_header_name, validate_env_map, validate_headers, validate_local_auth_header,
+    validate_oauth_client, validate_stdio, ConnectionIdentity, ConnectionSource, ContractError,
 };
 
 const FILE_NAME: &str = "mcp-custom-connections.json";
 const LOCK_NAME: &str = ".mcp-custom-connections.lock";
+const DISK_SCHEMA: u8 = 2;
 pub const MAX_CONNECTIONS: usize = 32;
 pub const MAX_REGISTRY_BYTES: usize = 256 * 1024;
+pub const MAX_IMPORT_BUNDLE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConnectionDefinition(RemoteMcpConnection);
+pub struct ConnectionDefinition(McpConnection);
 
 impl ConnectionDefinition {
     pub fn parse(bytes: &[u8]) -> Result<Self, RegistryError> {
@@ -36,14 +39,44 @@ impl ConnectionDefinition {
         Self::validate(input)
     }
 
-    pub fn validate(mut input: RemoteMcpConnection) -> Result<Self, RegistryError> {
-        if !display_text(&input.name, 120) {
-            return Err(RegistryError::InvalidInput(ContractError::InvalidMetadata));
+    pub fn validate(mut input: McpConnection) -> Result<Self, RegistryError> {
+        match &mut input {
+            McpConnection::Remote {
+                name,
+                url,
+                authentication,
+                headers,
+                oauth_client,
+            } => {
+                if !display_text(name, 120) {
+                    return Err(RegistryError::InvalidInput(ContractError::InvalidMetadata));
+                }
+                *url = canonical_endpoint(url).map_err(RegistryError::InvalidInput)?;
+                validate_headers(headers).map_err(RegistryError::InvalidInput)?;
+                validate_oauth_client(*authentication, oauth_client.as_ref())
+                    .map_err(RegistryError::InvalidInput)?;
+            }
+            McpConnection::LocalHttp { name, url, headers } => {
+                if !display_text(name, 120) {
+                    return Err(RegistryError::InvalidInput(ContractError::InvalidMetadata));
+                }
+                *url = canonical_loopback_endpoint(url).map_err(RegistryError::InvalidInput)?;
+                validate_headers(headers).map_err(RegistryError::InvalidInput)?;
+            }
+            McpConnection::Stdio {
+                name,
+                command,
+                args,
+                cwd,
+                env_keys,
+            } => {
+                if !display_text(name, 120) {
+                    return Err(RegistryError::InvalidInput(ContractError::InvalidMetadata));
+                }
+                validate_stdio(command, args, cwd.as_deref(), env_keys)
+                    .map_err(RegistryError::InvalidInput)?;
+            }
         }
-        input.url = canonical_endpoint(&input.url).map_err(RegistryError::InvalidInput)?;
-        validate_headers(&input.headers).map_err(RegistryError::InvalidInput)?;
-        validate_oauth_client(input.authentication, input.oauth_client.as_ref())
-            .map_err(RegistryError::InvalidInput)?;
         if serde_json::to_vec(&input)
             .map_err(|_| RegistryError::InvalidState)?
             .len()
@@ -54,9 +87,298 @@ impl ConnectionDefinition {
         Ok(Self(input))
     }
 
-    pub fn definition(&self) -> &RemoteMcpConnection {
+    pub fn definition(&self) -> &McpConnection {
         &self.0
     }
+}
+
+/// One validated connection parsed from user-supplied JSON (either Grain's direct
+/// format or a standard Claude Desktop / Cursor `mcpServers` block). Secrets are
+/// separated at parse time so they are stored only in the OS credential vault.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportedConnection {
+    pub definition: ConnectionDefinition,
+    pub env_secrets: BTreeMap<String, String>,
+    pub auth_header: Option<(String, String)>,
+}
+
+/// Parse either:
+/// - A standard `{"mcpServers": { "<name>": { ... } }}` or `{"servers": { ... }}` bundle,
+/// - A single Grain `McpConnection` object (optionally carrying transient `env` or `authHeader`), or
+/// - A single shorthand remote/local object (`{ name, url, ... }` or `{ name, command, ... }`).
+pub fn parse_mcp_import_bundle(bytes: &[u8]) -> Result<Vec<ImportedConnection>, RegistryError> {
+    if bytes.len() > MAX_IMPORT_BUNDLE_BYTES {
+        return Err(RegistryError::Limit);
+    }
+    let root: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|_| RegistryError::InvalidInput(ContractError::InvalidJson))?;
+    let Some(obj) = root.as_object() else {
+        return Err(RegistryError::InvalidInput(ContractError::InvalidJson));
+    };
+
+    if let Some(servers_val) = obj.get("mcpServers").or_else(|| obj.get("servers")) {
+        // Reject extraneous unexpected keys besides the known wrapper key.
+        let allowed_key = if obj.contains_key("mcpServers") {
+            "mcpServers"
+        } else {
+            "servers"
+        };
+        if obj.len() != 1 || !obj.contains_key(allowed_key) {
+            return Err(RegistryError::InvalidInput(ContractError::InvalidJson));
+        }
+        let Some(servers) = servers_val.as_object() else {
+            return Err(RegistryError::InvalidInput(ContractError::InvalidJson));
+        };
+        if servers.is_empty() {
+            return Err(RegistryError::InvalidInput(ContractError::InvalidJson));
+        }
+        if servers.len() > MAX_CONNECTIONS {
+            return Err(RegistryError::Limit);
+        }
+        let mut out = Vec::with_capacity(servers.len());
+        for (raw_name, entry) in servers {
+            let name = raw_name.trim();
+            out.push(parse_server_entry(name, entry)?);
+        }
+        return Ok(out);
+    }
+
+    // Single direct object.
+    let single = parse_single_object(obj)?;
+    Ok(vec![single])
+}
+
+fn parse_single_object(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Result<ImportedConnection, RegistryError> {
+    // Check if it carries transient `env` (for stdio) or `authHeader` (for local-http)
+    // alongside Grain's direct wire schema.
+    if let Some(transport) = obj.get("transport").and_then(|v| v.as_str()) {
+        let mut cleaned = obj.clone();
+        let mut env_secrets = BTreeMap::new();
+        let mut auth_header = None;
+
+        if transport == "stdio" {
+            if let Some(env_val) = cleaned.remove("env") {
+                env_secrets = parse_env_value(&env_val)?;
+                // Merge keys into `envKeys` if not already present.
+                let mut keys: Vec<String> = cleaned
+                    .get("envKeys")
+                    .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+                    .unwrap_or_default();
+                for k in env_secrets.keys() {
+                    if !keys.contains(k) {
+                        keys.push(k.clone());
+                    }
+                }
+                cleaned.insert("envKeys".into(), serde_json::json!(keys));
+            }
+        } else if transport == "local-http" {
+            if let Some(auth_val) = cleaned.remove("authHeader") {
+                auth_header = Some(parse_auth_header_object(&auth_val)?);
+            }
+        }
+
+        let raw = serde_json::to_vec(&serde_json::Value::Object(cleaned))
+            .map_err(|_| RegistryError::InvalidInput(ContractError::InvalidJson))?;
+        let definition = ConnectionDefinition::parse(&raw)?;
+        return Ok(ImportedConnection {
+            definition,
+            env_secrets,
+            auth_header,
+        });
+    }
+
+    // Shorthand single object with `name`.
+    let name = obj
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .ok_or(RegistryError::InvalidInput(ContractError::InvalidJson))?;
+    parse_server_entry(name, &serde_json::Value::Object(obj.clone()))
+}
+
+fn parse_server_entry(
+    name: &str,
+    entry: &serde_json::Value,
+) -> Result<ImportedConnection, RegistryError> {
+    let Some(map) = entry.as_object() else {
+        return Err(RegistryError::InvalidInput(ContractError::InvalidJson));
+    };
+    if !display_text(name, 120) {
+        return Err(RegistryError::InvalidInput(ContractError::InvalidMetadata));
+    }
+
+    let explicit_type = map.get("type").and_then(|v| v.as_str());
+    let has_command = map.contains_key("command");
+    let has_url = map.contains_key("url") || map.contains_key("serverUrl");
+
+    if has_command && has_url {
+        return Err(RegistryError::InvalidInput(ContractError::InvalidJson));
+    }
+
+    if has_command || matches!(explicit_type, Some("stdio")) {
+        let command = map
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .ok_or(RegistryError::InvalidInput(ContractError::InvalidStdio))?
+            .to_owned();
+        let args = match map.get("args") {
+            None | Some(serde_json::Value::Null) => Vec::new(),
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .ok_or(RegistryError::InvalidInput(ContractError::InvalidStdio))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+            Some(_) => return Err(RegistryError::InvalidInput(ContractError::InvalidStdio)),
+        };
+        let cwd = match map.get("cwd") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(s)) if s.trim().is_empty() => None,
+            Some(serde_json::Value::String(s)) => Some(s.trim().to_owned()),
+            Some(_) => return Err(RegistryError::InvalidInput(ContractError::InvalidStdio)),
+        };
+        let env_secrets = match map.get("env") {
+            None | Some(serde_json::Value::Null) => BTreeMap::new(),
+            Some(v) => parse_env_value(v)?,
+        };
+        let env_keys: Vec<String> = env_secrets.keys().cloned().collect();
+        let definition = ConnectionDefinition::validate(McpConnection::Stdio {
+            name: name.to_owned(),
+            command,
+            args,
+            cwd,
+            env_keys,
+        })?;
+        return Ok(ImportedConnection {
+            definition,
+            env_secrets,
+            auth_header: None,
+        });
+    }
+
+    if has_url {
+        let url_str = map
+            .get("url")
+            .or_else(|| map.get("serverUrl"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .ok_or(RegistryError::InvalidInput(ContractError::InvalidEndpoint))?;
+
+        let raw_headers = match map.get("headers") {
+            None | Some(serde_json::Value::Null) => BTreeMap::new(),
+            Some(serde_json::Value::Object(hmap)) => {
+                let mut parsed = BTreeMap::new();
+                for (k, v) in hmap {
+                    let Some(val) = v.as_str() else {
+                        return Err(RegistryError::InvalidInput(ContractError::InvalidHeaders));
+                    };
+                    let lower = k.trim().to_ascii_lowercase();
+                    if parsed.insert(lower, val.trim().to_owned()).is_some() {
+                        return Err(RegistryError::InvalidInput(ContractError::InvalidHeaders));
+                    }
+                }
+                parsed
+            }
+            Some(_) => return Err(RegistryError::InvalidInput(ContractError::InvalidHeaders)),
+        };
+
+        // Route loopback URLs to LocalHttp, public HTTPS URLs to Remote.
+        if canonical_loopback_endpoint(url_str).is_ok() {
+            let mut public_headers = McpHeaders::new();
+            let mut auth_header = None;
+            for (k, v) in raw_headers {
+                if is_secret_header_name(&k) {
+                    if auth_header.is_some() {
+                        return Err(RegistryError::InvalidInput(ContractError::InvalidHeaders));
+                    }
+                    auth_header = Some(
+                        validate_local_auth_header(&k, &v).map_err(RegistryError::InvalidInput)?,
+                    );
+                } else {
+                    public_headers.insert(k, v);
+                }
+            }
+            if let Some(auth_val) = map.get("authHeader") {
+                if auth_header.is_some() {
+                    return Err(RegistryError::InvalidInput(ContractError::InvalidHeaders));
+                }
+                auth_header = Some(parse_auth_header_object(auth_val)?);
+            }
+            let definition = ConnectionDefinition::validate(McpConnection::LocalHttp {
+                name: name.to_owned(),
+                url: url_str.to_owned(),
+                headers: public_headers,
+            })?;
+            return Ok(ImportedConnection {
+                definition,
+                env_secrets: BTreeMap::new(),
+                auth_header,
+            });
+        }
+
+        // Public remote HTTPS server.
+        let authentication = match map.get("authentication") {
+            None | Some(serde_json::Value::Null) => McpAuthentication::OAuth {},
+            Some(v) => serde_json::from_value::<McpAuthentication>(v.clone())
+                .map_err(|_| RegistryError::InvalidInput(ContractError::InvalidJson))?,
+        };
+        let oauth_client = match map.get("oauthClient") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(v) => Some(
+                serde_json::from_value(v.clone())
+                    .map_err(|_| RegistryError::InvalidInput(ContractError::InvalidJson))?,
+            ),
+        };
+        let definition = ConnectionDefinition::validate(McpConnection::Remote {
+            name: name.to_owned(),
+            url: url_str.to_owned(),
+            authentication,
+            headers: raw_headers,
+            oauth_client,
+        })?;
+        return Ok(ImportedConnection {
+            definition,
+            env_secrets: BTreeMap::new(),
+            auth_header: None,
+        });
+    }
+
+    Err(RegistryError::InvalidInput(ContractError::InvalidJson))
+}
+
+fn parse_env_value(value: &serde_json::Value) -> Result<BTreeMap<String, String>, RegistryError> {
+    let Some(map) = value.as_object() else {
+        return Err(RegistryError::InvalidInput(ContractError::InvalidStdio));
+    };
+    let mut env = BTreeMap::new();
+    for (k, v) in map {
+        let Some(val) = v.as_str() else {
+            return Err(RegistryError::InvalidInput(ContractError::InvalidStdio));
+        };
+        env.insert(k.clone(), val.to_owned());
+    }
+    validate_env_map(&env).map_err(RegistryError::InvalidInput)?;
+    Ok(env)
+}
+
+fn parse_auth_header_object(value: &serde_json::Value) -> Result<(String, String), RegistryError> {
+    let Some(map) = value.as_object() else {
+        return Err(RegistryError::InvalidInput(ContractError::InvalidHeaders));
+    };
+    let name = map
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or(RegistryError::InvalidInput(ContractError::InvalidHeaders))?;
+    let val = map
+        .get("value")
+        .and_then(|v| v.as_str())
+        .ok_or(RegistryError::InvalidInput(ContractError::InvalidHeaders))?;
+    validate_local_auth_header(name, val).map_err(RegistryError::InvalidInput)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,7 +420,7 @@ impl std::error::Error for RegistryError {}
 pub struct ConnectionRecord {
     identity: ConnectionIdentity,
     revision: u64,
-    definition: RemoteMcpConnection,
+    definition: McpConnection,
 }
 
 impl ConnectionRecord {
@@ -108,7 +430,7 @@ impl ConnectionRecord {
     pub fn revision(&self) -> u64 {
         self.revision
     }
-    pub fn definition(&self) -> &RemoteMcpConnection {
+    pub fn definition(&self) -> &McpConnection {
         &self.definition
     }
 }
@@ -132,7 +454,7 @@ struct DiskRecord {
     connection_id: String,
     account_id: String,
     revision: u64,
-    definition: RemoteMcpConnection,
+    definition: McpConnection,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,7 +483,7 @@ impl ConnectionRegistry {
         if let Some(bytes) = &bytes {
             let disk: DiskFile =
                 serde_json::from_slice(bytes).map_err(|_| RegistryError::InvalidState)?;
-            if disk.schema != 1 || disk.connections.len() > MAX_CONNECTIONS {
+            if disk.schema != DISK_SCHEMA || disk.connections.len() > MAX_CONNECTIONS {
                 return Err(RegistryError::InvalidState);
             }
             let mut accounts = HashSet::new();
@@ -269,7 +591,7 @@ impl ConnectionRegistry {
     }
 
     /// Returns an account-retired record for explicit host vault cleanup when
-    /// destination/authentication changes. Label edits preserve the binding;
+    /// destination/authentication/command changes. Label edits preserve the binding;
     /// identical saves preserve the complete record.
     pub fn replace(
         &self,
@@ -346,7 +668,7 @@ impl ConnectionRegistry {
         let mut candidate = state.records.clone();
         let result = edit(&mut candidate)?;
         let disk = DiskFile {
-            schema: 1,
+            schema: DISK_SCHEMA,
             connections: candidate
                 .values()
                 .map(|row| DiskRecord {
@@ -439,7 +761,7 @@ mod tests {
     use serde_json::{json, Value};
 
     fn wire() -> Value {
-        json!({"name":"Test calendar","url":"https://mcp.example.com/mcp",
+        json!({"transport":"remote","name":"Test calendar","url":"https://mcp.example.com/mcp",
             "authentication":{"type":"oauth"}})
     }
     fn definition(value: &Value) -> ConnectionDefinition {
@@ -452,10 +774,13 @@ mod tests {
     #[test]
     fn direct_json_is_strict_nonsecret_and_not_an_extension_package() {
         let admitted = definition(&wire());
-        assert_eq!(
-            admitted.definition().authentication,
-            McpAuthentication::OAuth {}
-        );
+        assert!(matches!(
+            admitted.definition(),
+            McpConnection::Remote {
+                authentication: McpAuthentication::OAuth {},
+                ..
+            }
+        ));
         for field in [
             "connectionId",
             "accountId",
@@ -479,7 +804,11 @@ mod tests {
         let mut value = wire();
         value["authentication"]["token"] = json!("secret");
         assert!(ConnectionDefinition::parse(&serde_json::to_vec(&value).unwrap()).is_err());
-        assert!(ConnectionDefinition::parse(br#"{"name":"a","name":"b","url":"https://mcp.example.com","authentication":{"type":"none"}}"#).is_err());
+        assert!(ConnectionDefinition::parse(br#"{"transport":"remote","name":"a","name":"b","url":"https://mcp.example.com","authentication":{"type":"none"}}"#).is_err());
+        assert!(ConnectionDefinition::parse(
+            br#"{"transport":"stdio","name":"a","name":"b","command":"browse"}"#
+        )
+        .is_err());
         assert!(ConnectionDefinition::parse(&vec![b' '; MCP_CONNECTION_MAX_BYTES + 1]).is_err());
     }
 
@@ -512,9 +841,128 @@ mod tests {
         let mut value = wire();
         value["url"] = json!("https://MCP.EXAMPLE.COM:443/");
         value["authentication"] = json!({"type":"none"});
+        let McpConnection::Remote { url, .. } = definition(&value).definition().clone() else {
+            panic!("expected remote");
+        };
+        assert_eq!(url, "https://mcp.example.com");
+    }
+
+    #[test]
+    fn import_bundle_parses_mcp_servers_and_separates_secrets() {
+        let bundle = json!({
+            "mcpServers": {
+                "browse": {
+                    "command": "browse",
+                    "args": ["mcp"]
+                },
+                "brave": {
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+                    "env": { "BRAVE_API_KEY": "BSA-secret-123" }
+                },
+                "local-pw": {
+                    "url": "http://127.0.0.1:8931/mcp",
+                    "headers": {
+                        "Authorization": "Bearer local-tok",
+                        "X-Custom-Opt": "yes"
+                    }
+                },
+                "remote-docs": {
+                    "url": "https://mcp.example.com/mcp"
+                }
+            }
+        });
+        let imported = parse_mcp_import_bundle(&serde_json::to_vec(&bundle).unwrap()).unwrap();
+        assert_eq!(imported.len(), 4);
+
+        let brave = imported
+            .iter()
+            .find(|i| i.definition.definition().name() == "brave")
+            .unwrap();
         assert_eq!(
-            definition(&value).definition().url,
-            "https://mcp.example.com"
+            brave.env_secrets.get("BRAVE_API_KEY").map(String::as_str),
+            Some("BSA-secret-123")
+        );
+        let serialized_brave = serde_json::to_string(brave.definition.definition()).unwrap();
+        assert!(!serialized_brave.contains("BSA-secret-123"));
+        assert!(serialized_brave.contains("BRAVE_API_KEY"));
+
+        let local_pw = imported
+            .iter()
+            .find(|i| i.definition.definition().name() == "local-pw")
+            .unwrap();
+        assert_eq!(
+            local_pw.auth_header,
+            Some(("authorization".into(), "Bearer local-tok".into()))
+        );
+        let McpConnection::LocalHttp { headers, .. } = local_pw.definition.definition() else {
+            panic!("expected local-http");
+        };
+        assert_eq!(headers.get("x-custom-opt").map(String::as_str), Some("yes"));
+        assert!(!headers.contains_key("authorization"));
+
+        // Remote server with Authorization header in JSON must still be rejected.
+        let bad_remote = json!({
+            "mcpServers": {
+                "bad": {
+                    "url": "https://mcp.example.com/mcp",
+                    "headers": { "Authorization": "Bearer leaked" }
+                }
+            }
+        });
+        assert!(parse_mcp_import_bundle(&serde_json::to_vec(&bad_remote).unwrap()).is_err());
+    }
+
+    #[test]
+    fn stdio_and_local_http_persist_and_rotate_accounts_on_binding_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = ConnectionRegistry::load(dir.path()).unwrap();
+        let stdio = definition(&json!({
+            "transport": "stdio",
+            "name": "Browse",
+            "command": "browse",
+            "args": ["mcp"]
+        }));
+        let record = registry.insert(stdio).unwrap();
+        let lease = registry.lease(record.identity.connection_id()).unwrap();
+
+        // Rename preserves account binding.
+        let renamed = definition(&json!({
+            "transport": "stdio",
+            "name": "Browser Tool",
+            "command": "browse",
+            "args": ["mcp"]
+        }));
+        assert_eq!(registry.replace(&lease, renamed).unwrap(), None);
+        let lease = registry.lease(record.identity.connection_id()).unwrap();
+        assert_eq!(lease.record.identity, record.identity);
+
+        // Changing args rotates account binding.
+        let changed = definition(&json!({
+            "transport": "stdio",
+            "name": "Browser Tool",
+            "command": "browse",
+            "args": ["mcp", "--headless"]
+        }));
+        let retired = registry.replace(&lease, changed).unwrap().unwrap();
+        let next = registry.lease(record.identity.connection_id()).unwrap();
+        assert_ne!(
+            retired.identity.account_id(),
+            next.record.identity.account_id()
+        );
+
+        // Switching transport rotates account binding.
+        let local_http = definition(&json!({
+            "transport": "local-http",
+            "name": "Browser Tool",
+            "url": "http://127.0.0.1:8931/mcp"
+        }));
+        let retired2 = registry.replace(&next, local_http).unwrap().unwrap();
+        let reloaded = ConnectionRegistry::load(dir.path()).unwrap();
+        assert_eq!(reloaded.list().unwrap().len(), 1);
+        assert_ne!(
+            retired2.identity.account_id(),
+            reloaded.list().unwrap()[0].identity.account_id()
         );
     }
 
@@ -621,7 +1069,7 @@ mod tests {
         let current = registry.lease(record.identity.connection_id()).unwrap();
         assert_eq!(current.record.identity, record.identity);
         assert_eq!(current.record.revision, record.revision + 1);
-        assert_eq!(current.record.definition.name, "Renamed calendar");
+        assert_eq!(current.record.definition.name(), "Renamed calendar");
         assert!(!registry.is_current(&lease));
         assert!(registry.is_current(&current));
     }
@@ -642,7 +1090,10 @@ mod tests {
         assert!(!registry.is_current(&lease));
         assert_eq!(next.record.identity, record.identity);
         assert_eq!(next.record.revision, record.revision + 1);
-        assert_eq!(next.record.definition.headers["x-mcp-toolsets"], "all");
+        let McpConnection::Remote { headers, .. } = next.record.definition() else {
+            panic!("expected remote");
+        };
+        assert_eq!(headers["x-mcp-toolsets"], "all");
         assert_eq!(
             ConnectionRegistry::load(dir.path())
                 .unwrap()
@@ -711,8 +1162,9 @@ mod tests {
         registry.insert(definition(&wire())).unwrap();
         let original: Value = serde_json::from_slice(&bytes(dir.path())).unwrap();
         let mut variants = vec![
-            json!({"schema":2,"connections":[]}),
-            json!({"schema":1,"connections":[],"secret":"s"}),
+            json!({"schema":3,"connections":[]}),
+            json!({"schema":1,"connections":[]}),
+            json!({"schema":2,"connections":[],"secret":"s"}),
         ];
         let mut value = original.clone();
         let row = value["connections"][0].clone();

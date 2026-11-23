@@ -1,5 +1,6 @@
-//! Remote MCP connection metadata. Host identities, credentials,
-//! trust, enablement, runtime sessions and tool schemas do not belong here.
+//! Custom MCP connection metadata (remote HTTPS, local loopback HTTP, and local
+//! stdio commands). Host identities, credentials, env secret values, trust,
+//! enablement, runtime sessions and tool schemas do not belong here.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -43,26 +44,72 @@ fn deserialize_headers<'de, D: serde::Deserializer<'de>>(
 
 /// Direct connection input: no extension package, host identity or credentials.
 /// Parsing/endpoint admission belongs to Grain, not to this wire declaration.
-pub const MCP_CONNECTION_MAX_BYTES: usize = 4 * 1024;
+pub const MCP_CONNECTION_MAX_BYTES: usize = 8 * 1024;
 
+/// Unified custom MCP connection metadata across all supported transports.
+/// Never carries secret env values or auth tokens; those live only in the OS vault.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RemoteMcpConnection {
-    pub name: String,
-    pub url: String,
-    pub authentication: McpAuthentication,
-    #[serde(
-        default,
-        deserialize_with = "deserialize_headers",
-        skip_serializing_if = "BTreeMap::is_empty"
-    )]
-    pub headers: McpHeaders,
-    #[serde(
-        rename = "oauthClient",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub oauth_client: Option<McpPublicOAuthClient>,
+#[serde(tag = "transport", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum McpConnection {
+    Remote {
+        name: String,
+        url: String,
+        authentication: McpAuthentication,
+        #[serde(
+            default,
+            deserialize_with = "deserialize_headers",
+            skip_serializing_if = "BTreeMap::is_empty"
+        )]
+        headers: McpHeaders,
+        #[serde(
+            rename = "oauthClient",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        oauth_client: Option<McpPublicOAuthClient>,
+    },
+    LocalHttp {
+        name: String,
+        url: String,
+        #[serde(
+            default,
+            deserialize_with = "deserialize_headers",
+            skip_serializing_if = "BTreeMap::is_empty"
+        )]
+        headers: McpHeaders,
+    },
+    Stdio {
+        name: String,
+        command: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(rename = "envKeys", default, skip_serializing_if = "Vec::is_empty")]
+        env_keys: Vec<String>,
+    },
+}
+
+impl McpConnection {
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Remote { name, .. } | Self::LocalHttp { name, .. } | Self::Stdio { name, .. } => {
+                name
+            }
+        }
+    }
+
+    pub fn transport_kind(&self) -> &'static str {
+        match self {
+            Self::Remote { .. } => "remote",
+            Self::LocalHttp { .. } => "local-http",
+            Self::Stdio { .. } => "stdio",
+        }
+    }
+
+    pub fn is_local(&self) -> bool {
+        matches!(self, Self::LocalHttp { .. } | Self::Stdio { .. })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

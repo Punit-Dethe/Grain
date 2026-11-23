@@ -275,6 +275,8 @@ fn runtime_provider(app: &AppHandle, id: &str) -> Result<RuntimeProvider, String
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Registration {
     Anonymous,
+    LocalHttp,
+    Stdio,
     Dynamic,
     PreRegistered,
     #[cfg(feature = "agent-harness")]
@@ -282,7 +284,10 @@ enum Registration {
 }
 
 fn requires_account(item: &Provider<'_>) -> bool {
-    if item.registration == Registration::Anonymous {
+    if matches!(
+        item.registration,
+        Registration::Anonymous | Registration::LocalHttp | Registration::Stdio
+    ) {
         return false;
     }
     #[cfg(feature = "agent-harness")]
@@ -294,6 +299,12 @@ fn requires_account(item: &Provider<'_>) -> bool {
 }
 
 fn provider_endpoint<'a>(item: &'a Provider<'_>) -> Result<std::borrow::Cow<'a, str>, String> {
+    if item.registration == Registration::Stdio {
+        // Validate the underlying stdio definition via ownership.
+        item.connection_definition()
+            .map_err(|error| error.to_string())?;
+        return Ok(item.endpoint.into());
+    }
     // Presets and custom connections share endpoint and OAuth admission.
     // Owned harness URL overrides still pass their separate marker/HTTPS guards.
     item.connection_definition()
@@ -340,8 +351,13 @@ impl Provider<'_> {
         grain_core::mcp_connections::ConnectionDefinition,
         grain_core::mcp_connections::RegistryError,
     > {
-        use grain_sdk::mcp::{McpAuthentication, RemoteMcpConnection};
-        grain_core::mcp_connections::ConnectionDefinition::validate(RemoteMcpConnection {
+        if let Some(owner) = self.ownership {
+            return grain_core::mcp_connections::ConnectionDefinition::validate(
+                owner.definition().clone(),
+            );
+        }
+        use grain_sdk::mcp::{McpAuthentication, McpConnection};
+        grain_core::mcp_connections::ConnectionDefinition::validate(McpConnection::Remote {
             name: self.name.into(),
             url: self.endpoint.into(),
             headers: self.headers(),
@@ -437,10 +453,16 @@ const CATALOG: &[CatalogProvider] = &[
 ];
 
 #[derive(Clone)]
-pub struct McpHttpClient(pub reqwest_mcp::Client);
+pub struct McpHttpClient {
+    pub public: reqwest_mcp::Client,
+    pub loopback: reqwest_mcp::Client,
+}
 
 #[path = "grain_mcp_destination.rs"]
 mod destination;
+
+#[path = "grain_mcp_local.rs"]
+pub mod local;
 
 #[path = "grain_mcp_composio.rs"]
 pub mod composio;
@@ -550,7 +572,9 @@ fn provider_destination_policy(item: &Provider<'_>) -> Result<destination::Polic
             return Ok(destination::Policy::OwnedOrigins(origins));
         }
     }
-    let _ = item;
+    if item.registration == Registration::LocalHttp {
+        return Ok(destination::Policy::LocalLoopback);
+    }
     Ok(destination::Policy::Public)
 }
 
@@ -597,9 +621,14 @@ fn provider_http(app: &AppHandle, item: &Provider<'_>) -> Result<reqwest_mcp::Cl
         provider_endpoint(item)?;
         return crate::grain_agent_harness_mcp::client().map(|(_, client)| client);
     }
-    let _ = item;
     app.try_state::<McpHttpClient>()
-        .map(|client| client.0.clone())
+        .map(|client| {
+            if item.registration == Registration::LocalHttp {
+                client.loopback.clone()
+            } else {
+                client.public.clone()
+            }
+        })
         .ok_or_else(|| "MCP HTTP client unavailable".into())
 }
 
@@ -614,10 +643,13 @@ impl McpHttpClient {
     }
 
     pub fn build() -> Result<Self, String> {
-        destination::public_builder(Self::builder())
+        let public = destination::public_builder(Self::builder())
             .build()
-            .map(Self)
-            .map_err(|error| format!("could not initialize the MCP HTTP client: {error}"))
+            .map_err(|error| format!("could not initialize the MCP HTTP client: {error}"))?;
+        let loopback = destination::loopback_builder(Self::builder())
+            .build()
+            .map_err(|error| format!("could not initialize the local MCP HTTP client: {error}"))?;
+        Ok(Self { public, loopback })
     }
 
     #[cfg(test)]
@@ -2259,12 +2291,64 @@ pub(crate) async fn list_tools(app: &AppHandle, provider_id: &str) -> Result<Mcp
     list_tools_until(app, provider_id, deadline).await
 }
 
+/// Discovery used by the Extensions "Test" button: works even when a configured
+/// connection is still inactive, populates the tool cache, and shuts down a
+/// disabled stdio process right after discovery so zero idle RAM is retained.
+pub(super) async fn list_tools_for_test(
+    app: &AppHandle,
+    provider_id: &str,
+) -> Result<McpToolSet, String> {
+    let deadline = tokio::time::Instant::now() + OPERATION_TIMEOUT;
+    list_tools_inner(app, provider_id, deadline, false).await
+}
+
 /// First-round preparation has a short shared deadline. Keep SDK cleanup inside
 /// the normal discovery path instead of dropping a running service on timeout.
 pub(crate) async fn list_tools_until(
     app: &AppHandle,
     provider_id: &str,
     deadline: tokio::time::Instant,
+) -> Result<McpToolSet, String> {
+    list_tools_inner(app, provider_id, deadline, true).await
+}
+
+async fn acquire_stdio_peer(
+    owner: &RuntimeProvider,
+    item: &Provider<'_>,
+    deadline: tokio::time::Instant,
+) -> Result<rmcp::service::Peer<rmcp::service::RoleClient>, String> {
+    let RuntimeProvider::Configured(configured, _) = owner else {
+        return Err("Stdio transport requires a configured MCP connection.".into());
+    };
+    let grain_sdk::mcp::McpConnection::Stdio {
+        command,
+        args,
+        cwd,
+        env_keys,
+        ..
+    } = configured.definition()
+    else {
+        return Err("Connection is not a local stdio MCP.".into());
+    };
+    let mut env = local::read_local_env(provider_account(item)).await?;
+    // Only inject keys declared on the current connection definition.
+    env.retain(|k, _| env_keys.iter().any(|allowed| allowed == k));
+    let spec = local::StdioLaunchSpec {
+        command: command.clone(),
+        args: args.clone(),
+        cwd: cwd.clone(),
+        env,
+    };
+    local::supervisor()
+        .acquire(item.id, &owner.bind(""), spec, deadline)
+        .await
+}
+
+async fn list_tools_inner(
+    app: &AppHandle,
+    provider_id: &str,
+    deadline: tokio::time::Instant,
+    require_enabled: bool,
 ) -> Result<McpToolSet, String> {
     if composio::is_provider(provider_id) {
         return tokio::time::timeout_at(deadline, composio::list_tools(app, provider_id))
@@ -2281,25 +2365,45 @@ pub(crate) async fn list_tools_until(
         .await
         .map_err(|_| "MCP operation queue timed out")??;
     let queued_ms = started.elapsed().as_millis();
-    if !owner.enabled(app) {
+    if require_enabled && !owner.enabled(app) {
         return Err(format!("{} MCP is disabled in Grain Settings", item.name));
     }
-    let http = provider_http(app, item)?;
-    let service = ticket
-        .run(open_service(
-            http,
-            item,
-            app,
-            &ticket,
-            &_operation,
-            deadline,
-        ))
-        .await?
-        .map_err(|failure| failure.message)?;
-    let connected_ms = started.elapsed().as_millis();
-    let result = ticket.run(discover_on_service(&service, deadline)).await;
-    let discovered_ms = started.elapsed().as_millis();
-    close_service(service).await;
+
+    let (connected_ms, discovered_ms, result) = if item.registration == Registration::Stdio {
+        let peer = ticket
+            .run(acquire_stdio_peer(&owner, item, deadline))
+            .await??;
+        let connected_ms = started.elapsed().as_millis();
+        let res = ticket.run(discover_on_peer(&peer, deadline)).await;
+        let discovered_ms = started.elapsed().as_millis();
+        // If we discovered purely for a test on a disabled connection, stop the
+        // child immediately so disabled connections never keep a process alive.
+        if !owner.enabled(app) {
+            local::supervisor().evict(item.id).await;
+        } else if res.is_ok() {
+            local::supervisor().touch(item.id);
+        }
+        (connected_ms, discovered_ms, res)
+    } else {
+        let http = provider_http(app, item)?;
+        let service = ticket
+            .run(open_service(
+                http,
+                item,
+                app,
+                &ticket,
+                &_operation,
+                deadline,
+            ))
+            .await?
+            .map_err(|failure| failure.message)?;
+        let connected_ms = started.elapsed().as_millis();
+        let res = ticket.run(discover_on_service(&service, deadline)).await;
+        let discovered_ms = started.elapsed().as_millis();
+        close_service(service).await;
+        (connected_ms, discovered_ms, res)
+    };
+
     trace_mcp_timing(
         provider_id,
         "list_tools",
@@ -2313,7 +2417,7 @@ pub(crate) async fn list_tools_until(
         }),
     );
     let tools = result??;
-    if !owner.enabled(app) {
+    if require_enabled && !owner.enabled(app) {
         return Err("The MCP extension was disabled during discovery.".into());
     }
     let raw_digest = tool_set_digest(item, &tools)?;
@@ -2344,16 +2448,31 @@ async fn open_service(
     operation: &session::Lease,
     deadline: tokio::time::Instant,
 ) -> Result<McpService, ExecutionFailure> {
-    if item.registration == Registration::Anonymous {
+    if item.registration == Registration::Anonymous || item.registration == Registration::LocalHttp
+    {
         let endpoint = provider_endpoint(item).map_err(|_| Recovery::Configuration.failure())?;
         let client = bounded_http::BoundedClient::guarded(
             http,
             provider_destination_policy(item).map_err(|_| Recovery::Configuration.failure())?,
         );
         let legacy_probe = client.legacy_probe();
+        let mut config = transport_config(&endpoint, &item.headers())?;
+        if item.registration == Registration::LocalHttp {
+            if let Some((auth_name, auth_value)) = local::read_local_auth(provider_account(item))
+                .await
+                .map_err(|message| before_dispatch(FailureClass::Internal, message))?
+            {
+                config.custom_headers.insert(
+                    reqwest_mcp::header::HeaderName::from_bytes(auth_name.as_bytes())
+                        .map_err(|_| Recovery::Configuration.failure())?,
+                    reqwest_mcp::header::HeaderValue::from_str(&auth_value)
+                        .map_err(|_| Recovery::Configuration.failure())?,
+                );
+            }
+        }
         return serve_http(
             client,
-            transport_config(&endpoint, &item.headers())?,
+            config,
             deadline,
             legacy_probe,
             None,
@@ -2543,6 +2662,13 @@ async fn discover_on_service(
     service: &McpService,
     deadline: tokio::time::Instant,
 ) -> Result<Vec<Tool>, String> {
+    discover_on_peer(service.inner.peer(), deadline).await
+}
+
+async fn discover_on_peer(
+    service: &rmcp::service::Peer<rmcp::service::RoleClient>,
+    deadline: tokio::time::Instant,
+) -> Result<Vec<Tool>, String> {
     let mut tools = Vec::new();
     let mut cursor = None;
     let mut seen_cursors = HashSet::new();
@@ -2677,35 +2803,93 @@ pub(crate) async fn call_tool(
             "MCP arguments must be an object.",
         )
     })?;
-    let http = provider_http(app, item)
-        .map_err(|_| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?;
     let queued_ms = started.elapsed().as_millis();
-    let service = ticket
-        .run(open_service(
-            http,
-            item,
-            app,
-            &ticket,
-            &_operation,
-            deadline,
-        ))
-        .await
-        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))??;
-    let connected_ms = started.elapsed().as_millis();
-    let result = ticket
-        .run(call_on_service(
-            &service,
-            item,
-            tool_name,
-            arguments,
-            expected_digest,
-            deadline,
-            || ticket.commit(|| owner.enabled(app)).unwrap_or(false),
-        ))
-        .await
-        .unwrap_or_else(|message| Err(session_cancelled(&service, message)));
-    let called_ms = started.elapsed().as_millis();
-    close_service(service).await;
+    let (connected_ms, called_ms, result) = if item.registration == Registration::Stdio {
+        let dispatched = std::sync::atomic::AtomicBool::new(false);
+        let peer = ticket
+            .run(acquire_stdio_peer(&owner, item, deadline))
+            .await
+            .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?
+            .map_err(|message| before_dispatch(FailureClass::Network, message))?;
+        let connected_ms = started.elapsed().as_millis();
+        let first = ticket
+            .run(call_on_peer(
+                &peer,
+                &dispatched,
+                item,
+                tool_name,
+                arguments.clone(),
+                expected_digest,
+                deadline,
+                || ticket.commit(|| owner.enabled(app)).unwrap_or(false),
+            ))
+            .await
+            .unwrap_or_else(|message| Err(cancelled_after(&dispatched, &message)));
+        // If a warm child died before dispatch, evict it and retry once cleanly.
+        let res = if matches!(
+            &first,
+            Err(failure)
+                if failure.phase == DispatchPhase::NotDispatched
+                    && failure.class == FailureClass::Network
+        ) {
+            local::supervisor().evict(item.id).await;
+            let retry_dispatched = std::sync::atomic::AtomicBool::new(false);
+            match ticket.run(acquire_stdio_peer(&owner, item, deadline)).await {
+                Ok(Ok(fresh_peer)) => ticket
+                    .run(call_on_peer(
+                        &fresh_peer,
+                        &retry_dispatched,
+                        item,
+                        tool_name,
+                        arguments,
+                        expected_digest,
+                        deadline,
+                        || ticket.commit(|| owner.enabled(app)).unwrap_or(false),
+                    ))
+                    .await
+                    .unwrap_or_else(|message| Err(cancelled_after(&retry_dispatched, &message))),
+                Ok(Err(message)) => Err(before_dispatch(FailureClass::Network, message)),
+                Err(message) => Err(before_dispatch(FailureClass::Cancelled, message)),
+            }
+        } else {
+            first
+        };
+        let called_ms = started.elapsed().as_millis();
+        if res.is_ok() {
+            local::supervisor().touch(item.id);
+        }
+        (connected_ms, called_ms, res)
+    } else {
+        let http = provider_http(app, item)
+            .map_err(|_| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?;
+        let service = ticket
+            .run(open_service(
+                http,
+                item,
+                app,
+                &ticket,
+                &_operation,
+                deadline,
+            ))
+            .await
+            .map_err(|message| before_dispatch(FailureClass::Cancelled, message))??;
+        let connected_ms = started.elapsed().as_millis();
+        let res = ticket
+            .run(call_on_service(
+                &service,
+                item,
+                tool_name,
+                arguments,
+                expected_digest,
+                deadline,
+                || ticket.commit(|| owner.enabled(app)).unwrap_or(false),
+            ))
+            .await
+            .unwrap_or_else(|message| Err(session_cancelled(&service, message)));
+        let called_ms = started.elapsed().as_millis();
+        close_service(service).await;
+        (connected_ms, called_ms, res)
+    };
     if matches!(&result, Err(failure) if failure.message == DEFINITIONS_CHANGED) {
         // The saved tool list is stale; the next turn rediscovers it live.
         forget_tool_cache(app, item).await;
@@ -2805,70 +2989,127 @@ async fn call_tools_batched(
         .iter()
         .map(|call| call.arguments.as_object().cloned())
         .collect();
-    let http = provider_http(app, item)
-        .map_err(|_| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?;
     let queued_ms = started.elapsed().as_millis();
-    let service = ticket
-        .run(open_service(
-            http,
-            item,
-            app,
-            &ticket,
-            &_operation,
-            deadline,
-        ))
-        .await
-        .map_err(|message| before_dispatch(FailureClass::Cancelled, message))??;
-    let connected_ms = started.elapsed().as_millis();
     let flags: Vec<_> = calls
         .iter()
         .map(|_| std::sync::atomic::AtomicBool::new(false))
         .collect();
     let is_enabled = || ticket.commit(|| owner.enabled(app)).unwrap_or(false);
-    let batch = async {
-        let revalidate_started = std::time::Instant::now();
-        let tools = revalidate_on_service(&service, item, expected_digest, deadline).await?;
-        let revalidate_ms = revalidate_started.elapsed().as_millis();
-        let pending = calls
-            .iter()
-            .zip(arguments)
-            .zip(&flags)
-            .map(|((call, arguments), flag)| {
-                let (service, tools, is_enabled) = (&service, &tools, &is_enabled);
-                async move {
-                    let Some(arguments) = arguments else {
-                        return Err(before_dispatch(
-                            FailureClass::InvalidArgument,
-                            "MCP arguments must be an object.",
-                        ));
-                    };
-                    dispatch_on_service(
-                        service,
-                        tools,
-                        item,
-                        &call.tool_name,
-                        arguments,
-                        deadline,
-                        is_enabled,
-                        flag,
-                        revalidate_ms,
-                    )
-                    .await
-                }
-            });
-        Ok::<_, ExecutionFailure>(futures_util::future::join_all(pending).await)
+
+    let (connected_ms, called_ms, results) = if item.registration == Registration::Stdio {
+        let peer = ticket
+            .run(acquire_stdio_peer(&owner, item, deadline))
+            .await
+            .map_err(|message| before_dispatch(FailureClass::Cancelled, message))?
+            .map_err(|message| before_dispatch(FailureClass::Network, message))?;
+        let connected_ms = started.elapsed().as_millis();
+        let batch = async {
+            let revalidate_started = std::time::Instant::now();
+            let tools = revalidate_on_peer(&peer, item, expected_digest, deadline).await?;
+            let revalidate_ms = revalidate_started.elapsed().as_millis();
+            let pending =
+                calls
+                    .iter()
+                    .zip(arguments)
+                    .zip(&flags)
+                    .map(|((call, arguments), flag)| {
+                        let (peer, tools, is_enabled) = (&peer, &tools, &is_enabled);
+                        async move {
+                            let Some(arguments) = arguments else {
+                                return Err(before_dispatch(
+                                    FailureClass::InvalidArgument,
+                                    "MCP arguments must be an object.",
+                                ));
+                            };
+                            dispatch_on_peer(
+                                peer,
+                                tools,
+                                item,
+                                &call.tool_name,
+                                arguments,
+                                deadline,
+                                is_enabled,
+                                flag,
+                                revalidate_ms,
+                            )
+                            .await
+                        }
+                    });
+            Ok::<_, ExecutionFailure>(futures_util::future::join_all(pending).await)
+        };
+        let results = match ticket.run(batch).await {
+            Ok(Ok(results)) => results,
+            Ok(Err(failure)) => calls.iter().map(|_| Err(failure.clone())).collect(),
+            Err(message) => flags
+                .iter()
+                .map(|flag| Err(cancelled_after(flag, &message)))
+                .collect(),
+        };
+        let called_ms = started.elapsed().as_millis();
+        local::supervisor().touch(item.id);
+        (connected_ms, called_ms, results)
+    } else {
+        let http = provider_http(app, item)
+            .map_err(|_| before_dispatch(FailureClass::Internal, "MCP HTTP client unavailable."))?;
+        let service = ticket
+            .run(open_service(
+                http,
+                item,
+                app,
+                &ticket,
+                &_operation,
+                deadline,
+            ))
+            .await
+            .map_err(|message| before_dispatch(FailureClass::Cancelled, message))??;
+        let connected_ms = started.elapsed().as_millis();
+        let batch = async {
+            let revalidate_started = std::time::Instant::now();
+            let tools = revalidate_on_service(&service, item, expected_digest, deadline).await?;
+            let revalidate_ms = revalidate_started.elapsed().as_millis();
+            let pending =
+                calls
+                    .iter()
+                    .zip(arguments)
+                    .zip(&flags)
+                    .map(|((call, arguments), flag)| {
+                        let (service, tools, is_enabled) = (&service, &tools, &is_enabled);
+                        async move {
+                            let Some(arguments) = arguments else {
+                                return Err(before_dispatch(
+                                    FailureClass::InvalidArgument,
+                                    "MCP arguments must be an object.",
+                                ));
+                            };
+                            dispatch_on_service(
+                                service,
+                                tools,
+                                item,
+                                &call.tool_name,
+                                arguments,
+                                deadline,
+                                is_enabled,
+                                flag,
+                                revalidate_ms,
+                            )
+                            .await
+                        }
+                    });
+            Ok::<_, ExecutionFailure>(futures_util::future::join_all(pending).await)
+        };
+        let results = match ticket.run(batch).await {
+            Ok(Ok(results)) => results,
+            // Revalidation failed before any call was sent.
+            Ok(Err(failure)) => calls.iter().map(|_| Err(failure.clone())).collect(),
+            Err(message) => flags
+                .iter()
+                .map(|flag| Err(cancelled_after(flag, &message)))
+                .collect(),
+        };
+        let called_ms = started.elapsed().as_millis();
+        close_service(service).await;
+        (connected_ms, called_ms, results)
     };
-    let results = match ticket.run(batch).await {
-        Ok(Ok(results)) => results,
-        // Revalidation failed before any call was sent.
-        Ok(Err(failure)) => calls.iter().map(|_| Err(failure.clone())).collect(),
-        Err(message) => flags
-            .iter()
-            .map(|flag| Err(cancelled_after(flag, &message)))
-            .collect(),
-    };
-    let called_ms = started.elapsed().as_millis();
-    close_service(service).await;
     if results
         .iter()
         .any(|result| matches!(result, Err(failure) if failure.message == DEFINITIONS_CHANGED))
@@ -2916,18 +3157,42 @@ async fn call_on_service(
     deadline: tokio::time::Instant,
     is_enabled: impl Fn() -> bool + Sync,
 ) -> Result<McpCallOutput, ExecutionFailure> {
+    call_on_peer(
+        service.inner.peer(),
+        &service.dispatched,
+        item,
+        tool_name,
+        arguments,
+        expected_digest,
+        deadline,
+        is_enabled,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call_on_peer(
+    peer: &rmcp::service::Peer<rmcp::service::RoleClient>,
+    dispatched: &std::sync::atomic::AtomicBool,
+    item: &Provider<'_>,
+    tool_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    expected_digest: &str,
+    deadline: tokio::time::Instant,
+    is_enabled: impl Fn() -> bool + Sync,
+) -> Result<McpCallOutput, ExecutionFailure> {
     let revalidate_started = std::time::Instant::now();
-    let tools = revalidate_on_service(service, item, expected_digest, deadline).await?;
+    let tools = revalidate_on_peer(peer, item, expected_digest, deadline).await?;
     let revalidate_ms = revalidate_started.elapsed().as_millis();
-    dispatch_on_service(
-        service,
+    dispatch_on_peer(
+        peer,
         &tools,
         item,
         tool_name,
         arguments,
         deadline,
         &is_enabled,
-        &service.dispatched,
+        dispatched,
         revalidate_ms,
     )
     .await
@@ -2941,7 +3206,16 @@ async fn revalidate_on_service(
     expected_digest: &str,
     deadline: tokio::time::Instant,
 ) -> Result<Vec<Tool>, ExecutionFailure> {
-    let tools = discover_on_service(service, deadline)
+    revalidate_on_peer(service.inner.peer(), item, expected_digest, deadline).await
+}
+
+async fn revalidate_on_peer(
+    peer: &rmcp::service::Peer<rmcp::service::RoleClient>,
+    item: &Provider<'_>,
+    expected_digest: &str,
+    deadline: tokio::time::Instant,
+) -> Result<Vec<Tool>, ExecutionFailure> {
+    let tools = discover_on_peer(peer, deadline)
         .await
         .map_err(|message| before_dispatch(FailureClass::Network, message))?;
     let current_digest = tool_set_digest(item, &tools).map_err(|_| {
@@ -2965,6 +3239,32 @@ async fn revalidate_on_service(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_on_service(
     service: &McpService,
+    tools: &[Tool],
+    item: &Provider<'_>,
+    tool_name: &str,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    deadline: tokio::time::Instant,
+    is_enabled: &(dyn Fn() -> bool + Sync),
+    dispatched: &std::sync::atomic::AtomicBool,
+    revalidate_ms: u128,
+) -> Result<McpCallOutput, ExecutionFailure> {
+    dispatch_on_peer(
+        service.inner.peer(),
+        tools,
+        item,
+        tool_name,
+        arguments,
+        deadline,
+        is_enabled,
+        dispatched,
+        revalidate_ms,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_on_peer(
+    service: &rmcp::service::Peer<rmcp::service::RoleClient>,
     tools: &[Tool],
     item: &Provider<'_>,
     tool_name: &str,
@@ -3284,13 +3584,21 @@ mod tests {
 
     #[test]
     fn catalog_connections_preserve_endpoints_auth_and_deployed_vault_keys() {
-        use grain_sdk::mcp::McpAuthentication;
+        use grain_sdk::mcp::{McpAuthentication, McpConnection};
         let mut keys = std::collections::BTreeSet::new();
         for item in CATALOG {
             let connection = item.connection_definition().unwrap();
-            assert_eq!(connection.definition().url, item.endpoint);
+            let McpConnection::Remote {
+                url,
+                authentication,
+                ..
+            } = connection.definition()
+            else {
+                panic!("expected remote catalog connection");
+            };
+            assert_eq!(url, item.endpoint);
             assert_eq!(
-                connection.definition().authentication,
+                *authentication,
                 if requires_account(item) {
                     McpAuthentication::OAuth {}
                 } else {

@@ -1,17 +1,21 @@
-//! Host configuration and current-revision ownership for direct remote MCP.
-//! Import stays inactive. Anonymous activation reuses the shared MCP runtime;
-//! OAuth uses the shared SDK with revision-owned vault publication and cleanup.
+//! Host configuration and current-revision ownership for custom MCP connections
+//! (remote HTTPS, local loopback HTTP, and local stdio commands).
+//! Import stays inactive. Anonymous and local activation reuse the shared MCP
+//! runtime; OAuth and local env/auth secrets use revision-owned OS vault entries.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use grain_core::mcp_connections::{
-    ConnectionDefinition, ConnectionLease, ConnectionRecord, ConnectionRegistry, RegistryError,
+    parse_mcp_import_bundle, ConnectionDefinition, ConnectionLease, ConnectionRecord,
+    ConnectionRegistry, RegistryError,
 };
-use grain_sdk::mcp::McpAuthentication;
+use grain_sdk::mcp::{McpAuthentication, McpConnection, McpHeaders, McpPublicOAuthClient};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, WebviewWindow};
+
+use super::local;
 
 #[derive(Default)]
 pub struct State {
@@ -26,29 +30,68 @@ pub(super) struct RuntimeOwner {
     lease: ConnectionLease,
     control: Arc<super::session::Control>,
     provider_id: String,
+    endpoint_label: String,
+}
+
+fn empty_headers() -> &'static McpHeaders {
+    static EMPTY: std::sync::OnceLock<McpHeaders> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(McpHeaders::new)
+}
+
+fn endpoint_label_for(def: &McpConnection) -> String {
+    match def {
+        McpConnection::Remote { url, .. } | McpConnection::LocalHttp { url, .. } => url.clone(),
+        McpConnection::Stdio { command, .. } => format!("stdio:{command}"),
+    }
 }
 
 impl RuntimeOwner {
-    pub(super) fn headers(&self) -> &grain_sdk::mcp::McpHeaders {
-        &self.lease.record().definition().headers
+    pub(super) fn definition(&self) -> &McpConnection {
+        self.lease.record().definition()
     }
 
-    pub(super) fn oauth_client(&self) -> Option<&grain_sdk::mcp::McpPublicOAuthClient> {
-        self.lease.record().definition().oauth_client.as_ref()
+    pub(super) fn headers(&self) -> &McpHeaders {
+        match self.definition() {
+            McpConnection::Remote { headers, .. } | McpConnection::LocalHttp { headers, .. } => {
+                headers
+            }
+            McpConnection::Stdio { .. } => empty_headers(),
+        }
+    }
+
+    pub(super) fn oauth_client(&self) -> Option<&McpPublicOAuthClient> {
+        match self.definition() {
+            McpConnection::Remote { oauth_client, .. } => oauth_client.as_ref(),
+            _ => None,
+        }
     }
 
     pub(super) fn spec(&self) -> super::Provider<'_> {
-        let definition = self.lease.record().definition();
+        let definition = self.definition();
+        let registration = match definition {
+            McpConnection::Remote {
+                authentication: McpAuthentication::None {},
+                ..
+            } => super::Registration::Anonymous,
+            McpConnection::Remote {
+                authentication: McpAuthentication::OAuth {},
+                ..
+            } => super::Registration::Dynamic,
+            McpConnection::LocalHttp { .. } => super::Registration::LocalHttp,
+            McpConnection::Stdio { .. } => super::Registration::Stdio,
+        };
+        let description = match definition {
+            McpConnection::Remote { .. } => "Tools from this MCP server.",
+            McpConnection::LocalHttp { .. } => "Tools from this local HTTP MCP server.",
+            McpConnection::Stdio { .. } => "Tools from this local command MCP server.",
+        };
         super::Provider {
             id: &self.provider_id,
-            name: &definition.name,
-            description: "Tools from this MCP server.",
-            endpoint: &definition.url,
-            registration: match definition.authentication {
-                McpAuthentication::None {} => super::Registration::Anonymous,
-                McpAuthentication::OAuth {} => super::Registration::Dynamic,
-            },
-            setup_url: &definition.url,
+            name: definition.name(),
+            description,
+            endpoint: &self.endpoint_label,
+            registration,
+            setup_url: &self.endpoint_label,
             bundled_preset: false,
             ownership: Some(self),
         }
@@ -122,6 +165,7 @@ impl State {
             return Err(RegistryError::Conflict.to_string());
         }
         let id = lease.record().identity().connection_id().to_string();
+        let endpoint_label = endpoint_label_for(lease.record().definition());
         let mut controls = self
             .controls
             .lock()
@@ -130,6 +174,7 @@ impl State {
             if owner.lease != lease {
                 owner.control.invalidate();
                 owner.lease = lease;
+                owner.endpoint_label = endpoint_label;
             }
             return Ok(owner.clone());
         }
@@ -141,6 +186,7 @@ impl State {
             lease,
             control: super::session::Control::new(),
             provider_id: format!("configured-{id}"),
+            endpoint_label,
         };
         controls.insert(id, owner.clone());
         Ok(owner)
@@ -158,9 +204,6 @@ impl State {
         let registry = self.registry(app)?;
         let lease = registry.lease(id).map_err(|error| error.to_string())?;
         let owner = self.owner(registry, lease)?;
-        // Metadata and cancellation generation are captured under the same
-        // mutation lock. A delayed caller must never borrow a newer generation
-        // for an older endpoint/account/revision snapshot.
         let ticket = owner.ticket();
         Ok((owner, ticket))
     }
@@ -196,37 +239,102 @@ impl State {
     }
 }
 
-/// Host UI projection, deliberately omitting vault/account IDs and numeric u64
-/// revisions (JavaScript numbers cannot represent all supported revisions).
+/// Host UI projection, deliberately omitting vault/account IDs, secret values,
+/// and numeric u64 revisions (JavaScript numbers cannot represent all revisions).
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionView {
     id: String,
     revision: String,
+    transport: String,
     name: String,
     url: String,
     authentication: String,
-    headers: grain_sdk::mcp::McpHeaders,
-    oauth_client: Option<grain_sdk::mcp::McpPublicOAuthClient>,
+    headers: McpHeaders,
+    oauth_client: Option<McpPublicOAuthClient>,
+    command: Option<String>,
+    args: Vec<String>,
+    cwd: Option<String>,
+    env_keys: Vec<String>,
+    has_auth_header: bool,
+    runtime: local::LocalMcpRuntimeStatus,
     state: String,
 }
 
 impl From<ConnectionRecord> for ConnectionView {
     fn from(record: ConnectionRecord) -> Self {
-        let definition = record.definition();
-        Self {
-            id: record.identity().connection_id().into(),
-            revision: record.revision().to_string(),
-            name: definition.name.clone(),
-            url: definition.url.clone(),
-            headers: definition.headers.clone(),
-            oauth_client: definition.oauth_client.clone(),
-            authentication: match definition.authentication {
-                McpAuthentication::OAuth {} => "oauth",
-                McpAuthentication::None {} => "none",
-            }
-            .into(),
-            state: "inactive".into(),
+        let id = record.identity().connection_id().to_string();
+        let provider_id = format!("configured-{id}");
+        let runtime = local::supervisor().runtime_status(&provider_id);
+        let account = record.identity().vault_account();
+        match record.definition() {
+            McpConnection::Remote {
+                name,
+                url,
+                authentication,
+                headers,
+                oauth_client,
+            } => Self {
+                id,
+                revision: record.revision().to_string(),
+                transport: "remote".into(),
+                name: name.clone(),
+                url: url.clone(),
+                authentication: match authentication {
+                    McpAuthentication::OAuth {} => "oauth",
+                    McpAuthentication::None {} => "none",
+                }
+                .into(),
+                headers: headers.clone(),
+                oauth_client: oauth_client.clone(),
+                command: None,
+                args: Vec::new(),
+                cwd: None,
+                env_keys: Vec::new(),
+                has_auth_header: false,
+                runtime,
+                state: "inactive".into(),
+            },
+            McpConnection::LocalHttp { name, url, headers } => Self {
+                id,
+                revision: record.revision().to_string(),
+                transport: "local-http".into(),
+                name: name.clone(),
+                url: url.clone(),
+                authentication: "none".into(),
+                headers: headers.clone(),
+                oauth_client: None,
+                command: None,
+                args: Vec::new(),
+                cwd: None,
+                env_keys: Vec::new(),
+                has_auth_header: local::has_local_auth_sync(&account),
+                runtime,
+                state: "inactive".into(),
+            },
+            McpConnection::Stdio {
+                name,
+                command,
+                args,
+                cwd,
+                env_keys,
+            } => Self {
+                id,
+                revision: record.revision().to_string(),
+                transport: "stdio".into(),
+                name: name.clone(),
+                url: String::new(),
+                authentication: "none".into(),
+                headers: McpHeaders::new(),
+                oauth_client: None,
+                command: Some(command.clone()),
+                args: args.clone(),
+                cwd: cwd.clone(),
+                env_keys: env_keys.clone(),
+                has_auth_header: false,
+                runtime,
+                state: "inactive".into(),
+            },
         }
     }
 }
@@ -268,15 +376,31 @@ fn prune_enabled(app: &AppHandle, id: &str, keep: Option<&str>) -> Result<(), St
 }
 
 fn retire_account(record: &ConnectionRecord) -> Result<(), String> {
-    if matches!(
-        record.definition().authentication,
-        McpAuthentication::None {}
-    ) {
-        return Ok(());
+    match record.definition() {
+        McpConnection::Remote {
+            authentication: McpAuthentication::None {},
+            ..
+        } => Ok(()),
+        McpConnection::Remote {
+            authentication: McpAuthentication::OAuth {},
+            ..
+        } => retire_with(record, |service, account| {
+            super::delete_vault_entry(service, account).map_err(|_| ())
+        }),
+        McpConnection::LocalHttp { .. } => {
+            let account = record.identity().vault_account();
+            local::delete_local_auth_sync(&account).map_err(|_| {
+                "Could not clear local MCP auth header from vault. Reload and retry cleanup.".into()
+            })
+        }
+        McpConnection::Stdio { .. } => {
+            let account = record.identity().vault_account();
+            local::delete_local_env_sync(&account).map_err(|_| {
+                "Could not clear local MCP environment secrets from vault. Reload and retry cleanup."
+                    .into()
+            })
+        }
     }
-    retire_with(record, |service, account| {
-        super::delete_vault_entry(service, account).map_err(|_| ())
-    })
 }
 
 fn prune_client_ids(app: &AppHandle, id: &str) -> Result<(), String> {
@@ -339,11 +463,14 @@ pub async fn mcp_connection_clear_client_credentials(
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
-        if matches!(
-            lease.record().definition().authentication,
-            McpAuthentication::None {}
+        if !matches!(
+            lease.record().definition(),
+            McpConnection::Remote {
+                authentication: McpAuthentication::OAuth {},
+                ..
+            }
         ) {
-            return Err("This anonymous server has no OAuth client to configure.".into());
+            return Err("This server has no OAuth client to configure.".into());
         }
         if !registry.is_current(&lease) {
             return Err(RegistryError::Conflict.to_string());
@@ -360,9 +487,12 @@ fn retire_with(
     record: &ConnectionRecord,
     mut delete: impl FnMut(&str, &str) -> Result<(), ()>,
 ) -> Result<(), String> {
-    if matches!(
-        record.definition().authentication,
-        McpAuthentication::None {}
+    if !matches!(
+        record.definition(),
+        McpConnection::Remote {
+            authentication: McpAuthentication::OAuth {},
+            ..
+        }
     ) {
         return Ok(());
     }
@@ -441,6 +571,11 @@ pub async fn mcp_connection_status(
         None
     };
     let observation = ticket.recovery();
+    let runtime = if item.registration == super::Registration::Stdio {
+        Some(local::supervisor().runtime_status(item.id))
+    } else {
+        None
+    };
     ticket.commit(|| {
         if !owner.current() {
             return Err(RegistryError::Conflict.to_string());
@@ -452,7 +587,17 @@ pub async fn mcp_connection_status(
                     .is_some_and(|value| value.token_response.is_some())
             })
         });
-        let state = if !required {
+        let state = if let Some(rt) = &runtime {
+            if rt.running {
+                "running"
+            } else if rt.last_error.is_some() {
+                "error"
+            } else {
+                "idle"
+            }
+        } else if item.registration == super::Registration::LocalHttp {
+            "local"
+        } else if !required {
             "anonymous"
         } else if stored.as_ref().is_some_and(Result::is_err) {
             "unavailable"
@@ -491,7 +636,7 @@ pub async fn mcp_connection_disconnect(
     guard(&window)?;
     let (owner, _) = expected_owner(&app, &id, &expected_revision)?;
     if !super::requires_account(&owner.spec()) {
-        return Err("This anonymous server has no account to disconnect.".into());
+        return Err("This server has no OAuth account to disconnect.".into());
     }
     let ticket = owner.invalidate(&app)?;
     let result = tokio::time::timeout(
@@ -550,12 +695,10 @@ async fn storage<T: Send + 'static>(
     app: AppHandle,
     operation: impl FnOnce(&State, &Arc<ConnectionRegistry>) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    // Registry disk I/O and its bounded publication retry never block the UI.
     tokio::task::spawn_blocking(move || {
         let state = app
             .try_state::<State>()
             .ok_or("MCP connection storage is unavailable.")?;
-        // Serialize the command's mutation and returned view as one host unit.
         let _operation = state
             .operation
             .lock()
@@ -565,6 +708,24 @@ async fn storage<T: Send + 'static>(
     })
     .await
     .map_err(|_| "MCP connection storage operation failed.".to_string())?
+}
+
+fn store_imported_secrets(
+    record: &ConnectionRecord,
+    env_secrets: &BTreeMap<String, String>,
+    auth_header: Option<(String, String)>,
+) -> Result<(), String> {
+    let account = record.identity().vault_account();
+    match record.definition() {
+        McpConnection::Stdio { .. } if !env_secrets.is_empty() => {
+            local::write_local_env_sync(&account, env_secrets)?;
+        }
+        McpConnection::LocalHttp { .. } if auth_header.is_some() => {
+            local::write_local_auth_sync(&account, auth_header)?;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -597,13 +758,64 @@ pub async fn mcp_connection_import(
     definition_json: String,
 ) -> Result<ConnectionView, String> {
     guard(&window)?;
-    let definition = ConnectionDefinition::parse(definition_json.as_bytes())
-        .map_err(|error| error.to_string())?;
+    let mut bundle =
+        parse_mcp_import_bundle(definition_json.as_bytes()).map_err(|error| error.to_string())?;
+    if bundle.len() != 1 {
+        return Err(
+            "Provide a single MCP server definition, or use bundle import for multiple servers."
+                .into(),
+        );
+    }
+    let imported = bundle.remove(0);
     storage(app, move |_, registry| {
-        registry
-            .insert(definition)
-            .map(Into::into)
-            .map_err(|error| error.to_string())
+        let record = registry
+            .insert(imported.definition)
+            .map_err(|error| error.to_string())?;
+        if let Err(err) =
+            store_imported_secrets(&record, &imported.env_secrets, imported.auth_header)
+        {
+            // Roll back metadata if vault write fails so we never leave half-configured secrets.
+            if let Ok(lease) = registry.lease(record.identity().connection_id()) {
+                let _ = registry.remove(&lease);
+            }
+            return Err(err);
+        }
+        Ok(ConnectionView::from(record))
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_import_bundle(
+    app: AppHandle,
+    window: WebviewWindow,
+    definition_json: String,
+) -> Result<Vec<ConnectionView>, String> {
+    guard(&window)?;
+    let bundle =
+        parse_mcp_import_bundle(definition_json.as_bytes()).map_err(|error| error.to_string())?;
+    storage(app, move |_, registry| {
+        let existing_count = registry.list().map_err(|e| e.to_string())?.len();
+        if existing_count + bundle.len() > grain_core::mcp_connections::MAX_CONNECTIONS {
+            return Err(RegistryError::Limit.to_string());
+        }
+        let mut added = Vec::with_capacity(bundle.len());
+        for imported in bundle {
+            let record = registry
+                .insert(imported.definition)
+                .map_err(|error| error.to_string())?;
+            if let Err(err) =
+                store_imported_secrets(&record, &imported.env_secrets, imported.auth_header)
+            {
+                if let Ok(lease) = registry.lease(record.identity().connection_id()) {
+                    let _ = registry.remove(&lease);
+                }
+                return Err(err);
+            }
+            added.push(ConnectionView::from(record));
+        }
+        Ok(added)
     })
     .await
 }
@@ -618,8 +830,13 @@ pub async fn mcp_connection_replace(
     definition_json: String,
 ) -> Result<ConnectionView, String> {
     guard(&window)?;
-    let definition = ConnectionDefinition::parse(definition_json.as_bytes())
-        .map_err(|error| error.to_string())?;
+    let mut bundle =
+        parse_mcp_import_bundle(definition_json.as_bytes()).map_err(|error| error.to_string())?;
+    if bundle.len() != 1 {
+        return Err("Replacement must contain exactly one MCP server definition.".into());
+    }
+    let imported = bundle.remove(0);
+    let definition = imported.definition;
     let view_app = app.clone();
     storage(app, move |state, registry| {
         let lease = expected_lease(registry, &id, &expected_revision)?;
@@ -628,19 +845,57 @@ pub async fn mcp_connection_replace(
         {
             return Err(RegistryError::RevisionExhausted.to_string());
         }
-        if lease.record().definition() != definition.definition() {
+        if lease.record().definition() != definition.definition()
+            || !imported.env_secrets.is_empty()
+            || imported.auth_header.is_some()
+        {
             state.invalidate(&id)?;
+            local::supervisor().evict_in_background(format!("configured-{id}"));
         }
         let account_changed = grain_core::mcp::account_binding_changed(
             lease.record().definition(),
             definition.definition(),
         );
+        // Preserve existing vault env secrets for keys that were not re-supplied
+        // when editing a stdio connection (e.g. changing args without retyping API keys).
+        let carried_env = if matches!(
+            (lease.record().definition(), definition.definition()),
+            (McpConnection::Stdio { .. }, McpConnection::Stdio { .. })
+        ) {
+            let mut prev =
+                local::read_local_env_sync(lease.record().identity().vault_account().as_ref())
+                    .unwrap_or_default();
+            for (k, v) in &imported.env_secrets {
+                prev.insert(k.clone(), v.clone());
+            }
+            if let McpConnection::Stdio { env_keys, .. } = definition.definition() {
+                prev.retain(|k, _| env_keys.iter().any(|allowed| allowed == k));
+            }
+            prev
+        } else {
+            imported.env_secrets.clone()
+        };
+        let carried_auth = if imported.auth_header.is_some() {
+            imported.auth_header.clone()
+        } else if matches!(
+            (lease.record().definition(), definition.definition()),
+            (
+                McpConnection::LocalHttp { .. },
+                McpConnection::LocalHttp { .. }
+            )
+        ) && !account_changed
+        {
+            local::read_local_auth_sync(lease.record().identity().vault_account().as_ref())
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+
         if account_changed {
             if !registry.is_current(&lease) {
                 return Err(RegistryError::Conflict.to_string());
             }
-            // Disable and clean the old account BEFORE publishing a new identity.
-            // A failed cleanup preserves metadata/identity for a safe retry.
             prune_enabled(&view_app, &id, None)?;
             retire_account(lease.record())?;
             prune_client_ids(&view_app, &id)?;
@@ -653,6 +908,13 @@ pub async fn mcp_connection_replace(
             .map_err(|error| error.to_string())?
             .record()
             .clone();
+        if matches!(record.definition(), McpConnection::Stdio { .. }) {
+            local::write_local_env_sync(record.identity().vault_account().as_ref(), &carried_env)?;
+        } else if matches!(record.definition(), McpConnection::LocalHttp { .. })
+            && (imported.auth_header.is_some() || account_changed)
+        {
+            local::write_local_auth_sync(record.identity().vault_account().as_ref(), carried_auth)?;
+        }
         if retired.is_some() {
             prune_enabled(
                 &view_app,
@@ -663,6 +925,156 @@ pub async fn mcp_connection_replace(
         Ok(view(&view_app, registry, record))
     })
     .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_set_local_env(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+    env: BTreeMap<String, String>,
+) -> Result<ConnectionView, String> {
+    guard(&window)?;
+    grain_core::mcp::validate_env_map(&env).map_err(|error| error.to_string())?;
+    let view_app = app.clone();
+    storage(app, move |state, registry| {
+        let lease = expected_lease(registry, &id, &expected_revision)?;
+        let McpConnection::Stdio {
+            name,
+            command,
+            args,
+            cwd,
+            ..
+        } = lease.record().definition().clone()
+        else {
+            return Err(
+                "Only local command (stdio) MCP connections support environment variables.".into(),
+            );
+        };
+        if !registry.is_current(&lease) {
+            return Err(RegistryError::Conflict.to_string());
+        }
+        state.invalidate(&id)?;
+        local::supervisor().evict_in_background(format!("configured-{id}"));
+        let env_keys: Vec<String> = env.keys().cloned().collect();
+        let next_def = ConnectionDefinition::validate(McpConnection::Stdio {
+            name,
+            command,
+            args,
+            cwd,
+            env_keys,
+        })
+        .map_err(|error| error.to_string())?;
+        let account_changed = grain_core::mcp::account_binding_changed(
+            lease.record().definition(),
+            next_def.definition(),
+        );
+        if account_changed {
+            prune_enabled(&view_app, &id, None)?;
+            retire_account(lease.record())?;
+        }
+        let _ = registry
+            .replace(&lease, next_def)
+            .map_err(|error| error.to_string())?;
+        let record = registry
+            .lease(&id)
+            .map_err(|error| error.to_string())?
+            .record()
+            .clone();
+        local::write_local_env_sync(record.identity().vault_account().as_ref(), &env)?;
+        Ok(view(&view_app, registry, record))
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_set_local_auth(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+    header_name: String,
+    header_value: String,
+) -> Result<ConnectionView, String> {
+    guard(&window)?;
+    let auth = if header_name.trim().is_empty() && header_value.trim().is_empty() {
+        None
+    } else {
+        Some(
+            grain_core::mcp::validate_local_auth_header(&header_name, &header_value)
+                .map_err(|error| error.to_string())?,
+        )
+    };
+    let view_app = app.clone();
+    storage(app, move |state, registry| {
+        let lease = expected_lease(registry, &id, &expected_revision)?;
+        if !matches!(lease.record().definition(), McpConnection::LocalHttp { .. }) {
+            return Err("Only local HTTP MCP connections support a local auth header.".into());
+        }
+        if !registry.is_current(&lease) {
+            return Err(RegistryError::Conflict.to_string());
+        }
+        state.invalidate(&id)?;
+        local::write_local_auth_sync(lease.record().identity().vault_account().as_ref(), auth)?;
+        Ok(view(&view_app, registry, lease.record().clone()))
+    })
+    .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_stop(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+) -> Result<(), String> {
+    guard(&window)?;
+    let (owner, _) = expected_owner(&app, &id, &expected_revision)?;
+    let provider_id = owner.provider_id.clone();
+    let _ = owner.invalidate(&app);
+    local::supervisor().evict(&provider_id).await;
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_logs(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+) -> Result<local::LocalMcpLogs, String> {
+    guard(&window)?;
+    let (owner, _) = expected_owner(&app, &id, &expected_revision)?;
+    Ok(local::supervisor().logs(&owner.provider_id))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn mcp_connection_test(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: String,
+    expected_revision: String,
+) -> Result<super::McpDiscoveryResult, String> {
+    guard(&window)?;
+    let (owner, _) = expected_owner(&app, &id, &expected_revision)?;
+    let tool_set = super::list_tools_for_test(&app, &owner.provider_id).await?;
+    Ok(super::McpDiscoveryResult {
+        provider_id: tool_set.provider_id,
+        provider_name: tool_set.provider_name,
+        tool_count: tool_set.tools.len() as u32,
+        tools: tool_set
+            .tools
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect(),
+        tool_set_digest: tool_set.digest,
+    })
 }
 
 #[tauri::command]
@@ -681,6 +1093,9 @@ pub async fn mcp_connection_remove(
             return Err(RegistryError::Conflict.to_string());
         }
         state.invalidate(&id)?;
+        let provider_id = format!("configured-{id}");
+        local::supervisor().evict_in_background(provider_id.clone());
+        local::supervisor().clear_diagnostics(&provider_id);
         prune_enabled(&view_app, &id, None)?;
         super::tool_cache::clear_blocking(
             &view_app,
@@ -729,11 +1144,12 @@ pub async fn mcp_connection_set_enabled(
             return Err("Connect this configured MCP account before enabling it.".into());
         }
         owner.control.invalidate();
+        if !enabled {
+            local::supervisor().evict_in_background(owner.provider_id.clone());
+        }
         context
             .update_settings(|settings| {
                 let key = owner.enable_key();
-                // Only exact account ownership can enable this destination. Neither
-                // raw record IDs nor old account keys can activate an edited URL.
                 settings.mcp_enabled_providers.retain(|value| value != &key);
                 if enabled {
                     settings.mcp_enabled_providers.push(key);
@@ -778,14 +1194,19 @@ pub(super) fn directory(
                 .iter()
                 .any(|key| key == record.identity().vault_account().as_ref())
         })
-        .map(
-            |record| grain_core::capability_index::ExtensionDirectoryEntry {
+        .map(|record| {
+            let description = match record.definition() {
+                McpConnection::Remote { .. } => "Tools from this MCP server.",
+                McpConnection::LocalHttp { .. } => "Tools from this local HTTP MCP server.",
+                McpConnection::Stdio { .. } => "Tools from this local command MCP server.",
+            };
+            grain_core::capability_index::ExtensionDirectoryEntry {
                 extension_id: format!("mcp.configured-{}", record.identity().connection_id()),
-                name: record.definition().name.clone(),
-                description: "Tools from this MCP server.".into(),
+                name: record.definition().name().to_owned(),
+                description: description.into(),
                 action_count: 1,
-            },
-        )
+            }
+        })
         .collect()
 }
 
@@ -797,7 +1218,7 @@ mod tests {
     fn external_metadata_change_denies_vault_io_without_a_generation_notification() {
         let data = tempfile::tempdir().unwrap();
         let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
-        let input = ConnectionDefinition::parse(br#"{"name":"Account","url":"https://server.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
+        let input = ConnectionDefinition::parse(br#"{"transport":"remote","name":"Account","url":"https://server.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
         let record = registry.insert(input).unwrap();
         let lease = registry.lease(record.identity().connection_id()).unwrap();
         let state = State::default();
@@ -809,7 +1230,7 @@ mod tests {
             _operation: None,
             current: Some(owner),
         };
-        let changed = ConnectionDefinition::parse(br#"{"name":"Changed","url":"https://other.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
+        let changed = ConnectionDefinition::parse(br#"{"transport":"remote","name":"Changed","url":"https://other.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
         registry.replace(&lease, changed).unwrap();
         assert!(
             ticket.commit(|| ()).is_ok(),
@@ -829,7 +1250,7 @@ mod tests {
     fn retirement_checks_all_three_exact_owned_keys_and_reports_partial_failure() {
         let data = tempfile::tempdir().unwrap();
         let registry = ConnectionRegistry::load(data.path()).unwrap();
-        let record = registry.insert(ConnectionDefinition::parse(br#"{"name":"Account","url":"https://server.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap()).unwrap();
+        let record = registry.insert(ConnectionDefinition::parse(br#"{"transport":"remote","name":"Account","url":"https://server.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap()).unwrap();
         let expected = record.identity().vault_account();
         let mut services = Vec::new();
         assert!(retire_with(&record, |service, account| {
@@ -844,7 +1265,7 @@ mod tests {
         .is_err());
         assert_eq!(services.len(), 3);
         assert!(services.contains(&super::super::VAULT_SERVICE.to_string()));
-        let anonymous = registry.insert(ConnectionDefinition::parse(br#"{"name":"Anonymous","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap()).unwrap();
+        let anonymous = registry.insert(ConnectionDefinition::parse(br#"{"transport":"remote","name":"Anonymous","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap()).unwrap();
         assert!(retire_with(&anonymous, |_, _| panic!(
             "Anonymous metadata touched the vault"
         ))
@@ -865,7 +1286,7 @@ mod tests {
     fn owner_stamps_separate_identical_servers_and_follow_revision_changes() {
         let data = tempfile::tempdir().unwrap();
         let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
-        let definition = ConnectionDefinition::parse(br#"{"name":"Server","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap();
+        let definition = ConnectionDefinition::parse(br#"{"transport":"remote","name":"Server","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap();
         let first = registry.insert(definition.clone()).unwrap();
         let second = registry.insert(definition).unwrap();
         let state = State::default();
@@ -882,7 +1303,7 @@ mod tests {
         assert_eq!(one.unbind(&approval).unwrap(), "same-tools");
         let ticket = one.ticket();
         let old_generation = ticket.bind_digest(&approval);
-        let renamed = ConnectionDefinition::parse(br#"{"name":"Renamed","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap();
+        let renamed = ConnectionDefinition::parse(br#"{"transport":"remote","name":"Renamed","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap();
         registry.replace(&lease, renamed).unwrap();
         let current = state
             .owner(
@@ -902,12 +1323,12 @@ mod tests {
     fn copied_spec_and_enable_key_cannot_follow_a_destination_account_rotation() {
         let data = tempfile::tempdir().unwrap();
         let registry = Arc::new(ConnectionRegistry::load(data.path()).unwrap());
-        let definition = ConnectionDefinition::parse(br#"{"name":"Server","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap();
+        let definition = ConnectionDefinition::parse(br#"{"transport":"remote","name":"Server","url":"https://server.example.com/mcp","authentication":{"type":"none"}}"#).unwrap();
         let record = registry.insert(definition).unwrap();
         let state = State::default();
         let lease = registry.lease(record.identity().connection_id()).unwrap();
         let old = state.owner(registry.clone(), lease.clone()).unwrap();
-        let replacement = ConnectionDefinition::parse(br#"{"name":"Server","url":"https://other.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
+        let replacement = ConnectionDefinition::parse(br#"{"transport":"remote","name":"Server","url":"https://other.example.com/mcp","authentication":{"type":"oauth"}}"#).unwrap();
         registry.replace(&lease, replacement).unwrap();
         let next = state
             .owner(
