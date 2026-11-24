@@ -1,6 +1,6 @@
 {
   "src-tauri/.gitignore": 5,
-  "src-tauri/Cargo.toml": 192,
+  "src-tauri/Cargo.toml": 193,
   "src-tauri/build.rs": 12,
   "src-tauri/capabilities/default.json": 16,
   "src-tauri/capabilities/desktop.json": 2,
@@ -38,7 +38,7 @@
   "src-tauri/src/handy/transcription_coordinator.rs": 101,
   "src-tauri/src/handy/tray.rs": 658,
   "src-tauri/src/handy/utils.rs": 60,
-  "src-tauri/src/lib.rs": 1357,
+  "src-tauri/src/lib.rs": 1358,
   "src-tauri/src/main.rs": 4,
   "src-tauri/tauri.conf.json": 28
 }
