@@ -8,6 +8,34 @@ use tauri::{AppHandle, Manager};
 
 static GENERATION: AtomicU32 = AtomicU32::new(0);
 
+#[cfg(target_os = "macos")]
+mod macos_field;
+
+#[cfg(target_os = "macos")]
+use macos_field::Field;
+
+#[cfg(target_os = "macos")]
+pub(crate) use macos_field::read_focused_selection;
+
+#[cfg(windows)]
+struct Field(Vec<i32>);
+
+#[cfg(windows)]
+impl Field {
+    fn open() -> Option<(Self, String)> {
+        let (id, text) = crate::context_detect::dictionary_field()?;
+        Some((Self(id), text))
+    }
+
+    async fn read(&mut self) -> Option<String> {
+        let (id, text) =
+            tauri::async_runtime::spawn_blocking(crate::context_detect::dictionary_field)
+                .await
+                .ok()??;
+        (self.0 == id).then_some(text)
+    }
+}
+
 pub(crate) fn cancel_watch() {
     GENERATION.fetch_add(1, Ordering::AcqRel);
 }
@@ -19,8 +47,8 @@ pub(crate) fn is_current(id: u32) -> bool {
 #[tauri::command]
 #[specta::specta]
 pub fn set_learn_from_edits(app: AppHandle, enabled: bool) -> Result<(), String> {
-    if enabled && !cfg!(windows) {
-        return Err("Learning from edits is available on Windows.".into());
+    if enabled && !cfg!(any(windows, target_os = "macos")) {
+        return Err("Learning from edits is unavailable on this platform.".into());
     }
     app.state::<Arc<AppContext>>()
         .update_public_settings(|settings| settings.learn_from_edits = enabled)
@@ -32,13 +60,12 @@ pub fn set_learn_from_edits(app: AppHandle, enabled: bool) -> Result<(), String>
     Ok(())
 }
 
-#[cfg(windows)]
-pub(crate) use windows_watch::prepare;
+#[cfg(any(windows, target_os = "macos"))]
+pub(crate) use watch::prepare;
 
-#[cfg(windows)]
-mod windows_watch {
+#[cfg(any(windows, target_os = "macos"))]
+mod watch {
     use super::*;
-    use crate::context_detect::dictionary_field;
     use crate::settings::{OverlayStyle, PasteMethod};
     use std::time::{Duration, Instant};
 
@@ -59,7 +86,7 @@ mod windows_watch {
 
     pub(crate) struct Watch {
         id: u32,
-        field_id: Vec<i32>,
+        field: Field,
         before: String,
         inserted: String,
     }
@@ -83,14 +110,14 @@ mod windows_watch {
         if text.trim().is_empty() || text.len() > 2048 || crate::agent::foreground_is_terminal() {
             return None;
         }
-        let (field_id, before) = dictionary_field()?;
+        let (field, before) = Field::open()?;
         let mut inserted = text.replace("\r\n", "\n");
         if append_space {
             inserted.push(' ');
         }
         Some(Watch {
             id,
-            field_id,
+            field,
             before,
             inserted,
         })
@@ -99,6 +126,7 @@ mod windows_watch {
     impl Watch {
         pub(crate) fn start(self, app: AppHandle) {
             tauri::async_runtime::spawn(async move {
+                let mut field = self.field;
                 let started = Instant::now();
                 let mut anchor: Option<(String, String)> = None;
                 let mut previous = None;
@@ -114,12 +142,10 @@ mod windows_watch {
                     if !is_current(self.id) || started.elapsed() > WATCH {
                         return;
                     }
-                    let Ok(Some((field, value))) =
-                        tauri::async_runtime::spawn_blocking(dictionary_field).await
-                    else {
+                    let Some(value) = field.read().await else {
                         return;
                     };
-                    if field != self.field_id || !is_current(self.id) {
+                    if !is_current(self.id) {
                         return;
                     }
                     if let Some((prefix, suffix)) = &anchor {
@@ -156,7 +182,7 @@ mod windows_watch {
 
 /// Find the inserted span only when it accounts for the change from the pre-paste
 /// field. Exact surrounding text anchors the span through later caret movement.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn confirm_insertion(before: &str, after: &str, inserted: &str) -> Option<(String, String)> {
     if before == after {
         return None;
@@ -176,7 +202,7 @@ fn confirm_insertion(before: &str, after: &str, inserted: &str) -> Option<(Strin
 
 /// A single changed word inside the confirmed span. Appended prose, deletion,
 /// and multiple replacements are deliberately inconclusive.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn replacement<'a>(original: &'a str, edited: &'a str) -> Option<(&'a str, &'a str)> {
     let mut before = original.split_whitespace();
     let mut after = edited.split_whitespace();
@@ -198,7 +224,7 @@ fn replacement<'a>(original: &'a str, edited: &'a str) -> Option<(&'a str, &'a s
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn dictionary_word(text: &str) -> Option<&str> {
     let word = text.trim_matches(|c: char| {
         matches!(

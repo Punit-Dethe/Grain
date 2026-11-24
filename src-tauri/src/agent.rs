@@ -28,6 +28,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::context_screen::CapturedImage;
 use crate::grain_llm_fallback::ProviderOutcome;
+#[cfg(not(target_os = "macos"))]
 use crate::input::EnigoState;
 use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
@@ -954,6 +955,13 @@ fn build_window(
     }
 
     let window = builder.build()?;
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::NSWindowCollectionBehavior as Behavior;
+        // SAFETY: the window owns this AppKit handle, and all callers build on the main thread.
+        let native = unsafe { &*window.ns_window()?.cast::<objc2_app_kit::NSWindow>() };
+        native.setCollectionBehavior(Behavior::CanJoinAllSpaces | Behavior::FullScreenAuxiliary);
+    }
     // [GRAIN] The shell animates its own entrance out of the screen edge; the
     // OS show/hide fade on top of it read as a second, unrelated animation.
     #[cfg(windows)]
@@ -1031,6 +1039,19 @@ fn build_window(
     }
 
     Ok(window)
+}
+
+/// Keep the editor active until a reply is revealed or the user opens chat.
+fn show_notch(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: this runs on the main thread with a live Tauri window.
+        let native = unsafe { &*window.ns_window()?.cast::<objc2_app_kit::NSWindow>() };
+        native.orderFrontRegardless();
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    window.show()
 }
 
 /// Monitor metrics in LOGICAL px as `(origin_x, origin_y, screen_w, screen_h)`.
@@ -1349,7 +1370,7 @@ fn ensure_capture_notch(app: &AppHandle, generation: u64) {
         place_notch_at_text_scale(&window, size);
         #[cfg(windows)]
         set_compact_notch_region(&window, true);
-        window.show().map_err(|error| error.to_string())?;
+        show_notch(&window).map_err(|error| error.to_string())?;
         crate::grain_notch_sliver::set_hidden(app, true);
         Ok(())
     };
@@ -1427,7 +1448,7 @@ pub(crate) fn open_notch(app: &AppHandle) {
     // and a clip lifted on screen flashes the pixels it uncovers.
     #[cfg(windows)]
     set_notch_region(&window, None);
-    if let Err(error) = window.show() {
+    if let Err(error) = show_notch(&window) {
         warn!("[GRAIN] agent: failed to show the notch: {error}");
         let _ = window.destroy();
         return;
@@ -1438,12 +1459,44 @@ pub(crate) fn open_notch(app: &AppHandle) {
         .dictation_session_at_summon
         .store(crate::grain_actions::current_session_id(), Ordering::SeqCst);
     let _ = app.emit_to(PANEL_LABEL, "agent-open", ());
+    crate::capability::prefetch::start(app);
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(NOTCH_GROW).await;
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || focus_revealed_notch(&handle, generation));
     });
+}
+
+/// Open the existing top-edge chat from settings.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_open_chat(app: AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Open Agent from Grain's main window.".into());
+    }
+    if !get_settings(&app).agent_enabled {
+        return Err("Turn on Agent before opening the chat.".into());
+    }
+    let handle = app.clone();
+    let (opened, result) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let was_open = hand_opened(&handle) && reply_shown(&handle);
+        open_notch(&handle);
+        let window = handle.get_webview_window(PANEL_LABEL);
+        if was_open && !ordinary_dictation_live(&handle) {
+            if let Some(window) = &window {
+                let _ = window.set_focus();
+            }
+        }
+        let _ = opened.send(window.is_some_and(|window| window.is_visible().unwrap_or(false)));
+    })
+    .map_err(|error| error.to_string())?;
+    if result.await.unwrap_or(false) {
+        Ok(())
+    } else {
+        Err("Could not open the Agent window.".into())
+    }
 }
 
 fn hand_opened(app: &AppHandle) -> bool {
@@ -1576,11 +1629,18 @@ mod terminal_capture_tests {
     }
 }
 
+/// Read the selected text without issuing a copy command or touching the pasteboard.
+#[cfg(target_os = "macos")]
+pub(crate) fn capture_selection_result(_: &AppHandle) -> Result<Option<String>, String> {
+    Ok(crate::grain_dictionary::read_focused_selection())
+}
+
 /// Synthesise a platform copy and read the resulting selection off the clipboard,
 /// restoring the user's original clipboard afterwards (the capture is invisible).
 /// Returns `None` if nothing usable was selected, input simulation is unavailable,
 /// or the clipboard didn't change.
 // Shared invisible selection capture for Agent and extension requests.
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn capture_selection_result(app: &AppHandle) -> Result<Option<String>, String> {
     // A synthetic Ctrl+C is an interrupt in a terminal. In development the
     // terminal can also own this very process, so copying its selection would
@@ -2513,7 +2573,9 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
             return;
         };
         state.transient_shortcuts.release_if_current(expected, || {
-            if app.get_webview_window(PANEL_LABEL).is_some()
+            let panel_holds_global_escape = app.get_webview_window(PANEL_LABEL).is_some()
+                && (!hand_opened(&app) || state.panel_voice_keys.load(Ordering::SeqCst));
+            if panel_holds_global_escape
                 || state.input_active.load(Ordering::SeqCst)
                 // A new instruction may already have registered Escape while
                 // its window creation is still queued on the main thread.

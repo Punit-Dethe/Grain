@@ -208,16 +208,18 @@ development run, use `bun run dev:asr`.
 | Check | What to try |
 | --- | --- |
 | Dictation and permissions | Run Standard and Flow with `Option+Space`. Try a tap, a hold, stop, cancel, and one immediate retry. Verify that the text lands and the pill clears. Test an app that enables Secure Input, then switch back to a normal editor. |
-| Recording overlay | With **Live** selected, check recording, live text on a streaming model, and processing. Verify focus stays in the editor. Try a second display, Spaces, and a full-screen window. |
+| Recording overlay | With **Live** selected, check recording, live text on a streaming model, and processing. Start in two different apps and check that the pill shows the matching app icon. Verify focus stays in the editor. |
 | Clipboard recovery | In Output settings select **External script**, give it an executable script that exits with status 1, then dictate. Test Copy, decline, and timeout. Only an explicit Copy should replace the clipboard. |
-| Agent | Try the shortcut, typed and voice input, and dismissal. Summon from an editor with text selected and check that the clipboard is restored. Try a Mac with a notch and an external display if available. |
+| Agent | Use **Open Agent** in AI settings, then try the shortcut, typed and voice input, and dismissal. Verify the compact notch appears at the top without stealing focus while listening. Select text in TextEdit, summon Agent, and verify it reads the selection while the clipboard keeps its previous contents. If available, repeat in a full-screen Space and on an external display. |
+| Dictionary | Enable **Learn from edits** in Tools. Dictate into TextEdit, replace one word, then pause. Save the suggested correction, repeat with a second word, and decline. Check that only the saved word appears in the dictionary. |
 | Recall | Record and play a microphone-only meeting. Enable Recall for an MCP client, restart the client, and try reading the meeting while Grain is closed. |
 
-Native macOS work still needed includes the pill's foreground app icon,
-learning from edits, and Recall system audio. The text-field and selection
-logic can share the existing confirmation flow, with a macOS Accessibility
-adapter for reading the focused control. System audio needs its own native
-capture backend behind Recall's existing source interface.
+For a short rental, download the DMG before the session, install it in
+Applications, and start the model download first. Test the rows above in
+order and record the macOS version, chip, app, and input device with failures.
+An editor must expose its focused field through Accessibility for selection
+and dictionary checks. Recall system audio still needs a native capture
+backend behind Recall's existing source interface.
 
 ### macOS Accessibility remains enabled after a local rebuild
 

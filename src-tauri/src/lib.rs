@@ -1497,6 +1497,7 @@ fn command_bindings() -> Builder<tauri::Wry> {
             agent::agent_present_reply,
             agent::agent_stop_speech, // [GRAIN] talk-back stop
             agent::agent_open_summon,
+            agent::agent_open_chat,
             agent::agent_panel_voice_start, // [GRAIN] dictate into the open chat
             agent::agent_panel_voice_stop,
             agent::agent_input_submit,

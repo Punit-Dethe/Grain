@@ -23,7 +23,7 @@ pub(crate) fn active_confirmation_dimensions(app: &AppHandle) -> Option<(f64, f6
     confirmation_dimensions(&value.state)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 const DICTIONARY_NOTICE_DURATION: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Serialize, Deserialize, Type)]
@@ -483,7 +483,7 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn show_dictionary_suggestion(
     app: &AppHandle,
     id: u32,

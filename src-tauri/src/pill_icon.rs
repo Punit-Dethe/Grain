@@ -33,6 +33,9 @@ use std::sync::Mutex;
 use grain_sdk::{DaemonEvent, PILL_ICON_PX};
 use tauri::AppHandle;
 
+#[cfg(target_os = "macos")]
+mod macos;
+
 /// Bytes in one icon: fixed, so a cache file needs no header and the wire
 /// payload needs no dimensions.
 pub const ICON_BYTES: usize = PILL_ICON_PX * PILL_ICON_PX * 4;
@@ -196,6 +199,16 @@ struct Foreground {
 /// while post-processing treats the window as a plain browser. If that ever
 /// needs to be one rule, this is the line to change — and the log line in
 /// `detect` already names which rung answered, so the case is diagnosable.
+#[cfg(target_os = "macos")]
+fn foreground(_: &grain_core::AppSettings) -> Foreground {
+    Foreground {
+        app: macos::foreground_bundle().map(IconKey::Path),
+        site: None,
+        early: false,
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 fn foreground(settings: &grain_core::AppSettings) -> Foreground {
     let Some(ctx) = crate::context_detect::detect_active_context() else {
         return Foreground {
@@ -227,7 +240,10 @@ pub fn resolve(key: &IconKey) -> Option<Vec<u8>> {
     {
         return windows_impl::resolve(key);
     }
-    // macOS: NSWorkspace icon(forFile:) / urlForApplication(withBundleIdentifier:).
+    #[cfg(target_os = "macos")]
+    if let IconKey::Path(path) = key {
+        return macos::resolve_bundle_icon(path);
+    }
     // Linux: desktop-file id → Icon= → freedesktop icon-theme lookup.
     // Both slot in here without touching anything above this function.
     #[cfg(not(windows))]
@@ -306,7 +322,7 @@ pub fn cancel_pending() {
 /// than a loop.
 fn resolve_and_emit(app: &AppHandle, clear_when_unknown: bool, may_retry: bool) {
     let settings = crate::settings::get_settings(app);
-    if !settings.pill_show_app_icon {
+    if !settings.pill_show_app_icon || settings.overlay_style == crate::settings::OverlayStyle::None {
         // Clear any icon a previous session left on the pill.
         *SHOWING.lock().unwrap() = None;
         emit(app, None);

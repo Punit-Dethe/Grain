@@ -285,7 +285,7 @@ function DictionaryTool() {
     <section className="dictionary-workspace" aria-label="Personal dictionary">
       <div
         className={
-          os === "windows"
+          os === "windows" || os === "macos"
             ? "dictionary-toolbar dictionary-term-toolbar"
             : "dictionary-toolbar"
         }
@@ -303,7 +303,7 @@ function DictionaryTool() {
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-        {os === "windows" && (
+        {(os === "windows" || os === "macos") && (
           <div className="dictionary-learn-control">
             <span>{t("dictionarySuggestion.learn")}</span>
             <Switch

@@ -1,4 +1,5 @@
 import React from "react";
+import { platform } from "@tauri-apps/plugin-os";
 import { useTranslation } from "react-i18next";
 import { ToggleSwitch } from "../ui/ToggleSwitch";
 import { useSettings } from "../../hooks/useSettings";
@@ -14,7 +15,8 @@ export const AgentNotchAutohide: React.FC<AgentNotchAutohideProps> = React.memo(
     const { t } = useTranslation();
     const { getSetting, updateSetting, isUpdating } = useSettings();
     // The notch only exists while the Agent is on.
-    if (!(getSetting("agent_enabled") ?? true)) return null;
+    if (platform() !== "windows" || !(getSetting("agent_enabled") ?? true))
+      return null;
 
     return (
       <ToggleSwitch
