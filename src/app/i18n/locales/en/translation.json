@@ -1112,7 +1112,8 @@
       },
       "pasteCatch": {
         "title": "Recover missed text insertion",
-        "description": "If Grain can’t insert a transcript, it offers to copy it. The transcript is copied after a short countdown unless you decline."
+        "description": "If Grain can’t insert a transcript, it offers to copy it. The transcript is copied after a short countdown unless you decline.",
+        "descriptionOnError": "If text insertion reports an error, Grain offers to copy the transcript. It copies only when you choose Copy."
       }
     },
     "appearance": {

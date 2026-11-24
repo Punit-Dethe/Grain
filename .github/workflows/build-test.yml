@@ -7,22 +7,20 @@ on:
         description: "Build only the normal Windows beta installer"
         type: boolean
         default: false
+      macos-only:
+        description: "Build only the Apple Silicon and Intel macOS test installers"
+        type: boolean
+        default: false
 
 jobs:
   build-test:
-    if: ${{ !inputs.windows-only }}
+    if: ${{ !inputs.windows-only && !inputs.macos-only }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-26" # for Arm based macs (M1 and above). Uses macOS 26 for Apple Intelligence SDK.
-            args: "--target aarch64-apple-darwin"
-            target: "aarch64-apple-darwin"
-          - platform: "macos-latest" # for Intel based macs.
-            args: "--target x86_64-apple-darwin"
-            target: "x86_64-apple-darwin"
           - platform: "ubuntu-22.04" # Build .deb on 22.04
             args: "--bundles deb"
             target: "x86_64-unknown-linux-gnu"
@@ -49,6 +47,27 @@ jobs:
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
     secrets: inherit
+
+  macos-build:
+    if: ${{ !inputs.windows-only }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-26
+            target: aarch64-apple-darwin
+          - platform: macos-15-intel
+            target: x86_64-apple-darwin
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      build-args: --target ${{ matrix.target }}
+      sign-binaries: false
+      asset-prefix: grain-macos-test
+      upload-artifacts: true
 
   windows-beta:
     if: ${{ inputs.windows-only }}

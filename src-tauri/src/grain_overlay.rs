@@ -320,6 +320,7 @@ pub fn on_event(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
+            | DaemonEvent::ModelError { .. }
             | DaemonEvent::AsrStreamText { .. }
     ) {
         return;
@@ -348,6 +349,7 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
             | DaemonEvent::PillIcon { .. }
             | DaemonEvent::OverlayConfig { .. }
             | DaemonEvent::PasteError { .. }
+            | DaemonEvent::ModelError { .. }
             | DaemonEvent::AsrStreamText { .. }
     ) {
         return;
@@ -413,8 +415,13 @@ fn on_event_main(app: &AppHandle, event: &DaemonEvent) {
                     hide = true;
                 }
             }
-            DaemonEvent::PasteError { .. } => {
-                value.notice = Some("Could not paste".into());
+            DaemonEvent::PasteError { .. } | DaemonEvent::ModelError { .. } => {
+                let message = if matches!(event, DaemonEvent::PasteError { .. }) {
+                    "Could not paste"
+                } else {
+                    "Could not transcribe"
+                };
+                value.notice = Some(message.into());
                 if !value.visible {
                     value.clear_capture();
                     value.state = "notice".into();

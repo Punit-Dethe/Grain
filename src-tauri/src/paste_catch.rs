@@ -91,7 +91,8 @@ enum Snapshot {
 struct PendingCopy {
     id: u32,
     text: String,
-    clipboard_sequence: u32,
+    /// A verified sequence permits timeout copy and the delivery shortcut.
+    clipboard_sequence: Option<u32>,
 }
 
 #[derive(Default)]
@@ -232,7 +233,7 @@ pub(crate) fn prepare(
     if let Some(sequence) = sequence.filter(|_| classify(before.facts) == FocusTarget::NotEditable)
     {
         info!("[paste-catch] focus is not editable — holding the transcript instead of pasting");
-        arm(app, id, text.to_owned(), sequence);
+        arm(app, id, text.to_owned(), Some(sequence));
         return Preparation::Held;
     }
     // A successful auto-submit can clear the field, exactly like a miss.
@@ -284,7 +285,7 @@ pub(crate) fn verify(
         }
         if get_settings(&app).paste_catch_enabled && confirmed_miss(&before, &text, input) {
             info!("[paste-catch] the same text field stayed unchanged after paste");
-            arm(&app, id, text, sequence);
+            arm(&app, id, text, Some(sequence));
         } else if copy {
             let _pending = state.pending.lock().unwrap();
             if state.gen.load(Ordering::Acquire) == id && clipboard_sequence() == sequence {
@@ -346,7 +347,26 @@ fn snapshot(app: &AppHandle) -> Snapshot {
     }
 }
 
-fn arm(app: &AppHandle, id: u32, text: String, sequence: u32) {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn prepare_manual_recovery(app: &AppHandle, text: &str) -> Option<(u32, String)> {
+    let settings = get_settings(app);
+    if !settings.paste_catch_enabled
+        || settings.overlay_style == crate::settings::OverlayStyle::None
+        || settings.paste_method == PasteMethod::None
+        || text.trim().is_empty()
+    {
+        return None;
+    }
+    let id = app.state::<PasteCatchState>().gen.load(Ordering::Acquire);
+    Some((id, text.to_owned()))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn offer_manual_recovery(app: &AppHandle, (id, text): (u32, String)) {
+    arm(app, id, text, None);
+}
+
+fn arm(app: &AppHandle, id: u32, text: String, sequence: Option<u32>) {
     let state = app.state::<PasteCatchState>();
     let mut pending = state.pending.lock().unwrap();
     let settings = get_settings(app);
@@ -355,7 +375,7 @@ fn arm(app: &AppHandle, id: u32, text: String, sequence: u32) {
     }
     if settings.overlay_style == crate::settings::OverlayStyle::None {
         if settings.clipboard_handling == ClipboardHandling::CopyToClipboard
-            && clipboard_sequence() == sequence
+            && sequence == Some(clipboard_sequence())
         {
             if let Err(error) = app.clipboard().write_text(text) {
                 warn!("[paste-catch] could not copy the transcript: {error}");
@@ -363,7 +383,12 @@ fn arm(app: &AppHandle, id: u32, text: String, sequence: u32) {
         }
         return;
     }
-    let ttl = COPY_OFFER_DELAY + COPY_COUNTDOWN;
+    let countdown = if sequence.is_some() {
+        COPY_COUNTDOWN
+    } else {
+        Duration::from_secs(8)
+    };
+    let ttl = COPY_OFFER_DELAY + countdown;
     let deadline = tokio::time::Instant::now() + ttl;
     let expires_at_ms = (std::time::SystemTime::now() + ttl)
         .duration_since(std::time::UNIX_EPOCH)
@@ -380,7 +405,7 @@ fn arm(app: &AppHandle, id: u32, text: String, sequence: u32) {
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep_until(deadline - COPY_COUNTDOWN).await;
+        tokio::time::sleep_until(deadline - countdown).await;
         {
             let state = app.state::<PasteCatchState>();
             let pending = state.pending.lock().unwrap();
@@ -392,7 +417,9 @@ fn arm(app: &AppHandle, id: u32, text: String, sequence: u32) {
                 DaemonEvent::PasteMissed {
                     id,
                     expires_at_ms,
-                    shortcut: deliver_binding(&app).current_binding,
+                    shortcut: sequence
+                        .map(|_| deliver_binding(&app).current_binding)
+                        .unwrap_or_default(),
                     chars,
                 },
             );
@@ -412,11 +439,11 @@ enum CopyDecision {
     Timeout,
 }
 
-fn should_copy(decision: CopyDecision, original_sequence: u32, current_sequence: u32) -> bool {
+fn should_copy(decision: CopyDecision, original_sequence: Option<u32>, current_sequence: u32) -> bool {
     match decision {
         CopyDecision::Copy => true,
         CopyDecision::Discard => false,
-        CopyDecision::Timeout => original_sequence == current_sequence,
+        CopyDecision::Timeout => original_sequence == Some(current_sequence),
     }
 }
 
@@ -519,6 +546,9 @@ fn clipboard_sequence() -> u32 {
 
 /// Deliver a pending transcript through the existing shortcut.
 pub fn deliver(app: &AppHandle) {
+    if !cfg!(windows) {
+        return;
+    }
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PasteCatchState>();
@@ -536,7 +566,7 @@ pub fn deliver(app: &AppHandle) {
             reconcile_deliver_deferred(&app);
             if let Err(error) = written {
                 warn!("[paste-catch] could not deliver the transcript: {error}");
-                arm(&app, id, offer.text, sequence);
+                arm(&app, id, offer.text, Some(sequence));
                 return;
             }
             (offer, saved, sequence, id)
@@ -568,7 +598,7 @@ pub fn deliver(app: &AppHandle) {
             }
         }
         if !delivered {
-            arm(&app, id, offer.text, rearm_sequence);
+            arm(&app, id, offer.text, Some(rearm_sequence));
         }
     });
 }
@@ -617,6 +647,9 @@ fn deliver_binding(app: &AppHandle) -> ShortcutBinding {
 /// Reconcile the shortcut off the input thread. Always consult the latest offer
 /// so a queued registration cannot outlive a newer discard or replacement.
 fn reconcile_deliver_deferred(app: &AppHandle) {
+    if !cfg!(windows) {
+        return;
+    }
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PasteCatchState>();
@@ -641,10 +674,12 @@ mod tests {
 
     #[test]
     fn only_an_explicit_copy_can_replace_newer_clipboard_contents() {
-        assert!(should_copy(CopyDecision::Timeout, 10, 10));
-        assert!(!should_copy(CopyDecision::Timeout, 10, 11));
-        assert!(should_copy(CopyDecision::Copy, 10, 11));
-        assert!(!should_copy(CopyDecision::Discard, 10, 10));
+        assert!(should_copy(CopyDecision::Timeout, Some(10), 10));
+        assert!(!should_copy(CopyDecision::Timeout, Some(10), 11));
+        assert!(should_copy(CopyDecision::Copy, Some(10), 11));
+        assert!(!should_copy(CopyDecision::Discard, Some(10), 10));
+        assert!(!should_copy(CopyDecision::Timeout, None, 0));
+        assert!(should_copy(CopyDecision::Copy, None, 0));
     }
 
     #[test]
@@ -652,7 +687,7 @@ mod tests {
         let mut pending = Some(PendingCopy {
             id: 2,
             text: "Transcript".into(),
-            clipboard_sequence: 10,
+            clipboard_sequence: Some(10),
         });
         assert!(take_offer(&mut pending, 1).is_none());
         assert!(take_offer(&mut pending, 2).is_some());

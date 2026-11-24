@@ -119,10 +119,16 @@ pub(crate) async fn paste_transcription(
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
         let watch = crate::grain_dictionary::prepare(&app, &text, suppress_trailing_space);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let recovery = crate::paste_catch::prepare_manual_recovery(&app, &text);
         let result = utils::paste_with_options(text, app.clone(), suppress_trailing_space);
         #[cfg(windows)]
         if let (Ok(()), Some(watch)) = (&result, watch) {
             watch.start(app);
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let (Err(_), Some(recovery)) = (&result, recovery) {
+            crate::paste_catch::offer_manual_recovery(&app, recovery);
         }
         result
     })
@@ -344,14 +350,18 @@ impl ShortcutAction for RealtimeTranscribeAction {
             let stopped = rm.stop_recording(&binding_id, cancel_generation);
             let Some(samples) = stopped else {
                 rt.cancel_session();
-                if !rm.was_cancelled_since(cancel_generation) {
-                    crate::bridge::emit(
-                        &ah,
-                        DaemonEvent::ModelError {
-                            error: "Audio capture failed; no partial transcript was produced"
-                                .to_string(),
-                        },
-                    );
+                emit_processing_complete(&ah, session_id);
+                if current_session_id() == session_id {
+                    change_tray_icon(&ah, TrayIconState::Idle);
+                    if !rm.was_cancelled_since(cancel_generation) {
+                        crate::bridge::emit(
+                            &ah,
+                            DaemonEvent::ModelError {
+                                error: "Audio capture failed; no partial transcript was produced"
+                                    .to_string(),
+                            },
+                        );
+                    }
                 }
                 return;
             };

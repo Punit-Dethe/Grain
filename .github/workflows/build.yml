@@ -286,7 +286,11 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          if [[ -z "$APPLE_CERTIFICATE" ]]; then
+            echo '::error::Set APPLE_CERTIFICATE to the base64-encoded Developer ID Application PKCS#12 file.'
+            exit 1
+          fi
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -341,6 +345,34 @@ jobs:
           echo "CMAKE_CXX_COMPILER_TARGET=aarch64-pc-windows-msvc" >> $env:GITHUB_ENV
           echo "CL=/EHsc" >> $env:GITHUB_ENV
 
+      - name: Prepare bundle options
+        if: runner.os == 'macOS'
+        id: bundle-options
+        shell: bash
+        env:
+          BUILD_ARGS: ${{ inputs.build-args }}
+          RUST_TARGET: ${{ inputs.target }}
+          SIGN_BINARIES: ${{ inputs.sign-binaries }}
+          RELEASE_ID: ${{ inputs.release-id }}
+        run: |
+          cargo build --locked --release -p grain-recall-mcp --target "$RUST_TARGET" \
+            --target-dir "$RUNNER_TEMP/grain-helpers"
+          mkdir -p src-tauri/helpers
+          install -m755 "$RUNNER_TEMP/grain-helpers/$RUST_TARGET/release/grain-recall-mcp" \
+            "src-tauri/helpers/grain-recall-mcp-$RUST_TARGET"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          bundle = {'externalBin': ['helpers/grain-recall-mcp']}
+          if os.environ['SIGN_BINARIES'] == 'false' and not os.environ['RELEASE_ID']:
+              bundle['createUpdaterArtifacts'] = False
+          config = Path('src-tauri/tauri.ci.conf.json')
+          config.write_text(json.dumps({'bundle': bundle}), encoding='utf-8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              print(f"args={os.environ['BUILD_ARGS']} --config {config.as_posix()}", file=output)
+          PY
+
       - name: Build with Tauri
         uses: tauri-apps/tauri-action@v0
         env:
@@ -371,28 +403,35 @@ jobs:
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
           assetNamePattern: ${{ steps.patch-release-name.outputs.platform }}
-          args: ${{ inputs.build-args }}
+          # Tauri treats an empty but defined Apple credential as supplied.
+          tauriScript: >-
+            ${{ runner.os == 'macOS' && !inputs.sign-binaries &&
+            'env -u APPLE_ID -u APPLE_ID_PASSWORD -u APPLE_PASSWORD -u APPLE_TEAM_ID -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD -u APPLE_SIGNING_IDENTITY bun run tauri' || '' }}
+          args: ${{ steps.bundle-options.outputs.args || inputs.build-args }}
 
-      - name: Verify macOS dylib bundling
-        if: inputs.target == 'x86_64-apple-darwin'
+      - name: Verify macOS app bundle
+        if: runner.os == 'macOS'
         shell: bash
+        env:
+          RUST_TARGET: ${{ inputs.target }}
+          PROFILE: ${{ steps.build-profile.outputs.profile }}
         run: |
-          APP=$(find src-tauri/target -name "*.app" -type d | head -1)
-          echo "=== Frameworks contents ==="
-          ls -la "$APP/Contents/Frameworks/" | grep onnx || true
-          echo "=== Binary linked libs ==="
-          otool -L "$APP/Contents/MacOS/handy" | grep onnx || true
-          echo "=== Checking all @rpath deps are satisfied ==="
-          # Extract every @rpath lib the binary needs
-          otool -L "$APP/Contents/MacOS/handy" | grep '@rpath/' | awk '{print $1}' | while read dep; do
-            libname=$(basename "$dep")
-            if [ ! -f "$APP/Contents/Frameworks/$libname" ]; then
-              echo "MISSING: $libname not found in Frameworks/"
-              exit 1
-            else
-              echo "OK: $libname"
-            fi
-          done
+          app="src-tauri/target/$RUST_TARGET/$PROFILE/bundle/macos/Grain.app"
+          arch=x86_64
+          if [[ "$RUST_TARGET" == aarch64-* ]]; then arch=arm64; fi
+          lipo -verify_arch "$arch" "$app/Contents/MacOS/handy"
+          lipo -verify_arch "$arch" "$app/Contents/MacOS/grain-recall-mcp"
+          codesign --verify --deep --strict "$app"
+          python - "$app/Contents/MacOS/handy" <<'PY'
+          import subprocess, sys
+
+          result = subprocess.run([sys.argv[1], '--list-devices'], capture_output=True,
+                                  text=True, timeout=45)
+          print(result.stdout)
+          print(result.stderr, file=sys.stderr)
+          if result.returncode != 0 or 'kind=cpu' not in result.stdout.lower():
+              raise SystemExit('Packaged Grain could not list the CPU ASR backend')
+          PY
 
       - name: Upload artifacts (macOS)
         if: inputs.upload-artifacts && contains(inputs.platform, 'macos')
@@ -402,6 +441,7 @@ jobs:
           path: |
             src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/dmg/*.dmg
             src-tauri/target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app
+          if-no-files-found: error
           retention-days: 30
 
       - name: Install FUSE for AppImage processing

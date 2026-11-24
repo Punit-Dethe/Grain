@@ -22,6 +22,9 @@ This guide covers how to set up the development environment and build Grain from
 Both Intel and Apple Silicon builds use the pinned transcribe.cpp source.
 The build script weak-links CoreAudio and supplies clang's availability runtime
 for older macOS deployment targets. ONNX Runtime is no longer required.
+Install CMake for the native speech engine. On Apple Silicon, use Xcode 26 or
+newer to build the Apple Intelligence bridge. The build uses a stub when the
+Foundation Models SDK is absent.
 
 #### Windows
 
@@ -176,6 +179,45 @@ sudo cp -a src-tauri/transcribe-libs/. /usr/lib/Grain/
 Resources only need re-copying if they change upstream (new icons, sounds, etc.).
 
 ## Troubleshooting
+
+### macOS local build and acceptance
+
+On GitHub, run **Build Test** with **macos-only** selected for Apple Silicon
+and Intel DMGs. The workflow verifies the app and Recall helper architectures,
+checks the bundle signatures, and launches Grain's CPU device probe. Test DMGs
+use ad hoc signing. Release DMGs require the Developer ID Application
+certificate and notarization credentials.
+
+From the repository root on a Mac, build a local DMG with the Recall helper:
+
+```bash
+bun install --frozen-lockfile
+target=$(rustc --print host-tuple)
+cargo build --locked --release -p grain-recall-mcp --target "$target" --target-dir target
+mkdir -p src-tauri/helpers
+install -m755 "target/$target/release/grain-recall-mcp" "src-tauri/helpers/grain-recall-mcp-$target"
+bun run tauri build --target "$target" --bundles dmg \
+  --config '{"bundle":{"createUpdaterArtifacts":false,"externalBin":["helpers/grain-recall-mcp"]}}'
+```
+
+The DMG is under `src-tauri/target/<target>/release/bundle/dmg` unless you
+configured a different Cargo target directory. Install the app in Applications
+before granting **Microphone** and **Accessibility** access. For a source
+development run, use `bun run dev:asr`.
+
+| Check | What to try |
+| --- | --- |
+| Dictation and permissions | Run Standard and Flow with `Option+Space`. Try a tap, a hold, stop, cancel, and one immediate retry. Verify that the text lands and the pill clears. Test an app that enables Secure Input, then switch back to a normal editor. |
+| Recording overlay | With **Live** selected, check recording, live text on a streaming model, and processing. Verify focus stays in the editor. Try a second display, Spaces, and a full-screen window. |
+| Clipboard recovery | In Output settings select **External script**, give it an executable script that exits with status 1, then dictate. Test Copy, decline, and timeout. Only an explicit Copy should replace the clipboard. |
+| Agent | Try the shortcut, typed and voice input, and dismissal. Summon from an editor with text selected and check that the clipboard is restored. Try a Mac with a notch and an external display if available. |
+| Recall | Record and play a microphone-only meeting. Enable Recall for an MCP client, restart the client, and try reading the meeting while Grain is closed. |
+
+Native macOS work still needed includes the pill's foreground app icon,
+learning from edits, and Recall system audio. The text-field and selection
+logic can share the existing confirmation flow, with a macOS Accessibility
+adapter for reading the focused control. System audio needs its own native
+capture backend behind Recall's existing source interface.
 
 ### macOS Accessibility remains enabled after a local rebuild
 
