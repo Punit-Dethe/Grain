@@ -1,6 +1,6 @@
 {
-  "src-tauri/.gitignore": 4,
-  "src-tauri/Cargo.toml": 160,
+  "src-tauri/.gitignore": 5,
+  "src-tauri/Cargo.toml": 192,
   "src-tauri/build.rs": 12,
   "src-tauri/capabilities/default.json": 16,
   "src-tauri/capabilities/desktop.json": 2,
@@ -33,12 +33,12 @@
   "src-tauri/src/handy/secure_input.rs": 10,
   "src-tauri/src/handy/shortcut/handler.rs": 7,
   "src-tauri/src/handy/shortcut/handy_keys.rs": 10,
-  "src-tauri/src/handy/shortcut/mod.rs": 446,
+  "src-tauri/src/handy/shortcut/mod.rs": 443,
   "src-tauri/src/handy/shortcut/tauri_impl.rs": 9,
   "src-tauri/src/handy/transcription_coordinator.rs": 101,
-  "src-tauri/src/handy/tray.rs": 653,
+  "src-tauri/src/handy/tray.rs": 657,
   "src-tauri/src/handy/utils.rs": 60,
-  "src-tauri/src/lib.rs": 1339,
+  "src-tauri/src/lib.rs": 1357,
   "src-tauri/src/main.rs": 4,
   "src-tauri/tauri.conf.json": 28
 }
