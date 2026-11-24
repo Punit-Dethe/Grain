@@ -105,22 +105,23 @@ pub fn get_icon_path(_theme: AppTheme, state: TrayIconState, warning: bool) -> &
 pub fn refresh_tray_icon(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
-        if let (Some(state), Some(_)) = (
+        if let (Some(state), Some(tray)) = (
             handle.try_state::<CurrentTrayIconState>(),
             handle.try_state::<TrayIcon>(),
         ) {
-            change_tray_icon(&handle, state.get());
+            apply_tray_icon(&handle, &tray, state.get());
         }
     });
 }
 
 pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     let tray = app.state::<TrayIcon>();
-    let theme = get_current_theme(app);
-
-    // Store current state
     app.state::<CurrentTrayIconState>().set(icon);
+    apply_tray_icon(app, &tray, icon);
+}
 
+fn apply_tray_icon(app: &AppHandle, tray: &TrayIcon, icon: TrayIconState) {
+    let theme = get_current_theme(app);
     let warning = crate::secure_input::tray_warning_active(app);
     let icon_path = get_icon_path(theme, icon, warning);
 

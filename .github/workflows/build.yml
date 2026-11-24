@@ -101,6 +101,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          cache-on-failure: ${{ runner.os == 'macOS' }}
           key: ${{ inputs.platform }}-${{ inputs.target }}-no-bin-v1
           cache-bin: false
 
@@ -419,8 +420,8 @@ jobs:
           app="src-tauri/target/$RUST_TARGET/$PROFILE/bundle/macos/Grain.app"
           arch=x86_64
           if [[ "$RUST_TARGET" == aarch64-* ]]; then arch=arm64; fi
-          lipo -verify_arch "$arch" "$app/Contents/MacOS/handy"
-          lipo -verify_arch "$arch" "$app/Contents/MacOS/grain-recall-mcp"
+          lipo "$app/Contents/MacOS/handy" -verify_arch "$arch"
+          lipo "$app/Contents/MacOS/grain-recall-mcp" -verify_arch "$arch"
           codesign --verify --deep --strict "$app"
           python - "$app/Contents/MacOS/handy" <<'PY'
           import subprocess, sys
