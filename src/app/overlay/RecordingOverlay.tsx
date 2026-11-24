@@ -46,6 +46,50 @@ type OverlayNotice = (
   | { kind: "clipboard"; offer: ClipboardOffer }
 ) & { leaving: boolean };
 
+// 12-dot rounded-plus matrix (rows: 2, 4, 4, 2) centered in an 18x18 viewBox.
+// Each dot carries a diagonal wave index (col + row - 1) for smooth shimmer.
+const DOT_MATRIX: ReadonlyArray<{ cx: number; cy: number; wave: number }> = [
+  // Row 0: 2 dots
+  { cx: 7.1, cy: 3.3, wave: 0 },
+  { cx: 10.9, cy: 3.3, wave: 1 },
+  // Row 1: 4 dots
+  { cx: 3.3, cy: 7.1, wave: 0 },
+  { cx: 7.1, cy: 7.1, wave: 1 },
+  { cx: 10.9, cy: 7.1, wave: 2 },
+  { cx: 14.7, cy: 7.1, wave: 3 },
+  // Row 2: 4 dots
+  { cx: 3.3, cy: 10.9, wave: 1 },
+  { cx: 7.1, cy: 10.9, wave: 2 },
+  { cx: 10.9, cy: 10.9, wave: 3 },
+  { cx: 14.7, cy: 10.9, wave: 4 },
+  // Row 3: 2 dots
+  { cx: 7.1, cy: 14.7, wave: 3 },
+  { cx: 10.9, cy: 14.7, wave: 4 },
+];
+
+/** Dynamic 2-4-4-2 dot-matrix indicator replacing the static fallback dot. */
+function GrainDotMatrix({ ready }: { ready: boolean }) {
+  return (
+    <svg
+      className={`sdot-matrix ${ready ? "ready" : "arming"}`}
+      viewBox="0 0 18 18"
+      fill="none"
+      aria-hidden="true"
+    >
+      {DOT_MATRIX.map((dot, index) => (
+        <circle
+          key={index}
+          cx={dot.cx}
+          cy={dot.cy}
+          r={1.15}
+          fill="currentColor"
+          style={{ animationDelay: `${dot.wave * 115}ms` }}
+        />
+      ))}
+    </svg>
+  );
+}
+
 function DictionaryOffer({ suggestion }: { suggestion: DictionarySuggestion }) {
   const { t } = useTranslation();
   return (
@@ -482,9 +526,7 @@ export function RecordingOverlay() {
           {presentation.app_icon_enabled && presentation.icon ? (
             <img src={presentation.icon} alt="" />
           ) : (
-            <span
-              className={`sdot ${presentation.ready ? "ready" : "arming"}`}
-            />
+            <GrainDotMatrix ready={presentation.ready} />
           )}
         </div>
       )}

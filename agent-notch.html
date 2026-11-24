@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Grain Assist</title>
+    <script>
+      if (
+        /Linux/i.test(navigator.platform) ||
+        /Linux/i.test(navigator.userAgent)
+      ) {
+        document.documentElement.dataset.floating = "1";
+      }
+    </script>
     <link rel="stylesheet" href="/src/app/components/agent/agent.css" />
   </head>
   <body>
