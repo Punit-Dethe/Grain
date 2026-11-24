@@ -100,6 +100,20 @@ pub fn get_icon_path(_theme: AppTheme, state: TrayIconState, warning: bool) -> &
     "resources/handy.png"
 }
 
+// [GRAIN] Bridge Handy's Secure Input refresh to Grain's branded tray.
+#[cfg(target_os = "macos")]
+pub fn refresh_tray_icon(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let (Some(state), Some(_)) = (
+            handle.try_state::<CurrentTrayIconState>(),
+            handle.try_state::<TrayIcon>(),
+        ) {
+            change_tray_icon(&handle, state.get());
+        }
+    });
+}
+
 pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     let tray = app.state::<TrayIcon>();
     let theme = get_current_theme(app);
