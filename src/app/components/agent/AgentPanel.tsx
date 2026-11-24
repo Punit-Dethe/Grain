@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { platform } from "@tauri-apps/plugin-os";
 import {
   ArrowUp,
   ChevronLeft,
@@ -153,6 +154,7 @@ export function AgentPanel() {
   // when its own cleanup ran survived forever. Those orphans stacked up and
   // each one handled the same event again (one dictation pasted N times).
   const win = useMemo(() => getCurrentWindow(), []);
+  const isLinux = useMemo(() => platform() === "linux", []);
 
   // The first reply can be retried until the conversation has a follow-up.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -168,6 +170,8 @@ export function AgentPanel() {
   const [flashedId, setFlashedId] = useState<string | null>(null);
   // Talk-back: the reply being read aloud, by speech id (null = silent).
   const [speechId, setSpeechId] = useState<number | null>(null);
+  const speechIdRef = useRef<number | null>(null);
+  speechIdRef.current = speechId;
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   // True once the shell has finished growing; the compact status (and its
@@ -212,12 +216,19 @@ export function AgentPanel() {
   const voiceToggleRef = useRef<() => void>(() => {});
   const summonListeningRef = useRef(false);
   const voiceSendRef = useRef<() => void>(() => {});
-  // Shrunk to the listening notch by Escape: what the capture state was, put
-  // back when the chat reopens. `null` while open.
+  // Shrunk to the listening/working/speaking pill: what the capture state was,
+  // put back when the chat reopens. `null` while open.
   const collapsedRef = useRef<Pick<
     AgentNotchStatus,
-    "opened" | "listening"
+    "opened" | "listening" | "working" | "speaking"
   > | null>(null);
+  // Tracks whether TTS played while collapsed into the Linux floating pill so
+  // finishing speech dismisses the pill while finishing silent work reopens.
+  const sawSpeechWhileCollapsedRef = useRef(false);
+  // Preserves the last Linux pill phase ("working" | "speaking") while fading
+  // out so a blue speaking pill never flashes yellow during dismissal.
+  const lastPillPhaseRef = useRef<"working" | "speaking" | null>(null);
+  const closingRef = useRef(false);
   const [resizing, setResizing] = useState(false);
   useEffect(() => {
     void commands
@@ -271,8 +282,10 @@ export function AgentPanel() {
 
   const reveal = useCallback(() => {
     revealedRef.current = true;
+    sawSpeechWhileCollapsedRef.current = false;
+    lastPillPhaseRef.current = null;
     setRevealed(true);
-    // Reopened after Escape shrank it to the listening notch.
+    // Reopened after Escape/X shrank it to the compact pill.
     const saved = collapsedRef.current;
     if (saved) {
       collapsedRef.current = null;
@@ -280,8 +293,8 @@ export function AgentPanel() {
     }
   }, []);
 
-  /** Escape shrank the open chat to the listening notch (the host already
-   * clipped it): show the compact listening state; the recording goes on. */
+  /** Collapse the open chat to the listening, working, or speaking pill (the
+   * host already clipped/resized it): show the compact status while it runs. */
   const collapse = useCallback(() => {
     revealedRef.current = false;
     setRevealed(false);
@@ -289,14 +302,34 @@ export function AgentPanel() {
     setHoverOpening(false);
     // The host holds the compact clip now; the shape effect starts over.
     clipRef.current = undefined;
+    const isSpeaking = speechIdRef.current !== null;
+    const isWorking =
+      busyRef.current &&
+      voiceRef.current === "off" &&
+      !summonListeningRef.current;
+    const isStatusPill = isSpeaking || isWorking;
+    sawSpeechWhileCollapsedRef.current = isSpeaking;
+    lastPillPhaseRef.current = isSpeaking
+      ? "speaking"
+      : isWorking
+        ? "working"
+        : null;
     setCapture((current) => {
       if (!current) return current;
       collapsedRef.current ??= {
         opened: current.opened,
         listening: current.listening,
+        working: current.working,
+        speaking: current.speaking,
       };
       // Not "opened": hover and click reopen it, as for a summon.
-      return { ...current, opened: false, listening: true };
+      return {
+        ...current,
+        opened: false,
+        listening: !isStatusPill,
+        working: isWorking,
+        speaking: isSpeaking,
+      };
     });
   }, []);
 
@@ -531,7 +564,12 @@ export function AgentPanel() {
         .listen("agent-instruction", () => void startFirstIfQueued())
         .then(track),
       // The host times the close itself (NOTCH_CLOSE); this only animates it.
-      win.listen("agent-dismiss", () => setClosing(true)).then(track),
+      win
+        .listen("agent-dismiss", () => {
+          closingRef.current = true;
+          setClosing(true);
+        })
+        .then(track),
       win
         .listen("agent-open", () => {
           requestAnimationFrame(() => {
@@ -665,17 +703,49 @@ export function AgentPanel() {
 
   /** Close the reply the same way the host closes it: retract, then close. */
   const dismiss = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
     setClosing(true);
-    // Matches --notch-close in agent.css (and NOTCH_CLOSE in agent.rs).
-    window.setTimeout(() => void win.close(), 320);
-  }, [win]);
+    // Matches --notch-close in agent.css (and NOTCH_CLOSE in agent.rs);
+    // Linux floating mode fades out in place in 170ms.
+    window.setTimeout(() => void win.close(), isLinux ? 210 : 320);
+  }, [win, isLinux]);
+
+  // On Linux floating mode: while collapsed in the status pill, keep it yellow
+  // while processing and blue while speaking. If speech played and finished
+  // (with no work left), dismiss cleanly; if silent work finished, reopen.
+  useEffect(() => {
+    if (
+      !isLinux ||
+      revealed ||
+      closing ||
+      !collapsedRef.current ||
+      voiceRef.current !== "off" ||
+      summonListeningRef.current
+    )
+      return;
+    if (speechId !== null) {
+      sawSpeechWhileCollapsedRef.current = true;
+      lastPillPhaseRef.current = "speaking";
+      return;
+    }
+    if (busy) {
+      lastPillPhaseRef.current = "working";
+      return;
+    }
+    if (sawSpeechWhileCollapsedRef.current) {
+      dismiss();
+    } else {
+      void commands.agentReopenListening().catch(console.error);
+    }
+  }, [isLinux, busy, speechId, revealed, closing, dismiss]);
 
   useEffect(() => {
     if (!revealed) return;
     // Matches --notch-grow in agent.css (and NOTCH_GROW in agent.rs).
-    const timer = window.setTimeout(() => setGrown(true), 460);
+    const timer = window.setTimeout(() => setGrown(true), isLinux ? 240 : 460);
     return () => window.clearTimeout(timer);
-  }, [revealed]);
+  }, [revealed, isLinux]);
 
   useEffect(() => {
     if (!revealed || mode !== "chat" || view !== "main") return;
@@ -706,8 +776,25 @@ export function AgentPanel() {
       }
       if (event.key !== "Escape") return;
       event.preventDefault();
+      // Speaking on Linux: Escape stops talk-back and closes cleanly (unless a
+      // request is still processing, in which case the yellow pill remains).
+      if (isLinux && speechIdRef.current !== null) {
+        setSpeechId(null);
+        void commands.agentStopSpeech().catch(console.error);
+        if (busyRef.current) {
+          void commands.agentCollapseToListening().catch(console.error);
+        } else {
+          dismiss();
+        }
+        return;
+      }
       // Still listening: shrink to the listening notch, the voice goes on.
       if (voiceRef.current === "listening" || summonListeningRef.current) {
+        void commands.agentCollapseToListening().catch(console.error);
+        return;
+      }
+      // Working on Linux: shrink to the floating working pill; never disappear.
+      if (isLinux && busyRef.current) {
         void commands.agentCollapseToListening().catch(console.error);
         return;
       }
@@ -723,7 +810,7 @@ export function AgentPanel() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [revealed, dismiss, view]);
+  }, [revealed, dismiss, view, isLinux]);
 
   // Clip the window to a fitted shell (Recall or a view) so its
   // transparent rest never eats clicks. Pixels outside the clip are not
@@ -1305,7 +1392,7 @@ export function AgentPanel() {
 
   return (
     <div
-      className="agent-panel-root"
+      className={`agent-panel-root${isLinux ? " is-floating" : ""}`}
       onPointerEnter={() => canOpenEarly && setHoverOpening(true)}
       onPointerLeave={() => setHoverOpening(false)}
     >
@@ -1328,13 +1415,15 @@ export function AgentPanel() {
         data-phase={
           revealed
             ? "reply"
-            : capture?.speaking
-              ? "speaking"
-              : capture?.working
-                ? "working"
-                : capture?.listening
-                  ? "listening"
-                  : "starting"
+            : isLinux && closing && lastPillPhaseRef.current
+              ? lastPillPhaseRef.current
+              : capture?.speaking || (isLinux && speechId !== null)
+                ? "speaking"
+                : capture?.working || (isLinux && busy)
+                  ? "working"
+                  : capture?.listening
+                    ? "listening"
+                    : "starting"
         }
         aria-label={t("agent.brand")}
       >
@@ -1444,9 +1533,26 @@ export function AgentPanel() {
               // Not the shell's click-to-open.
               event.stopPropagation();
               if (closing) return;
-              if (revealed) dismiss();
-              else if (capture)
+              if (revealed) {
+                // On Linux, X while working or speaking collapses back to the
+                // sleek status pill instead of removing it or stopping speech.
+                if (
+                  isLinux &&
+                  (busyRef.current || speechIdRef.current !== null)
+                ) {
+                  void commands.agentCollapseToListening().catch(console.error);
+                } else {
+                  dismiss();
+                }
+              } else if (capture) {
+                if (
+                  isLinux &&
+                  (busyRef.current || speechIdRef.current !== null)
+                ) {
+                  return;
+                }
                 void commands.agentCancelNotch(capture.generation);
+              }
             }}
           >
             <X size={14} />

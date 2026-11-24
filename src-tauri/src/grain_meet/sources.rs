@@ -4,8 +4,9 @@
 //!
 //! Each enabled source is captured by its own stream for the length of one
 //! recording and closed when it stops. The microphone uses `handy-recorder`
-//! (its own instance, not the dictation recorder). System audio is a WASAPI
-//! loopback of an output device through cpal, Windows only for now.
+//! (its own instance, not the dictation recorder). System audio uses WASAPI
+//! loopback through cpal on Windows, and PulseAudio/PipeWire `.monitor`
+//! sources through `handy-recorder` on Linux.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -73,7 +74,18 @@ pub struct SourceDevice {
 }
 
 pub fn system_audio_supported() -> bool {
-    cfg!(windows)
+    #[cfg(windows)]
+    {
+        true
+    }
+    #[cfg(target_os = "linux")]
+    {
+        loopback::is_supported()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        false
+    }
 }
 
 fn settings_path(root: &Path) -> PathBuf {
@@ -326,20 +338,296 @@ mod loopback {
 #[cfg(windows)]
 pub use loopback::{list_outputs, output_name, SystemCapture};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod loopback {
+    use super::*;
+    use std::future::Future;
+    use std::net::Shutdown;
+    use std::os::unix::net::UnixStream;
+    use std::pin::pin;
+    use std::sync::mpsc;
+    use std::task::{Context, Poll, Wake, Waker};
+    use std::thread::{self, Thread};
+    use std::time::{Duration, Instant};
+
+    const DEFAULT_SINK_WATCH_INTERVAL: Duration = Duration::from_secs(1);
+    const PULSE_IO_TIMEOUT: Duration = Duration::from_secs(2);
+
+    struct ThreadWaker(Thread);
+
+    impl Wake for ThreadWaker {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    /// Poll a future synchronously up to `timeout` without requiring Tokio.
+    pub(super) fn block_on_timeout<F: Future>(future: F, timeout: Duration) -> Option<F::Output> {
+        let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
+        let mut cx = Context::from_waker(&waker);
+        let mut future = pin!(future);
+        let deadline = Instant::now() + timeout;
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(value) => return Some(value),
+                Poll::Pending => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return None;
+                    }
+                    thread::park_timeout(remaining);
+                }
+            }
+        }
+    }
+
+    /// System audio capture works on any Linux desktop running PipeWire
+    /// (via `pipewire-pulse`) or PulseAudio.
+    pub fn is_supported() -> bool {
+        pulseaudio::socket_path_from_env().is_some()
+    }
+
+    fn connect_pulse(keep_io_timeout: bool) -> Option<(pulseaudio::Client, UnixStream)> {
+        let path = pulseaudio::socket_path_from_env()?;
+        let socket = UnixStream::connect(path).ok()?;
+        let _ = socket.set_read_timeout(Some(PULSE_IO_TIMEOUT));
+        let _ = socket.set_write_timeout(Some(PULSE_IO_TIMEOUT));
+        let shutdown = socket.try_clone().ok()?;
+        let cookie = pulseaudio::cookie_path_from_env().and_then(|p| std::fs::read(p).ok());
+        let client =
+            pulseaudio::Client::new_unix(c"grain-recall-system-audio", socket, cookie).ok()?;
+        if !keep_io_timeout {
+            // Long-lived watch connections sit idle between polls; clear the
+            // read timeout after the handshake so the reactor stays alive.
+            let _ = shutdown.set_read_timeout(None);
+        }
+        Some((client, shutdown))
+    }
+
+    /// Ask PipeWire/PulseAudio for the current default sink's `.monitor` name.
+    fn default_monitor_source_name() -> Option<String> {
+        let (client, shutdown) = connect_pulse(true)?;
+        let info = block_on_timeout(client.server_info(), PULSE_IO_TIMEOUT).and_then(Result::ok);
+        // Close the socket explicitly so pulseaudio's reactor thread exits promptly.
+        let _ = shutdown.shutdown(Shutdown::Both);
+        let sink = info?.default_sink_name?.into_string().ok()?;
+        (!sink.is_empty()).then(|| format!("{sink}.monitor"))
+    }
+
+    pub(super) fn clean_monitor_name(name: &str) -> String {
+        name.strip_prefix("Monitor of ")
+            .map(str::trim)
+            .filter(|trimmed| !trimmed.is_empty())
+            .unwrap_or(name)
+            .to_owned()
+    }
+
+    pub(super) fn monitor_matches(device_id: &str, expected_monitor: &str) -> bool {
+        device_id
+            .split_once(':')
+            .map(|(_, raw)| raw)
+            .unwrap_or(device_id)
+            == expected_monitor
+    }
+
+    pub fn list_outputs() -> Result<Vec<SourceDevice>, String> {
+        let default_monitor = default_monitor_source_name();
+        let mut outputs: Vec<SourceDevice> = handy_recorder::list_input_devices()
+            .map_err(|e| format!("Could not list audio outputs: {e}"))?
+            .into_iter()
+            .filter(|device| device.is_monitor)
+            .map(|device| {
+                let is_default = default_monitor
+                    .as_deref()
+                    .is_some_and(|expected| monitor_matches(&device.id, expected));
+                SourceDevice {
+                    id: device.id,
+                    name: clean_monitor_name(&device.name),
+                    is_default,
+                }
+            })
+            .collect();
+        if !outputs.is_empty() && !outputs.iter().any(|d| d.is_default) {
+            outputs[0].is_default = true;
+        }
+        Ok(outputs)
+    }
+
+    pub fn output_name(device_id: Option<&str>) -> String {
+        let outputs = list_outputs().unwrap_or_default();
+        match device_id {
+            Some(id) => outputs
+                .iter()
+                .find(|d| d.id == id)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| "System audio".into()),
+            None => outputs
+                .iter()
+                .find(|d| d.is_default)
+                .map(|d| d.name.clone())
+                .unwrap_or_else(|| "System audio".into()),
+        }
+    }
+
+    /// Watches the PulseAudio/PipeWire default sink while following "System default".
+    /// If the user switches outputs mid-recording (e.g. speakers -> headphones),
+    /// sets `failed` so Recall's recorder seamlessly reopens on the new default.
+    struct DefaultSinkWatch {
+        stop: mpsc::Sender<()>,
+        shutdown: UnixStream,
+        thread: Option<thread::JoinHandle<()>>,
+    }
+
+    impl DefaultSinkWatch {
+        fn start(initial_monitor: String, failed: Arc<AtomicBool>) -> Option<Self> {
+            let (client, shutdown) = connect_pulse(false)?;
+            let thread_shutdown = shutdown.try_clone().ok()?;
+            let (stop, stopped) = mpsc::channel();
+            let thread = thread::Builder::new()
+                .name("grain-meet-default-sink-watch".into())
+                .spawn(move || {
+                    loop {
+                        if stopped.recv_timeout(DEFAULT_SINK_WATCH_INTERVAL)
+                            != Err(mpsc::RecvTimeoutError::Timeout)
+                        {
+                            break;
+                        }
+                        match block_on_timeout(client.server_info(), PULSE_IO_TIMEOUT) {
+                            Some(Ok(info)) => {
+                                if let Some(sink) =
+                                    info.default_sink_name.and_then(|s| s.into_string().ok())
+                                {
+                                    let current_monitor = format!("{sink}.monitor");
+                                    if !sink.is_empty() && current_monitor != initial_monitor {
+                                        log::info!(
+                                            "System audio default output changed to {current_monitor}; reconnecting"
+                                        );
+                                        failed.store(true, Ordering::Release);
+                                        break;
+                                    }
+                                }
+                            }
+                            Some(Err(_)) | None => {
+                                // Stop requested while query was in flight.
+                                if stopped.try_recv() != Err(mpsc::TryRecvError::Empty) {
+                                    break;
+                                }
+                                log::warn!(
+                                    "System audio default output watch lost connection; reconnecting"
+                                );
+                                failed.store(true, Ordering::Release);
+                                break;
+                            }
+                        }
+                    }
+                    let _ = thread_shutdown.shutdown(Shutdown::Both);
+                })
+                .ok()?;
+            Some(Self {
+                stop,
+                shutdown,
+                thread: Some(thread),
+            })
+        }
+    }
+
+    impl Drop for DefaultSinkWatch {
+        fn drop(&mut self) {
+            let _ = self.stop.send(());
+            let _ = self.shutdown.shutdown(Shutdown::Both);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    pub struct SystemCapture {
+        recorder: Option<handy_recorder::Recorder<MicSink>>,
+        _default_watch: Option<DefaultSinkWatch>,
+    }
+
+    impl SystemCapture {
+        pub fn start(
+            choice: &SystemAudioChoice,
+            deliver: Deliver,
+            failed: Arc<AtomicBool>,
+        ) -> Result<Self, String> {
+            if !is_supported() {
+                return Err(
+                    "System audio recording requires PipeWire or PulseAudio on Linux".into(),
+                );
+            }
+            let (device_id, watched_monitor) = match &choice.device_id {
+                Some(id) => (id.clone(), None),
+                None => {
+                    let outputs = list_outputs()?;
+                    let default = outputs
+                        .into_iter()
+                        .find(|d| d.is_default)
+                        .ok_or_else(|| "There is no audio output monitor available".to_string())?;
+                    let raw_monitor = default
+                        .id
+                        .split_once(':')
+                        .map(|(_, raw)| raw.to_owned())
+                        .unwrap_or_else(|| default.id.clone());
+                    (default.id, Some(raw_monitor))
+                }
+            };
+            let config = handy_recorder::RecorderConfig {
+                device: Some(device_id),
+                sample_rate: Some(CAPTURE_RATE),
+                channels: handy_recorder::Channels::MixToMono,
+                frames_per_chunk: Some(CAPTURE_RATE as usize / 100),
+                ..Default::default()
+            };
+            let watch_failed = Arc::clone(&failed);
+            let recorder = handy_recorder::Recorder::open_with_failure_handler(config, move |_| {
+                failed.store(true, Ordering::Release)
+            })
+            .map_err(|e| format!("Could not open system audio: {e}"))?;
+            recorder
+                .start(MicSink { deliver })
+                .map_err(|e| format!("Could not record system audio: {}", e.error))?;
+            let default_watch =
+                watched_monitor.and_then(|monitor| DefaultSinkWatch::start(monitor, watch_failed));
+            Ok(Self {
+                recorder: Some(recorder),
+                _default_watch: default_watch,
+            })
+        }
+    }
+
+    impl Drop for SystemCapture {
+        fn drop(&mut self) {
+            self._default_watch = None;
+            if let Some(recorder) = self.recorder.take() {
+                let _ = recorder.stop();
+                let _ = recorder.close();
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub use loopback::{list_outputs, output_name, SystemCapture};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn list_outputs() -> Result<Vec<SourceDevice>, String> {
     Ok(Vec::new())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn output_name(_device_id: Option<&str>) -> String {
     "System audio".into()
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub struct SystemCapture;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl SystemCapture {
     pub fn start(_: &SystemAudioChoice, _: Deliver, _: Arc<AtomicBool>) -> Result<Self, String> {
         Err("System audio recording is not available on this platform yet".into())
@@ -349,6 +637,40 @@ impl SystemCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_block_on_timeout_completes_and_expires() {
+        use std::time::Duration;
+
+        assert_eq!(
+            loopback::block_on_timeout(std::future::ready(42), Duration::from_millis(50)),
+            Some(42)
+        );
+        assert_eq!(
+            loopback::block_on_timeout(std::future::pending::<u8>(), Duration::from_millis(20)),
+            None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_monitor_names_and_ids_match_cleanly() {
+        assert_eq!(
+            loopback::clean_monitor_name("Monitor of Built-in Audio Analog Stereo"),
+            "Built-in Audio Analog Stereo"
+        );
+        assert_eq!(loopback::clean_monitor_name("Monitor of "), "Monitor of ");
+        assert_eq!(loopback::clean_monitor_name("HDMI Audio"), "HDMI Audio");
+        assert!(loopback::monitor_matches(
+            "pulseaudio:alsa_output.pci-0000_00_1f.3.analog-stereo.monitor",
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        ));
+        assert!(!loopback::monitor_matches(
+            "pulseaudio:alsa_output.pci-0000_01_00.1.hdmi-stereo.monitor",
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        ));
+    }
 
     #[test]
     fn settings_round_trip_and_require_a_source() {

@@ -245,6 +245,7 @@ objc2-service-management = "0.3.2"
 atspi = { version = "0.30", default-features = false, features = ["connection", "proxies", "tokio", "zbus"] }
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
+pulseaudio = "0.3"
 webkit2gtk-sys = "2"
 x11rb = "0.13"
 transcribe-cpp = { version = "=0.4.0", default-features = false, features = [

@@ -24,7 +24,6 @@ use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
-#[cfg(not(target_os = "linux"))]
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::context_screen::CapturedImage;
@@ -52,10 +51,17 @@ const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
 const NOTCH_REPLY: (f64, f64) = (760.0, 620.0);
 /// The compact shell, in CSS px (`.agent-notch` in agent.css).
 const NOTCH_COMPACT: (f64, f64) = (300.0, 30.0);
+/// [GRAIN] Linux floating status pill (working/speaking) and top-edge clearance,
+/// in logical px.
+#[cfg(target_os = "linux")]
+const LINUX_WORKING_PILL: (f64, f64) = (132.0, 16.0);
+#[cfg(target_os = "linux")]
+const LINUX_TOP_MARGIN: i32 = 12;
 /// The shell's CSS expansion (`--notch-grow` in agent.css) plus a frame.
 /// Native window work waits for it: any restyle mid-growth re-presents WebView2.
 const NOTCH_GROW: Duration = Duration::from_millis(460);
 /// The shell's retract-on-close (`--notch-close` in agent.css) plus a frame.
+#[cfg(not(target_os = "linux"))]
 const NOTCH_CLOSE: Duration = Duration::from_millis(320);
 
 /// The Agent's system instruction. The user's dictated/typed instruction is the
@@ -482,6 +488,16 @@ pub fn summon(app: &AppHandle) {
     if route_summon_to_open_chat(app) {
         return;
     }
+    // [GRAIN] On Linux there is no always-on hover sliver: Alt+A when closed
+    // opens the floating Agent directly (a second Alt+A while open dictates
+    // into its composer).
+    #[cfg(target_os = "linux")]
+    {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || open_notch(&handle));
+        return;
+    }
+    #[cfg(not(target_os = "linux"))]
     summon_inner(app);
 }
 
@@ -496,6 +512,17 @@ fn route_summon_to_open_chat(app: &AppHandle) -> bool {
     // sends, as Enter does.
     if !state.reply_visible.load(Ordering::SeqCst) && panel_voice_live(app) {
         send_panel_voice(app);
+        return true;
+    }
+    // [GRAIN] On Linux, Alt+A while collapsed into the floating working pill
+    // reopens the Agent chat.
+    #[cfg(target_os = "linux")]
+    if !state.reply_visible.load(Ordering::SeqCst)
+        && !state.input_active.load(Ordering::SeqCst)
+        && app.get_webview_window(PANEL_LABEL).is_some()
+    {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || expand_notch(&handle));
         return true;
     }
     if !state.reply_visible.load(Ordering::SeqCst) || state.input_active.load(Ordering::SeqCst) {
@@ -600,7 +627,14 @@ fn notch_listening(app: &AppHandle) -> bool {
 /// Main thread only.
 fn collapse_to_listening(app: &AppHandle) -> bool {
     let state = app.state::<AgentState>();
-    if !state.reply_visible.load(Ordering::SeqCst) || !notch_listening(app) {
+    let listening = notch_listening(app);
+    #[cfg(target_os = "linux")]
+    let active = state.chat_running.load(Ordering::SeqCst)
+        || waiting_for_reply(app)
+        || crate::grain_tts::current_speech().is_some();
+    #[cfg(not(target_os = "linux"))]
+    let active = false;
+    if !state.reply_visible.load(Ordering::SeqCst) || (!listening && !active) {
         return false;
     }
     let Some(window) = app.get_webview_window(PANEL_LABEL) else {
@@ -609,10 +643,20 @@ fn collapse_to_listening(app: &AppHandle) -> bool {
     state.reply_visible.store(false, Ordering::SeqCst);
     #[cfg(windows)]
     set_compact_notch_region(&window, true);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let compact = if listening {
+            NOTCH_COMPACT
+        } else {
+            LINUX_WORKING_PILL
+        };
+        place_notch_at_text_scale(&window, compact);
+        set_linux_input_region(&window, None);
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     let _ = &window;
     // Typing goes back to whatever the user was in.
-    let _ = window.set_focusable(false);
+    set_notch_focusable(&window, false);
     let _ = app.emit_to(PANEL_LABEL, "agent-collapse", ());
     // The composer's dictation now needs global Enter/Escape (a summon holds
     // them already). Never registered inside a shortcut's own callback.
@@ -642,7 +686,9 @@ pub async fn agent_collapse_to_listening(app: AppHandle) -> Result<(), String> {
 pub async fn agent_reopen_listening(app: AppHandle) -> Result<(), String> {
     let handle = app.clone();
     app.run_on_main_thread(move || {
-        if !reply_shown(&handle) && notch_listening(&handle) {
+        let can_reopen = notch_listening(&handle)
+            || (cfg!(target_os = "linux") && handle.get_webview_window(PANEL_LABEL).is_some());
+        if !reply_shown(&handle) && can_reopen {
             expand_notch(&handle);
         }
     })
@@ -660,9 +706,11 @@ fn expand_notch(app: &AppHandle) {
     set_compact_notch_region(&window, false);
     #[cfg(not(windows))]
     place_notch_at_text_scale(&window, NOTCH_REPLY);
+    #[cfg(target_os = "linux")]
+    set_linux_input_region(&window, None);
     state.reply_visible.store(true, Ordering::SeqCst);
     // Collapsing made it non-focusable; the open chat takes typing again.
-    let _ = window.set_focusable(true);
+    set_notch_focusable(&window, true);
     let _ = app.emit_to(PANEL_LABEL, "agent-reveal", ());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -673,7 +721,7 @@ fn expand_notch(app: &AppHandle) {
                 return;
             }
             if let Some(window) = handle.get_webview_window(PANEL_LABEL) {
-                let _ = window.set_focus();
+                focus_notch_window(&window);
             }
         });
     });
@@ -741,6 +789,7 @@ pub fn agent_input_submit(app: AppHandle) {
 }
 
 /// Capture foreground context and present the Agent off the hotkey thread.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn summon_inner(app: &AppHandle) {
     // Listening for a new instruction: stop reading the last reply aloud. The
     // compact mark goes first, so that speech's end cannot retract the notch
@@ -860,6 +909,7 @@ struct AgentCapture {
 }
 
 /// Warm the selected model and VAD while the Agent records.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn start_dictation(
     app: &AppHandle,
     state: &AgentState,
@@ -904,6 +954,7 @@ fn start_dictation(
 }
 
 /// Snapshot the foreground window for the optional screen attachment.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn foreground_hwnd() -> Option<isize> {
     #[cfg(windows)]
     unsafe {
@@ -956,6 +1007,8 @@ fn build_window(
     }
 
     let window = builder.build()?;
+    #[cfg(target_os = "linux")]
+    init_linux_layer_shell(&window, w, h);
     // [GRAIN] The shell animates its own entrance out of the screen edge; the
     // OS show/hide fade on top of it read as a second, unrelated animation.
     #[cfg(windows)]
@@ -1076,16 +1129,135 @@ fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
     if bounds_match_win32(window, x, y, w, h) || set_bounds_win32(window, x, y, w, h) {
         return;
     }
-    // A native Wayland toplevel is positioned by its compositor. Keep sizing it
-    // so the window can still grow from the listening card into the chat.
+    // On Wayland compositors with wlr-layer-shell (KDE Plasma, wlroots, COSMIC),
+    // the notch is anchored to Edge::Top; layer surfaces derive their size from
+    // GTK's size request + resize(1, 1), never from set_position.
     #[cfg(target_os = "linux")]
-    let can_position = !crate::utils::is_wayland();
+    if resize_linux_layer_shell(window, w, h) {
+        return;
+    }
+    // A native Wayland toplevel is positioned by its compositor. Keep sizing it
+    // so the window can still grow from the listening card into the chat. Check
+    // GTK's actual display backend so XWayland sessions still position properly.
+    #[cfg(target_os = "linux")]
+    let can_position = !is_linux_wayland_window(window);
     #[cfg(not(target_os = "linux"))]
     let can_position = true;
     if can_position {
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     }
     let _ = window.set_size(tauri::LogicalSize::new(w, h));
+}
+
+#[cfg(target_os = "linux")]
+fn is_linux_wayland_window(window: &tauri::WebviewWindow) -> bool {
+    use gtk::prelude::{ObjectExt, WidgetExt};
+
+    if let Ok(gtk_window) = window.gtk_window() {
+        return gtk_window.display().type_().name() == "GdkWaylandDisplay";
+    }
+    crate::utils::is_wayland()
+}
+
+#[cfg(target_os = "linux")]
+fn init_linux_layer_shell(window: &tauri::WebviewWindow, w: f64, h: f64) -> bool {
+    use gtk::prelude::{GtkWindowExt, WidgetExt};
+    use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
+
+    if crate::utils::env_flag_enabled("HANDY_NO_GTK_LAYER_SHELL")
+        || !gtk_layer_shell::is_supported()
+    {
+        return false;
+    }
+    let Ok(gtk_window) = window.gtk_window() else {
+        return false;
+    };
+    gtk_window.init_layer_shell();
+    gtk_window.set_namespace("grain-agent-notch");
+    gtk_window.set_layer(Layer::Overlay);
+    gtk_window.set_keyboard_mode(KeyboardMode::None);
+    gtk_window.set_exclusive_zone(0);
+    gtk_window.set_anchor(Edge::Top, true);
+    gtk_window.set_anchor(Edge::Bottom, false);
+    gtk_window.set_anchor(Edge::Left, false);
+    gtk_window.set_anchor(Edge::Right, false);
+    gtk_window.set_layer_shell_margin(Edge::Top, LINUX_TOP_MARGIN);
+    gtk_window.set_size_request(w.round().max(1.0) as i32, h.round().max(1.0) as i32);
+    gtk_window.resize(1, 1);
+    gtk_window.is_layer_window()
+}
+
+#[cfg(target_os = "linux")]
+fn resize_linux_layer_shell(window: &tauri::WebviewWindow, w: f64, h: f64) -> bool {
+    use gtk::prelude::{GtkWindowExt, WidgetExt};
+    use gtk_layer_shell::LayerShell;
+
+    let Ok(gtk_window) = window.gtk_window() else {
+        return false;
+    };
+    if !gtk_window.is_layer_window() {
+        return false;
+    }
+    gtk_window.set_size_request(w.round().max(1.0) as i32, h.round().max(1.0) as i32);
+    gtk_window.resize(1, 1);
+    true
+}
+
+/// Update whether the notch accepts keyboard focus. On Wayland layer-shell
+/// surfaces, GTK's `set_focusable` alone does not toggle compositor keyboard
+/// interactivity — `KeyboardMode::OnDemand` / `None` controls it.
+fn set_notch_focusable(window: &tauri::WebviewWindow, focusable: bool) {
+    #[cfg(target_os = "linux")]
+    if let Ok(gtk_window) = window.gtk_window() {
+        use gtk_layer_shell::{KeyboardMode, LayerShell};
+        if gtk_window.is_layer_window() {
+            gtk_window.set_keyboard_mode(if focusable {
+                KeyboardMode::OnDemand
+            } else {
+                KeyboardMode::None
+            });
+        }
+    }
+    let _ = window.set_focusable(focusable);
+}
+
+fn focus_notch_window(window: &tauri::WebviewWindow) {
+    set_notch_focusable(window, true);
+    #[cfg(target_os = "linux")]
+    if let Ok(gtk_window) = window.gtk_window() {
+        use gtk::prelude::GtkWindowExt;
+        gtk_window.present();
+    }
+    let _ = window.set_focus();
+}
+
+/// Clip the Linux notch's pointer input region to the visible top-centred shell
+/// so transparent pixels around the card pass clicks through to apps behind it.
+#[cfg(target_os = "linux")]
+fn set_linux_input_region(window: &tauri::WebviewWindow, shape: Option<(f64, f64)>) {
+    use gtk::prelude::{GtkWindowExt, WidgetExt};
+
+    let Ok(gtk_window) = window.gtk_window() else {
+        return;
+    };
+    let Some((sw, sh)) = shape else {
+        gtk_window.input_shape_combine_region(None);
+        return;
+    };
+    let (size_w, size_h) = gtk_window.size();
+    let alloc_w = gtk_window.allocated_width();
+    let alloc_h = gtk_window.allocated_height();
+    let win_w = alloc_w.max(size_w);
+    let win_h = alloc_h.max(size_h);
+    if win_w <= 1 || win_h <= 1 {
+        return;
+    }
+    let region_w = ((sw + 24.0).ceil() as i32).clamp(1, win_w);
+    let region_h = ((sh + 10.0).ceil() as i32).clamp(1, win_h);
+    let x = ((win_w - region_w) / 2).max(0);
+    let rect = gtk::cairo::RectangleInt::new(x, 0, region_w, region_h);
+    let region = gtk::cairo::Region::create_rectangle(&rect);
+    gtk_window.input_shape_combine_region(Some(&region));
 }
 
 /// Avoid asking WebView2 to recompose for unchanged bounds.
@@ -1136,7 +1308,11 @@ fn place_notch(window: &tauri::WebviewWindow, size: (f64, f64)) {
     if let Some((ox, oy, sw, sh)) = metrics {
         let w = size.0.min(sw.max(1.0));
         let h = size.1.min(sh.max(1.0));
-        set_bounds(window, ox + (sw - w) / 2.0, oy, w, h);
+        #[cfg(target_os = "linux")]
+        let top = oy + f64::from(LINUX_TOP_MARGIN);
+        #[cfg(not(target_os = "linux"))]
+        let top = oy;
+        set_bounds(window, ox + (sw - w) / 2.0, top, w, h);
     }
 }
 
@@ -1324,13 +1500,13 @@ fn focus_revealed_notch(app: &AppHandle, generation: u64) {
     let Some(window) = app.get_webview_window(PANEL_LABEL) else {
         return;
     };
-    let _ = window.set_focusable(true);
+    set_notch_focusable(&window, true);
     // Dictation may already be transcribing even though its microphone is idle.
     if !ordinary_dictation_live(app)
         && state.dictation_session_at_summon.load(Ordering::SeqCst)
             == crate::grain_actions::current_session_id()
     {
-        let _ = window.set_focus();
+        focus_notch_window(&window);
     }
 }
 
@@ -1409,6 +1585,7 @@ pub(crate) fn prewarm_open(app: &AppHandle) {
 }
 
 /// Drop a pre-created notch the pointer abandoned before it opened.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn cancel_prewarm(app: &AppHandle) {
     let state = app.state::<AgentState>();
     if !state.opened.load(Ordering::SeqCst) || state.open_shown.load(Ordering::SeqCst) {
@@ -1437,6 +1614,11 @@ pub(crate) fn open_notch(app: &AppHandle) {
     // and a clip lifted on screen flashes the pixels it uncovers.
     #[cfg(windows)]
     set_notch_region(&window, None);
+    #[cfg(target_os = "linux")]
+    {
+        set_linux_input_region(&window, None);
+        set_notch_focusable(&window, true);
+    }
     if let Err(error) = window.show() {
         warn!("[GRAIN] agent: failed to show the notch: {error}");
         let _ = window.destroy();
@@ -1447,6 +1629,7 @@ pub(crate) fn open_notch(app: &AppHandle) {
     state
         .dictation_session_at_summon
         .store(crate::grain_actions::current_session_id(), Ordering::SeqCst);
+    crate::capability::prefetch::start(app);
     let _ = app.emit_to(PANEL_LABEL, "agent-open", ());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -1474,11 +1657,18 @@ pub async fn agent_open_chat(app: AppHandle, window: tauri::WebviewWindow) -> Re
     let handle = app.clone();
     let (opened, result) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
+        #[cfg(target_os = "linux")]
+        if handle.get_webview_window(PANEL_LABEL).is_some() && !reply_shown(&handle) {
+            expand_notch(&handle);
+        } else {
+            open_notch(&handle);
+        }
+        #[cfg(not(target_os = "linux"))]
         open_notch(&handle);
         let window = handle.get_webview_window(PANEL_LABEL);
         if let Some(window) = &window {
             if reply_shown(&handle) && !ordinary_dictation_live(&handle) {
-                let _ = window.set_focus();
+                focus_notch_window(window);
             }
         }
         let _ = opened.send(window.is_some_and(|window| window.is_visible().unwrap_or(false)));
@@ -1511,7 +1701,9 @@ pub async fn agent_notch_shape(app: AppHandle, shape: Option<AgentNotchShape>) {
         if let Some(window) = handle.get_webview_window(PANEL_LABEL) {
             #[cfg(windows)]
             set_notch_region(&window, shape.map(|shape| (shape.width, shape.height)));
-            #[cfg(not(windows))]
+            #[cfg(target_os = "linux")]
+            set_linux_input_region(&window, shape.map(|shape| (shape.width, shape.height)));
+            #[cfg(not(any(windows, target_os = "linux")))]
             let _ = (window, shape);
         }
         let _ = applied.send(());
@@ -1619,6 +1811,7 @@ mod terminal_capture_tests {
 /// Read the focused edit control directly. Ctrl+C in a terminal would interrupt
 /// its foreground process.
 #[cfg(target_os = "linux")]
+#[allow(dead_code)]
 fn capture_selection(_: &AppHandle) -> Option<String> {
     crate::grain_dictionary::read_focused_selection()
 }
@@ -1713,6 +1906,7 @@ fn capture_selection(app: &AppHandle) -> Option<String> {
 /// `hwnd` is the paste-target snapshot taken moments earlier. Photographing that
 /// handle rather than re-asking for the foreground window closes the race with
 /// our own UI — see [`crate::context_screen::capture_window`].
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn capture_screen_image(app: &AppHandle, hwnd: Option<isize>) -> Option<CapturedImage> {
     if !get_settings(app).agent_screen_image {
         return None;
@@ -1765,6 +1959,7 @@ fn screen_attachment(app: &AppHandle) -> Option<ImageAttachment> {
     Some(ImageAttachment::new(image.mime, image.to_base64()))
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn store_screen_image(state: &AgentState, generation: u64, image: CapturedImage) {
     if let Ok(mut current) = state.screen_image.lock() {
         if state.summon_gen.load(Ordering::SeqCst) == generation {
@@ -2223,6 +2418,8 @@ pub async fn agent_present_reply(app: AppHandle, generation: u64) -> Result<(), 
         set_compact_notch_region(&window, false);
         #[cfg(not(windows))]
         place_notch_at_text_scale(&window, NOTCH_REPLY);
+        #[cfg(target_os = "linux")]
+        set_linux_input_region(&window, None);
         state.reply_visible.store(true, Ordering::SeqCst);
         let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
         let app = handle.clone();
@@ -2263,6 +2460,8 @@ pub async fn agent_open_summon(app: AppHandle, generation: u64) -> Result<(), St
         set_compact_notch_region(&window, false);
         #[cfg(not(windows))]
         place_notch_at_text_scale(&window, NOTCH_REPLY);
+        #[cfg(target_os = "linux")]
+        set_linux_input_region(&window, None);
         state.reply_visible.store(true, Ordering::SeqCst);
         let _ = handle.emit_to(PANEL_LABEL, "agent-reveal", ());
         let app = handle.clone();
@@ -2561,7 +2760,9 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
             return;
         };
         state.transient_shortcuts.release_if_current(expected, || {
-            if app.get_webview_window(PANEL_LABEL).is_some()
+            let panel_holds_global_escape = app.get_webview_window(PANEL_LABEL).is_some()
+                && (!hand_opened(&app) || state.panel_voice_keys.load(Ordering::SeqCst));
+            if panel_holds_global_escape
                 || state.input_active.load(Ordering::SeqCst)
                 // A new instruction may already have registered Escape while
                 // its window creation is still queued on the main thread.
@@ -2600,6 +2801,29 @@ pub fn global_submit(app: &AppHandle) {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxEscapeAction {
+    StopSpeechAndClose,
+    StopSpeechAndCollapse,
+    StopSpeechAndStay,
+    CollapseToWorking,
+    IgnoreWhileWorking,
+    Passthrough,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_escape_action(speaking: bool, working: bool, reply_visible: bool) -> LinuxEscapeAction {
+    match (speaking, working, reply_visible) {
+        (true, false, _) => LinuxEscapeAction::StopSpeechAndClose,
+        (true, true, true) => LinuxEscapeAction::StopSpeechAndCollapse,
+        (true, true, false) => LinuxEscapeAction::StopSpeechAndStay,
+        (false, true, true) => LinuxEscapeAction::CollapseToWorking,
+        (false, true, false) => LinuxEscapeAction::IgnoreWhileWorking,
+        (false, false, _) => LinuxEscapeAction::Passthrough,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EscapeTarget {
     AgentInput,
@@ -2623,6 +2847,7 @@ fn escape_target(input_live: bool, dictation_live: bool, waiting: bool) -> Escap
 /// Whether the Agent currently owns `binding` as its transient close shortcut.
 /// The normal dictation cancel registration uses this to share Escape by state
 /// instead of racing a second global registration for the same accelerator.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
     if !binding.eq_ignore_ascii_case(&close_binding().current_binding) {
         return false;
@@ -2701,6 +2926,54 @@ pub fn global_close(app: &AppHandle) {
         EscapeTarget::AgentPanel => {}
     }
 
+    // [GRAIN] On Linux:
+    // - Speaking + idle: stop talk-back and smoothly close the pill/window.
+    // - Speaking + working: stop talk-back, and collapse to (or keep) the
+    //   yellow working pill until processing finishes.
+    // - Silent + working: never remove the yellow pill; collapse if open,
+    //   ignore Escape if already collapsed.
+    #[cfg(target_os = "linux")]
+    {
+        let speaking = crate::grain_tts::current_speech().is_some();
+        let working = app.try_state::<AgentState>().is_some_and(|s| {
+            s.chat_running.load(Ordering::SeqCst) || s.waiting_for_reply.load(Ordering::SeqCst)
+        });
+        match linux_escape_action(speaking, working, reply_shown(app)) {
+            LinuxEscapeAction::StopSpeechAndClose => {
+                crate::grain_tts::stop();
+                if let Some(closing_session) = app
+                    .try_state::<AgentState>()
+                    .map(|state| state.summon_gen.load(Ordering::SeqCst))
+                {
+                    close_keeping_chat(app);
+                    close_panel_animated(app, closing_session);
+                }
+                return;
+            }
+            LinuxEscapeAction::StopSpeechAndCollapse => {
+                crate::grain_tts::stop();
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    collapse_to_listening(&handle);
+                });
+                return;
+            }
+            LinuxEscapeAction::StopSpeechAndStay => {
+                crate::grain_tts::stop();
+                return;
+            }
+            LinuxEscapeAction::CollapseToWorking => {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    collapse_to_listening(&handle);
+                });
+                return;
+            }
+            LinuxEscapeAction::IgnoreWhileWorking => return,
+            LinuxEscapeAction::Passthrough => {}
+        }
+    }
+
     // No notch on screen, only the speaking sliver: Escape silences the voice.
     if app.get_webview_window(PANEL_LABEL).is_none() && crate::grain_tts::current_speech().is_some()
     {
@@ -2736,7 +3009,11 @@ fn close_panel_animated(app: &AppHandle, generation: u64) {
     let _ = app.emit_to(PANEL_LABEL, "agent-dismiss", ());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(NOTCH_CLOSE).await;
+        #[cfg(target_os = "linux")]
+        let delay = Duration::from_millis(210);
+        #[cfg(not(target_os = "linux"))]
+        let delay = NOTCH_CLOSE;
+        tokio::time::sleep(delay).await;
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             if handle
@@ -2832,7 +3109,39 @@ mod transient_shortcut_tests {
 
 #[cfg(test)]
 mod escape_priority_tests {
-    use super::{escape_target, EscapeTarget};
+    use super::{escape_target, linux_escape_action, EscapeTarget, LinuxEscapeAction};
+
+    #[test]
+    fn linux_escape_rules_protect_working_pill_and_stop_speech() {
+        assert_eq!(
+            linux_escape_action(true, false, true),
+            LinuxEscapeAction::StopSpeechAndClose
+        );
+        assert_eq!(
+            linux_escape_action(true, false, false),
+            LinuxEscapeAction::StopSpeechAndClose
+        );
+        assert_eq!(
+            linux_escape_action(true, true, true),
+            LinuxEscapeAction::StopSpeechAndCollapse
+        );
+        assert_eq!(
+            linux_escape_action(true, true, false),
+            LinuxEscapeAction::StopSpeechAndStay
+        );
+        assert_eq!(
+            linux_escape_action(false, true, true),
+            LinuxEscapeAction::CollapseToWorking
+        );
+        assert_eq!(
+            linux_escape_action(false, true, false),
+            LinuxEscapeAction::IgnoreWhileWorking
+        );
+        assert_eq!(
+            linux_escape_action(false, false, true),
+            LinuxEscapeAction::Passthrough
+        );
+    }
 
     #[test]
     fn agent_input_has_first_escape_priority() {

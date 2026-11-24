@@ -1955,3 +1955,133 @@ html[data-window="agent-panel"] body {
     animation: none;
   }
 }
+
+/* [GRAIN] Linux floating Agent card & working pill: all four corners rounded
+   with a subtle top hairline and top-edge clearance instead of a fused notch.
+   Opening from scratch and closing use a pure opacity fade (no sliver flash or
+   scale jump); collapsing to/from the working pill morphs smoothly between the
+   full pill and the card. */
+html[data-floating="1"] .agent-panel-root,
+.agent-panel-root.is-floating {
+  --notch-edge:
+    inset 1px 0 0 var(--notch-line), inset -1px 0 0 var(--notch-line),
+    inset 0 1px 0 var(--notch-line), inset 0 -1px 0 var(--notch-line);
+}
+
+html[data-floating="1"] .agent-notch,
+.agent-panel-root.is-floating .agent-notch {
+  border-radius: 999px;
+  opacity: 1;
+  transition:
+    width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease-out,
+    border-radius 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 280ms ease,
+    box-shadow 280ms ease;
+}
+
+html[data-floating="1"] .agent-notch.is-reply,
+.agent-panel-root.is-floating .agent-notch.is-reply {
+  border-radius: 18px;
+}
+
+html[data-floating="1"] .agent-notch.is-reply.is-fit,
+.agent-panel-root.is-floating .agent-notch.is-reply.is-fit {
+  border-radius: 16px;
+}
+
+/* Open from scratch on Linux: invisible on frame 0 (including the static HTML
+   shell before React mounts) at the target card size, then pure fade-in. */
+html[data-floating="1"] .agent-notch.is-entering,
+.agent-panel-root.is-floating .agent-notch.is-entering {
+  width: min(var(--fit-w, var(--chat-w)), 100vw);
+  height: min(var(--fit-h, var(--chat-h)), 100vh);
+  background: var(--agc-bg);
+  box-shadow: var(--notch-edge);
+  border-radius: 18px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Fade the whole card in together on Linux instead of staggering header/body. */
+.agent-panel-root.is-floating .agent-notch:not(.is-entering) .agent-notch-label,
+.agent-panel-root.is-floating
+  .agent-notch:not(.is-entering)
+  .agent-notch-control {
+  animation: none;
+}
+
+.agent-panel-root.is-floating .is-reply .agent-notch-brand {
+  transition: opacity 140ms ease;
+  transition-delay: 0ms;
+}
+
+.agent-panel-root.is-floating .is-reply .agent-notch-reply {
+  transition:
+    opacity 140ms ease,
+    visibility 0s;
+}
+
+/* Closing completely on Linux: pure smooth fade-out in place. */
+.agent-panel-root.is-floating .agent-notch.is-closing,
+.agent-panel-root.is-floating .agent-notch.is-reply.is-closing,
+.agent-panel-root.is-floating .agent-notch.is-reply.is-fit.is-closing {
+  width: min(var(--fit-w, var(--chat-w)), 100vw);
+  height: min(var(--fit-h, var(--chat-h)), 100vh);
+  background: var(--agc-bg);
+  box-shadow: var(--notch-edge);
+  border-radius: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 170ms ease-out;
+}
+
+.agent-panel-root.is-floating .agent-notch.is-reply.is-fit.is-closing {
+  border-radius: 16px;
+}
+
+/* Sleek thin pill (all four corners rounded) while working or speaking. */
+.agent-panel-root.is-floating .agent-notch[data-phase="working"],
+.agent-panel-root.is-floating .agent-notch[data-phase="speaking"] {
+  width: min(112px, 100vw);
+  height: min(8px, 100vh);
+  border-radius: 999px;
+  background: var(--notch-sliver);
+  box-shadow: var(--notch-edge);
+}
+
+.agent-panel-root.is-floating .agent-notch[data-phase="working"].is-closing,
+.agent-panel-root.is-floating .agent-notch[data-phase="speaking"].is-closing {
+  width: min(112px, 100vw);
+  height: min(8px, 100vh);
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 170ms ease-out;
+}
+
+.agent-panel-root.is-floating
+  .agent-notch[data-phase="working"]
+  .agent-notch-work,
+.agent-panel-root.is-floating
+  .agent-notch[data-phase="speaking"]
+  .agent-notch-work {
+  --work-span: 94px;
+  top: 3px;
+  left: 9px;
+  right: 9px;
+  height: 2px;
+}
+
+.agent-panel-root.is-floating
+  .agent-notch[data-phase="working"]
+  .agent-notch-fill,
+.agent-panel-root.is-floating
+  .agent-notch[data-phase="speaking"]
+  .agent-notch-fill {
+  left: 9px;
+  right: 9px;
+  top: 3px;
+  bottom: auto;
+  height: 2px;
+}
