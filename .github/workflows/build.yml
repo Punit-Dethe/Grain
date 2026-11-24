@@ -397,7 +397,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.sign-binaries && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
           # Exclude host graphics libraries during packaging, before Tauri signs the file.
-          LINUXDEPLOY_EXCLUDED_LIBRARIES: libwayland-client.so*;libvulkan.so*
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: libwayland-client.so*;libwayland-cursor.so*;libwayland-egl.so*;libvulkan.so*
           # Disable -march=native and all SIMD instruction sets above SSE4.2 for
           # x86_64 builds. Without this, CPUs lacking AVX/FMA (e.g. Celeron N2920,
           # FX-8350) crash with SIGILL. The Vulkan backend handles heavy compute
@@ -535,7 +535,7 @@ jobs:
               cd "$workdir"
               "$image" --appimage-extract > /dev/null
               test -x squashfs-root/usr/bin/grain-recall-mcp
-              forbidden="$(find squashfs-root \( -name 'libwayland-client.so*' -o -name 'libvulkan.so*' \) -print -quit)"
+              forbidden="$(find squashfs-root \( -name 'libwayland-client.so*' -o -name 'libwayland-cursor.so*' -o -name 'libwayland-egl.so*' -o -name 'libvulkan.so*' \) -print -quit)"
               if [[ -n "$forbidden" ]]; then
                 echo "Host graphics library bundled in $image: $forbidden" >&2
                 exit 1

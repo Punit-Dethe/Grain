@@ -1137,15 +1137,26 @@ fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
         return;
     }
     // A native Wayland toplevel is positioned by its compositor. Keep sizing it
-    // so the window can still grow from the listening card into the chat.
+    // so the window can still grow from the listening card into the chat. Check
+    // GTK's actual display backend so XWayland sessions still position properly.
     #[cfg(target_os = "linux")]
-    let can_position = !crate::utils::is_wayland();
+    let can_position = !is_linux_wayland_window(window);
     #[cfg(not(target_os = "linux"))]
     let can_position = true;
     if can_position {
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     }
     let _ = window.set_size(tauri::LogicalSize::new(w, h));
+}
+
+#[cfg(target_os = "linux")]
+fn is_linux_wayland_window(window: &tauri::WebviewWindow) -> bool {
+    use gtk::prelude::{ObjectExt, WidgetExt};
+
+    if let Ok(gtk_window) = window.gtk_window() {
+        return gtk_window.display().type_().name() == "GdkWaylandDisplay";
+    }
+    crate::utils::is_wayland()
 }
 
 #[cfg(target_os = "linux")]
