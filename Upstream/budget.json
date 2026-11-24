@@ -36,7 +36,7 @@
   "src-tauri/src/handy/shortcut/mod.rs": 443,
   "src-tauri/src/handy/shortcut/tauri_impl.rs": 9,
   "src-tauri/src/handy/transcription_coordinator.rs": 101,
-  "src-tauri/src/handy/tray.rs": 657,
+  "src-tauri/src/handy/tray.rs": 658,
   "src-tauri/src/handy/utils.rs": 60,
   "src-tauri/src/lib.rs": 1357,
   "src-tauri/src/main.rs": 4,
