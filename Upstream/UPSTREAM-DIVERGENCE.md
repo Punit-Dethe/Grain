@@ -236,8 +236,8 @@ Grain's entry point and lazy UI startup). Capture policy remains in
 `grain_capture.rs`; no second engine or frontend import is added. These are
 measured new-base differences, not blanket budget headroom.
 
-Never copy a static merge-base claim from this document. Query
-`git merge-base HEAD upstream/main` and `git describe --tags --always <sha>`.
+Never copy a static sync-point claim from this document. Query
+`python Upstream/sync_base.py` and `git describe --tags --always <sha>`.
 The rules here supersede repeated dated rows in the audit history below.
 
 The transcribe.cpp dependency now uses the maintained source fork recorded in

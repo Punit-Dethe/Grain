@@ -22,10 +22,12 @@ guards), and the procedures for the common case (reviewing the
 
 | File                  | Purpose                                                                                                                                                                                                                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sync_base.py`        | The sync point: the newest `Upstream-Synced: <sha>` line in Grain's history. Every tool measures against it; Grain shares no git history with Handy.                                                                                                                     |
+| `merge_upstream.py`   | Runs a sync: three-way merge against the sync point, committed as one squashed single-parent commit; auto-resolves the frozen frontend.                                                                                                                                  |
 | `policy_check.py`     | Validates relocation schema/paths, derives inert-alias coverage, and enforces the generated divergence-map table.                                                                                                                                                        |
-| `closeout.py`         | Fail-closed replacement for raw `git merge -s ours`; requires explicit assessments and proves the tree is unchanged.                                                                                                                                                     |
-| `sync_upstream.py`    | Rebuilds the commit ledger (`data.json`, verdict.py's input) and audits ancestry drift.                                                                                                                                                                                  |
-| `ratchet.py`          | Divergence ratchet — enforces per-file line budgets vs the merge base.                                                                                                                                                                                                   |
+| `closeout.py`         | Fail-closed close-out: moves the sync point with an empty `Upstream-Synced:` commit; requires explicit assessments and proves the tree is unchanged.                                                                                                                     |
+| `sync_upstream.py`    | Rebuilds the commit ledger (`data.json`, verdict.py's input) and audits sync-point drift.                                                                                                                                                                                |
+| `ratchet.py`          | Divergence ratchet — enforces per-file line budgets vs the sync point.                                                                                                                                                                                                   |
 | `port_audit.py`       | Port audit — flags upstream commits that touched an inert/relocated/parallel file (per `relocations.json`), so a fix that merged into the wrong (upstream-shaped) file can't silently miss the Grain code that replaces it. The one check a diff structurally cannot be. |
 | `relocations.json`    | Machine-readable map of upstream files → the Grain files that must carry their fixes. The audit's input; keep in step with `UPSTREAM-DIVERGENCE.md`.                                                                                                                     |
 | `frontend_freeze.py`  | Frontend freeze guard — `src/` is Grain-owned; fails if upstream files land there.                                                                                                                                                                                       |
@@ -38,7 +40,7 @@ guards), and the procedures for the common case (reviewing the
 ## Generated (gitignored build products)
 
 `data.json` (the commit ledger) and `merge-report.md` — recomputed every CI run
-from upstream's commit list, our git ancestry, and `verdicts.json`. Never edit
+from upstream's commit list, the recorded sync point, and `verdicts.json`. Never edit
 by hand; regenerate with `python Upstream/sync_upstream.py`. Sync health is
 surfaced in the CI job summary, the auto-sync PR, and `python
 Upstream/preflight.py` — the GitHub Pages dashboard was retired 2026-08-10.

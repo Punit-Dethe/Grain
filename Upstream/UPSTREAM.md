@@ -9,7 +9,7 @@ Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 
 **Before the next sync, read [DEFERRED-PORTS.md](DEFERRED-PORTS.md) and the
 [recording overlay maintenance contract](OVERLAY-MAINTENANCE.md).** It lists
-the exact Handy commits already present in ancestry whose runtime behavior
+the exact Handy commits already behind the sync point whose runtime behavior
 Grain has deliberately not implemented yet.
 
 The active October 17 sync sequence and Flow/dictionary impact assessment are
@@ -19,11 +19,18 @@ stage, not a blanket decision to ignore upstream UI fixes.
 ## The short version
 
 **The common case is reviewing a PR, not running a procedure.** Every 2 hours
-CI trial-merges `upstream/main`. If Handy moved and the merge is clean, CI
-opens (or refreshes) the **`sync/auto-upstream` PR** with the merge already
+CI trial-syncs `upstream/main`. If Handy moved and the sync is clean, CI
+opens (or refreshes) the **`sync/auto-upstream` PR** with the sync already
 done, the commit list in the body, and the divergence ratchet already run.
-Review it, merge it. Done — merged commits file themselves as `Merged` in the
-ledger, because being in our ancestry _is_ the record.
+Review it, merge it. Done — synced commits file themselves as `Merged` in the
+ledger, because being behind the recorded sync point _is_ the record.
+
+**Grain shares no git history with Handy.** Each sync is a real three-way merge
+committed as ONE ordinary commit whose message ends with
+`Upstream-Synced: <full Handy sha>`. That line is the sync point every tool
+reads ([sync_base.py](sync_base.py)); Handy's commits and authors never enter
+Grain's log. Credit to Handy lives in the NOTICE/README and in each sync
+commit's list of the Handy changes it brought in.
 
 `merge=ours` decides file ownership, not whether an upstream fix matters. Every
 upstream change under the frozen frontend or another suppressed Grain-owned
@@ -38,7 +45,7 @@ when adapting Handy dependency changes; a native upgrade is a separately
 tested fork release. Retired vendor baselines are recoverable from Git; only
 the checked immutable source pair is maintained.
 When closing out manually adapted commits, `closeout.py` defers the divergence
-ratchet until after its tree-preserving ancestry merge, because only then does
+ratchet until after its tree-preserving marker commit, because only then does
 the ratchet compare Grain against the newly assessed upstream baseline. Use
 `--accept-growth` only after reviewing every reported Handy-tree increase.
 
@@ -48,7 +55,7 @@ Working locally? One command answers everything:
 python Upstream/preflight.py     # fetches, then: behind-count, conflicts, all gates
 ```
 
-Only a _conflicted_ merge needs a human driver — and
+Only a _conflicted_ sync needs a human driver — and
 [merge-report.md](merge-report.md) will have told you the exact conflicting
 files up to 2 hours in advance, with
 [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md) saying which side wins in
@@ -76,9 +83,10 @@ Grain's replacements are `grain_settings.rs`, `grain_llm_client.rs`, aliased in 
 with low conflict risk but high silent-port risk. `port_audit.py` therefore
 requires a structured outcome and evidence for every mapped runtime destination.
 
-Because git recorded the folder move as 100% renames, merges map upstream's
-`src-tauri/src/X` into our `src-tauri/src/handy/X` automatically (verified
-with simulated upstream commits, 2026-07-20). One caveat, guarded by the
+Because the folder move is a pure rename against the sync point, syncs map
+upstream's `src-tauri/src/X` into our `src-tauri/src/handy/X` automatically
+(verified with simulated upstream commits, 2026-07-20; re-verified for the
+marker-based sync by `tests/test_squash_sync.py`, 2026-11-25). One caveat, guarded by the
 ratchet: a **new** upstream file at the `src/` _root_ lands at our root — the
 root itself was never fully renamed, since `lib.rs`/`main.rs` and the Grain
 modules live there — so `git mv` it into `handy/` and add its `#[path]`
@@ -87,11 +95,22 @@ a huge upstream refactor, fall back to `git merge -s subtree` or map by hand.
 
 ### 2. Merge machinery — plain git, deliberately
 
-- **Grafted ancestry** (`33638cc`, an `ours`-merge of upstream `0392b7b`):
-  3-way merges work; upstream-only changes land automatically. The merge base
-  advances only at real merges or assessed release close-outs. Never trust a
-  version written in docs; query `git merge-base HEAD upstream/main` and
-  `git describe --tags --always <sha>` (audit 2026-08-22: v0.9.5 ancestry).
+- **The sync point** ([sync_base.py](sync_base.py)): the newest
+  `Upstream-Synced: <sha>` line in Grain's history, chosen by Handy's own
+  ancestry (two markers that disagree are refused, never guessed at). It
+  advances only at syncs and assessed close-outs. Never trust a version written
+  in docs; query `python Upstream/sync_base.py` and
+  `git describe --tags --always <sha>`. Until 2026-11-25 the sync point was a
+  grafted shared history (`33638cc`, an `ours`-merge of upstream `0392b7b`);
+  the marker replaced it so Handy's commits stop appearing in Grain's log.
+- **Squash sync** ([merge_upstream.py](merge_upstream.py)): for the one
+  `git merge --squash`, HEAD is grafted onto the sync point with a temporary
+  `git replace --graft`, so git's full machinery (rename detection, rerere,
+  merge drivers) runs a true three-way merge against the recorded base. The
+  replacement is deleted before the script returns, and the sync commit has
+  HEAD as its only parent. Verified 2026-11-25 against 72 real pending Handy
+  commits: the same 13 conflicts and a byte-identical index for all 886 other
+  files as the old ancestry merge.
 - **`merge=ours` attributes** (`.gitattributes`): docs, workflows, identity
   configs, lockfiles auto-keep Grain's side.
 - **rerere, shared**: every conflict resolution is recorded, and — via
@@ -119,8 +138,10 @@ filtering, as adopted by
 [Rust](https://blog.rust-lang.org/inside-rust/2026/06/04/how-josh-helps-rust-manage-code-across-multiple-repositories/)),
 and `git subtree` — and rejected them: they solve _mapping a subtree across
 repositories_. Grain doesn't have that problem, because `#[path]` kept
-upstream's paths merge-compatible inside one shared history. Plain `git merge`
-plus rename detection is simpler than any of them and loses nothing. GitHub's
+upstream's paths merge-compatible. The marker borrows Copybara's one good idea
+(record the synced upstream revision in the destination's commit message, keep
+no other state) without its transforms. Plain git merging plus rename
+detection is simpler than any of them and loses nothing. GitHub's
 own [friendly-fork guidance](https://github.blog/developer-skills/github/friend-zone-strategies-friendly-fork-management/)
 reaches the same conclusion: frequent, small, scheduled merges beat clever
 tooling.
@@ -130,21 +151,23 @@ tooling.
 [`upstream-sync.yml`](../.github/workflows/upstream-sync.yml), every 2 hours
 (and on any push touching `Upstream/`):
 
-1. **Trial merge** → `merge-report.md`, written into the CI **job summary**: the
+1. **Trial sync** → `merge-report.md`, written into the CI **job summary**: the
    next sync's conflict surface (behind count, trial result, conflicting files),
-   always known in advance without reading CI logs.
+   always known in advance without reading CI logs. The trial runs
+   `merge_upstream.py` itself, so frozen-frontend conflicts are resolved exactly
+   as a real sync resolves them.
 2. **Ledger**: [sync_upstream.py](sync_upstream.py) rebuilds `data.json` — the
    per-commit status ledger `verdict.py` validates against. It pages the API
    back to `TRACKING_FLOOR_TS` (a single page silently dropped commits whenever
    upstream landed a burst) and keys on **SHA**, because subjects repeat
    (`update catalog`, `bump tauri global shortcut`).
-3. **Ancestry audit**: flags upstream commits that are already applied here but
-   unrecorded (see D below), into the job summary — and gates step 4 on it.
-4. **Auto-PR**: clean merge + new commits + no ancestry drift → the
-   `sync/auto-upstream` branch is (re)built, the ratchet must pass on the
-   merged result, and a PR is opened/updated with the commit list and a review
-   checklist. Conflicted merges, ratchet failures and drift all suppress the
-   PR rather than producing a misleading one.
+3. **Sync-point audit**: flags upstream commits that are already applied here
+   but unrecorded (see D below), into the job summary — and gates step 4 on it.
+4. **Auto-PR**: clean sync + new commits + no drift → the
+   `sync/auto-upstream` branch is (re)built with one squashed sync commit, the
+   ratchet must pass on the result, and a PR is opened/updated with the commit
+   list and a review checklist. Conflicted syncs, ratchet failures and drift all
+   suppress the PR rather than producing a misleading one.
 
 > A GitHub Pages **dashboard** used to render the ledger + sync health as a
 > webpage. It was retired 2026-08-10: chronically stale (any hiccup in the
@@ -159,11 +182,11 @@ every push/PR touching `src-tauri/`: the boundary cannot silently erode.
 `data.json` and `merge-report.md` are **gitignored build products**. Nothing
 commits them; every run recomputes them from three inputs:
 
-| Input                          | Answers                                                       |
-| ------------------------------ | ------------------------------------------------------------- |
-| upstream's commit list         | what happened                                                 |
-| our git ancestry               | what we absorbed — a commit reachable from `HEAD` is `Merged` |
-| [verdicts.json](verdicts.json) | what only a human knows: `Ignored`, cherry-picks, notes       |
+| Input                          | Answers                                                         |
+| ------------------------------ | --------------------------------------------------------------- |
+| upstream's commit list         | what happened                                                   |
+| the recorded sync point        | what we absorbed — a commit at or before it is `Merged`         |
+| [verdicts.json](verdicts.json) | what only a human knows: `Ignored`, cherry-picks, notes         |
 
 So the output is a pure function of its inputs: idempotent, and impossible to
 drift. That matters because it used to drift constantly — verdicts were typed
@@ -179,14 +202,14 @@ python Upstream/verdict.py <sha|#PR> --note "detail"    # just annotate
 python Upstream/verdict.py <sha|#PR> --clear            # back to derived
 ```
 
-It refuses to store a status ancestry already implies, so `verdicts.json` only
-ever holds real decisions. **A merged sync needs no verdict at all.** Regenerate
+It refuses to store a status the sync point already implies, so `verdicts.json`
+only ever holds real decisions. **A merged sync needs no verdict at all.** Regenerate
 the ledger any time with `python Upstream/sync_upstream.py`.
 
 ### 4. Guards — the boundary is enforced, not hoped for
 
 [ratchet.py](ratchet.py) + [budget.json](budget.json): every Handy-derived
-file has a divergence budget (added+removed lines vs the merge base, measured
+file has a divergence budget (added+removed lines vs the sync point, measured
 blob-to-blob so the folder move can't fool it). CI fails on: a grown budget, a
 newly-diverged file, an outright-deleted upstream file, or a **stray**
 upstream file sitting outside `handy/`. Budgets tighten via
@@ -226,26 +249,26 @@ deferral. The overlay/capture review routes and acceptance checklist are in
 
 1. Read the PR body's commit list. Anything Grain does **not** actually take
    needs saying so — `python Upstream/verdict.py <sha> Ignored "why"` (the
-   divergence map says where Grain replaced that surface). Everything merged
-   needs nothing: ancestry files it.
+   divergence map says where Grain replaced that surface). Everything synced
+   needs nothing: the sync point files it.
 2. Review affected recording-window/capture changes using
    [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md), including owned callers and
    frozen-frontend behavior. CI must be green (build, tests, ratchet). If the ratchet flags a stray
    file, `git mv` it into `handy/` on the branch.
-3. Merge the PR with a **merge commit — never squash** (squashing discards
-   the recorded ancestry, so the board would forget these commits were merged
-   _and_ the next sync re-fights them).
+3. Merge the PR with a **merge commit or rebase — never squash** (a squash can
+   rewrite the sync commit's message, and without its `Upstream-Synced:` line
+   the board forgets these commits were synced _and_ the next sync re-fights
+   them).
 
-### B. The trial merge reports conflicts (rare case)
+### B. The trial sync reports conflicts (rare case)
 
 ```bash
 python Upstream/preflight.py            # fetches; says how far behind + what conflicts
 python Upstream/rerere_cache.py restore
 git checkout -b sync/upstream-YYYY-MM-DD
-python Upstream/merge_upstream.py       # merges; auto-resolves the frozen frontend
-# resolve ONLY what it lists, per UPSTREAM-DIVERGENCE.md
-git commit --no-edit
-python Upstream/merge_upstream.py --finish   # gates first; then tightens budgets
+python Upstream/merge_upstream.py       # squash-syncs; auto-resolves the frozen frontend
+# resolve ONLY what it lists, per UPSTREAM-DIVERGENCE.md, then `git add` them
+python Upstream/merge_upstream.py --finish   # commits the sync; gates; then tightens budgets
 python Upstream/rerere_cache.py save    # share NEW resolutions; commit them
 bun install && cargo check              # regenerate lockfiles
 python Upstream/verdict.py --pending    # anything left unassessed? record it
@@ -256,10 +279,15 @@ still fetches first and rejects targets outside fetched Handy main history.
 Resolve, review, test and finish each batch before selecting the next boundary;
 never substitute a bare merge or move the upstream tracking ref to an older tip.
 
-**Never run a bare `git merge upstream/main`.** The remote-tracking ref is a
-local cache; merging against a stale one is how the first 2026-08-02 sync
-"completed" while 16 commits it could not see stayed behind. Every tool here
-now fetches first — `git merge` does not.
+**Never run a bare `git merge upstream/main`.** Grain has no shared history
+with Handy, so it either fails as unrelated histories or — with
+`--allow-unrelated-histories` — drags every Handy commit back into Grain's log.
+The remote-tracking ref is also a local cache; merging against a stale one is
+how the first 2026-08-02 sync "completed" while 16 commits it could not see
+stayed behind. Every tool here fetches first — `git merge` does not.
+
+To abandon a sync in progress: `git reset --hard` (it clears the prepared
+`SQUASH_MSG`; no replace ref outlives the script).
 
 Three things `merge_upstream.py` does that hand-merging misses:
 
@@ -307,28 +335,30 @@ python Upstream/closeout.py vX.Y.Z              # read-only assessment check
 python Upstream/closeout.py vX.Y.Z --execute    # checked close-out + tree proof
 ```
 
-`closeout.py` verifies the tree hash is unchanged and refuses unassessed ranges,
-dirty worktrees, non-upstream targets, or a failing preflight. Commit the
-regenerated `budget.json` with the close-out. **Never** run raw
-`-s ours` over commits you have not assessed — it silently locks their fixes
-out forever, with no conflict to warn you. Cherry-picks record no ancestry
-(measured 2026-07-17: 13 cherry-picks, conflict surface unchanged at 57) —
-close-outs are what advance the merge base.
+`closeout.py` records an empty commit carrying `Upstream-Synced: <sha>`,
+verifies the tree hash is unchanged, and refuses unassessed ranges, dirty
+worktrees, targets outside `upstream/main` or not past the sync point, or a
+failing preflight. Commit the regenerated `budget.json` with the close-out.
+**Never** hand-write an `Upstream-Synced:` line over commits you have not
+assessed — it silently locks their fixes out forever, with no conflict to warn
+you. Cherry-picks do not move the sync point (measured 2026-07-17: 13
+cherry-picks, conflict surface unchanged at 57) — close-outs do.
 
-### D. "We're N behind, but we already did those" — ancestry drift
+### D. "We're N behind, but we already did those" — sync-point drift
 
 The single most common way this fork's bookkeeping goes wrong. Symptoms:
 
-- `git rev-list --count HEAD..upstream/main` stays stubbornly non-zero;
+- `python Upstream/upstream_ref.py` keeps reporting Handy commits behind;
 - the same file (historically `es/translation.json`) conflicts in _every_
-  trial merge;
+  trial sync;
 - the board says `Merged` for those very commits (a `verdicts.json` override
-  said so, since ancestry could not).
+  said so, since the sync point could not).
 
-**Cause:** the work was applied by cherry-pick or by hand. Git tracks
-_ancestry_, not content — so the content is in the tree, the ledger is
-correct, and git still believes we never took those commits. It therefore
-replays them (and re-raises their conflicts) into every future merge, forever.
+**Cause:** the work was applied by cherry-pick or by hand. The sync point
+tracks what was _synced_, not content — so the content is in the tree, the
+ledger is correct, and the next sync still three-way-merges those commits
+against the old base. It therefore replays them (and re-raises their conflicts)
+into every future sync, forever.
 `git cherry` won't spot it either: an adapted cherry-pick has a different
 patch-id, so it reports the commit as missing.
 
@@ -336,7 +366,7 @@ patch-id, so it reports the commit as missing.
 patch IDs, explicit `Upstream-Commit` trailers, and then subject heuristics; it prints a
 loud `ALREADY APPLIED` block. CI runs this every 2 hours, surfaces it in the
 job summary, and — importantly — **suppresses the auto-sync PR** while drift
-exists, because auto-merging in that state would replay resolved work.
+exists, because auto-syncing in that state would replay resolved work.
 
 **Fix:** verify the content really is present (spot-check the files each
 commit touched), then record it:
@@ -350,7 +380,8 @@ Measured 2026-07-20: four i18n commits (#1697, #1701, #1708, #1709) sat
 applied-but-unrecorded. Recording them took the trial merge from "1 conflict,
 4 behind" to **clean, 0 behind** without changing a single line of code.
 
-**Prevention:** prefer `git merge` over `git cherry-pick` for upstream work.
+**Prevention:** prefer a sync (`merge_upstream.py --target <sha>`) over
+`git cherry-pick` for upstream work.
 If an urgent fix must be cherry-picked or adapted, put the exact full SHA in
 the commit body as `Upstream-Commit: <sha>`, then close it out afterwards.
 Patch IDs catch exact cherry-picks; the trailer catches adapted ports; subject
@@ -513,6 +544,7 @@ execution plan for subsequent native/capture and final frontend stages.
 | 2026-08-15    | `98a4d80c` (6 commits)             | Backlog to **zero**. Two frozen Handy web-overlay conflicts were auto-dropped; one real `managers/audio.rs` conflict was resolved per policy. Adopted #37a26fd6's Secure Input/tray rebuild race fix (including atomic template-icon updates), #1908 portable `HF_HOME` under `Data/huggingface`, #1911 layout-aware macOS Cmd+V key resolution (active keyboard layout with ANSI-V fallback), and #1902's pre-init `GGML_METAL_NO_RESIDENCY=1` shutdown workaround (`HANDY_METAL_RESIDENCY=1` opts back in). #1907's Turkish semantic corrections were **manually ported** into Grain's owned locale schema with Grain branding. #549cbde3's webview arming visualization and compiled first-sample recorder API were **not adopted**: Grain's overlay is the native pill, and the upstream API would cut across batch, rolling, Agent, onboarding, and extension capture paths; the inert `handy/overlay.rs` was nevertheless taken verbatim. Decision recorded in `verdicts.json` and the per-file map. `cargo check --lib` passed (only upstream's documented Windows `Emitter` warning); `cargo test --lib` **510 passed, 1 ignored**; `bun install` unchanged; `tsc --noEmit` clean; ratchet + audit + freeze + port-audit green.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | 2026-08-22    | `0e503672` (10 commits)            | Audited every Handy commit after 2026-08-15 and closed ancestry to **zero behind**. Fixed four missed runtime/product changes: #1874 race-safe default-microphone fallback + UI refresh; #1406 phrase support across all Grain dictionary entry points; #1817/#1892 explicit xdotool modifier keyup cleanup; handy-keys 0.3.4. Completed #1924 beyond the earlier partial port by taking the generated catalog/architecture changes verbatim while preserving the exact 0.2.0 vendor baseline and isolated rolling/TDT patch contract. Adapted three suppressed docs fixes (Bluetooth input tradeoff, Apple-only fn/Globe limitation, stale macOS Accessibility grants). The new frontend/suppressed gates require problem, applicability, Grain destinations, and evidence and include upstream merge commits; d55ea7ef's conflict-marker accident is valid only with repair merge 0e503672. `cargo test --lib`: **622 passed, 1 ignored**; grain-core **111 passed**; frontend **81 passed**; TypeScript, policy, semantic audits, ancestry, and ratchet green.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2026-09-23    | `8f9cf53c` (42 commits)            | Bulk merge driver advanced ancestry to zero behind. It auto-resolved 14 frozen-frontend conflicts and reverted 13 routed UI changes; ten backend/product conflicts were resolved under the divergence policy. Ported model-file recovery, empty-recording unload, transcript-log redaction, Norwegian language alias, compound-key names, Wayland paste fixes, Nix updater guard, and Windows Vulkan default. Frontend, suppressed-path, relocation, divergence, policy, and ratchet gates pass after reviewing and locking 26 intentional temporary divergence increases. Seven larger tray/capture/shortcut/platform ports remain explicitly deferred in [REVIEW-2026-09-23.md](REVIEW-2026-09-23.md); zero behind does not imply feature parity. Bun production build and eight focused frontend tests passed; Rust check stopped in the vendored transcribe.cpp CMake build before Grain code compiled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-11-25    | sync point → marker                | Grain stops sharing git history with Handy. The sync point is now the `Upstream-Synced:` line ([sync_base.py](sync_base.py)), seeded at `73c09585`; syncs are one squashed single-parent commit (`merge_upstream.py`), close-outs an empty marker commit. Trial against the 72 pending Handy commits: identical 13 conflicts and identical index to the old ancestry merge; ledger (299 rows), ratchet and preflight results unchanged. |
 
 ### 2026-11-02 staged completion
 
