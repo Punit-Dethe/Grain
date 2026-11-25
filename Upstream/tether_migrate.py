@@ -8,7 +8,7 @@ tether there, and compare against the Python tools on the same history.
     python Upstream/tether_migrate.py            # writes .tether/ in the repo root
 
 It reads and never changes the Python tools' inputs; it writes only
-`.tether/config.toml` and `.tether/decisions/*.toml`.
+`.tether/config.toml`, `.tether/budgets.toml` and `.tether/decisions/*.toml`.
 """
 
 from __future__ import annotations
@@ -135,7 +135,15 @@ def main() -> int:
             path = os.path.join(decisions, f"{sha}.toml")
             with open(path, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(body)
-    print(f"wrote .tether/config.toml and {len(verdicts)} decision(s)")
+    with open(ratchet.BUDGET_PATH, encoding="utf-8") as handle:
+        budgets = json.load(handle)
+    with open(os.path.join(HERE, "frontend_allow.json"), encoding="utf-8") as handle:
+        adopted = json.load(handle).get("adopted", [])
+    lines = ["adopted = " + qlist(sorted(adopted)), "", "[files]"]
+    lines += [f"{q(path)} = {cost}" for path, cost in sorted(budgets.items())]
+    with open(os.path.join(state, "budgets.toml"), "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n".join(lines) + "\n")
+    print(f"wrote .tether/config.toml, budgets.toml and {len(verdicts)} decision(s)")
     return 0
 
 
