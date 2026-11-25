@@ -6,9 +6,9 @@
     python Upstream/verdict.py <sha|#PR> --clear           # drop the override
     python Upstream/verdict.py --pending                   # list what needs one
 
-Most commits need no verdict at all: once a sync is merged, the commit is in
-our ancestry and the ledger files it as `Merged` by itself. Reach for this only
-to say something ancestry cannot — `Ignored` (Grain replaced that surface),
+Most commits need no verdict at all: once a sync is merged, the commit is at or
+behind the sync point and the ledger files it as `Merged` by itself. Reach for this only
+to say something the sync point cannot — `Ignored` (Grain replaced that surface),
 work applied by cherry-pick, or a note explaining a resolution.
 
 It exists because verdicts used to be hand-typed into data.json, a 27 KB
@@ -164,7 +164,7 @@ def main(argv):
             entry.pop("status", None)
             # ASCII only: this prints to the Windows console (cp1252), where a
             # stray em dash raises UnicodeEncodeError and kills the command.
-            print(f"'{status}' is what ancestry already implies - storing only the note.")
+            print(f"'{status}' is what the sync point already implies - storing only the note.")
         else:
             entry["status"] = status
         if len(rest) > 1:
@@ -178,7 +178,7 @@ def main(argv):
 
     write_verdicts(verdicts)
     print(f"{row['sha'][:8]}  {row['commit']}")
-    print(f"  -> {entry if entry else 'no override (derived from ancestry)'}")
+    print(f"  -> {entry if entry else 'no override (derived from the sync point)'}")
 
     # Rebuild so the ledger (data.json) can never lag the verdict.
     print()

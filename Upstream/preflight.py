@@ -13,7 +13,7 @@ What it checks, in the order that matters:
   1. `upstream/main` is actually current. Everything below is measured against
      it, so a stale ref makes every later check confidently wrong. This is the
      failure that let a sync report "0 behind" while 16 commits were missing.
-  2. How far behind we are, and whether a merge would conflict.
+  2. How far behind we are, and whether a sync would conflict.
   3. The divergence ratchet — feature code creeping into the Handy tree.
   4. The divergence audit — ancestry drift and stale "converged" claims.
   5. The frontend freeze — files whose path is shared with upstream's src/.
@@ -33,6 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
+from sync_base import SyncBaseError, sync_base  # noqa: E402
 from upstream_ref import ensure_fresh  # noqa: E402
 
 
@@ -74,15 +75,19 @@ def run_gate(label: str, argv: list[str]) -> bool:
     return result.returncode == 0
 
 
-def trial_merge_conflicts() -> list[str] | None:
-    """Files a merge with upstream/main would conflict on.
+def trial_merge_conflicts(base: str) -> list[str] | None:
+    """Files a sync with upstream/main would conflict on.
 
-    Uses `merge-tree`, which computes the merge in memory — the working tree and
-    the index are never touched, so this is safe to run with uncommitted work.
-    Returns `None` when git is too old for the `--write-tree` form.
+    Uses `merge-tree` against the recorded sync point, which computes the merge
+    in memory — the working tree and the index are never touched, so this is
+    safe to run with uncommitted work. Returns `None` when git is too old for
+    the `--write-tree --merge-base` form.
     """
     out = subprocess.run(
-        ["git", "merge-tree", "--write-tree", "--name-only", "HEAD", "upstream/main"],
+        [
+            "git", "merge-tree", "--write-tree", "--name-only",
+            f"--merge-base={base}", "HEAD", "upstream/main",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -114,24 +119,29 @@ def main() -> int:
     if ensure_fresh() is None:
         return 1
 
-    behind = git("rev-list", "--count", "HEAD..upstream/main").strip() or "?"
-    ahead = git("rev-list", "--count", "upstream/main..HEAD").strip() or "?"
+    try:
+        base = sync_base()
+    except SyncBaseError as error:
+        print(f"  FAIL  sync point: {error}")
+        print("=== preflight FAILED ===")
+        return 1
+    behind = git("rev-list", "--count", f"{base}..upstream/main").strip() or "?"
     tip = git("log", "-1", "--format=%h %s", "upstream/main").strip()
     print(f"  upstream/main {tip}")
-    print(f"  behind {behind}, ahead {ahead}")
+    print(f"  synced to {base[:8]}, {behind} Handy commit(s) behind")
 
     if behind not in ("0", "?"):
-        conflicts = trial_merge_conflicts()
+        conflicts = trial_merge_conflicts(base)
         if conflicts is None:
             print("  (trial merge skipped: git too old for merge-tree --write-tree)")
         elif conflicts:
-            print(f"  a merge would conflict in {len(conflicts)} file(s):")
+            print(f"  a sync would conflict in {len(conflicts)} file(s):")
             for path in conflicts[:20]:
                 print(f"        {path}")
             if len(conflicts) > 20:
                 print(f"        ... and {len(conflicts) - 20} more")
         else:
-            print("  a merge would apply cleanly")
+            print("  a sync would apply cleanly")
 
     print("  --")
     ratchet = ["Upstream/ratchet.py", "--no-fetch"]
@@ -144,7 +154,7 @@ def main() -> int:
         run_gate("policy consistency", ["Upstream/policy_check.py"]),
     ]
     if skip_ratchet:
-        print("  SKIP  ratchet: close-out moves the merge base; checked after ancestry")
+        print("  SKIP  ratchet: close-out moves the sync point; checked after it")
     else:
         ok.insert(0, run_gate("ratchet", ratchet))
 

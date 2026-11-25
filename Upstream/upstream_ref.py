@@ -154,11 +154,17 @@ def main() -> int:
     sha = ensure_fresh()
     if sha is None:
         return 1
-    behind = _git("rev-list", "--count", f"HEAD..{REF}").strip()
-    ahead = _git("rev-list", "--count", f"{REF}..HEAD").strip()
+    from sync_base import SyncBaseError, sync_base
+
     subject = _git("log", "-1", "--format=%s", REF).strip()
     print(f"[upstream] {REMOTE}/{BRANCH} = {sha[:8]}  {subject}")
-    print(f"[upstream] behind {behind}, ahead {ahead}")
+    try:
+        base = sync_base()
+    except SyncBaseError as error:
+        print(f"[upstream] {error}", file=sys.stderr)
+        return 1
+    behind = _git("rev-list", "--count", f"{base}..{REF}").strip()
+    print(f"[upstream] synced to {base[:8]}, {behind} Handy commit(s) behind")
     return 0
 
 

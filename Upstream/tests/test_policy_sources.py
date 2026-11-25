@@ -17,15 +17,14 @@ class RelocationSourceTests(unittest.TestCase):
 
     def source_files(self, integrated: set[str], pending: set[str]) -> set[str]:
         def fake_git(*args: str) -> SimpleNamespace:
-            if args == ("merge-base", "HEAD", "upstream/main"):
-                return SimpleNamespace(returncode=0, stdout="integrated-sha\n")
             if args[:3] == ("ls-tree", "-r", "--name-only"):
                 self.assertEqual(args[4:], ("--", "src-tauri/src/"))
                 paths = {"integrated-sha": integrated, "upstream/main": pending}[args[3]]
                 return SimpleNamespace(returncode=0, stdout="\n".join(sorted(paths)))
             raise AssertionError(args)
 
-        with patch.object(policy_check, "git", side_effect=fake_git):
+        with patch.object(policy_check, "sync_base", return_value="integrated-sha"), \
+                patch.object(policy_check, "git", side_effect=fake_git):
             return policy_check.upstream_source_files()
 
     def test_pending_recorder_deletion_does_not_break_existing_route(self) -> None:
@@ -40,21 +39,16 @@ class RelocationSourceTests(unittest.TestCase):
     def test_unknown_source_is_not_accepted(self) -> None:
         self.assertNotIn("src-tauri/src/typo.rs", self.source_files({self.recorder}, {self.worker}))
 
-    def test_missing_merge_base_fails_closed(self) -> None:
-        with patch.object(policy_check, "git", return_value=SimpleNamespace(returncode=1, stdout="")):
-            with self.assertRaisesRegex(RuntimeError, "integrated Handy baseline"):
-                policy_check.upstream_source_files()
-
-    def test_empty_merge_base_fails_closed(self) -> None:
-        with patch.object(policy_check, "git", return_value=SimpleNamespace(returncode=0, stdout="\n")):
+    def test_missing_sync_point_fails_closed(self) -> None:
+        with patch.object(
+            policy_check, "sync_base", side_effect=policy_check.SyncBaseError("no marker")
+        ):
             with self.assertRaisesRegex(RuntimeError, "integrated Handy baseline"):
                 policy_check.upstream_source_files()
 
     def test_unreadable_source_tree_fails_closed(self) -> None:
-        with patch.object(policy_check, "git", side_effect=[
-            SimpleNamespace(returncode=0, stdout="integrated-sha\n"),
-            SimpleNamespace(returncode=1, stdout=""),
-        ]):
+        with patch.object(policy_check, "sync_base", return_value="integrated-sha"), \
+                patch.object(policy_check, "git", return_value=SimpleNamespace(returncode=1, stdout="")):
             with self.assertRaisesRegex(RuntimeError, "cannot inspect Handy source tree"):
                 policy_check.upstream_source_files()
 

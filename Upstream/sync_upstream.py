@@ -4,10 +4,11 @@ The ledger is DERIVED, never accumulated. Every run recomputes it from three
 inputs:
 
   * upstream's commit list (GitHub API, back to TRACKING_FLOOR_TS);
-  * our own git ancestry — a commit reachable from HEAD arrived through a
-    merge, so it is Merged whether or not anyone wrote that down;
+  * the recorded sync point (`sync_base.py`) — a Handy commit at or before it
+    arrived through a sync, so it is Merged whether or not anyone wrote that
+    down;
   * verdicts.json — the one human-owned file: the notes, and the statuses
-    ancestry cannot infer (Ignored, or work applied by cherry-pick).
+    the sync point cannot infer (Ignored, or work applied by cherry-pick).
 
 That makes the output a pure function of its inputs: idempotent, impossible to
 drift, and nothing to "regenerate". The previous design hand-edited data.json,
@@ -29,6 +30,7 @@ from datetime import datetime
 import re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sync_base import SyncBaseError, absorbed, sync_base  # noqa: E402
 from upstream_ref import ensure_fresh  # noqa: E402
 
 REPO = "cjpais/handy"
@@ -47,7 +49,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(script_dir, "data.json")
 VERDICTS_FILE = os.path.join(script_dir, "verdicts.json")
 
-ANCESTRY_NOTE = "Absorbed by an upstream merge (in our ancestry)."
+ANCESTRY_NOTE = "Absorbed by an upstream sync (at or before the sync point)."
 
 
 def fetch_page(page):
@@ -128,7 +130,8 @@ normalize_subject = normalize
 
 def git(*args):
     return subprocess.run(
-        ["git", *args], capture_output=True, text=True, check=True
+        ["git", *args], capture_output=True, text=True, check=True,
+        encoding="utf-8", errors="replace",
     ).stdout
 
 
@@ -147,16 +150,16 @@ def load_verdicts():
 
 
 def ancestry_shas():
-    """Every commit reachable from HEAD.
+    """Every Handy commit at or before the recorded sync point.
 
     One rev-list beats a `git merge-base --is-ancestor` per commit (that was
     80+ subprocesses a run). A failure here is fatal on purpose: with an empty
     set every row would file as Pending, and publishing that wipes the board.
     """
     try:
-        return set(git("rev-list", "HEAD").split())
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        raise SystemExit(f"Cannot read git ancestry ({e}) — refusing to build a ledger.")
+        return absorbed()
+    except (SyncBaseError, FileNotFoundError) as e:
+        raise SystemExit(f"Cannot read the sync point ({e}) — refusing to build a ledger.")
 
 
 def build_ledger(commits, ancestry, verdicts):
@@ -211,22 +214,23 @@ def check_ancestry_drift(recorded_shas):
     already in our tree (applied by cherry-pick / by hand).
 
     Returns (unmerged_count, already_applied_subjects, checked). A non-empty
-    second value means: close out with `git merge -s ours upstream/main` so git
-    stops replaying resolved work. See Upstream/UPSTREAM.md → "Closing out".
+    second value means: close out with `python Upstream/closeout.py <sha>
+    --execute` so the sync point moves past resolved work. See
+    Upstream/UPSTREAM.md → "Closing out".
     """
     try:
+        base = sync_base()
         unmerged = [
             line.split(" ", 1)
-            for line in git("log", "--format=%h %s", "HEAD..upstream/main").splitlines()
+            for line in git("log", "--format=%h %s", f"{base}..upstream/main").splitlines()
             if line.strip()
         ]
 
         if not unmerged:
             return 0, [], True
 
-        # Our own subjects since the merge base: a cherry-picked upstream commit
-        # keeps its subject, so this finds work that landed without ancestry.
-        base = git("merge-base", "HEAD", "upstream/main").strip()
+        # Our own subjects: a cherry-picked upstream commit keeps its subject,
+        # so this finds work that landed without moving the sync point.
         ours = {
             normalize(s) for s in git("log", "--format=%s", f"{base}..HEAD").splitlines()
         }
@@ -240,7 +244,7 @@ def check_ancestry_drift(recorded_shas):
                 git("log", "--format=%B%x00", f"{base}..HEAD"),
             )
         }
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError, SyncBaseError):
         # No upstream remote (fresh clone, or a local run) — the ledger is
         # still valid, so never let this take the whole job down.
         print("  (no upstream remote — skipping ancestry check)")
@@ -265,9 +269,9 @@ def report_ancestry(ledger):
     if not checked:
         return unmerged_count, applied, checked
     if not unmerged_count:
-        print("Ancestry: in sync with upstream/main (0 unmerged).")
+        print("Sync point: in sync with upstream/main (0 unmerged).")
         return unmerged_count, applied, checked
-    print(f"Ancestry: {unmerged_count} upstream commit(s) not in our history.")
+    print(f"Sync point: {unmerged_count} upstream commit(s) past it.")
     if applied:
         # ASCII only: this runs on the Windows console (cp1252), where a stray
         # arrow or warning glyph raises UnicodeEncodeError and kills the job.
@@ -279,9 +283,9 @@ def report_ancestry(ledger):
             print(f"      {sha} {subj}")
         print(
             "  -> Verify the content, then record it:\n"
-            "        git merge -s ours upstream/main\n"
+            "        python Upstream/closeout.py <upstream sha> --execute\n"
             "     Until then git replays these commits - and their conflicts -\n"
-            "     into every merge. See Upstream/UPSTREAM.md."
+            "     into every sync. See Upstream/UPSTREAM.md."
         )
     return unmerged_count, applied, checked
 

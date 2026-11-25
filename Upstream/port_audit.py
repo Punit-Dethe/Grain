@@ -51,6 +51,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
+from functools import lru_cache  # noqa: E402
+
+from sync_base import sync_base  # noqa: E402
 from upstream_ref import ensure_fresh  # noqa: E402
 
 RELOCATIONS_PATH = os.path.join(HERE, "relocations.json")
@@ -92,11 +95,16 @@ def load_verdicts() -> dict:
         return {}
 
 
+@lru_cache(maxsize=1)
+def _sync_point() -> str:
+    return sync_base()
+
+
 def is_merged(sha: str) -> bool:
-    """True when `sha` is already in our history (an ancestor of HEAD)."""
+    """True when `sha` is already synced (at or before the sync point)."""
     return (
         subprocess.run(
-            ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+            ["git", "merge-base", "--is-ancestor", sha, _sync_point()],
             cwd=ROOT,
             capture_output=True,
         ).returncode

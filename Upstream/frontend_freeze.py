@@ -28,7 +28,7 @@ land; blocking the sync PR over it would stall *backend* intake for a frontend
 reason. Flip ``"strict": true`` in frontend_allow.json once the census reaches
 zero — from then on any frontend change in a sync is a hard failure.
 
-``--report`` lists upstream commits touching ``src/`` since the merge base, so a
+``--report`` lists upstream commits touching ``src/`` since the sync point, so a
 reviewer can spot the rare one carrying backend knowledge worth porting to Rust
 by hand (see the plan's §3 principle: facts about the machine belong in the
 engine, screens are ours).
@@ -40,6 +40,7 @@ import subprocess
 import sys
 
 from review_evidence import validation_failures
+from sync_base import sync_base
 
 SCOPE = "src/"
 ALLOW_PATH = os.path.join(
@@ -185,14 +186,14 @@ def sync_purity(base: str) -> int:
 
 
 def report() -> int:
-    base = git("merge-base", "HEAD", "upstream/main").strip()
+    base = sync_base()
     log = git(
         "log", "--oneline", f"{base}..upstream/main", "--", SCOPE
     ).strip()
     if not log:
-        print("[freeze] no upstream frontend commits since the merge base")
+        print("[freeze] no upstream frontend commits since the sync point")
         return 0
-    print("[freeze] upstream commits touching src/ since the merge base:")
+    print("[freeze] upstream commits touching src/ since the sync point:")
     print("\n".join(f"    {line}" for line in log.splitlines()))
     print(
         "  These are NOT taken. If one carries backend knowledge (host "

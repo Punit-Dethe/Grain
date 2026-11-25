@@ -17,6 +17,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+from sync_base import SyncBaseError, sync_base  # noqa: E402
+
 RELOCATIONS_PATH = os.path.join(HERE, "relocations.json")
 DIVERGENCE_PATH = os.path.join(HERE, "UPSTREAM-DIVERGENCE.md")
 LIB_PATH = os.path.join(ROOT, "src-tauri", "src", "lib.rs")
@@ -44,15 +47,16 @@ def upstream_source_files() -> set[str]:
     """Validate existing routes before, and new routes during, an upstream merge.
 
     A fetch must not invalidate a route just because a pending commit deletes
-    its source. Once that deletion is merged, the merge base advances and the
+    its source. Once that deletion is synced, the sync point advances and the
     obsolete source no longer qualifies. New upstream paths are accepted too,
-    so a merge can update its routes before the merge commit is recorded.
+    so a sync can update its routes before the sync commit is recorded.
     """
-    base = git("merge-base", "HEAD", "upstream/main")
-    if base.returncode or not base.stdout.strip():
-        raise RuntimeError("cannot determine the integrated Handy baseline")
+    try:
+        base = sync_base()
+    except SyncBaseError as error:
+        raise RuntimeError(f"cannot determine the integrated Handy baseline: {error}")
     files: set[str] = set()
-    for ref in dict.fromkeys(("upstream/main", base.stdout.strip())):
+    for ref in dict.fromkeys(("upstream/main", base)):
         tree = git("ls-tree", "-r", "--name-only", ref, "--", "src-tauri/src/")
         if tree.returncode:
             raise RuntimeError(f"cannot inspect Handy source tree at {ref}")

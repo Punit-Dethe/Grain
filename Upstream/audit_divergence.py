@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Divergence audit — checks the *claims* in UPSTREAM-DIVERGENCE.md against real blobs.
 
-The ratchet ([ratchet.py](ratchet.py)) measures divergence against the **merge
-base**, which is the right yardstick for "is feature code creeping into the
+The ratchet ([ratchet.py](ratchet.py)) measures divergence against the **sync
+point**, which is the right yardstick for "is feature code creeping into the
 Handy tree". But it is blind to two things that make syncs harder:
 
-  1. **Ancestry drift** — a file byte-identical to `upstream/main` that is still
+  1. **Sync-point drift** — a file byte-identical to `upstream/main` that is still
      billed, because the change was applied by hand/cherry-pick instead of
-     merged. Git does not know we have it, so it replays it (and re-raises its
-     conflict) into every future merge. `handy/tray_i18n.rs` was exactly this
+     synced. Git does not know we have it, so it replays it (and re-raises its
+     conflict) into every future sync. `handy/tray_i18n.rs` was exactly this
      when this script was written: identical blob, 60 lines of phantom budget,
      and a delete/modify conflict every sync because the file also moved and
      similarity fell to 36% — under git's 50% rename threshold.
@@ -33,6 +33,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sync_base import sync_base  # noqa: E402
 from upstream_ref import ensure_fresh  # noqa: E402
 
 HANDY_DIR = "src-tauri/src/handy/"
@@ -101,7 +102,7 @@ def main():
         print("upstream/main not found — run: git fetch upstream", file=sys.stderr)
         return 2
 
-    base = git("merge-base", "HEAD", "upstream/main").strip()
+    base = sync_base()
     ours, up, base_t = {}, {}, {}
     for scope in SCOPES:
         ours.update(tree("HEAD", scope))
@@ -133,7 +134,7 @@ def main():
         if any(p.endswith("/" + name) or p == name for p in real)
     )
 
-    print(f"merge base {base[:8]} | {len(up)} upstream files in scope")
+    print(f"sync point {base[:8]} | {len(up)} upstream files in scope")
     print(f"  diverged from upstream/main by our own edits : {len(real)}")
     print(f"  deleted by us                                : {len(deleted)}")
     print()
@@ -142,7 +143,7 @@ def main():
         print("ANCESTRY DRIFT - byte-identical to upstream/main, still billed:")
         for path, cost in drift:
             print(f"  {path}  (budget {cost})")
-        print("  Fix: merge upstream (or `git merge -s ours` per UPSTREAM.md D),")
+        print("  Fix: sync upstream (or `closeout.py <sha> --execute` per UPSTREAM.md D),")
         print("  then `python Upstream/ratchet.py --update`.")
         print()
 

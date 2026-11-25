@@ -3,7 +3,7 @@
 
 Guards the boundary between the Handy-derived STT core and Grain's own code:
 every file under ``src-tauri/`` that also exists in upstream's tree has a
-line-budget (added+removed lines vs the upstream merge base) recorded in
+line-budget (added+removed lines vs the Handy sync point) recorded in
 ``budget.json``. CI fails any push that
 
   * grows an existing budget (feature code creeping into a Handy file), or
@@ -18,10 +18,10 @@ working tree, so running ``--update`` with the change still unstaged records
 the *old* numbers. Commit the code first, then ``--update``, then amend or
 follow up with the budget commit.
 
-The reference is the *merge base* with ``upstream/main`` (not upstream's HEAD),
-so upstream activity never shifts Grain's numbers; only Grain commits and
-release close-outs (``git merge -s ours vX.Y.Z``) do. After a close-out the
-budgets must be regenerated with ``--update`` as part of the sync commit.
+The reference is the recorded *sync point* (``sync_base.py``, not upstream's
+HEAD), so upstream activity never shifts Grain's numbers; only Grain commits,
+syncs and close-outs (``closeout.py``) do. After either the budgets must be
+regenerated with ``--update``.
 
 Grain-only files (no upstream counterpart) are invisible to the ratchet —
 that is the point: new features belong there.
@@ -42,6 +42,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from sync_base import sync_base  # noqa: E402
 from upstream_ref import ensure_fresh  # noqa: E402
 
 SCOPE = "src-tauri/"
@@ -72,7 +73,7 @@ def git(*args: str) -> str:
 
 
 def measure(worktree: bool = False) -> dict:
-    """Divergence per file, measured blob-to-blob against the merge base.
+    """Divergence per file, measured blob-to-blob against the sync point.
 
     Deliberately NOT a `git diff base HEAD` over the tree: once phase 7 moved the
     Handy files into `src/handy/`, rename detection pairs each move as R100 and
@@ -84,7 +85,7 @@ def measure(worktree: bool = False) -> dict:
     because that is what CI must judge, and because ``--update`` has to record
     committed numbers.
     """
-    base = git("merge-base", "HEAD", "upstream/main").strip()
+    base = sync_base()
     base_files = set(
         git("ls-tree", "-r", "--name-only", base, "--", SCOPE).splitlines()
     )
@@ -181,8 +182,8 @@ def budget_growth(current: dict, budget: dict) -> list[tuple[str, int | None, in
 
 
 def main() -> int:
-    # The budget is measured against the merge base with `upstream/main`. A
-    # stale ref moves that base and silently changes every number.
+    # The budget is measured against the recorded sync point. A
+    # stale upstream ref hides it and silently changes every number.
     if ensure_fresh(quiet=True) is None:
         return 1
     worktree = "--worktree" in sys.argv
@@ -232,7 +233,7 @@ def main() -> int:
             )
         elif cost > allowed:
             failures.append(
-                f"GREW: {path} {allowed} -> {cost} lines vs merge base. "
+                f"GREW: {path} {allowed} -> {cost} lines vs sync point. "
                 f"Feature code belongs outside the Handy-derived core."
             )
         elif cost < allowed:
