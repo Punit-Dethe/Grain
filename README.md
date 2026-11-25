@@ -38,7 +38,7 @@ Everything beyond plain dictation is optional. Turn on what helps you and ignore
 The heart of Grain. One shortcut, from any app.
 
 - **Hold or toggle.** Hold the key while you talk, or press once to start and again to stop. Your choice.
-- **Long dictation without the wait.** With a supported model, Grain transcribes while you're still talking, so even a ten-minute brain dump lands moments after you stop instead of making you wait for the whole recording to process. You don't have to turn anything on: pick a supported model and it just happens.
+- **Fast, even for long dictation.** With models like Parakeet, a ten-minute brain dump lands moments after you stop talking, not minutes later.
 - **Live text for models that support it.** Some models show your words as you speak them.
 - **Runs on your computer.** Choose a speech model from the built-in catalogue and Grain downloads it once. If you prefer, you can use a cloud speech service you've set up instead.
 - **"Scrap that."** Lost your train of thought? Say "scrap that" and everything before it is thrown away while you keep talking.
@@ -126,14 +126,9 @@ If there's something you wish Grain did, something that gets in your way, or a d
 4. Set your dictation shortcut, click into any text box, and start talking.
 5. Optional: connect an AI provider under **Settings → AI** to unlock AI cleanup, the Agent and meeting summaries.
 
-Grain runs on Windows, macOS and Linux.
-
 ### Good to know
 
-- **Linux (Wayland):** typing into other apps may need `wtype` or `dotool` installed. On Debian or Ubuntu, install the downloaded package with `sudo apt install ./Grain_*.deb`.
-- **macOS with Bluetooth headphones:** using the headset microphone can make playback sound worse while recording. Choose your Mac's built-in microphone in Grain to avoid it.
-- **macOS `fn`/Globe key:** works in shortcuts only on Apple keyboards.
-- **An older clipboard item gets pasted instead of your words:** open Grain, press `Ctrl+Shift+D` (`Cmd+Shift+D` on macOS) to show the Debug settings, then try **Reliable Paste** or increase **Paste Delay (After)**. If it keeps happening, [let us know](https://github.com/Punit-Dethe/Grain/issues) which app and operating system you're using.
+- **An older clipboard item gets pasted instead of your words:** open Grain, press `Ctrl+Shift+D` to show the Debug settings, then try **Reliable Paste** or increase **Paste Delay (After)**. If it keeps happening, [let us know](https://github.com/Punit-Dethe/Grain/issues) which app you were typing into.
 
 ## For developers
 
