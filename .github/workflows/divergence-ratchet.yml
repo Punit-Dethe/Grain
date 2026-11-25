@@ -65,7 +65,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history required for the merge base
+          fetch-depth: 0 # full history required to find the sync marker
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -86,7 +86,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history required for the merge base
+          fetch-depth: 0 # full history required to find the sync marker
 
       - name: Set up Python
         uses: actions/setup-python@v5

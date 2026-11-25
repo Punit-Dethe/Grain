@@ -143,7 +143,7 @@ def sync_message(base: str, target: str) -> str:
     """Subject, the absorbed Handy subjects (credit by link, not by authorship),
     and the marker every tool reads the sync point from."""
     log = git("log", "--no-merges", "--format=  %h %s", f"{base}..{target}").stdout.rstrip()
-    count = git("rev-list", "--count", "--no-merges", f"{base}..{target}").stdout.strip()
+    count = git("rev-list", "--count", f"{base}..{target}").stdout.strip()
     return (
         f"sync(upstream): Handy {target[:8]} ({count} commits)\n\n"
         f"Brings in Handy ({UPSTREAM_URL}) changes {base[:12]}..{target[:12]}:\n\n"

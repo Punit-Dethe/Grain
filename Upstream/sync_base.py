@@ -21,6 +21,7 @@ honest in both directions while every merge stays a true three-way merge
 against the recorded base.
 
     python Upstream/sync_base.py          # print the sync point
+    python Upstream/sync_base.py --sha    # just the sha (for scripts and CI)
 """
 
 from __future__ import annotations
@@ -130,12 +131,16 @@ def absorbed(rev: str = "HEAD") -> set[str]:
 
 
 def main() -> int:
-    rev = sys.argv[1] if len(sys.argv) > 1 else "HEAD"
+    args = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
+    rev = args[0] if args else "HEAD"
     try:
         commit, sha = sync_point(rev)
     except SyncBaseError as error:
         print(f"[sync-base] {error}", file=sys.stderr)
         return 1
+    if "--sha" in sys.argv:
+        print(sha)
+        return 0
     subject = _git("log", "-1", "--format=%s", sha, check=False).stdout.strip()
     print(f"[sync-base] Handy {sha[:12]}  {subject}")
     print(f"[sync-base] recorded by {commit[:12]}")
