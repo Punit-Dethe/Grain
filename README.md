@@ -22,14 +22,14 @@ On top of that, Grain can tidy up what you said, take spoken requests like a per
 
 Grain does a few different jobs. Most people start with one and grow into the rest.
 
-| If you want to…                                      | Start with                                      |
-| ---------------------------------------------------- | ----------------------------------------------- |
-| Write faster than you type                           | [Dictation](#dictation)                         |
-| Turn rough speech into polished writing              | [AI cleanup](#ai-cleanup-optional)              |
-| Ask for things out loud: rewrite, explain, look up   | [Agent](#agent)                                 |
-| Capture meetings and calls without taking notes      | [Recall](#recall-meetings)                      |
-| Let the Agent work with your browser, the web, apps  | [Extensions](#extensions)                       |
-| Teach Grain your names, phrases and writing style    | [Personalize](#personalize)                     |
+| If you want to…                                     | Start with                         |
+| --------------------------------------------------- | ---------------------------------- |
+| Write faster than you type                          | [Dictation](#dictation)            |
+| Turn rough speech into polished writing             | [AI cleanup](#ai-cleanup-optional) |
+| Ask for things out loud: rewrite, explain, look up  | [Agent](#agent)                    |
+| Capture meetings and calls without taking notes     | [Recall](#recall-meetings)         |
+| Let the Agent work with your browser, the web, apps | [Extensions](#extensions)          |
+| Teach Grain your names, phrases and writing style   | [Personalize](#personalize)        |
 
 Everything beyond plain dictation is optional. Turn on what helps you and ignore the rest; switched-off features don't run in the background.
 
