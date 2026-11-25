@@ -1,7 +1,8 @@
 # Fork tool — design plan
 
-Status: **plan, not started** (2026-11-25). Working name: **`tether`** (a
-placeholder — check crates.io / GitHub availability before the repo exists).
+Status: **M0 started** (2026-11-25). Name: **`tether`** (user-facing name may
+change later). License: **MIT**. Repository: `Punit-Dethe/tether` for now; it
+moves to an organisation account later. No MCP server is planned (§8).
 
 A free, open-source tool for keeping a long-lived fork in step with its
 upstream, built for AI agents to drive. It starts life as Grain's own
@@ -72,7 +73,8 @@ designed for agents. Free, local, bring-your-own-agent.
 | Electron / jj-fork / Brave | Patch-carry mode: fork = ordered change set on upstream | carry mode |
 | Copybara / Grain | Clean history: one sync commit + `Upstream-Synced:` marker | merge mode (default) |
 | rerere (Grain) | Shared, versioned conflict memory | `.tether/rr-cache/` |
-| Mergiraf / Weave | Code-aware merging | configured as merge drivers, not rebuilt |
+| Weave | Code-aware (function/class level) merging | **built in** via the `weave-core` crate (§8.1) |
+| Mergiraf | Code-aware merging | supported as an external driver only (GPL-3.0) |
 | fork-parity | Upstream triage by priority | inbox categories |
 | stream-track / safeguard | Find upstream follow-up and security fixes | inbox `security` category |
 
@@ -138,7 +140,7 @@ review queue with required evidence, divergence budgets, owned-area handling
 | `decide` | Validate and store decisions + evidence |
 | `session` | Resumable state in `.git/tether/` (what step, what is pending) |
 | `report` | Text and JSON output; `status` next-action contract |
-| `mcp` | Optional MCP server over the same commands (later) |
+| `semantic` | `tether merge-driver`: Weave's entity-level merge as a git merge driver (§8.1) |
 
 ### 6.2 Files
 
@@ -186,14 +188,49 @@ All take `--json`. Nothing else in v1.
 
 ## 8. Works alongside (not instead of)
 
-- **Mergiraf / Weave** — configured as git merge drivers; Weave's
-  `--verify-cmd` style gating is a model for ours.
+### 8.1 Weave, built in
+
+[Weave](https://github.com/Ataraxy-Labs/weave) (Rust, ~1.4k stars, active —
+v0.7.1 on 2026-11-02) merges at the function/class level and refuses when
+unsure. Its merge engine is a separate library crate, `weave-core`
+(`MIT OR Apache-2.0`, on crates.io, entry point `entity_merge`), so it fits
+inside tether without forking:
+
+- **How it plugs in:** git calls a merge driver per conflicting file. tether
+  registers **itself** as that driver for one sync only
+  (`tether merge-driver %O %A %B %P`, which calls `weave-core`), so users install
+  one binary, and git's rename detection, rerere and the owned-area rules keep
+  working around it. The driver is written to `.git/info/attributes` for the
+  session and removed after it, and only for paths the repository has not
+  given its own `merge=` rule (Grain's `src/** merge=ours` must keep winning).
+- **Depend, don't fork.** Forking Weave would create the very problem tether
+  solves. tether pins a `weave-core` version. If we need a change, we send it
+  upstream; only if it is refused do we carry a patch (`[patch.crates-io]`),
+  and that patch is then maintained with tether itself.
+- **Cost to watch:** `weave-core` turns on `sem-core`'s `git` (libgit2, C) and
+  `grammar-all` (~40 tree-sitter grammars, C) features, which means a slower
+  first build and a bigger binary. Mitigation: tether builds it behind a
+  `semantic-merge` cargo feature (on in release binaries, off for a minimal
+  build), and we propose upstream a weave-core feature to choose grammars and
+  drop libgit2.
+- **Licences:** Weave is MIT-or-Apache, compatible with tether's MIT. Mergiraf
+  is GPL-3.0-only, so it can be used as an external driver but never linked in.
+
+### 8.2 Other tools
+
+- **Mergiraf** — external merge driver, if the user prefers it.
 - **GitHub Copilot / Agent Merge, `gh`, GitHub MCP** — PR creation and
   plain-conflict fixing stay theirs; tether produces the branch and the PR body.
 - **Git MCP servers** — generic git access for the agent; tether does not
   duplicate them.
 - **Graftfork** — a hosted alternative; tether is the local, open one.
 - **fork-parity** — overlapping triage; tether's inbox is the superset.
+
+### 8.3 No MCP server
+
+Agents drive tether through its command line, which they already use well; an
+MCP layer would add a process and a second interface for no new capability.
+Revisit only if a real agent cannot use the CLI.
 
 ## 9. Dashboard (last, optional)
 
@@ -219,7 +256,7 @@ Designed with user approval before building (same rule as Grain's UI).
 | M5 | Release tracking + security category | Fixture with tagged releases and a GHSA reference |
 | M6 | **Grain switches**: config written, CI moved, `Upstream/*.py` deleted, then the 72+ pending Handy commits synced with tether | Grain sync PR produced by tether |
 | M7 | Carry mode (patch-set forks) with Graftfork's safety rules | Public fixture forks re-applied onto new releases |
-| M8 | MCP server mode | Same contract over MCP |
+| M8 | Built-in Weave merge driver (`semantic-merge` feature) | Fixture: a function-level conflict git cannot merge is merged; an unsure one is refused |
 | M9 | Dashboard | User visual approval |
 
 ## 11. Moving Grain safely
@@ -238,15 +275,21 @@ Designed with user approval before building (same rule as Grain's UI).
 - **Competition** — Graftfork could open-source; GitHub could build it in.
   The product-fork layer and the agent contract are the parts least likely to
   be copied.
-- **Non-goals** — our own conflict resolver, our own LLM calls, hosting,
-  patch-stack editing UX (jj-fork, Electron do it), dashboards before M9.
+- **Non-goals** — our own conflict resolver, our own LLM calls, hosting, an
+  MCP server, patch-stack editing UX (jj-fork, Electron do it), dashboards
+  before M9.
 
-## 13. Open decisions
+## 13. Decisions
 
-- Name (placeholder `tether`), license (MIT/Apache-2.0 dual is the Rust norm),
-  which GitHub org owns it.
+Decided 2026-11-25: name `tether` (user-facing, changeable), license MIT,
+repository `Punit-Dethe/tether` (moves to an organisation later), no MCP
+server, Weave used as a library dependency rather than forked.
+
+Still open:
+
 - Intent marker syntax per language (comment prefix vs a sidecar file).
-- Whether `packet` trims context by syntax (tree-sitter) in v1 or later.
+- Whether `packet` trims context by syntax (tree-sitter, available through
+  `weave-core`) in v1 or later.
 
 ## Sources
 
