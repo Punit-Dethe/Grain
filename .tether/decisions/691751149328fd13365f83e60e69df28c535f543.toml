@@ -1,0 +1,8 @@
+status = "ignored"
+note = "Adds a Handy sponsor and logo; Grain does not import Handy sponsorship assets"
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Handy added a sponsor logo to its README"
+destinations = []
+evidence = "Sponsorship copy and image are Handy-specific and do not change Grain product behavior"

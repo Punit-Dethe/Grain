@@ -1,0 +1,8 @@
+status = "ignored"
+note = "Handy v0.9.6 release version only; Grain owns its independent package version and generated lockfiles"
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Handy release bump changes its product version"
+destinations = []
+evidence = "The commit changes only Handy version strings in package, Cargo, lockfile and Tauri config; Grain version is 0.0.5"

@@ -1,0 +1,8 @@
+status = "ignored"
+note = "Reorders Handy Development Setup heading in its README; Grain has its own Build from source section"
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Handy repositioned its Development Setup link"
+destinations = []
+evidence = "Grain README already links BUILD.md from its own Build from source section"

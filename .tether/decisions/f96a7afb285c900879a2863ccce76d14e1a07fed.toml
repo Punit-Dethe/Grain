@@ -1,0 +1,1 @@
+note = "AUDIT 2026-07-17: was HALF-applied - run-extension gate was correct but the fuzzy-correction gate still used Feature::InitialPrompt, so custom words were silently dropped for non-whisper models advertising it. Fixed, and the same root cause fixed in the Grain-only rolling path (upstream fix could not reach it)."

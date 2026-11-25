@@ -1,0 +1,7 @@
+note = "2026-11-02: adopted pre-run macOS Accessory startup, adapted for Grain lazy Core/window ownership. Existing show-main-window decision and early Regular promotion retain no-tray/permissions/update visibility. No macOS runtime acceptance is claimed."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Starting hidden must avoid unreliable post-launch Regular-to-Accessory demotion and preserve a way back without a tray."
+destinations = ["src-tauri/src/lib.rs", "Upstream/SYNC-2026-11-02.md"]
+evidence = "Grain creates Core settings during Ready, so all GUI launches start Accessory before run, then the existing show-window decision promotes to Regular before building/showing a visible window (also no-tray, onboarding and updater cases). Headless CLI policy and window destruction stay unchanged. Native macOS runtime acceptance pending."

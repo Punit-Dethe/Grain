@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "A slow receiving app can paste restored clipboard text instead of the transcript"
+destinations = ["README.md"]
+evidence = "Grain README now explains Reliable Paste and the after-paste delay using the actual Grain Debug shortcut and platform availability"

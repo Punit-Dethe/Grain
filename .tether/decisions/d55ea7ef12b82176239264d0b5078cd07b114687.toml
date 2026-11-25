@@ -1,0 +1,18 @@
+status = "merged"
+note = "Semantic intent is covered by Grain's exact-device selector and schema migration; this upstream commit itself contains conflict markers and is valid only together with repair merge 0e503672."
+
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "not-applicable"
+destinations = ["src-tauri/src/rolling.rs", "crates/rolling-window/src"]
+evidence = "This change only removes an ambiguous load selector; rolling shares the central engine selection and has no parallel accelerator setting."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs"]
+evidence = "grain-core migration converts generic GPU without an exact device to Auto and preserves a stable keyed device."
+
+[review.frontend]
+outcome = "already-covered"
+problem = "A standalone generic GPU accelerator selection is ambiguous under transcribe.cpp 0.2.0 without a stable device identity."
+destinations = ["src/app/components/settings/AccelerationSelector.tsx", "crates/grain-core/src/settings.rs"]
+evidence = "The UI offers exact GPU devices and migrations normalize generic GPU-without-device to Auto; tests cover both legacy and current settings."

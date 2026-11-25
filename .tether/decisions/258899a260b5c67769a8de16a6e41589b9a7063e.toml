@@ -1,0 +1,9 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "Compiled Handy action completion log calls redact_text; Grain actions do not log transcript bodies."
+
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src"]
+evidence = "Shared TranscriptionManager redacts final result in release logs; rolling and TDT Flow log session metadata only."

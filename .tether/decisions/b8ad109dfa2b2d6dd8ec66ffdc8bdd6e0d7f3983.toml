@@ -1,0 +1,8 @@
+status = "merged"
+note = "Adapted the macOS Bluetooth microphone tradeoff to Grain's user documentation."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Bluetooth bidirectional recording can reduce headset playback quality or volume and looks like an application audio bug."
+destinations = ["README.md"]
+evidence = "Known input/audio behavior tells users to keep Bluetooth output while selecting a built-in or external microphone."

@@ -1,0 +1,18 @@
+status = "merged"
+note = "Successful default-microphone fallback persistence, concurrent-selection guards and settings/device refresh are ported. Maintenance audit 2026-10-04 found the CPAL stream-error/needs_reopen portion absent in recorder and manager; that remainder is explicitly queued in DEFERRED-PORTS.md, so this commit does not imply full runtime parity."
+
+[port."src-tauri/src/audio_toolkit/audio/recorder.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/handy/managers/audio.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_audio_journal.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "Source inspection confirms worker-liveness recovery but no upstream CPAL stream_error flag / needs_reopen path. The remaining disconnect/no-sample reopen contract is now explicitly queued; existing fallback-persistence behavior is not claimed as full parity."
+
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/extension_session.rs", "src-tauri/src/grain_action_session.rs", "src-tauri/src/grain_onboarding.rs"]
+evidence = "Successful default-open persistence and concurrent selection guards are present, but the manager still checks is_capture_worker_dead rather than upstream needs_reopen. The missing stream-error integration is tracked in DEFERRED-PORTS.md; hardware recovery remains unvalidated."
+
+[review.frontend]
+outcome = "adapted"
+problem = "After a selected microphone disconnects, the backend can recover on the system default while the UI and persisted setting still name the missing device."
+destinations = ["src-tauri/src/handy/managers/audio.rs", "src/app/stores/settingsStore.ts"]
+evidence = "Persistence occurs only after successful default stream open and only if the unavailable selection is still current; settings-changed refreshes settings and microphones."

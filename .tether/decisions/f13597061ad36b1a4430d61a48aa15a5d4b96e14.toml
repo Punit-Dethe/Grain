@@ -1,0 +1,1 @@
+note = "build.rs staging cherry-picked; redist locator wired into grain-release.yml (x64) instead of upstream build.yml"

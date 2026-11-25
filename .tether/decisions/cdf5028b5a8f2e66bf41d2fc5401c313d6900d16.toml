@@ -1,0 +1,2 @@
+status = "ignored"
+note = "Grain has custom sidebar structure with additional tabs (Speech to Text, Grain Space, Experimentations). Applied custom ordering instead."

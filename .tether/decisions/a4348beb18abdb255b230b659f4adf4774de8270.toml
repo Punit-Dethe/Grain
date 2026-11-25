@@ -1,0 +1,9 @@
+[port."src-tauri/src/audio_toolkit/audio/recorder.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/handy/managers/audio.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_audio_journal.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "Source inspection confirms is_capture_worker_dead and recorder close/reopen after worker death; the existing unopened_recorder_is_not_reported_dead regression covers the initial no-worker guard. The later CPAL stream-error variant is separately deferred under c89b7bf3."
+
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/extension_session.rs", "src-tauri/src/grain_action_session.rs", "src-tauri/src/grain_onboarding.rs"]
+evidence = "start_microphone_stream checks worker liveness before the already-open fast path, closes dead capture and restores mute; startup checks are retained across capture callers. This source review does not claim validation of the later CPAL callback-error remainder."

@@ -1,0 +1,24 @@
+status = "merged"
+note = "Completed the prior manual transcribe.cpp 0.2.0 port: exact opaque-device lifecycle, settings migration, build/ABI staging, generated catalog additions, architecture allowlist, and Grain-owned selector are all audited under vendor/TRANSCRIBE-CPP.md."
+
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "crates/rolling-window/src"]
+evidence = "Opaque device selection stays in the shared engine manager; rolling/TDT policy remains isolated and consumes the same checked session ownership hooks under vendor/TRANSCRIBE-CPP.md."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs"]
+evidence = "grain-core schema v3 stores stable string device keys and tests migration away from process-local integer indices."
+
+[review.frontend]
+outcome = "adapted"
+problem = "The 0.2.0 API replaces process-local integer GPU indices with opaque devices and stable identities, requiring the UI to persist an exact device rather than a generic GPU choice."
+destinations = ["src/app/components/settings/AccelerationSelector.tsx", "crates/grain-core/src/settings.rs", "src-tauri/src/handy/managers/transcription.rs"]
+evidence = "Settings migration tests cover legacy indices and generic GPU fallback; the selector encodes only Auto, CPU, or an exact stable GPU key."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Suppressed dependency/workflow files and Grain's deleted catalog generator could leave the Rust API, packaged native ABI, and generated model catalog on different transcribe.cpp baselines."
+destinations = ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/build.rs", "src-tauri/src/handy/catalog/catalog.json", "src-tauri/src/handy/catalog/mod.rs", "docs/TRANSCRIBE-CPP-FORK.md"]
+evidence = "All four requirements are exact =0.2.0, both vendored crates identify commit 93151602, policy_check.py enforces the contract, and the catalog blob is byte-identical to upstream. Historical vendor implementation is retired; current immutable pin/ABI evidence is in the maintained fork contract."

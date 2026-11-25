@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "already-covered"
+problem = "Troubleshooting Markdown must remain formatter-compatible."
+destinations = ["docs/troubleshooting/ubuntu-26-04-gnome-wayland/README.md"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."

@@ -1,0 +1,1 @@
+note = "Applied latest-request cancel reconciliation centrally; removed obsolete per-backend async register/unregister tasks. Preserved Agent Escape ownership and Secure Input fallback. Windows build passes; real key acceptance remains required."

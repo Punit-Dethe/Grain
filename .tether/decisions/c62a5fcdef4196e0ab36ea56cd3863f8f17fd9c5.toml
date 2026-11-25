@@ -1,0 +1,23 @@
+note = "2026-11-02: hold-or-toggle is implemented using the shared production state machine and owned Grain capture effects, alongside existing toggle/hold choices. Toggle remains default; real desktop checks remain separate from automated passing tests."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs", "crates/grain-core/src/context.rs", "src/app/components/settings/ShowOverlay.tsx", "src/app/components/settings/PillCloseButton.tsx", "src/app/components/settings/PillAppIcon.tsx", "src/app/stores/settingsStore.ts", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx", "crates/grain-core/src/providers.rs", "src-tauri/src/grain_provider_commands.rs", "src/app/stores/ppPoolStore.ts", "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx", "src/app/components/settings/experimentations/AgentSection.tsx", "src/app/components/settings/DecodeSettings.tsx"]
+evidence = "Replaced the obsolete boolean directly with ShortcutActivation in owned Core schema/defaults/bundled settings and persisted through an owned fallible command. Existing recording settings/Quick Panel gates now distinguish hold-only from locked/toggle modes. No compatibility migration or adjustable threshold API."
+
+[port."src-tauri/src/transcription_coordinator.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/handy/transcription_coordinator.rs", "src-tauri/src/grain_coordinator.rs", "src-tauri/src/grain_dictation_routing.rs", "src-tauri/src/grain_shortcuts.rs"]
+evidence = "Toggle, PushToTalk and HoldOrToggle share the canonical machine and sequence tests. Grain keeps Toggle default, a fixed 300 ms hold boundary, native action retention, AI finishing and cancel/drain behavior. 754 backend tests pass."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Expose the new three-mode activation contract without losing Grain capture and AI routing."
+destinations = ["src/app/components/settings/ShortcutActivation.tsx", "src/app/settings/panes/CapturePane.tsx", "src/app/components/settings/capture/CaptureModes.tsx", "src/app/quick-panel/registry.ts", "src/app/stores/settingsStore.ts"]
+evidence = "Replaced the old push-to-talk switch with the existing settings Dropdown for toggle, hold and hold-or-toggle; kept Toggle default and 300 ms boundary. Cancel/AI settings stay available for locked holds. Build and 102 frontend tests pass."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Grain needs accurate mode ownership and command registration rather than Handy-specific release docs."
+destinations = ["crates/grain-core/src/settings.rs", "src-tauri/src/lib.rs", "Upstream/SYNC-2026-11-02.md"]
+evidence = "Grain schema/defaults and existing settings UI now own the three activation choices; composition registers the owned fallible command. No Handy-branded docs or migration-only code copied."

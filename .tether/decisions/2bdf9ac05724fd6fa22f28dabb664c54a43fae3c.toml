@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Indonesian Handy app translation"
+destinations = []
+evidence = "Grain's app-locale list is independently curated; this merge does not add a new product locale."

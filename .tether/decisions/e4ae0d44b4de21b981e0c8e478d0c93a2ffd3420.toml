@@ -1,0 +1,10 @@
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src"]
+evidence = "Shared TranscriptionManager emits loading_failed for missing ID and path failures; Grain Flow checks installed status before starting and uses that manager's model-load barrier."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Deleted model files leave stale active/loading UI"
+destinations = ["src-tauri/src/handy/managers/model.rs", "src-tauri/src/handy/managers/transcription.rs", "src/app/stores/modelStore.ts"]
+evidence = "Model manager now clears an unavailable selection; transcription manager emits loading_failed on early errors and Grain modelStore refreshes current status on model-state-changed."

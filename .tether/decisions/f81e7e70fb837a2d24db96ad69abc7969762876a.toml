@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Handy GradeChip labels are vertically misaligned on Windows."
+destinations = ["src/app/components/onboarding/ModelCard.tsx"]
+evidence = "Grain does not ship the upstream shared GradeChip component; its owned ModelCard uses separate markup and styling. No Handy UI was copied and no equivalent bug has been established."

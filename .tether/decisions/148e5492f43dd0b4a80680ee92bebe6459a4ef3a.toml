@@ -1,0 +1,1 @@
+note = "PORTED: reasoning-rejection retry added to grain_llm_client post_chat (upstream #1809). On a 400/422 to a request carrying reasoning-disable fields, retry once without them and remember the endpoint (url|model) process-wide so later calls skip them. Grain gates reasoning by provider, so this only affects a 'custom' endpoint pointed at a strict API; +2 unit tests."

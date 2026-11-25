@@ -1,0 +1,1 @@
+note = "2026-11-02: adopted differential Secure Input Carbon reconciliation, preserving unchanged callback-id/chord registrations so held keys keep their release. Grain Prompt Record eligibility retained. The actual identity comparator is covered by host-independent unit tests; native macOS acceptance remains pending."

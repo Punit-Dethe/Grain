@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "Implicit Vulkan layers can crash Windows capture"
+destinations = ["src-tauri/src/main.rs"]
+evidence = "Grain main now sets VK_LOADER_LAYERS_DISABLE before backend startup while honoring explicit settings and the opt-out."

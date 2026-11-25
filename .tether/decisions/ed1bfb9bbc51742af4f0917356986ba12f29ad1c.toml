@@ -1,0 +1,11 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Catalan Handy app translation"
+destinations = []
+evidence = "Grain's app-locale list is independently curated; this merge does not add a new product locale."
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Handy Catalan translation contribution docs"
+destinations = []
+evidence = "Grain did not add Catalan to its independently curated app locales in this round."

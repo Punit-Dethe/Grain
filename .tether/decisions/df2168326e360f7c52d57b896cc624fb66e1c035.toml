@@ -1,0 +1,4 @@
+[port."src-tauri/src/audio_toolkit/audio/recorder.rs"]
+outcome = "not-applicable"
+destinations = ["src-tauri/src/handy/managers/audio.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_audio_journal.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "Tail-loss bug class is already covered by the guarded resampler output_delay drain and recorder frame_resampler.finish callback. The upstream finish rewrite is not copied because it would replace that guarantee; source inspection and existing resampler tail fixtures document the retained contract."

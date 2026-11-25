@@ -1,0 +1,1 @@
+note = "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite)."

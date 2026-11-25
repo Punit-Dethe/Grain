@@ -1,0 +1,26 @@
+[port."src-tauri/src/audio_toolkit/audio/recorder.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/handy/managers/audio.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_audio_journal.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "Earshot/variable-frame integration remains queued; the current shared recorder uses Silero and Grain bounded sample/journal hooks. Overlay readiness restoration does not implement this VAD rewrite."
+
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/extension_session.rs", "src-tauri/src/grain_action_session.rs", "src-tauri/src/grain_onboarding.rs"]
+evidence = "Audio manager retains the fixed-frame Silero contract and owned capture callers. Earshot selection and variable-frame integration remain queued, independently of restored readiness."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "not-applicable"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs"]
+evidence = "Experimental selectable Earshot backend was excluded; Grain keeps its current Silero recorder contract."
+
+[review.frontend]
+outcome = "not-applicable"
+problem = "Experimental Earshot VAD selector"
+destinations = []
+evidence = "Grain exposes only the existing Silero VAD path; the experimental backend and selector were excluded from this sync pending capture-policy review."
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Earshot dependency in Cargo lockfile"
+destinations = []
+evidence = "Experimental Earshot backend was excluded; Grain continues using its Silero capture path."

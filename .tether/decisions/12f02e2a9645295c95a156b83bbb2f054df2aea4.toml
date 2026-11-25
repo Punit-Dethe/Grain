@@ -1,0 +1,1 @@
+note = "Backend plumbing merged; selected_channel setting ported into crates/grain-core AppSettings (upstream settings.rs inert). Upstream ChannelSelector.tsx dropped (frontend frozen); set_selected_channel command kept + registered for Grain's own UI."

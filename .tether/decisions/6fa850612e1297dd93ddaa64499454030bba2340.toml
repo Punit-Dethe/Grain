@@ -1,0 +1,16 @@
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src"]
+evidence = "Shared language evidence and effective_language now canonicalize no/nb and fil/tl; Grain Flow delegates language selection to the same manager helper."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Norwegian disappears when a model advertises nb"
+destinations = ["src/app/lib/constants/languages.ts", "src-tauri/src/handy/managers/model.rs"]
+evidence = "Grain language picker and backend now compare no/nb aliases; focused tests cover both paths."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Language alias must stay covered by checks"
+destinations = ["src/app/lib/constants/languages.test.ts", "src-tauri/src/handy/managers/model.rs"]
+evidence = "Norwegian no/nb and Filipino fil/tl aliases are covered by Grain frontend and Rust regression tests."

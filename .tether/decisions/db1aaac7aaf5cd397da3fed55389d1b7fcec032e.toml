@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "already-covered"
+problem = "transcribe.cpp 0.2.3 dependency lockfile"
+destinations = ["src-tauri/Cargo.toml", "docs/TRANSCRIBE-CPP-FORK.md"]
+evidence = "Grain already pins exact transcribe-cpp 0.2.3 and carries the reviewed vendored TDT patch contract. Historical vendor implementation is retired; current immutable pin/ABI evidence is in the maintained fork contract."

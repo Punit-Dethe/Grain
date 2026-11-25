@@ -1,0 +1,6 @@
+note = "Single-writer tray architecture deferred: Grain retains its branded single-icon menu and current tray call sites; review as a dedicated tray port."
+
+[port."src-tauri/src/actions.rs"]
+outcome = "not-applicable"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "The actions hunk only renames Handy tray calls for its new writer; Grain's branded tray API remains the call target. Tray rewrite is deferred."

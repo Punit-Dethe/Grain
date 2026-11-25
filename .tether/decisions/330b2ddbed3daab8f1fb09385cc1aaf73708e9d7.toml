@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "already-covered"
+problem = "Mac non-Apple mouse scrollbars lacked custom thumb styling"
+destinations = ["src/app/app.css"]
+evidence = "Grain app.css scopes scrollbar styling by component and has no macOS exclusion around its custom scrollbars"

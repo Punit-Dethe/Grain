@@ -1,0 +1,1 @@
+note = "Overlay migration 2026-10-04 adopts preserved live text and working/polishing states through grain_overlay; actual Handy show/hide lifecycle is active. Full Rust and frontend verification passed; visual/platform acceptance remains pending."

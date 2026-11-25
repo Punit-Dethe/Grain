@@ -1,0 +1,10 @@
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/extension_session.rs", "src-tauri/src/grain_action_session.rs", "src-tauri/src/grain_onboarding.rs", "src-tauri/src/grain_audio.rs", "src-tauri/src/grain_audio_manager.rs"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Native Silero replaces the ONNX dependency and VAD resource."
+destinations = ["src-tauri/Cargo.lock", "src-tauri/resources/models/silero-vad-v6.2-F32.gguf", "BUILD.md"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."

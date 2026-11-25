@@ -1,0 +1,2 @@
+status = "merged"
+note = "Clean cherry-pick. Danish translation file taken verbatim; languages.ts updated with da entry at priority 24."

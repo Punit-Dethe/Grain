@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "Windows release CI could reuse incompatible Cargo binaries and fail installing the signing CLI"
+destinations = [".github/workflows/build.yml"]
+evidence = "Grain build.yml disables rust-cache binaries, rotates the cache key, and installs the pinned signing CLI with --locked --force; YAML parses"

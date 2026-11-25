@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Handy regenerated bindings with trailing whitespace changes"
+destinations = []
+evidence = "The upstream diff is whitespace in a generated binding file; Grain generates src/app/bindings.ts from its own Rust API and never hand-merges it"

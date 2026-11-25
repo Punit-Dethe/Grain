@@ -1,0 +1,4 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_overlay.rs", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx"]
+evidence = "Batch delegates before VAD/tray/overlay/mic to grain_capture::require_transcribable_model. Flow, NativeAsr, Agent start_dictation and declared extension sessions use that shared guard before acquiring capture resources. Actual selected model files are checked unless that exact model is resident; obsolete cached-download guards are removed. Prompt Record reuses validated dictation. The separate Extension Mode feature remains disabled before acquisition."

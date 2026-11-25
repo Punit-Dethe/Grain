@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "adapted"
+problem = "Live preview stayed empty during a slow model load."
+destinations = ["src/app/overlay/RecordingOverlay.tsx"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."

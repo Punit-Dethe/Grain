@@ -1,0 +1,4 @@
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src", "src-tauri/src/grain_overlay.rs", "src/app/overlay/RecordingOverlay.tsx", "src-tauri/src/grain_transcription.rs"]
+evidence = "Move diagnostic device enumeration out of init_transcribe_backend. Explicit headless mode calls report_compute_devices; Grain retains lazy Advanced-page enumeration and does not spawn a boot prewarm. Flow/batch model loading still uses the shared initialized backend."

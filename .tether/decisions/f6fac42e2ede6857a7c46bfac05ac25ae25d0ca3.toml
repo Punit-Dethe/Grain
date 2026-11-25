@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "already-covered"
+problem = "Updater dependency and generated lockfiles"
+destinations = ["package.json", "src-tauri/Cargo.lock"]
+evidence = "Grain package.json uses plugin 2.10.1 and Cargo.lock already resolves tauri-plugin-updater 2.10.1; Bun frozen install passed."

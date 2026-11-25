@@ -1,0 +1,1 @@
+note = "Ported stream:false into grain_llm_client ChatCompletionRequest (all 4 call sites); upstream's llm_client.rs is inert. Grain parses full JSON on every path."

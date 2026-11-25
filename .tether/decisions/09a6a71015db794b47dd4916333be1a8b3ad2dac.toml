@@ -1,0 +1,2 @@
+status = "merged"
+note = "Cherry-picked (2c17bfbd); conflicts resolved per divergence map: kept Grain keys (multiLanguage, flat overlay, whisper ack, snippets), took selectModel/languageCount/VAD translations, dropped unreferenced model-list keys. Cherry-pick — needs close-out with the batch."

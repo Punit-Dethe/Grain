@@ -1,0 +1,1 @@
+note = "AUDIT 2026-07-17: was NOT actually applied - all 12 Moonshine models still read \"English speech-to-text\". Fixed by taking upstream catalog.json verbatim (also converged its hand-reformatting)."

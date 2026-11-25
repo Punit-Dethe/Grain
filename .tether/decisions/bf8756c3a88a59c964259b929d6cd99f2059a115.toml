@@ -1,0 +1,7 @@
+note = "Main-window WebView2 accelerator suppression deferred to Grain's lazy window builder; webview2-com dependency already present."
+
+[review.suppressed]
+outcome = "already-covered"
+problem = "WebView2 dependency in generated Cargo lockfile"
+destinations = ["src-tauri/Cargo.toml"]
+evidence = "Grain already pins webview2-com 0.38 for Grain Space; the separate main-window accelerator behavior remains deferred."

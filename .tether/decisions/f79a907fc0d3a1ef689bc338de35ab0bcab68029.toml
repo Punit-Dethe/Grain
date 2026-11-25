@@ -1,0 +1,1 @@
+note = "Added the cancel-generation infra Grain lacked; cancel now aborts in-flight LLM/paste"

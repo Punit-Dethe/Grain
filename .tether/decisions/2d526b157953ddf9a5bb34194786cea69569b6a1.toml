@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "Handy updates transcribe.cpp to 0.2.4 for runtime fixes."
+destinations = ["native/transcribe-fork.json", "src-tauri/Cargo.toml", "scripts/flow-audit/Cargo.toml"]
+evidence = "Grain ports the cumulative fork onto 0.4.0 at 517885822a5f42562972796c53ae496a52c143b6 with paired immutable pins/locks, contract revision 3, native failure tests, source-built backend tests and real v2/v3 journal replay. Target backend features are retained."

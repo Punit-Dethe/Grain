@@ -1,0 +1,1 @@
+note = "Vulkan host-gating kept in Grain's get_available_accelerators (verified v0.9.5 sync); dropped only the ORT branch (no ONNX engine behind it)."

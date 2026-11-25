@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "Debian packages may install without the OpenSSL 3 runtime required by their linked binary."
+destinations = ["src-tauri/tauri.conf.json", ".github/workflows/build.yml"]
+evidence = "Added libssl3t64 | libssl3 to Grain Debian dependencies and a build-workflow dpkg-deb Depends audit. JSON/TOML validation and scoped formatting pass. No Debian installer has been built or run on this Windows machine."

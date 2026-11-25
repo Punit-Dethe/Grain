@@ -1,0 +1,14 @@
+status = "merged"
+note = "Audited the final repaired tree from both parents; this merge removes d55ea7ef's accidentally committed conflict markers. Never replay d55ea7ef without this repair."
+
+[review.frontend]
+outcome = "already-covered"
+problem = "The first parent contained unresolved conflict markers and an inconsistent accelerator UI after parallel transcribe.cpp work."
+destinations = ["src/app/components/settings/AccelerationSelector.tsx", "src-tauri/src/handy/managers/transcription.rs", "crates/grain-core/src/settings.rs"]
+evidence = "Repository-wide conflict-marker scan is clean; accelerator selection uses Auto, exact opaque GPU devices, or CPU."
+
+[review.suppressed]
+outcome = "already-covered"
+problem = "The repair merge reconciled dependency, build, workflow, and lockfile state after the transcribe.cpp 0.2.0 integration."
+destinations = ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "docs/TRANSCRIBE-CPP-FORK.md"]
+evidence = "Exact 0.2.0 manifest declarations, vendored baseline provenance, and regenerated lockfile are checked by policy_check.py and Cargo. Historical vendor implementation is retired; current immutable pin/ABI evidence is in the maintained fork contract."

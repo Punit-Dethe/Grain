@@ -1,0 +1,4 @@
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/extension_session.rs", "src-tauri/src/grain_action_session.rs", "src-tauri/src/grain_onboarding.rs"]
+evidence = "apply_mute snapshots prior system mute, avoids duplicate snapshotting and restores previous state during removal/close. Grain announce_ready applies mute after feedback only while the capture generation remains current. Source inspection confirms the ownership and cancellation seam."

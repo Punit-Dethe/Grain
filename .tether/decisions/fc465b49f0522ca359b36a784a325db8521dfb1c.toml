@@ -1,0 +1,2 @@
+status = "ignored"
+note = "Irrelevant (Grain manages its own custom prompts)."

@@ -1,0 +1,1 @@
+note = "ASCII/Soundex custom-word guard (is_supported_fuzzy_key) present in Grain's handy/audio_toolkit/text.rs; rolling has no separate Soundex matcher (its 'fuzzy' is seam dedup), so the shared finalization carries the fix."

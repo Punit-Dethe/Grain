@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "already-covered"
+problem = "Handy's updater lockfile needed a bounded 2.10.1 range and matching Nix hash"
+destinations = ["bun.lock", ".nix/bun-lock-hash"]
+evidence = "Grain bun.lock already has ~2.10.1 and bun install --frozen-lockfile passed its Nix derivative check"

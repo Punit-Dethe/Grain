@@ -1,0 +1,11 @@
+[review.frontend]
+outcome = "adapted"
+problem = "Spaced compound key names fail shortcut parsers"
+destinations = ["src/app/lib/utils/keyboard.ts", "src/app/lib/utils/keyboard.test.ts"]
+evidence = "Grain keyboard utility now stores compact parser tokens and renders friendly labels; six focused tests pass."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "CI regression check for compound shortcut names"
+destinations = ["src/app/lib/utils/keyboard.test.ts"]
+evidence = "Grain's focused Vitest suite verifies compact stored names and readable labels for six compound keys."

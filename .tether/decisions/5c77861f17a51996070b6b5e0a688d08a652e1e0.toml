@@ -1,0 +1,8 @@
+status = "merged"
+note = "Bumped handy-keys to 0.3.4 for Pause/Break, PrintScreen/SysRq, and ContextMenu/Application key support on supported platforms."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Keeping the merge-owned lockfile at 0.3.3 would silently omit newly supported physical shortcut keys."
+destinations = ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]
+evidence = "cargo update resolved handy-keys 0.3.4 and its published checksum."

@@ -1,0 +1,2 @@
+status = "ignored"
+note = "n/a - Grain kept its own bindings.ts typings, no optional bindings"

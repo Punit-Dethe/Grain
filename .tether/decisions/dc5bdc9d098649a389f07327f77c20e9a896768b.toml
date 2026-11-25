@@ -1,0 +1,4 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "The shared FinishGuard now calls maybe_unload_immediately on every early exit before notifying the coordinator; all Grain and Handy call sites pass the manager."

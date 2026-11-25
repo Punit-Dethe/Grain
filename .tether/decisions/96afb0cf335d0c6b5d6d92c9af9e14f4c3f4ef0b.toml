@@ -1,0 +1,1 @@
+note = "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."

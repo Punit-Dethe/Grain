@@ -1,0 +1,1 @@
+note = "Clean cherry-pick. Grain PasteMethod.tsx matched upstream pre-fix structure; Grain Dropdown already supported DropdownOption.disabled, so the macOS hide-but-keep-manual-selection logic works as-is."

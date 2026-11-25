@@ -1,0 +1,8 @@
+status = "merged"
+note = "Adapted Handy's local-rebuild Accessibility recovery instructions to Grain's bundle id and app path."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "A macOS ad-hoc rebuild can retain a visibly enabled but stale Accessibility grant and stop global input."
+destinations = ["BUILD.md"]
+evidence = "Troubleshooting uses com.grain.app, /Applications/Grain.app, and resets only the Accessibility TCC service."

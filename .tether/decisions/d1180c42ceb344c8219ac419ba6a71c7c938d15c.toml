@@ -1,0 +1,2 @@
+status = "merged"
+note = "Adapted app-private Linux runtime libraries to /usr/lib/Grain, with SONAME staging and rpath."

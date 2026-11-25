@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "adapted"
+problem = "Debug paste-delay control capped manual waits at 500 ms"
+destinations = ["src/app/components/settings/debug/PasteDelay.tsx"]
+evidence = "Grain PasteDelay slider now permits 5000 ms; TypeScript and targeted ESLint pass"

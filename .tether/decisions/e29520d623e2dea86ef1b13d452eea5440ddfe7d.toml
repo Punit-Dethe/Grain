@@ -1,0 +1,10 @@
+[port."src-tauri/src/overlay.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/handy/overlay.rs", "src-tauri/src/grain_overlay.rs", "src-tauri/src/grain_capture.rs", "src/app/overlay/RecordingOverlay.tsx", "src/app/overlay/wave.ts"]
+evidence = "2026-10-04: actual handy/overlay.rs is compiled for window lifecycle, GTK/NSScreen main-thread geometry, Wayland layer-shell/fallback, NSPanel activation, Windows work-area/DPI/text scale and generation-aware hides. Grain integration lives in grain_overlay/grain_capture; owned presentation retains WaveField response. Windows Rust suite and build pass; macOS/Linux visual acceptance remains pending."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Windows WebView text scaling can clip or misplace the recording pill."
+destinations = ["src-tauri/src/handy/overlay.rs", "src-tauri/src/grain_overlay.rs", "src/app/overlay/overlay.css"]
+evidence = "Shared Windows placement applies native text scale to logical bounds; Grain live dimensions are passed from Rust to CSS. Platform visual acceptance remains pending."

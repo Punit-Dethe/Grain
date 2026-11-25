@@ -1,0 +1,12 @@
+note = "Real-time-safe microphone ring-buffer rewrite deferred for dedicated rolling/conditioning and capture-lifecycle review."
+
+[port."src-tauri/src/audio_toolkit/audio/recorder.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/handy/managers/audio.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_audio_journal.rs", "src-tauri/src/grain_actions.rs"]
+evidence = "Retained bounded capture/journal and restored first-sample acknowledgements; the CPAL ring-buffer rewrite remains explicitly queued in DEFERRED-PORTS.md. No completion or hardware validation is claimed."
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Recorder ring-buffer dependency lockfile"
+destinations = []
+evidence = "The large microphone callback rewrite and its dependency were deferred; Grain's current rolling and conditioning recorder contract remains in place."

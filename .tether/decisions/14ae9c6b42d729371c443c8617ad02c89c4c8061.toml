@@ -1,0 +1,15 @@
+[port."src-tauri/src/llm_client.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_llm_client.rs", "src-tauri/src/net_diag.rs", "src-tauri/src/grain_llm_fallback.rs", "src-tauri/src/grain_post_process.rs", "src-tauri/src/agent.rs"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs", "crates/grain-core/src/context.rs", "src/app/components/settings/ShowOverlay.tsx", "src/app/components/settings/PillCloseButton.tsx", "src/app/components/settings/PillAppIcon.tsx", "src/app/stores/settingsStore.ts", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx", "crates/grain-core/src/providers.rs", "src-tauri/src/grain_provider_commands.rs", "src/app/stores/ppPoolStore.ts", "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx", "src/app/components/settings/experimentations/AgentSection.tsx", "src/app/components/settings/DecodeSettings.tsx"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Custom Anthropic-compatible endpoints need a selectable API wire format."
+destinations = ["src/app/components/settings/post-processing/pool/PpProviderForm.tsx", "src-tauri/src/grain_anthropic.rs", "src-tauri/src/grain_llm_client.rs"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."

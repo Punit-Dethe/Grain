@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "adapted"
+problem = "Settings sections retained the previous section's scroll position"
+destinations = ["src/app/pages/SettingsPage.tsx"]
+evidence = "SettingsPage resets its persistent scroll container on activeSection changes; TypeScript and targeted ESLint pass"

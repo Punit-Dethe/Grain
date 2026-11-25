@@ -1,0 +1,8 @@
+status = "merged"
+note = "Adapted the Apple-only fn/Globe shortcut limitation to Grain's user documentation."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Third-party keyboard Fn keys are often firmware-only, so macOS emits no event and the shortcut can never trigger."
+destinations = ["README.md"]
+evidence = "Known input/audio behavior explains the hardware boundary and recommends portable standard modifiers."

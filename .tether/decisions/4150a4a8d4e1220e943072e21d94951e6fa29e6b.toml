@@ -1,0 +1,4 @@
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src", "src-tauri/src/grain_overlay.rs", "src/app/overlay/RecordingOverlay.tsx", "src-tauri/src/grain_transcription.rs", "src-tauri/src/grain_transcription_manager.rs", "src-tauri/src/grain_engine.rs", "src-tauri/src/context_bias.rs"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."

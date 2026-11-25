@@ -1,0 +1,21 @@
+[port."src-tauri/src/overlay.rs"]
+outcome = "not-applicable"
+destinations = ["crates/grain-pill/src/lib.rs", "src-tauri/src/grain_overlay.rs"]
+evidence = "Handy web overlay's updater controls are inert in Grain; native grain-pill has no update-check surface."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "not-applicable"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs"]
+evidence = "Grain's updater policy is implemented in grain_update and Nix wrapper rather than the inert Handy settings module."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Nix installs cannot self-update"
+destinations = ["flake.nix", "src-tauri/src/grain_update.rs"]
+evidence = "flake.nix sets GRAIN_DISABLE_UPDATER; grain_update gates automatic and manual checks and installation."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "Nix package must disable in-app updater"
+destinations = ["flake.nix", "src-tauri/src/grain_update.rs"]
+evidence = "Grain's Nix wrapper sets GRAIN_DISABLE_UPDATER and Rust blocks checks and installation under that environment."

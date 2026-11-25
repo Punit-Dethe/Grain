@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "adapted"
+problem = "History settings showed Copied before clipboard writing succeeded"
+destinations = ["src/app/components/settings/history/HistorySettings.tsx"]
+evidence = "Grain HistorySettings now awaits clipboard success and reports failure; frontend build and targeted ESLint pass"

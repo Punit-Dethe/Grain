@@ -1,0 +1,1 @@
+note = "Recover poisoned mutexes inside Drop impls using `match` + logged warnings."

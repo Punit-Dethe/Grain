@@ -1,0 +1,2 @@
+status = "merged"
+note = "Cherry-picked as 0eac7cab; rename-conflict resolved into handy/tray_i18n.rs (blob byte-identical to upstream 2bdc84ca)."

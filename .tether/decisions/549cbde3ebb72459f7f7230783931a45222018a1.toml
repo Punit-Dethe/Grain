@@ -1,0 +1,1 @@
+note = "Overlay migration 2026-10-04 restores first-sample readiness for Batch, Flow, Native ASR, Agent and extension capture. grain_capture polls a bounded receiver lifetime and rejects cancelled generations; recorder test covers no-sample Stop. The owned WebView uses Handy show/ready/hide events; the separate ring-buffer rewrite remains deferred."

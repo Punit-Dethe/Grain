@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "already-covered"
+problem = "Onboarding could overflow horizontally when classic scrollbars reserve width"
+destinations = ["src/app/components/onboarding/onboarding.css", "src/app/components/onboarding/Onboarding.tsx", "src/app/components/onboarding/AccessibilityOnboarding.tsx"]
+evidence = "Grain onboarding uses a fixed inset shell, width constrained content, and an internal scrolling stage rather than w-screen containers"

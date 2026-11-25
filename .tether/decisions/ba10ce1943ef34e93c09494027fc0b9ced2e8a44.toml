@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "Debian and Ubuntu package installation with dpkg can leave runtime dependencies unresolved"
+destinations = ["README.md"]
+evidence = "Grain README Quick start now directs users to install its .deb through APT"

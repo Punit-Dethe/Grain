@@ -1,0 +1,1 @@
+note = "Tauri dependency/fork decisions remain unchanged. Overlay migration 2026-10-04 compiles Handy overlay.rs and adopts its current NSPanel lifecycle and Dock/nonactivation handling; macOS platform acceptance is pending."

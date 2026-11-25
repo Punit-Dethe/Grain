@@ -1,0 +1,13 @@
+status = "merged"
+note = "Adapted phrase support across all three Grain-owned dictionary entry points and strengthened the backend n-gram assertion."
+
+[port."src-tauri/src/audio_toolkit/text.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/handy/audio_toolkit/grain_text.rs"]
+evidence = "Grain finalization calls the shared apply_custom_words implementation; its exact multi-word n-gram regression test passes."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Frontend validation rejected spaces even though backend custom-word matching supports multi-word phrases."
+destinations = ["src/app/lib/customWords.ts", "src/app/components/settings/CustomWords.tsx", "src/app/pages/ToolsPage.tsx", "src/app/overview/OverviewCards.tsx"]
+evidence = "Shared normalization unit test preserves phrases; backend test now requires the exact 'using MacBook Pro' result."

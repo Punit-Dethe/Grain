@@ -1,0 +1,8 @@
+status = "ignored"
+note = "Moves Handy sponsor links within its README; Grain does not publish Handy sponsor copy"
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Handy moved its sponsor section"
+destinations = []
+evidence = "The diff only relocates Handy-specific sponsor markup and does not change app behavior"

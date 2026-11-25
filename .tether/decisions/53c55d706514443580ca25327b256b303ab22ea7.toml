@@ -1,0 +1,8 @@
+status = "ignored"
+note = "Handy README restructuring and obsolete-model cleanup are Handy-owned documentation; Grain has its own README and build guide"
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Handy reorganized and slimmed its README"
+destinations = []
+evidence = "Grain README uses a separate feature and build structure; no runtime code or shared user instructions changed"

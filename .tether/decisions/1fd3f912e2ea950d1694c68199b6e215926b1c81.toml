@@ -1,0 +1,1 @@
+note = "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding."

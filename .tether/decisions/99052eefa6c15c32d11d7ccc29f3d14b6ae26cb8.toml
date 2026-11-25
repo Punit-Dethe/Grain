@@ -1,0 +1,2 @@
+status = "merged"
+note = "Ported the explicit post-type xdotool keyup cleanup for both sides of Control/Shift/Alt/Super. --clearmodifiers alone can restore a modifier released during typing and leave XTEST latched."

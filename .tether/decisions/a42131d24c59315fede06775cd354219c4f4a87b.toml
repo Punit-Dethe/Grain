@@ -1,0 +1,20 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_overlay.rs", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+
+[port."src-tauri/src/audio_toolkit/audio/sink.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/handy/managers/audio.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_audio_journal.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_audio.rs", "src-tauri/src/grain_audio_manager.rs"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/extension_session.rs", "src-tauri/src/grain_action_session.rs", "src-tauri/src/grain_onboarding.rs", "src-tauri/src/grain_audio.rs", "src-tauri/src/grain_audio_manager.rs"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit. Source-specific adaptations and dictionary/capture call paths are recorded in the execution matrix; Grain-owned destinations remain authoritative."
+
+[review.suppressed]
+outcome = "adapted"
+problem = "New recorder ownership, resampling and failure contracts must reach Grain callers."
+destinations = ["src-tauri/Cargo.lock", "src-tauri/src/grain_audio.rs", "src-tauri/src/grain_audio_manager.rs", "src-tauri/src/grain_capture.rs"]
+evidence = "See Upstream/SYNC-2026-10-17.md: Windows backend 599 pass; real worker, streaming fault, VAD and exact-text v2/v3 Flow gates pass; frontend build, 117 tests, lint and parity pass. Physical device/UI and macOS/Linux app acceptance remain explicit."

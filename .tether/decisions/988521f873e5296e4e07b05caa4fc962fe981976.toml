@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Handy onboarding preview in debug UI"
+destinations = []
+evidence = "Grain owns a different onboarding flow and does not expose Handy's preview components."
