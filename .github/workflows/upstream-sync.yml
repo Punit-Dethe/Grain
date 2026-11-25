@@ -33,7 +33,7 @@ concurrency:
 
 env:
   SYNC_BRANCH: sync/auto-upstream
-  TETHER_REV: d46d3c31d81e7e75084130777dd1bcf4e480b465
+  TETHER_REV: 56ad41dc38d32a9e08668911bb0afcc8a1641cc9
 
 jobs:
   sync:
