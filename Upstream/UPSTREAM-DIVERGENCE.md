@@ -83,7 +83,7 @@ the default: normal 3-way merge, preferring upstream in the STT core.
 
 > **Paths below are upstream's.** Since the phase-7 folder move the same files
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
-> unchanged). `Upstream/ratchet.py` maps between the two.
+> unchanged). `[[moved]]` in `.tether/config.toml` maps between the two.
 
 ## Onboarding backend integration — 2 November 2026
 
@@ -198,7 +198,7 @@ Prompt Record from Carbon shadows; preserve that lifecycle gate. The macOS-only
 ## October 17 final integration budget review
 
 These are measured differences against the new `9e57a0d7` baseline, not spare
-headroom. `merge_upstream.py --finish` tightens the committed values afterwards.
+headroom. `tether check --update` tightens the committed values afterwards.
 
 | Shared path (under src-tauri)                  | Reviewed change                                                                                                         |
 | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -274,30 +274,14 @@ VAD, recorder, shortcut, Secure Input, macOS activation, or WebView2 behavior as
 implemented in Grain. First-sample readiness and the compiled overlay were subsequently restored; see [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md) for the current seam contract and measured migration deltas. The exact deferred commit queue for the next sync is
 [DEFERRED-PORTS.md](DEFERRED-PORTS.md).
 
-### Runtime relocation policy (generated from `relocations.json`)
+### Runtime relocation policy
 
-`policy_check.py` requires this block to match the JSON exactly and also derives
-coverage for `grain_* as upstream_name` inert module aliases.
-
-<!-- prettier-ignore-start -->
-
-<!-- BEGIN GENERATED RELOCATION POLICY -->
-<!-- prettier-ignore -->
-| Upstream source | Kind | Grain runtime destinations |
-| --- | --- | --- |
-| `src-tauri/src/actions.rs` | relocated | `src-tauri/src/grain_post_process.rs`<br>`src-tauri/src/grain_actions.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src-tauri/src/grain_overlay.rs`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx` |
-| `src-tauri/src/audio_toolkit/audio/sink.rs` | parallel | `src-tauri/src/handy/managers/audio.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src-tauri/src/grain_audio_journal.rs`<br>`src-tauri/src/grain_actions.rs`<br>`src-tauri/src/grain_audio.rs`<br>`src-tauri/src/grain_audio_manager.rs` |
-| `src-tauri/src/audio_toolkit/text.rs` | relocated | `src-tauri/src/handy/audio_toolkit/grain_text.rs` |
-| `src-tauri/src/llm_client.rs` | inert | `src-tauri/src/grain_llm_client.rs`<br>`src-tauri/src/net_diag.rs`<br>`src-tauri/src/grain_llm_fallback.rs`<br>`src-tauri/src/grain_post_process.rs`<br>`src-tauri/src/agent.rs` |
-| `src-tauri/src/managers/audio.rs` | relocated | `src-tauri/src/grain_capture.rs`<br>`src-tauri/src/grain_actions.rs`<br>`src-tauri/src/agent.rs`<br>`src-tauri/src/grain_onboarding.rs`<br>`src-tauri/src/grain_audio.rs`<br>`src-tauri/src/grain_audio_manager.rs` |
-| `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`src-tauri/src/tdt_flow.rs`<br>`crates/grain-tdt/src`<br>`src-tauri/src/grain_overlay.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src-tauri/src/grain_transcription.rs`<br>`src-tauri/src/grain_transcription_manager.rs`<br>`src-tauri/src/grain_engine.rs`<br>`src-tauri/src/context_bias.rs` |
-| `src-tauri/src/overlay.rs` | relocated | `src-tauri/src/handy/overlay.rs`<br>`src-tauri/src/grain_overlay.rs`<br>`src-tauri/src/grain_capture.rs`<br>`src/app/overlay/RecordingOverlay.tsx`<br>`src/app/overlay/wave.ts`<br>`src/app/overlay/overlay.css`<br>`src-tauri/src/grain_events.rs`<br>`recording-overlay.html`<br>`vite.config.ts`<br>`src-tauri/src/pill_icon.rs`<br>`src-tauri/src/surface_watch.rs`<br>`src/app/overlay/main.tsx`<br>`crates/grain-sdk/src/event.rs` |
-| `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs`<br>`crates/grain-core/src/context.rs`<br>`src/app/components/settings/ShowOverlay.tsx`<br>`src/app/components/settings/PillCloseButton.tsx`<br>`src/app/components/settings/PillAppIcon.tsx`<br>`src/app/stores/settingsStore.ts`<br>`crates/grain-core/src/capture.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src/app/components/settings/capture/CaptureModes.tsx`<br>`crates/grain-core/src/providers.rs`<br>`src-tauri/src/grain_provider_commands.rs`<br>`src/app/stores/ppPoolStore.ts`<br>`src/app/components/settings/post-processing/pool/PostProcessingPool.tsx`<br>`src/app/components/settings/experimentations/AgentSection.tsx`<br>`src/app/components/settings/DecodeSettings.tsx` |
-| `src-tauri/src/transcription_coordinator.rs` | relocated | `src-tauri/src/handy/transcription_coordinator.rs`<br>`src-tauri/src/grain_coordinator.rs`<br>`src-tauri/src/grain_dictation_routing.rs`<br>`src-tauri/src/grain_shortcuts.rs` |
-
-<!-- END GENERATED RELOCATION POLICY -->
-
-<!-- prettier-ignore-end -->
+The canonical list of inert, relocated and parallel upstream files and the
+Grain files that must carry their fixes is `[relocations."<upstream file>"]`
+in [`.tether/config.toml`](../.tether/config.toml), each with its `why`.
+`tether check` fails when a synced upstream commit touched one without a port
+record, or when a destination no longer exists; `scripts/grain_seams.py`
+requires every `grain_* as upstream_name` module alias to be mapped there.
 
 ## Recording overlay audit (current)
 
@@ -306,8 +290,8 @@ contract and the per-sync acceptance checklist. The accepted migration reduces
 actual shared-file divergence by 42 lines against the same merge base; the
 overlay itself gains 28 marked integration/fixture lines as it becomes active.
 The measured before/after table distinguishes real changes from old ceilings.
-`policy_check.py` guards active module/entry wiring and all required review
-routes; `port_audit.py` includes recorder and audio-manager changes.
+`scripts/grain_seams.py` guards active module/entry wiring and all required
+review routes; tether's port audit includes recorder and audio-manager changes.
 
 ## Historical backend audit log (non-authoritative)
 
@@ -361,7 +345,7 @@ conflict rules.
 | `commands/transcription.rs` (budgeted 2026-08-15) | Grain manages `TranscriptionManager` as `Arc<TranscriptionManager>`; both model-status commands therefore request `State<Arc<TranscriptionManager>>`. Upstream's bare state type fails at runtime because it is not managed | Keep the `Arc` state type and imports unless Grain's composition root changes |
 
 | `managers/transcription.rs` + `shortcut/mod.rs` (2026-08-21) | Manually ports the backend/API portion of upstream `afbf44cd` while targeting its exact released `transcribe-cpp =0.2.0`: opaque `Device` selection, stable device identity, bound-device logging, ROCm probing, and the optional string command payload. Grain's compiled settings migration lives in `crates/grain-core`; upstream's `settings.rs` remains inert. No TDT policy or routing is added here. | Keep these device-lifecycle/API changes aligned with upstream; TDT orchestration must remain in Grain-owned modules |
-| `Cargo.toml` + `build.rs` (transcribe.cpp 0.2.0, 2026-08-21) | Grain matches Handy's exact 0.2.0 release (`93151602c670f0dbf6703b1d87a8822f87581a0b`) and vendors that pristine baseline only for the additive TDT Flow patch governed by [`docs/TRANSCRIBE-CPP-FORK.md`](../docs/TRANSCRIBE-CPP-FORK.md). All four dependency declarations are exact `=0.2.0`. Linux staging selects the shortest versioned filename because pre-1.0 `SOVERSION=0.2` makes the NEEDED name `libtranscribe.so.0.2`. | Preserve exact Handy baseline alignment; `policy_check.py` must validate the vendor contract before any Handy/transcribe.cpp upgrade. Rebase the additive TDT patch only after Handy upgrades, then regenerate bindings/ABI and verify installed Linux packages |
+| `Cargo.toml` + `build.rs` (transcribe.cpp 0.2.0, 2026-08-21) | Grain matches Handy's exact 0.2.0 release (`93151602c670f0dbf6703b1d87a8822f87581a0b`) and vendors that pristine baseline only for the additive TDT Flow patch governed by [`docs/TRANSCRIBE-CPP-FORK.md`](../docs/TRANSCRIBE-CPP-FORK.md). All four dependency declarations are exact `=0.2.0`. Linux staging selects the shortest versioned filename because pre-1.0 `SOVERSION=0.2` makes the NEEDED name `libtranscribe.so.0.2`. | Preserve exact Handy baseline alignment; `scripts/grain_seams.py` must validate the vendor contract before any Handy/transcribe.cpp upgrade. Rebase the additive TDT patch only after Handy upgrades, then regenerate bindings/ABI and verify installed Linux packages |
 | `managers/transcription.rs` (TDT lifecycle, 2026-08-21) | Narrow additive `[GRAIN]` boundary hooks: `with_grain_tdt_flow_session` exposes the existing load wait, checked exclusive checkout, panic isolation, and stale-model reconciliation for one long-lived Grain closure; `grain_transcribe_cpp_language_for_model` reuses Handy's model-aware language coercion/run-option gate. Native ASR reserves the same checked engine-owner token before opening its router, so it cannot silently drain while TDT owns the session. No capability routing, descriptor scheduling, retry, cancellation, text assembly, or TDT model policy lives here. | Keep these hooks policy-free. If engine ownership or language coercion changes upstream, reimplement only the same checkout/admission/reconcile and language-gate boundaries; all TDT orchestration remains outside `handy/`. |
 | `grain_audio_journal.rs`, `rolling.rs`, `tdt_flow.rs`, `grain_actions.rs` (2026-08-21) | Grain-only TDT Flow path: close-aware right-lookahead waits over the append-only PCM16 journal; explicit `commit_end_frame`; one serial worker with same-descriptor retry; native cancellation; exact delta assembly; and an internal finalization marker that bypasses only generic rolling canonicalization. Routing uses a Grain-owned exact catalog-ID overlay for the reviewed Parakeet TDT v2/v3 GGUF quants because those published artifacts predate and lack `stt.capability.tdt_flow`; native begin remains default-off for missing metadata and validates Parakeet architecture plus a TDT head when the reviewed caller override is used. Untagged models retain unchanged generic descriptors, reads, assembler, recovery, and output canonicalization. | Keep the generated upstream catalog verbatim and the two-model overlay in Grain-owned code. Do not infer routing from architecture, variant, `supports_streaming`, or arbitrary filenames; adding another model requires explicit review and a tag. Preserve native default-off behavior and loud failure for a tagged artifact whose architecture/head is incompatible. |
 
@@ -442,7 +426,7 @@ context/settings changes; no retired Agent background collector should return.
 
 | Area                                                    | Divergence                                                                                                                                                                                                                            | Merge guidance                                                                                                                                                                                                                                            |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/**`                                                | **Grain-owned. Never merge.** `merge=ours` in `.gitattributes`; guarded by [frontend_freeze.py](frontend_freeze.py) (`merge=ours` only wins _conflicts_ — a clean upstream edit or a new upstream file would otherwise land silently) | **Keep the file ours, but review the fixed problem.** Record `--frontend-review` with problem, applicability, Grain destinations, and evidence. Adapt shared problems into Grain-owned frontend or Rust; use `not-applicable` only with a concrete reason |
+| `src/**`                                                | **Grain-owned. Never merge.** `merge=ours` in `.gitattributes`; guarded by tether's owned area and review gate (`merge=ours` only wins _conflicts_ — a clean upstream edit or a new upstream file would otherwise land silently) | **Keep the file ours, but review the fixed problem.** Record `--frontend-review` with problem, applicability, Grain destinations, and evidence. Adapt shared problems into Grain-owned frontend or Rust; use `not-applicable` only with a concrete reason |
 | `src/app/i18n/locales/tr/translation.json` (2026-08-15) | #1907's corrected Turkish semantics were manually adapted to Grain's older owned schema: transcribe.cpp acceleration, `Ekran Katmanı` terminology, and ggml acknowledgement copy with Grain branding                                  | Treat future upstream translations as review input only; manually port relevant wording without merging or restoring upstream's frontend file                                                                                                             |
 | `bindings.ts`                                           | GENERATED from Grain's Rust (specta)                                                                                                                                                                                                  | Never hand-merge — regenerate                                                                                                                                                                                                                             |
 
@@ -454,10 +438,9 @@ for features Grain deleted, two carrying backend facts that belong in Rust, wher
 we still merge everything. The freeze does not touch the backend relationship in
 any way.
 
-`frontend_allow.json` now has zero shared paths and `"strict": true`. Its
-allowlists may only shrink; `--update` refuses growth without the explicit
-`--accept-growth` review override, and strict mode never permits a shared path.
-Any frontend change in a sync is a hard failure.
+tether's adopted-file budget for the owned `src/` may only shrink: an upstream
+file landing in the frozen frontend fails `tether check`, and growth needs the
+explicit `--update --accept-growth` review override.
 
 ## Repo meta (all `merge=ours` via .gitattributes)
 
@@ -493,11 +476,11 @@ similarity falls to **36%**, under git's 50% rename threshold, so it lands as a
 Resolution while it lasts: **keep ours** (`git checkout --ours` on the `handy/`
 path, `git rm` the root path) — the blobs are equal, so nothing is lost. It
 clears permanently at the next real merge or `-s ours` close-out, after which
-`ratchet.py --update` drops the 60.
+`tether check --update` drops the 60.
 
-Run [audit_divergence.py](audit_divergence.py) to re-check this and the
-"converged" claims above against real blobs — both had silently gone stale
-before it existed.
+`tether check` (budgets and drift) re-checks this and the "converged" claims
+above against real blobs — both had silently gone stale before such a check
+existed.
 
 ## Parakeet v2 buffered Flow transport (2026-10-18)
 

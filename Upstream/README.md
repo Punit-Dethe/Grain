@@ -1,54 +1,45 @@
 # Upstream/
 
-Tooling and documentation for keeping Grain in sync with its upstream,
+Documentation for keeping Grain in sync with its upstream,
 [Handy](https://github.com/cjpais/handy). Nothing here is shipped with the
-app — this folder is maintainer infrastructure only.
+app — this folder is maintainer infrastructure only. The tooling is
+[tether](https://github.com/Punit-Dethe/tether); its policy and records live
+in [`.tether/`](../.tether/).
 
 **Start with [UPSTREAM.md](UPSTREAM.md).** It is the runbook: how updates
-flow in, the four-layer architecture (isolation, merge machinery, automation,
-guards), and the procedures for the common case (reviewing the
-`sync/auto-upstream` PR) and the rare one (driving a conflicted merge).
+flow in, what tether enforces, and the procedures for the common case
+(reviewing the `sync/auto-upstream` PR) and the rare one (driving a
+conflicted sync).
 
 ## Documentation
 
-| File                                             | Purpose                                                                                       |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| [UPSTREAM.md](UPSTREAM.md)                       | The runbook. Single source of truth for upstream syncs.                                       |
-| [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md) | Per-file map of deliberate Grain/Handy divergence; which side wins each conflict.             |
-| [UPSTREAMABLE.md](UPSTREAMABLE.md)               | Grain-architecture fixes that must NOT go upstream, plus candidate extension hooks.           |
-| `merge-report.md`                                | CI-generated (gitignored): the next sync's conflict surface, written into the CI job summary. |
+| File                                             | Purpose                                                                             |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| [UPSTREAM.md](UPSTREAM.md)                       | The runbook. Single source of truth for upstream syncs.                             |
+| [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md) | Per-file map of deliberate Grain/Handy divergence; which side wins each conflict.   |
+| [DEFERRED-PORTS.md](DEFERRED-PORTS.md)           | The queue of Handy fixes Grain has reviewed but not ported yet.                     |
+| [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md) | The recording overlay/capture contract every sync must respect.                     |
+| [UPSTREAMABLE.md](UPSTREAMABLE.md)               | Grain-architecture fixes that must NOT go upstream, plus candidate extension hooks. |
 
-## Tooling
+## Policy and records (`.tether/`)
 
-| File                  | Purpose                                                                                                                                                                                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `policy_check.py`     | Validates relocation schema/paths, derives inert-alias coverage, and enforces the generated divergence-map table.                                                                                                                                                        |
-| `closeout.py`         | Fail-closed replacement for raw `git merge -s ours`; requires explicit assessments and proves the tree is unchanged.                                                                                                                                                     |
-| `sync_upstream.py`    | Rebuilds the commit ledger (`data.json`, verdict.py's input) and audits ancestry drift.                                                                                                                                                                                  |
-| `ratchet.py`          | Divergence ratchet — enforces per-file line budgets vs the merge base.                                                                                                                                                                                                   |
-| `port_audit.py`       | Port audit — flags upstream commits that touched an inert/relocated/parallel file (per `relocations.json`), so a fix that merged into the wrong (upstream-shaped) file can't silently miss the Grain code that replaces it. The one check a diff structurally cannot be. |
-| `relocations.json`    | Machine-readable map of upstream files → the Grain files that must carry their fixes. The audit's input; keep in step with `UPSTREAM-DIVERGENCE.md`.                                                                                                                     |
-| `frontend_freeze.py`  | Frontend freeze guard — `src/` is Grain-owned; fails if upstream files land there.                                                                                                                                                                                       |
-| `frontend_allow.json` | The still-shared frontend files. May shrink, never grow.                                                                                                                                                                                                                 |
-| `verdict.py`          | Records human verdicts (`Ignored`, cherry-picks, notes) on upstream commits.                                                                                                                                                                                             |
-| `rerere_cache.py`     | Versions git's rerere cache through `rr-cache/` so resolutions replay everywhere.                                                                                                                                                                                        |
-| `budget.json`         | Ratchet budgets for every Handy-derived file.                                                                                                                                                                                                                            |
-| `verdicts.json`       | The one human-owned ledger input.                                                                                                                                                                                                                                        |
+| File                         | Purpose                                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `.tether/config.toml`        | The policy: moved folders, owned areas, review areas, relocations (upstream file → Grain files), settings. |
+| `.tether/budgets.toml`       | Divergence budgets per Handy-derived file, and the accepted count of unmarked changes.                     |
+| `.tether/decisions/<sha>.toml` | One record per upstream commit that needed a decision: ignored, port evidence, reviews, notes.          |
+| `.tether/rr-cache/`          | Shared conflict resolutions; tether restores and saves them around each sync.                              |
+| `.tether/AGENT.md`           | The loop an AI agent follows to drive tether.                                                              |
 
-## Generated (gitignored build products)
+Grain's own seams with the Handy tree (alias coverage, overlay wiring, the
+transcribe.cpp pin) are checked by `scripts/grain_seams.py`.
 
-`data.json` (the commit ledger) and `merge-report.md` — recomputed every CI run
-from upstream's commit list, our git ancestry, and `verdicts.json`. Never edit
-by hand; regenerate with `python Upstream/sync_upstream.py`. Sync health is
-surfaced in the CI job summary, the auto-sync PR, and `python
-Upstream/preflight.py` — the GitHub Pages dashboard was retired 2026-08-10.
+## Setup
 
-## One-time per-clone setup
+No per-clone git config is needed: tether applies the merge settings and the
+shared rerere cache itself. Install it once:
 
 ```bash
-git config merge.ours.driver true
-git config rerere.enabled true
-git config rerere.autoupdate true
-git config merge.directoryRenames true
-python Upstream/rerere_cache.py restore
+cargo install --locked --git https://github.com/Punit-Dethe/tether tether
+tether doctor
 ```

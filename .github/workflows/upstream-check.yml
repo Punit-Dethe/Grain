@@ -13,6 +13,9 @@ name: Upstream Check
 # - relocations that point at Grain files which no longer exist;
 # - unmarked Grain changes in Handy-derived code (`// [GRAIN] <why>`).
 #
+# A second job runs scripts/grain_seams.py: Grain's own seams with the Handy
+# tree (grain_* alias coverage, overlay wiring, the transcribe.cpp pin).
+#
 # See Upstream/UPSTREAM.md.
 
 on:
@@ -25,6 +28,8 @@ on:
       - "recording-overlay.html"
       - "vite.config.ts"
       - ".tether/**"
+      - "native/**"
+      - "scripts/grain_seams.py"
       - ".github/workflows/upstream-check.yml"
   pull_request:
     paths:
@@ -34,6 +39,8 @@ on:
       - "recording-overlay.html"
       - "vite.config.ts"
       - ".tether/**"
+      - "native/**"
+      - "scripts/grain_seams.py"
       - ".github/workflows/upstream-check.yml"
   workflow_dispatch:
 
@@ -71,3 +78,20 @@ jobs:
 
       - name: Check the upstream boundary
         run: tether check
+
+  grain-seams:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test the seam checks
+        run: python -m unittest discover -s scripts -p test_grain_seams.py
+
+      - name: Check Grain's seams with the Handy tree
+        run: python scripts/grain_seams.py

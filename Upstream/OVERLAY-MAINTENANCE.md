@@ -68,28 +68,29 @@ conflict resolution.
 
 ## How an upstream change is reviewed
 
-1. Run preflight and follow the normal sync/close-out runbook. Read the deferred
+1. Run `tether status` and follow the normal sync/close-out runbook. Read the deferred
    queue before interpreting ancestry as runtime parity.
-2. `relocations.json` routes overlay, recorder, audio manager, transcription,
-   actions and settings changes to the active Grain destinations. Record each
-   touched source through `verdict.py --port`; the generated divergence table
-   must stay in sync. Merging shared Rust is not evidence that owned callers/UI
+2. The relocations in `.tether/config.toml` route overlay, recorder, audio
+   manager, transcription, actions and settings changes to the active Grain
+   destinations. Record each touched source with
+   `tether decide <sha> <outcome> --port <source> --evidence "..."`. Merging shared Rust is not evidence that owned callers/UI
    inherit the fix.
 3. The frozen-frontend review covers upstream overlay components/CSS as problem
    reports. Record the failure mode, applicability, actual owned destination and
-   verification with `--frontend-review`. Keep UI files Grain-owned.
+   verification with `tether decide <sha> --review <area> --problem ... --dest ...
+   --evidence ...`. Keep UI files Grain-owned.
 4. Use `ported` for adopted behavior, `not-applicable` for excluded behavior or
    an already-covered bug class, and `deferred` for intentionally pending work.
    A deferred outcome is accepted only while the full commit SHA has a queue
    row in `DEFERRED-PORTS.md`. Completing it requires updating the port outcome
    and removing the queue row; otherwise the port audit fails.
-5. `policy_check.py` gates the compiled shared module, separate adapters, owned
-   entry wiring, required review routes and retirement of the native/Matrix
-   renderer. It already runs in local preflight and runtime-port-policy CI.
+5. `scripts/grain_seams.py` gates the compiled shared module, separate
+   adapters, owned entry wiring, required review routes and retirement of the
+   native/Matrix renderer. It runs in the Upstream Check CI workflow.
 
 ## Verification when the affected behavior changes
 
-- Run the existing upstream process tests and preflight. Do not accept budget
+- Run `tether check` and `python scripts/grain_seams.py`. Do not accept budget
   growth before reviewing each shared-file diff; tighten budgets after commit.
 - Frontend build/lint/tests, settings UI parity and Specta export for contracts.
 - Rust overlay/session tests (including the 12 preference/mode combinations),

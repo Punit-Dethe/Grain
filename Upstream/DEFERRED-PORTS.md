@@ -32,6 +32,6 @@ journal-only sink. Physical-device acceptance is still distinct from this test.
 
 The detailed merge resolutions and budget rationale are in
 [REVIEW-2026-09-23.md](REVIEW-2026-09-23.md). Structured decisions for mapped or
-suppressed paths are in `verdicts.json`. Remove a deferred row only when the
+suppressed paths are in `.tether/decisions/`. Remove a deferred row only when the
 Grain runtime destination, behavioral verification, and verdict note (where
 applicable) are recorded together.

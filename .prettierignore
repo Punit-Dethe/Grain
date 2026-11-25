@@ -31,9 +31,6 @@ crates/grain-core/seed/*.json
 crates/grain-core/tests/fixtures/**/*.json
 src-tauri/tests/fixtures/**/*.json
 
-# Rewritten deterministically by Upstream/verdict.py.
-Upstream/verdicts.json
-
 # Misc
 .DS_Store
 *.log

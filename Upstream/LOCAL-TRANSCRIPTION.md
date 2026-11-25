@@ -45,7 +45,7 @@ cloud fallback or hidden opt-in remains.
 
 ## Upstream review
 
-`relocations.json` includes the local adapter under transcription-manager
+The relocations in `.tether/config.toml` include the local adapter under transcription-manager
 review, and no longer points at the deleted HTTP speech client. Review changes
 to shared loading, engine checkout, cancellation and finalization against this
 adapter and the retained Flow/Streaming callers. Preserve the resampler tail

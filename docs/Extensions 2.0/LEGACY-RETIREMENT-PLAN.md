@@ -139,7 +139,7 @@ Per unit: `cargo check --all-targets` and affected `cargo test` for `src-tauri`
 and `crates/*`, strict Clippy, regenerate `src/app/bindings.ts` with the ignored
 `binding_export::export_bindings` test after command changes, then
 `node_modules/.bin/tsc --noEmit`, `npx vitest run`, `npx eslint src`,
-`py scripts/ui_parity.py`, `Upstream/ratchet.py` for hook edits, and a scoped
+`py scripts/ui_parity.py`, `tether check` for hook edits, and a scoped
 diff review. Real-app smoke (Agent tool call, dictation start/cancel) after M1/M2.
 
 ## Continuity log
@@ -198,7 +198,7 @@ Tier 3 scope) to the user before starting them.
   in `grain-sdk/src/manifest.rs` test code (3194, 3242); app `check` passes;
   app `clippy --all-targets` exits 0 with 74 lib / 104 lib-test warnings; app
   lib tests 771 pass / 23 ignored; `cargo fmt --check` has one pre-existing
-  diff (`grain_audio_journal.rs:144`); `Upstream/ratchet.py` already fails
+  diff (`grain_audio_journal.rs:144`); `tether check` already fails
   (`lib.rs` 1302 → 1376 and `Cargo.toml` 142 → 156 lines vs merge base). The
   frontend matched session 1.
 - Done, each verified and pushed:
@@ -251,7 +251,7 @@ retirement rather than leaving machinery in place.
 
 **Next: batch 2 (Tier 2),** ordered lowest risk first: M3 no-op pipeline stubs
 → M5 headless `--eval` → M4 startup migrations → M2 sessions and contributed
-shortcuts (`handy/` hooks, run `Upstream/ratchet.py`) → M1 Extension Mode →
+shortcuts (`handy/` hooks, run `tether check`) → M1 Extension Mode →
 M6 settings contribution UI → M7 Agent confirmation. M6 and M7 change visible
 UI and need the user's decision first.
 

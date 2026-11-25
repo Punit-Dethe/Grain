@@ -78,7 +78,7 @@ Handy's `llm_client.rs` remains inert; its relevant transport fixes must be
 ported into `grain_llm_client.rs` and reviewed against `grain_llm_fallback.rs`,
 `grain_post_process.rs` and Agent. Handy settings changes need review against
 Grain core settings/provider policy and commands. These destinations are in
-`relocations.json` and its generated divergence table. Never restore a retired
+the relocations in `.tether/config.toml`. Never restore a retired
 router/tracker or quota field while adapting upstream. Frontend remains
 Grain-owned under the existing freeze.
 

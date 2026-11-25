@@ -8,49 +8,41 @@ upstream updates are absorbed. The per-file conflict policy lives in
 Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 
 **Before the next sync, read [DEFERRED-PORTS.md](DEFERRED-PORTS.md) and the
-[recording overlay maintenance contract](OVERLAY-MAINTENANCE.md).** It lists
-the exact Handy commits already present in ancestry whose runtime behavior
-Grain has deliberately not implemented yet.
+[recording overlay maintenance contract](OVERLAY-MAINTENANCE.md).** The first
+lists the exact Handy commits whose runtime behavior Grain has deliberately not
+implemented yet.
 
-The active October 17 sync sequence and Flow/dictionary impact assessment are
-in [SYNC-2026-10-17.md](SYNC-2026-10-17.md). Frontend benefit review is the final
-stage, not a blanket decision to ignore upstream UI fixes.
+The tooling is [tether](https://github.com/Punit-Dethe/tether). Its policy and
+records are committed in [`.tether/`](../.tether/); see
+[README.md](README.md) for what each file holds.
 
 ## The short version
 
 **The common case is reviewing a PR, not running a procedure.** Every 2 hours
-CI trial-merges `upstream/main`. If Handy moved and the merge is clean, CI
-opens (or refreshes) the **`sync/auto-upstream` PR** with the merge already
-done, the commit list in the body, and the divergence ratchet already run.
-Review it, merge it. Done — merged commits file themselves as `Merged` in the
-ledger, because being in our ancestry _is_ the record.
+CI previews the next sync. If Handy moved and the sync is clean, CI opens (or
+refreshes) the **`sync/auto-upstream` PR** with the sync already done as one
+squashed commit, the commit list in the body, and `tether check` already run on
+the result. Review it, merge it. Commits inside the sync file themselves as
+merged, because the sync commit's `Upstream-Synced:` line _is_ the record.
 
 `merge=ours` decides file ownership, not whether an upstream fix matters. Every
-upstream change under the frozen frontend or another suppressed Grain-owned
-path must be reviewed as a problem report: state the failure mode, decide
-whether Grain shares it, name the Grain paths adapted/already covering it, and
-record verification evidence. `frontend_freeze.py --review-audit` and
-`suppressed_review.py` enforce those records, including upstream merge commits.
-For transcribe.cpp changes, `docs/TRANSCRIBE-CPP-FORK.md` and
-`native/transcribe-fork.json` are the binding contract and paired immutable
-source pin. Preserve both fork patches/locks and the current target features
-when adapting Handy dependency changes; a native upgrade is a separately
-tested fork release. Retired vendor baselines are recoverable from Git; only
-the checked immutable source pair is maintained.
-When closing out manually adapted commits, `closeout.py` defers the divergence
-ratchet until after its tree-preserving ancestry merge, because only then does
-the ratchet compare Grain against the newly assessed upstream baseline. Use
-`--accept-growth` only after reviewing every reported Handy-tree increase.
+upstream change under the frozen frontend or another Grain-owned path must be
+reviewed as a problem report: what broke, whether Grain shares it, which Grain
+paths adapt or already cover it, and how that was verified. tether's review
+gate enforces those records. For transcribe.cpp changes,
+`docs/TRANSCRIBE-CPP-FORK.md` and `native/transcribe-fork.json` are the binding
+contract and paired immutable source pin. Preserve both fork patches/locks and
+the current target features when adapting Handy dependency changes; a native
+upgrade is a separately tested fork release.
 
 Working locally? One command answers everything:
 
 ```bash
-python Upstream/preflight.py     # fetches, then: behind-count, conflicts, all gates
+tether status     # fetches, then: where things stand and the one next step
 ```
 
-Only a _conflicted_ merge needs a human driver — and
-[merge-report.md](merge-report.md) will have told you the exact conflicting
-files up to 2 hours in advance, with
+Only a _conflicted_ sync needs a human driver — and the CI job summary will
+have listed the exact conflicting files up to 2 hours in advance, with
 [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md) saying which side wins in
 each one.
 
@@ -69,305 +61,249 @@ crates/                Grain crates (grain-core, grain-sdk, grain-tdt,
                        grain-editor).
 ```
 
+`.tether/config.toml` records the move as `[[moved]]` (`src-tauri/src/` →
+`src-tauri/src/handy/`, plus the frontend's `src/` → `src/app/`), so every
+tether report speaks in both path spaces.
+
 Two files inside `handy/` are **inert** — byte-identical to upstream but
 never compiled (no `mod` declaration): `settings.rs`, `llm_client.rs`.
-Grain's replacements are `grain_settings.rs`, `grain_llm_client.rs`, aliased in `lib.rs` so
-`crate::settings::…` etc. still resolve. Upstream edits to inert files merge
-with low conflict risk but high silent-port risk. `port_audit.py` therefore
-requires a structured outcome and evidence for every mapped runtime destination.
+Grain's replacements are `grain_settings.rs`, `grain_llm_client.rs`, aliased in
+`lib.rs` so `crate::settings::…` etc. still resolve. Upstream edits to inert
+files merge with low conflict risk but high silent-port risk, so the port audit
+requires a structured outcome and evidence for every mapped runtime
+destination.
 
 Because git recorded the folder move as 100% renames, merges map upstream's
-`src-tauri/src/X` into our `src-tauri/src/handy/X` automatically (verified
-with simulated upstream commits, 2026-07-20). One caveat, guarded by the
-ratchet: a **new** upstream file at the `src/` _root_ lands at our root — the
-root itself was never fully renamed, since `lib.rs`/`main.rs` and the Grain
-modules live there — so `git mv` it into `handy/` and add its `#[path]`
-declaration if it is a new module. If rename detection ever fails wholesale on
-a huge upstream refactor, fall back to `git merge -s subtree` or map by hand.
+`src-tauri/src/X` into our `src-tauri/src/handy/X` automatically. One caveat,
+guarded by `tether check` (strays): a **new** upstream file at the `src/`
+_root_ lands at our root — the root itself was never fully renamed, since
+`lib.rs`/`main.rs` and the Grain modules live there — so `git mv` it into
+`handy/` and add its `#[path]` declaration if it is a new module.
 
-### 2. Merge machinery — plain git, deliberately
+### 2. Merge machinery — plain git, driven by tether
 
-- **Grafted ancestry** (`33638cc`, an `ours`-merge of upstream `0392b7b`):
-  3-way merges work; upstream-only changes land automatically. The merge base
-  advances only at real merges or assessed release close-outs. Never trust a
-  version written in docs; query `git merge-base HEAD upstream/main` and
-  `git describe --tags --always <sha>` (audit 2026-08-22: v0.9.5 ancestry).
+- **The sync point is a commit-message line.** Every sync is one squashed,
+  single-parent commit carrying `Upstream-Synced: <handy sha>`. tether finds
+  the newest such line in Grain's history and merges three-way against that
+  Handy commit, grafting the base in for the merge when Grain's history does
+  not contain it. Never trust a version written in docs; `tether status`
+  reports the sync point.
 - **`merge=ours` attributes** (`.gitattributes`): docs, workflows, identity
-  configs, lockfiles auto-keep Grain's side.
-- **rerere, shared**: every conflict resolution is recorded, and — via
-  `Upstream/rr-cache/` + [rerere_cache.py](rerere_cache.py) — versioned in the
-  repo, so CI and every clone replay past resolutions instead of re-resolving
-  the same locale/Cargo.toml hunks each sync.
-- **`merge.directoryRenames=true`**: maps new upstream files inside moved
-  directories into `handy/` aggressively rather than conservatively.
-
-One-time per clone:
-
-```bash
-git config merge.ours.driver true
-git config rerere.enabled true
-git config rerere.autoupdate false
-git config merge.directoryRenames true
-python Upstream/rerere_cache.py restore
-```
+  configs, lockfiles, `Upstream/` and `.tether/` keep Grain's side.
+- **Owned areas** (`[[owned]]`): the frozen frontend (`src/`, except the moved
+  `src/app/` exemptions listed there). Conflicts inside resolve to Grain
+  automatically, and upstream work that rename detection routed _into_
+  Grain's tree is reverted — git's directory-rename detection sees
+  `src/` → `src/app/` and would otherwise apply upstream edits to moved files
+  with **no conflict at all** (on 2026-08-02 only the type-checker caught it).
+- **Merge settings** (`[sync.git_config]`): `merge.ours.driver` and
+  `merge.directoryRenames` are passed to every sync, so a fresh clone or CI
+  runner behaves exactly like a configured one.
+- **rerere, shared** (`[sync] rerere_cache = ".tether/rr-cache"`): tether
+  restores the committed resolutions before each sync and saves new ones
+  after it, so CI and every clone replay past resolutions. Replayed text stays
+  unstaged for review; an old resolution is not automatically correct forever.
 
 We evaluated the heavier tools the ecosystem uses for this problem —
-[Copybara](https://dagster.io/blog/monorepos-the-hub-and-spoke-model-and-copybara)
-(explicit cross-repo transforms),
-[josh](https://josh-project.github.io/josh/faq.html) (fast implicit tree
-filtering, as adopted by
-[Rust](https://blog.rust-lang.org/inside-rust/2026/06/04/how-josh-helps-rust-manage-code-across-multiple-repositories/)),
-and `git subtree` — and rejected them: they solve _mapping a subtree across
-repositories_. Grain doesn't have that problem, because `#[path]` kept
-upstream's paths merge-compatible inside one shared history. Plain `git merge`
-plus rename detection is simpler than any of them and loses nothing. GitHub's
-own [friendly-fork guidance](https://github.blog/developer-skills/github/friend-zone-strategies-friendly-fork-management/)
+[Copybara](https://dagster.io/blog/monorepos-the-hub-and-spoke-model-and-copybara),
+[josh](https://josh-project.github.io/josh/faq.html) and `git subtree` — and
+rejected them: they solve _mapping a subtree across repositories_. Grain
+doesn't have that problem, because `#[path]` kept upstream's paths
+merge-compatible. GitHub's own
+[friendly-fork guidance](https://github.blog/developer-skills/github/friend-zone-strategies-friendly-fork-management/)
 reaches the same conclusion: frequent, small, scheduled merges beat clever
 tooling.
 
 ### 3. Automation — CI does the waiting
 
 [`upstream-sync.yml`](../.github/workflows/upstream-sync.yml), every 2 hours
-(and on any push touching `Upstream/`):
+(and on any push touching `.tether/`):
 
-1. **Trial merge** → `merge-report.md`, written into the CI **job summary**: the
-   next sync's conflict surface (behind count, trial result, conflicting files),
-   always known in advance without reading CI logs.
-2. **Ledger**: [sync_upstream.py](sync_upstream.py) rebuilds `data.json` — the
-   per-commit status ledger `verdict.py` validates against. It pages the API
-   back to `TRACKING_FLOOR_TS` (a single page silently dropped commits whenever
-   upstream landed a burst) and keys on **SHA**, because subjects repeat
-   (`update catalog`, `bump tauri global shortcut`).
-3. **Ancestry audit**: flags upstream commits that are already applied here but
-   unrecorded (see D below), into the job summary — and gates step 4 on it.
-4. **Auto-PR**: clean merge + new commits + no ancestry drift → the
-   `sync/auto-upstream` branch is (re)built, the ratchet must pass on the
-   merged result, and a PR is opened/updated with the commit list and a review
-   checklist. Conflicted merges, ratchet failures and drift all suppress the
-   PR rather than producing a misleading one.
+1. **Preview** (`tether sync --dry-run`) into the CI **job summary**: how far
+   behind, the conflicts that need a person, possible security fixes not in
+   Grain yet, and upstream commits already applied here by hand.
+2. **Auto-PR**: new commits + no conflicts + nothing applied by hand → the
+   `sync/auto-upstream` branch is rebuilt with `tether sync`, new rerere
+   resolutions are committed, `tether check` runs on the result, and a PR is
+   opened or updated with the commit list and a review checklist. Conflicts
+   and hand-applied commits suppress the PR rather than producing a misleading
+   one.
 
-> A GitHub Pages **dashboard** used to render the ledger + sync health as a
-> webpage. It was retired 2026-08-10: chronically stale (any hiccup in the
-> API-scraping ledger step froze the deploy) and fully redundant with the CI job
-> summary, the auto-sync PR, and `python Upstream/preflight.py`.
+[`upstream-check.yml`](../.github/workflows/upstream-check.yml) on every
+push/PR touching the Rust tree, the frontend or `.tether/`: `tether check`, plus
+`scripts/grain_seams.py` for Grain's own seams (alias coverage, overlay
+wiring, the transcribe.cpp pin).
 
-[`divergence-ratchet.yml`](../.github/workflows/divergence-ratchet.yml) on
-every push/PR touching `src-tauri/`: the boundary cannot silently erode.
+#### The records — one folder, all human decisions
 
-#### The ledger is derived — one file is yours
+Nothing is generated into the repo. tether derives each commit's state from
+upstream's history, the sync point and `.tether/decisions/`:
 
-`data.json` and `merge-report.md` are **gitignored build products**. Nothing
-commits them; every run recomputes them from three inputs:
+| Input                       | Answers                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| upstream's commit list      | what happened                                              |
+| the sync point              | what we absorbed — everything up to it is merged           |
+| `.tether/decisions/<sha>.toml` | what only a human knows: ignored, port evidence, reviews, notes |
 
-| Input                          | Answers                                                       |
-| ------------------------------ | ------------------------------------------------------------- |
-| upstream's commit list         | what happened                                                 |
-| our git ancestry               | what we absorbed — a commit reachable from `HEAD` is `Merged` |
-| [verdicts.json](verdicts.json) | what only a human knows: `Ignored`, cherry-picks, notes       |
-
-So the output is a pure function of its inputs: idempotent, and impossible to
-drift. That matters because it used to drift constantly — verdicts were typed
-into the generated `data.json` by hand, and a bot commit landed on `main` every
-2 hours carrying nothing but a new timestamp.
-
-Record the rare verdict with the tool, never by hand:
+Record decisions with the tool, never by hand:
 
 ```bash
-python Upstream/verdict.py --pending                    # what still needs one
-python Upstream/verdict.py <sha|#PR> Ignored "why"      # Grain replaced that surface
-python Upstream/verdict.py <sha|#PR> --note "detail"    # just annotate
-python Upstream/verdict.py <sha|#PR> --clear            # back to derived
+tether inbox                                     # what is pending
+tether packet <sha|#PR>                          # everything one commit needs
+tether decide <sha|#PR> ignored --note "why"     # Grain replaced that surface
+tether decide <sha|#PR> --note "detail"          # just annotate
+tether decide <sha|#PR> --clear                  # back to derived
 ```
 
-It refuses to store a status ancestry already implies, so `verdicts.json` only
-ever holds real decisions. **A merged sync needs no verdict at all.** Regenerate
-the ledger any time with `python Upstream/sync_upstream.py`.
+**A synced commit needs no decision at all.**
 
 ### 4. Guards — the boundary is enforced, not hoped for
 
-[ratchet.py](ratchet.py) + [budget.json](budget.json): every Handy-derived
-file has a divergence budget (added+removed lines vs the merge base, measured
-blob-to-blob so the folder move can't fool it). CI fails on: a grown budget, a
-newly-diverged file, an outright-deleted upstream file, or a **stray**
-upstream file sitting outside `handy/`. Budgets tighten via
-`python Upstream/ratchet.py --update` — run it _after_ committing (it
-measures HEAD, not the working tree).
+`tether check` is the CI gate. It fails on:
 
-[port_audit.py](port_audit.py) + [relocations.json](relocations.json): the
-ratchet and a diff both prove the _shared_ `handy/` surface is on par with
-Handy — but they are blind to the fixes that merge into an **inert** file
-(`llm_client.rs`, `settings.rs` — byte-identical to upstream but
-uncompiled), into a file whose logic Grain **relocated** (`actions.rs` →
-`grain_post_process.rs`), or that share a bug class with a Grain-only
-**parallel** implementation (the rolling engine). In all three
-the upstream-shaped file matches perfectly while the code Grain actually runs
-lacks the fix, and no diff spans the gap. The port audit reads the relocation
-map and fails when a merged upstream commit touched a mapped file without a
-[verdicts.json](verdicts.json) note recording where the fix landed (or why it
-does not apply) — turning "did we forget to port it?" from unbounded worry into
-a bounded, gated list. Wired into `preflight.py`; clear each finding with
-`python Upstream/verdict.py <sha> --note "..."`.
+- **Budgets** (`.tether/budgets.toml`): every Handy-derived file has a
+  divergence budget (added+removed lines against the sync point, measured
+  blob-to-blob so the folder move can't fool it). A grown budget, a newly
+  diverged file or an outright-deleted upstream file fails. Budgets tighten
+  with `tether check --update`; growth needs `--update --accept-growth` after
+  semantic review and an explanation in the commit.
+- **Strays**: an upstream file sitting outside `handy/`.
+- **Adopted frontend files**: upstream files that landed in the frozen
+  `src/`. The count may shrink, never grow.
+- **Port audit** (`[relocations."<upstream file>"]`): budgets and diffs prove
+  the _shared_ `handy/` surface is on par with Handy, but they are blind to
+  fixes that merge into an **inert** file, into a file whose logic Grain
+  **relocated** (`actions.rs` → `grain_post_process.rs`), or that share a bug
+  class with a Grain-only **parallel** implementation (the rolling engine). In
+  all three the upstream-shaped file matches perfectly while the code Grain
+  runs lacks the fix. The audit fails when a synced upstream commit touched a
+  relocated file without a port record, and when a relocation points at a
+  Grain file that no longer exists.
+- **Reviews** (`[[review]]`): synced upstream changes to the frozen frontend
+  and other Grain-owned paths need a problem-level review record.
+- **Unmarked changes**: a Grain edit inside Handy-derived code with no
+  `[GRAIN] <why>` comment on or just above it. The accepted count per file
+  lives in `budgets.toml [unmarked]` and may only shrink. `tether map` renders
+  the divergence map from those markers.
+- **Drift**: a Handy file that no longer matches the blob it was synced at.
 
-Record mapped runtime decisions through the existing verdict command:
+Record runtime port decisions with:
 
 ```bash
-python Upstream/verdict.py <sha> --port <source> <ported|not-applicable|deferred> "evidence"
+tether decide <sha> ported --port <upstream file> --evidence "where it landed, how it was verified"
+tether decide <sha> not-applicable --port <upstream file> --evidence "why"
+tether decide <sha> deferred --port <upstream file> --evidence "why, and the plan"
+tether decide <sha> --review <area> --problem "what broke" --dest <grain path> --evidence "how verified"
 ```
 
-`deferred` is reviewed pending work, not implementation. It requires a full-SHA
-queue row in `DEFERRED-PORTS.md`. On completion, record the adopted behavior and
-verification before removing that row; the port audit rejects an untracked
-deferral. The overlay/capture review routes and acceptance checklist are in
+`deferred` is reviewed pending work, not implementation. It counts only while
+the commit's full SHA has a row in `DEFERRED-PORTS.md` (`[port_audit]
+deferred_queue`); tether refuses an unqueued deferral. On completion, record
+the adopted behavior and verification before removing that row. The
+overlay/capture review routes and acceptance checklist are in
 [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md).
 
 ## Runbook
 
 ### A. The auto-PR is open (common case)
 
-1. Read the PR body's commit list. Anything Grain does **not** actually take
-   needs saying so — `python Upstream/verdict.py <sha> Ignored "why"` (the
-   divergence map says where Grain replaced that surface). Everything merged
-   needs nothing: ancestry files it.
+1. Read the PR body's commit list and the `tether check` output. Anything
+   Grain does **not** actually take needs saying so —
+   `tether decide <sha> ignored --note "why"` (the divergence map says where
+   Grain replaced that surface). Every port, review and marker the check asks
+   for gets recorded on the branch; `tether packet <sha>` shows what each
+   needs.
 2. Review affected recording-window/capture changes using
-   [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md), including owned callers and
-   frozen-frontend behavior. CI must be green (build, tests, ratchet). If the ratchet flags a stray
-   file, `git mv` it into `handy/` on the branch.
-3. Merge the PR with a **merge commit — never squash** (squashing discards
-   the recorded ancestry, so the board would forget these commits were merged
-   _and_ the next sync re-fights them).
+   [OVERLAY-MAINTENANCE.md](OVERLAY-MAINTENANCE.md), including owned callers
+   and frozen-frontend behavior. CI must be green (build, tests, Upstream
+   Check). If the check flags a stray file, `git mv` it into `handy/` on the
+   branch.
+3. Merge the PR with a **merge commit or rebase — never squash**: squashing
+   rewrites the sync commit's message, so the `Upstream-Synced:` line can be
+   lost and the next sync re-fights these commits.
 
-### B. The trial merge reports conflicts (rare case)
+### B. The preview reports conflicts (rare case)
 
 ```bash
-python Upstream/preflight.py            # fetches; says how far behind + what conflicts
-python Upstream/rerere_cache.py restore
+tether status                           # fetches; how far behind + what conflicts
 git checkout -b sync/upstream-YYYY-MM-DD
-python Upstream/merge_upstream.py       # merges; auto-resolves the frozen frontend
-# resolve ONLY what it lists, per UPSTREAM-DIVERGENCE.md
-git commit --no-edit
-python Upstream/merge_upstream.py --finish   # gates first; then tightens budgets
-python Upstream/rerere_cache.py save    # share NEW resolutions; commit them
+tether sync                             # merges; owned areas resolve themselves
+# resolve ONLY what it lists, per UPSTREAM-DIVERGENCE.md; git add each file
+tether sync --continue                  # one squashed commit with the marker
+git add .tether/rr-cache && git commit -m "Share new conflict resolutions"
 bun install && cargo check              # regenerate lockfiles
-python Upstream/verdict.py --pending    # anything left unassessed? record it
+tether status                           # ports, reviews, markers still owed
 ```
 
-For a staged sync, pass `--target <commit>` to `merge_upstream.py`. The tool
-still fetches first and rejects targets outside fetched Handy main history.
-Resolve, review, test and finish each batch before selecting the next boundary;
-never substitute a bare merge or move the upstream tracking ref to an older tip.
+For a staged sync, pass `--target <commit>` to `tether sync`. It still fetches
+first and rejects targets outside Handy's history. Resolve, review, test and
+finish each batch before selecting the next boundary. `tether sync --abort`
+throws a prepared sync away.
 
-**Never run a bare `git merge upstream/main`.** The remote-tracking ref is a
-local cache; merging against a stale one is how the first 2026-08-02 sync
-"completed" while 16 commits it could not see stayed behind. Every tool here
-now fetches first — `git merge` does not.
-
-Three things `merge_upstream.py` does that hand-merging misses:
-
-- **Frozen-frontend conflicts resolve themselves.** Upstream keeps developing
-  its `src/`; we deleted it. Six of the eleven conflicts in the 08-02 sync were
-  that, and the answer never varies.
-- **Silent frontend adoption is reverted.** This is the one to understand.
-  Git's directory-rename detection saw `src/` → `src/app/` and _helpfully_
-  routes upstream's frontend work into Grain's tree — new files land under
-  `src/app/`, and edits to files that moved are applied with **no conflict at
-  all**. `frontend_freeze.py` cannot see either: it matches paths shared with
-  upstream's `src/`, and `src/app/...` is not one. On 08-02 only the
-  type-checker caught it.
-- **Strays are surfaced.** New upstream modules land at the `src-tauri/src/`
-  root and must be `git mv`'d into `handy/` with a `#[path]` declaration.
-
-`--finish` is deliberately ordered **gate first, budget update second**. A
-failed gate leaves `budget.json` untouched. `ratchet.py --update` only tightens;
-new/grown budgets require `--update --accept-growth` after semantic review and
-an explanation in the commit.
+**Never run a bare `git merge upstream/main`.** It brings in Handy's history
+instead of one squashed commit, merges against a possibly stale
+remote-tracking ref (how the first 2026-08-02 sync "completed" while 16
+commits stayed behind), and skips the owned-area rules. tether fetches first.
 
 ### B1. Before you commit anything in the Handy tree
 
-```bash
-python Upstream/ratchet.py --worktree
-```
-
-The budget is measured against `HEAD`, so the plain ratchet can only fail
-_after_ you commit — which then needs a second commit or an amend to fix.
-`--worktree` measures the files on disk and answers before you commit.
+Mark every change: a `// [GRAIN] <why>` comment on or just above it. For a
+file that cannot hold comments, `tether map --reason <path> --why "<why>"`.
+`tether check` measures the committed tree, so run it right after committing.
 
 If upstream changed code Grain relocated (settings → `crates/grain-core`,
 post-processing → `grain_post_process.rs`, LLM client → `grain_llm_client.rs`,
 final-text stage → `audio_toolkit/grain_text.rs`), **port the change into the
-Grain location by hand** and say so in the commit body. The divergence map
-lists every relocation.
+Grain location by hand** and record it with `tether decide --port`. The
+relocations in `.tether/config.toml` list every destination.
 
-### C. Closing out a release (do not skip)
+### C. Closing out commits without a sync (do not skip)
 
-Once every commit of a release has a verdict (`python Upstream/verdict.py
---pending` comes back empty for it):
+Once every commit up to some Handy revision has a decision
+(`tether inbox` comes back empty for it):
 
 ```bash
-python Upstream/closeout.py vX.Y.Z              # read-only assessment check
-python Upstream/closeout.py vX.Y.Z --execute    # checked close-out + tree proof
+tether closeout <rev>              # read-only: is every commit decided?
+tether closeout <rev> --execute    # moves the sync point, changes no file
 ```
 
-`closeout.py` verifies the tree hash is unchanged and refuses unassessed ranges,
-dirty worktrees, non-upstream targets, or a failing preflight. Commit the
-regenerated `budget.json` with the close-out. **Never** run raw
-`-s ours` over commits you have not assessed — it silently locks their fixes
-out forever, with no conflict to warn you. Cherry-picks record no ancestry
-(measured 2026-07-17: 13 cherry-picks, conflict surface unchanged at 57) —
-close-outs are what advance the merge base.
+`closeout` refuses undecided commits, dirty worktrees and non-upstream
+targets, and its commit changes no file. **Never** move the sync point by
+hand over commits you have not assessed — it silently locks their fixes out
+forever, with no conflict to warn you.
 
-### D. "We're N behind, but we already did those" — ancestry drift
+### D. "We're N behind, but we already did those" — hand-applied commits
 
-The single most common way this fork's bookkeeping goes wrong. Symptoms:
-
-- `git rev-list --count HEAD..upstream/main` stays stubbornly non-zero;
-- the same file (historically `es/translation.json`) conflicts in _every_
-  trial merge;
-- the board says `Merged` for those very commits (a `verdicts.json` override
-  said so, since ancestry could not).
+Symptoms: the behind count stays stubbornly non-zero; the same file
+conflicts in _every_ preview.
 
 **Cause:** the work was applied by cherry-pick or by hand. Git tracks
-_ancestry_, not content — so the content is in the tree, the ledger is
-correct, and git still believes we never took those commits. It therefore
-replays them (and re-raises their conflicts) into every future merge, forever.
-`git cherry` won't spot it either: an adapted cherry-pick has a different
-patch-id, so it reports the commit as missing.
+history, not content — the content is in the tree but the sync point never
+moved, so every future sync replays those commits and re-raises their
+conflicts.
 
-**Detection (automatic):** `python Upstream/sync_upstream.py` checks exact
-patch IDs, explicit `Upstream-Commit` trailers, and then subject heuristics; it prints a
-loud `ALREADY APPLIED` block. CI runs this every 2 hours, surfaces it in the
-job summary, and — importantly — **suppresses the auto-sync PR** while drift
-exists, because auto-merging in that state would replay resolved work.
+**Detection (automatic):** `tether inbox` marks a commit as applied here from
+exact patch IDs and explicit `Upstream-Commit:` trailers. CI lists them in the
+job summary and **suppresses the auto-sync PR** while any exist, because
+auto-syncing in that state would replay resolved work.
 
 **Fix:** verify the content really is present (spot-check the files each
-commit touched), then record it:
+commit touched), record it with `tether decide <sha> merged`, then run a
+close-out (C) to move the sync point past it.
 
-```bash
-python Upstream/closeout.py upstream/main
-python Upstream/closeout.py upstream/main --execute
-```
-
-Measured 2026-07-20: four i18n commits (#1697, #1701, #1708, #1709) sat
-applied-but-unrecorded. Recording them took the trial merge from "1 conflict,
-4 behind" to **clean, 0 behind** without changing a single line of code.
-
-**Prevention:** prefer `git merge` over `git cherry-pick` for upstream work.
-If an urgent fix must be cherry-picked or adapted, put the exact full SHA in
-the commit body as `Upstream-Commit: <sha>`, then close it out afterwards.
-Patch IDs catch exact cherry-picks; the trailer catches adapted ports; subject
-matching remains only a heuristic signal.
+**Prevention:** sync rather than cherry-pick. If an urgent fix must be
+cherry-picked or adapted, put the exact full SHA in the commit body as
+`Upstream-Commit: <sha>`, then close it out afterwards.
 
 ### Verification (every sync)
 
 - Rust: `cargo check --lib` then `cargo test --lib` in `src-tauri/`
 - Frontend: `./node_modules/.bin/tsc --noEmit`
-- Boundary: `python Upstream/ratchet.py`
-- Process guards: `python -m unittest discover -s Upstream/tests -p "test_*.py"`
-- Runtime ports/policy: `python Upstream/port_audit.py` and
-  `python Upstream/policy_check.py`
+- Boundary: `tether check` and `python scripts/grain_seams.py`
 - Dependencies: `bun install --frozen-lockfile`; regenerate intentionally if
   `package.json` changed, then run the existing Nix lock-derivative check
 - Platform fixes: run the native CI target where available; otherwise record
-  the unvalidated OS explicitly in the verdict and PR checklist
+  the unvalidated OS explicitly in the decision note and PR checklist
 - Windows quirks on the primary dev machine: unset `LOCALAPPDATA` and `TEMP`,
   set `TMP=C:\Windows\Temp` (transcribe-cpp-sys junction workaround), and
   build with `CARGO_TARGET_DIR=C:\gtc` — the running Grain app locks the
@@ -381,7 +317,7 @@ matching remains only a heuristic signal.
 - **Frontend/backend decoupling**: frontend→backend is Tauri commands only,
   backend→frontend is events only. The frontend must stay destroyable.
 - **Frontend freeze (2026-07-31)**: `src/` is Grain-owned — `merge=ours` plus
-  [frontend_freeze.py](frontend_freeze.py), because `merge=ours` only wins
+  tether's owned area and review gate, because `merge=ours` only wins
   conflicts. Everything genuinely valuable in upstream's frontend commits is
   _backend knowledge that happens to be written in TSX_ (which accelerators this
   host can run, which locale a system tag resolves to). Port those into Rust —
