@@ -80,7 +80,7 @@ src-tauri/Cargo.lock merge=ours
 # Shared rerere resolutions ([sync] rerere_cache in .tether/config.toml): pre/postimages must
 # stay byte-exact or rerere's conflict hashes stop matching — never convert
 # line endings.
-.tether/rr-cache/** -text
+.tether/rr-cache/** binary
 
 # Font binaries must never be line-ending converted (would corrupt the file).
 *.ttf binary

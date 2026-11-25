@@ -49,7 +49,7 @@ permissions:
 
 env:
   # The tether version this repository's .tether/ files were written for.
-  TETHER_REV: 56ad41dc38d32a9e08668911bb0afcc8a1641cc9
+  TETHER_REV: 5b564400e0826207441c618f8b20d0a36dad2e5f
 
 jobs:
   tether-check:
