@@ -22,6 +22,7 @@ CONTRIBUTING_TRANSLATIONS.md merge=ours
 docs/**            merge=ours
 website/**         merge=ours
 Upstream/**        merge=ours
+.tether/**         merge=ours
 
 # Grain-owned CI (upstream workflows do not apply to this repo)
 .github/workflows/** merge=ours
@@ -33,7 +34,7 @@ Upstream/**        merge=ours
 # features Grain deleted, two carrying *backend* knowledge (host accelerators,
 # locale resolution) that belongs in Rust, where we still merge everything.
 # merge=ours only wins conflicts, so the freeze is enforced by
-# Upstream/frontend_freeze.py, not by this line alone.
+# `tether check` (the owned area and its review gate), not by this line alone.
 #
 # WARNING — this line cannot tell an upstream merge from one of OUR OWN
 # branches, and it fires on both. Merging a Grain feature branch that edits a
@@ -76,10 +77,10 @@ src-tauri/Cargo.lock merge=ours
 # negations (`!path`) and rule order are semantic, so `union` can retain both
 # sides yet silently reverse one fork's intent. Review rare conflicts by rule.
 
-# Shared rerere resolutions (Upstream/rerere_cache.py): pre/postimages must
+# Shared rerere resolutions ([sync] rerere_cache in .tether/config.toml): pre/postimages must
 # stay byte-exact or rerere's conflict hashes stop matching — never convert
 # line endings.
-Upstream/rr-cache/** -text
+.tether/rr-cache/** -text
 
 # Font binaries must never be line-ending converted (would corrupt the file).
 *.ttf binary

@@ -1,0 +1,73 @@
+name: Upstream Check
+
+# The Handy/Grain boundary, checked by tether (https://github.com/Punit-Dethe/tether)
+# against .tether/config.toml. One `tether check` covers what the
+# Python ratchet, frontend freeze and port-policy jobs used to:
+#
+# - divergence budgets for Handy-derived files (shrink freely, never grow
+#   without a reviewed `tether check --update --accept-growth`);
+# - stray upstream files outside src-tauri/src/handy/, and sync-point drift;
+# - the frozen frontend: upstream files adopted into src/ are refused;
+# - runtime-port evidence for relocated Handy files, and problem-level review
+#   records for upstream frontend / Grain-owned changes;
+# - relocations that point at Grain files which no longer exist;
+# - unmarked Grain changes in Handy-derived code (`// [GRAIN] <why>`).
+#
+# See Upstream/UPSTREAM.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/**"
+      - "crates/**"
+      - "src/**"
+      - "recording-overlay.html"
+      - "vite.config.ts"
+      - ".tether/**"
+      - ".github/workflows/upstream-check.yml"
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "crates/**"
+      - "src/**"
+      - "recording-overlay.html"
+      - "vite.config.ts"
+      - ".tether/**"
+      - ".github/workflows/upstream-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The tether version this repository's .tether/ files were written for.
+  TETHER_REV: d46d3c31d81e7e75084130777dd1bcf4e480b465
+
+jobs:
+  tether-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history required to find the sync marker
+
+      - name: Cache tether
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/tether
+          key: tether-${{ runner.os }}-${{ env.TETHER_REV }}
+
+      - name: Install tether
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/Punit-Dethe/tether --rev "$TETHER_REV" tether
+
+      - name: Fetch Upstream
+        run: |
+          git remote add upstream https://github.com/cjpais/handy.git
+          git fetch --quiet upstream
+
+      - name: Check the upstream boundary
+        run: tether check

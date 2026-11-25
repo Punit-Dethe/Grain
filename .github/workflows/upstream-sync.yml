@@ -1,31 +1,23 @@
 name: Upstream Sync
 
-# Grain's upstream (Handy) intake, end to end — see Upstream/UPSTREAM.md.
-#
-# Nothing is committed. Upstream/data.json and merge-report.md are gitignored
-# build products, regenerated from upstream's commit list, our git ancestry, and
-# the human-owned Upstream/verdicts.json. Sync health is surfaced in the CI job
-# summary and the auto-sync PR (the GitHub Pages dashboard was retired
-# 2026-08-10 as redundant with those and with `python Upstream/preflight.py`).
+# Grain's upstream (Handy) intake, run by tether — see Upstream/UPSTREAM.md.
 #
 # Each run:
-#   1. trial-merges upstream/main and writes merge-report.md into the job
-#      summary, so the next sync's conflict surface is always known in advance;
-#   2. rebuilds the ledger and audits ancestry drift;
-#   3. if upstream has new commits AND the merge is clean, opens (or updates)
-#      an automatic sync PR — reviewing that PR is the entire sync workflow for
-#      the common case. Conflicted merges are never auto-opened; the report
-#      lists the files and the runbook takes over.
+#   1. previews the next sync (`tether sync --dry-run`) and writes the
+#      conflict surface, pending security fixes and hand-applied commits into
+#      the job summary, so the next sync is always known in advance;
+#   2. if upstream has new commits, nothing conflicts and nothing was applied
+#      by hand, opens (or updates) an automatic sync PR. Reviewing that PR is
+#      the whole sync for the common case. Conflicted syncs are never
+#      auto-opened; the runbook takes over.
 
 on:
   schedule:
     - cron: "0 */2 * * *" # Runs every 2 hours
   push:
-    # A human recording a verdict republishes immediately. (Human pushes do
-    # trigger workflows; the bot's would not — which is why it no longer pushes.)
     branches: [main]
     paths:
-      - "Upstream/**"
+      - ".tether/**"
       - ".github/workflows/upstream-sync.yml"
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
@@ -34,13 +26,14 @@ permissions:
   pull-requests: write
 
 concurrency:
-  # A scheduled run and a push run must queue rather than race (both touch the
-  # sync branch and the rerere cache).
+  # A scheduled run and a push run must queue rather than race (both touch
+  # the sync branch).
   group: upstream-sync
   cancel-in-progress: false
 
 env:
   SYNC_BRANCH: sync/auto-upstream
+  TETHER_REV: d46d3c31d81e7e75084130777dd1bcf4e480b465
 
 jobs:
   sync:
@@ -49,200 +42,121 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history required for the trial merge and the ancestry audit
+          fetch-depth: 0 # full history required to find the sync marker
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Cache tether
+        id: cache
+        uses: actions/cache@v4
         with:
-          python-version: "3.11"
+          path: ~/.cargo/bin/tether
+          key: tether-${{ runner.os }}-${{ env.TETHER_REV }}
+
+      - name: Install tether
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/Punit-Dethe/tether --rev "$TETHER_REV" tether
 
       - name: Fetch Upstream
         run: |
           git remote add upstream https://github.com/cjpais/handy.git
-          git fetch upstream --tags
-
-      - name: Configure merge machinery
-        run: |
+          git fetch --quiet upstream
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config merge.ours.driver true
-          # Map upstream's files into src-tauri/src/handy/ (the phase-7 layout)
-          # aggressively rather than conservatively.
-          git config merge.directoryRenames true
-          # Reuse every conflict resolution ever recorded by this repo.
-          git config rerere.enabled true
-          # Reuse known resolution text, but leave it unstaged for semantic
-          # review; an old resolution is not automatically correct forever.
-          git config rerere.autoupdate false
-          python Upstream/rerere_cache.py restore || true
 
-      - name: Trial Merge Report
-        id: trial
+      - name: Preview the next sync
+        id: preview
         run: |
-          BASE=$(git merge-base HEAD upstream/main || true)
-          REPORT="Upstream/merge-report.md"
-          BEHIND=$(git rev-list --count HEAD..upstream/main)
-          CONFLICTS=""
+          # tether exits 2 when it found something to act on; that is data here.
+          tether sync --dry-run --no-fetch --json > /tmp/dry.json || [ $? = 2 ]
+          tether inbox --json > /tmp/inbox.json
+          BEHIND=$(jq '.data.behind // 0' /tmp/dry.json)
+          CONFLICTS=$(jq '.data.conflicts // [] | length' /tmp/dry.json)
+          APPLIED=$(jq '[.data.items[] | select(.applied_here)] | length' /tmp/inbox.json)
           {
-            echo "# Upstream Merge Report"
+            echo "# Upstream Sync Report"
             echo
-            echo "_Auto-generated by upstream-sync; do not edit. See Upstream/UPSTREAM.md._"
+            echo "_Generated by tether; see Upstream/UPSTREAM.md._"
             echo
             echo "- Upstream HEAD: \`$(git rev-parse --short upstream/main)\` — $(git log -1 --format='%s (%ci)' upstream/main)"
-            echo "- Latest upstream tag: \`$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || echo none)\`"
-          } > "$REPORT"
-
-          CLEAN=false
-          if [ -z "$BASE" ]; then
-            echo "- **No merge base found — cannot trial-merge.**" >> "$REPORT"
-          else
-            echo "- Merge base: \`$(git rev-parse --short $BASE)\`" >> "$REPORT"
-            echo "- Unmerged upstream commits: $BEHIND" >> "$REPORT"
-            if git merge --no-commit --no-ff upstream/main > /dev/null 2>&1; then
-              echo "- **Trial merge: CLEAN — no conflicts.**" >> "$REPORT"
-              CLEAN=true
-            else
-              CONFLICTS=$(git diff --name-only --diff-filter=U | sort)
-              COUNT=$(echo "$CONFLICTS" | grep -c . || true)
-              {
-                echo "- **Trial merge: $COUNT conflicting file(s):**"
-                echo
-                echo '```'
-                echo "$CONFLICTS"
-                echo '```'
-                echo
-                echo "Resolve per the divergence map (Upstream/UPSTREAM-DIVERGENCE.md)."
-              } >> "$REPORT"
-            fi
-            git merge --abort 2>/dev/null || git reset --hard HEAD
-          fi
-          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
-          echo "clean=$CLEAN" >> "$GITHUB_OUTPUT"
-          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
-
-      # Ledger + ancestry audit. Runs BEFORE the PR step because it detects
-      # already-applied commits (cherry-picked work git has no ancestry for) —
-      # auto-merging those would replay resolved work and its conflicts.
-      - name: Rebuild ledger and audit ancestry
-        id: ledger
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Without pipefail the pipe reports tee's status, so a crashed
-          # scraper looked like a successful sync that found nothing.
-          set -o pipefail
-          python Upstream/sync_upstream.py | tee /tmp/ledger.txt
-          if grep -q "ALREADY APPLIED" /tmp/ledger.txt; then
-            echo "drift=true" >> "$GITHUB_OUTPUT"
-            {
+            echo "- $(jq -r .summary /tmp/inbox.json)"
+            echo "- $(jq -r .summary /tmp/dry.json)"
+            if [ "$CONFLICTS" != 0 ]; then
               echo
-              echo "## Ancestry drift"
+              echo "**Conflicts that need a person:**"
               echo '```'
-              cat /tmp/ledger.txt
+              jq -r '.data.conflicts[]' /tmp/dry.json
               echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "drift=false" >> "$GITHUB_OUTPUT"
-          fi
+            fi
+            if [ "$(jq '.data.security | length' /tmp/inbox.json)" != 0 ]; then
+              echo
+              echo "**Possible security fixes not in Grain yet:**"
+              echo '```'
+              jq -r '.data.items[] | select(.security) | "\(.sha[:12]) \(.subject)  [\(.security | join(", "))]"' /tmp/inbox.json
+              echo '```'
+            fi
+            if [ "$APPLIED" != 0 ]; then
+              echo
+              echo "**Already applied by hand (record with \`tether decide <sha> merged\`):**"
+              echo '```'
+              jq -r '.data.items[] | select(.applied_here) | "\(.sha[:12]) \(.subject)"' /tmp/inbox.json
+              echo '```'
+            fi
+          } > /tmp/report.md
+          cat /tmp/report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "conflicts=$CONFLICTS" >> "$GITHUB_OUTPUT"
+          echo "applied=$APPLIED" >> "$GITHUB_OUTPUT"
 
       - name: Open or update the automatic sync PR
         if: >-
-          steps.trial.outputs.clean == 'true' &&
-          steps.trial.outputs.behind != '0' &&
-          steps.ledger.outputs.drift == 'false'
+          steps.preview.outputs.behind != '0' &&
+          steps.preview.outputs.conflicts == '0' &&
+          steps.preview.outputs.applied == '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           git checkout -B "$SYNC_BRANCH" HEAD
-          # Capture semantic-review inputs before the merge advances the base.
-          python Upstream/port_audit.py --pending --no-fetch > /tmp/ports.txt
-          python Upstream/frontend_freeze.py --report > /tmp/frontend.txt
-          python Upstream/frontend_freeze.py --review-audit HEAD upstream/main > /tmp/frontend-review.txt || true
-          python Upstream/suppressed_review.py HEAD upstream/main > /tmp/suppressed-review.txt || true
-          git log --format='%h %s' --name-only HEAD..upstream/main -- \
-            README.md AGENTS.md CLAUDE.md CRUSH.md BUILD.md CONTRIBUTING.md \
-            CONTRIBUTING_TRANSLATIONS.md docs website Upstream .github/workflows \
-            src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json \
-            bun.lock Cargo.lock src-tauri/Cargo.lock .nix > /tmp/protected.txt
-          git merge --no-ff upstream/main \
-            -m "merge: upstream/main $(git rev-parse --short upstream/main) (auto-sync)"
-          # Any conflict rerere replayed during that merge is knowledge this
-          # repo should keep; without saving it, the next clone re-resolves it.
-          python Upstream/rerere_cache.py save
-          git add Upstream/rr-cache
-          git diff --cached --quiet || git commit -m "chore(upstream): share new rerere resolutions"
-          # The boundary must hold on the merged result, or there is no PR:
-          # better no PR than one that quietly erodes the Handy/Grain split.
-          python Upstream/ratchet.py
-          # The frontend is frozen (docs/UI 2.0/PLAN.md). While files are still
-          # shared this only warns — an upstream edit to a shared file we never
-          # touched can legitimately land, and blocking BACKEND intake over a
-          # frontend line would be the wrong trade. It becomes a hard failure
-          # when frontend_allow.json flips to "strict": true at cutover.
-          python Upstream/frontend_freeze.py --sync-purity main | tee /tmp/freeze.txt
+          jq -r '.data.items[] | select(.state == "pending") | "\(.sha[:12]) \(.subject)"' /tmp/inbox.json | head -30 > /tmp/commits.txt
+          # One squashed, single-parent commit carrying Upstream-Synced: <sha>.
+          tether sync --no-fetch || [ $? = 2 ]
+          tether sync --continue --json > /tmp/done.json
+          if [ -n "$(git status --porcelain -- .tether/rr-cache)" ]; then
+            git add .tether/rr-cache
+            git commit -m "chore(upstream): share new rerere resolutions"
+          fi
+          # The boundary must hold on the merged result: what still needs a
+          # record (ports, reviews) is listed in the PR, not hidden.
+          tether check --json > /tmp/check.json || true
+          tether check > /tmp/check.txt || true
           git push -f origin "$SYNC_BRANCH"
-          git log --oneline main..upstream/main | head -30 > /tmp/commits.txt
           {
-            echo "Automatic upstream sync — merged cleanly, divergence ratchet passed."
+            echo "Automatic upstream sync by tether — applied cleanly."
             echo
             echo '```'
             cat /tmp/commits.txt
             echo '```'
             echo
-            echo "### Runtime-port review"
+            echo "### tether check on the merged result"
             echo '```'
-            cat /tmp/ports.txt
-            echo '```'
-            echo
-            echo "### Frozen-frontend knowledge review"
-            echo '```'
-            cat /tmp/frontend.txt
+            cat /tmp/check.txt
             echo '```'
             echo
-            echo "### Required problem-level frontend decisions"
-            echo '```'
-            cat /tmp/frontend-review.txt
-            echo '```'
-            echo
-            echo "### Required suppressed-path decisions"
-            echo '```'
-            cat /tmp/suppressed-review.txt
-            echo '```'
-            echo
-            if [ -s /tmp/protected.txt ]; then
-              echo "### Upstream changes suppressed by Grain-owned paths"
-              echo '```'
-              cat /tmp/protected.txt
-              echo '```'
-              echo
-            fi
-            if grep -q 'WARN\|FAIL' /tmp/freeze.txt; then
-              echo "**Frontend freeze:** this merge touches \`src/\`, which is frozen."
-              echo
-              echo '```'
-              cat /tmp/freeze.txt
-              echo '```'
-              echo
-            fi
             echo "Before merging:"
-            echo "- [ ] CI green (build, tests, ratchet, frontend freeze)"
-            echo "- [ ] Anything **not** simply merged? Record it:"
-            echo "      \`python Upstream/verdict.py <sha> Ignored \"why\"\`."
-            echo "      Merged commits need nothing — ancestry files them itself."
+            echo "- [ ] CI green (build, tests, Upstream Check)"
+            echo "- [ ] \`tether status\` is clean: every port, review and marker it asks for is recorded"
+            echo "      (\`tether packet <sha>\` shows what each one needs)."
+            echo "- [ ] Anything **not** simply merged? \`tether decide <sha> ignored --note \"why\"\`."
             echo "- [ ] New settings/bindings? Export \`src/app/bindings.ts\` and check settings parity"
-            echo "- [ ] Recording/capture/overlay changes? Follow [OVERLAY-MAINTENANCE.md](Upstream/OVERLAY-MAINTENANCE.md), including owned UI behavior and platform acceptance"
-            echo "- [ ] Every runtime-port item has structured \`--port\` evidence"
-            echo "- [ ] Every frontend commit records problem/applicability/destination/evidence"
-            echo "- [ ] Every suppressed Grain-owned change has a \`--suppressed-review\` record"
+            echo "- [ ] Recording/capture/overlay changes? Follow [OVERLAY-MAINTENANCE.md](Upstream/OVERLAY-MAINTENANCE.md)"
             echo
-            echo "Merge with a merge commit — **never squash** (squashing discards the"
-            echo "ancestry and the next sync re-fights these commits)."
+            echo "Merge with a merge commit or rebase — **never squash**: the sync"
+            echo "commit's \`Upstream-Synced:\` line must reach main unchanged, or the"
+            echo "next sync re-fights these commits."
           } > /tmp/body.md
           if gh pr view "$SYNC_BRANCH" --json state -q .state 2>/dev/null | grep -q OPEN; then
             gh pr edit "$SYNC_BRANCH" --body-file /tmp/body.md
           else
             gh pr create --head "$SYNC_BRANCH" \
-              --title "sync: merge upstream/main (auto)" --body-file /tmp/body.md
+              --title "sync: Handy upstream/main (auto)" --body-file /tmp/body.md
           fi
           git checkout main
