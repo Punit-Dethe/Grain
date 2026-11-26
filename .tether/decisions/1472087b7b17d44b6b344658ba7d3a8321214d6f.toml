@@ -1,0 +1,1 @@
+note = 'src-tauri/Cargo.toml:239 has opusic-sys with features = ["no-simd"] for windows aarch64; only the comment above it differs'

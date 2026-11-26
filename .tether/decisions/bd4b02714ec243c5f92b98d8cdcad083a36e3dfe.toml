@@ -1,0 +1,1 @@
+note = "src-tauri/src/handy/clipboard.rs:176 try_send_key_combo_linux returns bool and walks wtype/dotool/xdotool/ydotool, falling through on error; the call site at :126 has no ?"
