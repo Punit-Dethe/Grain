@@ -1227,6 +1227,8 @@ pub fn run(cli_args: CliArgs) {
             // Without this the flag stays at its `false` default until debug mode
             // is toggled, so a user who already had it enabled opens the viewer to
             // an empty panel.
+            // Build the runtime first: its Trace logs would re-enter spawn() mid-init and deadlock.
+            let _ = tauri::async_runtime::handle();
             WEBVIEW_LOG_STREAMING.store(
                 settings.debug_mode
                     || (cfg!(feature = "agent-harness") && settings.extension_developer_mode),
