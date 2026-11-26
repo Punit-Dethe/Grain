@@ -460,8 +460,9 @@ impl Default for ModelUnloadTimeout {
 
 impl Default for PasteMethod {
     fn default() -> Self {
+        // Shift+Insert pastes in Linux terminals too (Handy #2504).
         #[cfg(target_os = "linux")]
-        return PasteMethod::Direct;
+        return PasteMethod::ShiftInsert;
         #[cfg(not(target_os = "linux"))]
         return PasteMethod::CtrlV;
     }
@@ -1053,7 +1054,12 @@ fn default_paste_delay_ms() -> u64 {
 }
 
 fn default_paste_delay_after_ms() -> u64 {
-    60
+    // Linux clipboard owners need longer before the clipboard is restored
+    // (Handy #2504).
+    #[cfg(target_os = "linux")]
+    return 500;
+    #[cfg(not(target_os = "linux"))]
+    return 60;
 }
 fn default_auto_submit() -> bool {
     false
