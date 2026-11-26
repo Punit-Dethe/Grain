@@ -85,7 +85,7 @@ impl RollingTranscriber {
             previous.join_cancelled();
         }
         let _barrier = establish_model_load_barrier(&self.active_generation, session_id, || {
-            self.tm.initiate_model_load_for(model_id.clone());
+            self.tm.initiate_model_load_for(model_id.clone(), false);
             Ok(())
         })?;
 

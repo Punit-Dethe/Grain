@@ -422,6 +422,25 @@ pub enum RecordingRetentionPeriod {
 pub enum KeyboardImplementation {
     Tauri,
     HandyKeys,
+    /// No built-in global shortcuts; trigger dictation via CLI flags or signals
+    /// (e.g. from a Wayland compositor keybinding). (Handy)
+    None,
+}
+
+/// When a multilingual model's language is detected from the audio (Handy).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageDetectionMode {
+    #[default]
+    WhenNeeded,
+    Always,
+}
+
+/// Allowed audio window for language detection, in seconds (Handy).
+pub const LANGUAGE_DETECTION_WINDOW_SECS: std::ops::RangeInclusive<u32> = 2..=30;
+
+fn default_language_detection_window_secs() -> u32 {
+    5
 }
 
 impl Default for KeyboardImplementation {
@@ -641,6 +660,15 @@ pub struct AppSettings {
     pub translate_to_english: bool,
     #[serde(default = "default_selected_language")]
     pub selected_language: String,
+    /// Experimental, macOS only: move a Bluetooth headset (AirPods) to this
+    /// Mac while recording, so its microphone does not return silence while
+    /// another Apple device is playing through it. (Handy)
+    #[serde(default)]
+    pub airpods_mode: bool,
+    #[serde(default)]
+    pub language_detection: LanguageDetectionMode,
+    #[serde(default = "default_language_detection_window_secs")]
+    pub language_detection_window_secs: u32,
     #[serde(default)]
     pub chinese_script: ChineseScript,
     #[serde(default)]
@@ -1630,6 +1658,9 @@ pub fn get_default_settings() -> AppSettings {
         selected_output_device: None,
         translate_to_english: false,
         selected_language: "auto".to_string(),
+        airpods_mode: false,
+        language_detection: LanguageDetectionMode::default(),
+        language_detection_window_secs: default_language_detection_window_secs(),
         chinese_script: sys_locale::get_locale()
             .and_then(|locale| ChineseScript::for_locale(&locale))
             .unwrap_or_default(),
@@ -1716,6 +1747,12 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
+    /// The language-detection window in 16 kHz samples, clamped (Handy).
+    pub fn language_detection_window_samples(&self) -> usize {
+        let (min, max) = LANGUAGE_DETECTION_WINDOW_SECS.into_inner();
+        self.language_detection_window_secs.clamp(min, max) as usize * 16_000
+    }
+
     pub fn active_post_process_provider(&self) -> Option<&PostProcessProvider> {
         self.post_process_providers
             .iter()

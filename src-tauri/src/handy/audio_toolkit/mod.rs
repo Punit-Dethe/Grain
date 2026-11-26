@@ -2,6 +2,7 @@ pub mod audio;
 pub mod chunking;
 pub mod constants;
 pub mod grain_text; // [GRAIN] Shared final-text composition.
+pub(crate) mod cpu_engine;
 pub mod lang_id;
 pub mod snippets; // [GRAIN] Voice reset, snippet expansion and preview cleanup.
 pub mod text;

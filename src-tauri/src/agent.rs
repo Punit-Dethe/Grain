@@ -524,7 +524,7 @@ pub async fn agent_panel_voice_start(app: AppHandle) -> Result<(), String> {
         let model = get_settings(&app).selected_model;
         crate::grain_capture::require_transcribable_model(&app, &model)?;
         app.state::<Arc<TranscriptionManager>>()
-            .initiate_model_load_for(model.clone());
+            .initiate_model_load_for(model.clone(), false);
         {
             let rm = Arc::clone(&rm);
             std::thread::spawn(move || {
@@ -872,7 +872,7 @@ fn start_dictation(
         return None;
     }
     let tm = app.state::<Arc<TranscriptionManager>>();
-    tm.initiate_model_load_for(model.clone());
+    tm.initiate_model_load_for(model.clone(), false);
     {
         let rm = Arc::clone(&rm);
         std::thread::spawn(move || {

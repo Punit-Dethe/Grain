@@ -134,6 +134,25 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     );
 }
 
+// [GRAIN] Adapters for upstream's tray API names over Grain's single-icon
+// tray (upstream's coalesced tray sync is a deferred port).
+pub fn set_tray_state(app: &AppHandle, state: TrayIconState) {
+    change_tray_icon(app, state);
+}
+
+// [GRAIN] Re-apply the current state, e.g. after a notice or Secure Input change.
+pub fn refresh_tray_icon(app: &AppHandle) {
+    if app.try_state::<TrayIcon>().is_none() {
+        return;
+    }
+    change_tray_icon(app, app.state::<CurrentTrayIconState>().get());
+}
+
+// [GRAIN] Grain's menu is rebuilt in full on every update.
+pub fn rebuild_tray_menu(app: &AppHandle) {
+    update_tray_menu(app, None);
+}
+
 fn load_tray_icon(resolved_icon_path: tauri::Result<PathBuf>) -> tauri::Result<Image<'static>> {
     let resolved_icon_path = resolved_icon_path?;
     Image::from_path(&resolved_icon_path).map(Image::to_owned)
@@ -358,6 +377,8 @@ mod tests {
             post_processed_text: post_processed.map(|text| text.to_string()),
             post_process_prompt: None,
             post_process_requested: false,
+            language: None,
+            language_source: None,
         }
     }
 

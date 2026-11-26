@@ -7,7 +7,8 @@ use std::time::Instant;
 use transcribe_cpp::Transcript;
 
 use super::{
-    post_process_transcription_text, real_time_factor, BatchContext, TranscriptionManager,
+    agreed_language, post_process_transcription_text, real_time_factor, BatchContext,
+    Transcription, TranscriptionManager,
 };
 use crate::audio_toolkit::chunking::Chunker;
 use crate::managers::audio::create_detector;
@@ -34,16 +35,19 @@ impl TranscriptionManager {
         &self,
         audio: Vec<f32>,
         control: &dyn ChunkControl,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<Transcription>> {
         let started = Instant::now();
         let total = audio.len();
         if total == 0 {
-            return Ok(Some(String::new()));
+            return Ok(Some(Transcription {
+                text: String::new(),
+                language: None,
+            }));
         }
 
         self.touch_activity();
         // [GRAIN] Standard model and shared-engine admission, including Flow/Streaming.
-        let Some(batch) = self.grain_background_context(control)? else {
+        let Some(batch) = self.grain_background_context(control, &audio)? else {
             return Ok(None);
         };
         let BatchContext {
@@ -88,6 +92,7 @@ impl TranscriptionManager {
         }
 
         debug!("Transcribed {} chunks in the background", transcripts.len());
+        let language = setup.spoken_language(agreed_language(&transcripts).as_deref());
         let paragraphs: Vec<String> = transcripts
             .into_iter()
             .map(|t| {
@@ -112,6 +117,9 @@ impl TranscriptionManager {
             elapsed_secs,
             real_time_factor(audio_secs, elapsed_secs)
         );
-        Ok(Some(paragraphs.join("\n\n")))
+        Ok(Some(Transcription {
+            text: paragraphs.join("\n\n"),
+            language: Some(language),
+        }))
     }
 }

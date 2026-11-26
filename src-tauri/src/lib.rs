@@ -93,6 +93,12 @@ mod grain_window_geometry; // [GRAIN] scale-aware main-window sizing within the 
 mod helpers;
 #[path = "handy/input.rs"]
 mod input;
+#[path = "handy/language_detection/mod.rs"]
+mod language_detection;
+#[path = "handy/languages.rs"]
+mod languages;
+#[path = "handy/notices.rs"]
+mod notices;
 mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
 pub(crate) use grain_llm_client as llm_client;
 #[path = "handy/overlay.rs"]
@@ -118,6 +124,9 @@ mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
 pub mod portable;
 #[cfg(feature = "agent-harness")]
 pub use grain_agent_harness::portable;
+#[cfg(target_os = "linux")]
+#[path = "handy/primary_selection.rs"]
+mod primary_selection;
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the shortcut mark
 mod rolling; // [GRAIN] Parakeet TDT Flow capture and scheduling service
 #[path = "handy/secure_input.rs"]
@@ -130,12 +139,16 @@ mod surface_watch; // [GRAIN] follow the foreground app mid-session
 mod tdt_flow; // [GRAIN] capability-gated stateless TDT window adapter/accumulator
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
+#[path = "handy/transcription_hook.rs"]
+mod transcription_hook;
 #[path = "handy/tray.rs"]
 mod tray;
 #[path = "handy/tray_i18n.rs"]
 mod tray_i18n;
 #[path = "handy/utils.rs"]
 mod utils;
+#[path = "handy/webkit_renderer.rs"]
+pub mod webkit_renderer;
 
 pub use cli::CliArgs;
 pub use utils::env_flag_enabled;
@@ -147,6 +160,10 @@ mod grain_agent_probe;
 #[cfg(any(test, not(feature = "agent-harness")))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
+#[cfg(target_os = "linux")]
+pub use utils::apply_handy_gdk_backend;
+#[cfg(target_os = "linux")]
+pub use utils::{disable_gamescope_wsi_layer, gamescope_wsi_disabled_by_handy};
 
 use env_filter::Builder as EnvFilterBuilder;
 use managers::audio::AudioRecordingManager;
@@ -510,7 +527,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Choose the appropriate initial icon based on theme
     let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle, false);
 
-    let mut tray_builder = TrayIconBuilder::new()
+    let mut tray_builder = TrayIconBuilder::with_id("handy")
         .icon(
             Image::from_path(
                 app_handle
@@ -608,6 +625,17 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                     tray::update_tray_menu(&app_clone, None);
                 });
             }
+            id if id.starts_with("language_select:") => {
+                let language = id.strip_prefix("language_select:").unwrap().to_string();
+                if let Err(e) =
+                    shortcut::change_selected_language_setting(app.clone(), language.clone())
+                {
+                    log::error!("Failed to switch language via tray: {}", e);
+                    return;
+                }
+                log::info!("Language switched to {} via tray.", language);
+                tray::rebuild_tray_menu(app);
+            }
             _ => {}
         })
         .build(app_handle)
@@ -628,6 +656,14 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.listen("model-state-changed", move |_| {
         tray::update_tray_menu(&app_handle_for_listener, None);
     });
+    // A download or delete can change what the language submenu offers (the
+    // language detector arriving makes Auto usable).
+    for event in ["model-download-complete", "model-deleted"] {
+        let app_handle_for_listener = app_handle.clone();
+        app_handle.listen(event, move |_| {
+            tray::update_tray_menu(&app_handle_for_listener, None);
+        });
+    }
 
     // Apply the autostart preference (SMAppService login item on macOS 13+,
     // tauri-plugin-autostart elsewhere)
@@ -1389,6 +1425,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
             shortcut::change_extra_recording_buffer_setting,
+            shortcut::change_language_detection_setting,
+            shortcut::change_language_detection_window_setting,
             shortcut::change_paste_delay_ms_setting,
             shortcut::change_paste_delay_after_ms_setting,
             shortcut::change_reliable_paste_setting,
@@ -1539,6 +1577,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::models::get_available_models,
             commands::models::get_model_info,
             commands::models::download_model,
+            commands::models::download_language_detector,
+            commands::models::is_language_detector_downloaded,
             commands::models::delete_model,
             commands::models::cancel_download,
             commands::models::set_active_model,
@@ -1565,8 +1605,10 @@ fn command_bindings() -> Builder<tauri::Wry> {
             commands::audio::is_recording,
             commands::audio::get_microphone_channels,
             commands::audio::set_selected_channel,
+            commands::audio::change_airpods_mode_setting,
             commands::transcription::set_model_unload_timeout,
             commands::transcription::get_model_load_status,
+            commands::transcription::get_language_status,
             commands::transcription::unload_model_manually,
             commands::history::get_history_entries,
             commands::history::toggle_history_entry_saved,
@@ -1616,6 +1658,8 @@ fn command_bindings() -> Builder<tauri::Wry> {
             // Typed live-caption events used by the recording WebView.
             managers::transcription::StreamPhaseEvent,
             managers::transcription::StreamTextEvent,
+            actions::TranscriptionCompleteEvent,
+            notices::NoticesChanged,
             // [GRAIN] The webview event surface, typed. Registration alone is
             // what puts these in bindings.ts; the emit sites are untouched (and
             // most are inside handy/, which must stay byte-identical). See

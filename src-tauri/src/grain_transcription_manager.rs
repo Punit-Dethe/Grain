@@ -20,7 +20,8 @@ impl TranscriptionManager {
             .grain_claim_foreground(crate::grain_transcription::Use::Batch)
             .map_err(anyhow::Error::msg)?;
         self.grain_ensure_model(model)?;
-        let outcome = self.transcribe_cpp(mark, self.loaded_batch_context()?, samples)?;
+        let batch = self.loaded_batch_context(&samples)?;
+        let outcome = self.transcribe_cpp(mark, batch, samples)?;
         drop(lease);
 
         let text = finish_text(outcome, &get_settings(&self.app_handle));
@@ -35,16 +36,18 @@ impl TranscriptionManager {
         *self.is_loading.lock().unwrap()
     }
 
-    pub(crate) fn initiate_model_load_for(&self, model_id: String) {
+    /// Returns whether a load started; `raise_notice` reports its failure to
+    /// the person (dictation only).
+    pub(crate) fn initiate_model_load_for(&self, model_id: String, raise_notice: bool) -> bool {
         if !self.job_active() // A background chunk can still replace this model before it yields.
             && self.is_model_loaded()
             && self.get_current_model().as_deref() == Some(&model_id)
             && !self.reload_model_on_next_use.load(Ordering::Acquire)
         {
-            return;
+            return false;
         }
         let Some(loading) = self.try_start_loading() else {
-            return;
+            return false;
         };
         let manager = self.clone();
         thread::spawn(move || {
@@ -54,8 +57,12 @@ impl TranscriptionManager {
                 .store(false, Ordering::Release);
             if let Err(error) = manager.load_model(&model_id) {
                 error!("Failed to load selected model: {error}");
+                if raise_notice {
+                    manager.raise_model_load_failed(&model_id, &error);
+                }
             }
         });
+        true
     }
 
     pub(crate) fn grain_transcribe_cpp_language_for_model(
@@ -200,7 +207,7 @@ impl Drop for MeetingCleanup<'_> {
         self.manager.engine.unload().wait();
         drop(self.lease.take());
         if self.restore {
-            self.manager.initiate_model_load();
+            self.manager.initiate_model_load(false);
         }
     }
 }
@@ -234,7 +241,11 @@ impl TranscriptionManager {
         }
     }
 
-    fn grain_background_context(&self, control: &dyn ChunkControl) -> Result<Option<BatchContext>> {
+    fn grain_background_context(
+        &self,
+        control: &dyn ChunkControl,
+        audio: &[f32],
+    ) -> Result<Option<BatchContext>> {
         let Some(_lease) = self.grain_background_lease(control) else {
             return Ok(None);
         };
@@ -243,7 +254,7 @@ impl TranscriptionManager {
             .map_err(anyhow::Error::msg)?;
         self.grain_ensure_model(&selected)?;
         // No asynchronous load can replace the model while this lease is held.
-        self.loaded_batch_context().map(Some)
+        self.loaded_batch_context(audio).map(Some)
     }
 
     fn grain_ensure_model(&self, model: &str) -> Result<()> {

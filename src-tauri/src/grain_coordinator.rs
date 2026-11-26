@@ -100,6 +100,7 @@ mod grain_routing_tests {
             mode,
             hold_threshold: crate::grain_shortcuts::HOLD_THRESHOLD,
             external: false,
+            received_at: std::time::Instant::now(),
         }
     }
 

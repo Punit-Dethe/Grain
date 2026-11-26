@@ -108,6 +108,17 @@ pub(crate) fn emit_processing_complete(app: &AppHandle, session_id: u64) {
     );
 }
 
+/// The `recording-error` event's `error_type` for a recording that couldn't
+/// start. Derived from Handy's notice code so the classification stays upstream's.
+pub(crate) fn recording_error_type(error: &anyhow::Error) -> &'static str {
+    use crate::notices::NoticeCode;
+    match crate::managers::audio::recording_notice_code(error) {
+        NoticeCode::MicPermissionDenied => "microphone_permission_denied",
+        NoticeCode::NoMicrophone => "no_input_device",
+        _ => "unknown",
+    }
+}
+
 /// Paste delays, scripts and clipboard restoration must not block the UI or an
 /// async executor thread. The shared clipboard module dispatches only input
 /// injection back to the UI thread, preserving macOS keyboard API requirements.
@@ -119,7 +130,14 @@ pub(crate) async fn paste_transcription(
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(windows)]
         let watch = crate::grain_dictionary::prepare(&app, &text, suppress_trailing_space);
-        let result = utils::paste_with_options(text, app.clone(), suppress_trailing_space);
+        let result = utils::paste_with_options(text, app.clone(), suppress_trailing_space)
+            .and_then(|outcome| match outcome {
+                utils::PasteOutcome::Pasted => Ok(()),
+                // Windows dropped the keystrokes: the focused window runs elevated.
+                utils::PasteOutcome::Blocked => {
+                    Err("The focused window runs as administrator; Windows blocked the paste".into())
+                }
+            });
         #[cfg(windows)]
         if let (Ok(()), Some(watch)) = (&result, watch) {
             watch.start(app);
@@ -291,7 +309,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             rt.cancel_session();
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = crate::managers::audio::recording_error_type(&err);
+                let error_type = crate::grain_actions::recording_error_type(&err);
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
@@ -450,6 +468,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     post_processed_text: None,
                     post_process_prompt: None,
                     suppress_trailing_space: false,
+                    post_process_failed: false,
                 }
             } else {
                 process_transcription_output(
@@ -512,6 +531,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     post_process,
                     processed.post_processed_text.clone(),
                     processed.post_process_prompt.clone(),
+                    None, // [GRAIN] the Flow/rolling path records no language decision
                 ) {
                     error!("Failed to save history entry: {e}");
                 }

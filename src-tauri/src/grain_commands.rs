@@ -63,6 +63,8 @@ pub(crate) fn capture_shortcut_conflicts(
         settings::KeyboardImplementation::HandyKeys => {
             conflicts::<handy_keys::Hotkey>(settings, &IDS, id, candidate)
         }
+        // No built-in shortcuts are registered, so none can collide.
+        settings::KeyboardImplementation::None => false,
     }
 }
 

@@ -164,7 +164,10 @@
 
             preFixup = ''
               gappsWrapperArgs+=(
-                --set-default WEBKIT_DISABLE_DMABUF_RENDERER 1
+                # Renderer selection (DMA-BUF off vs. forced SHM compositing) is
+                # decided at runtime from the linked WebKitGTK version; setting
+                # WEBKIT_DISABLE_DMABUF_RENDERER or WEBKIT_DMABUF_RENDERER_FORCE_SHM
+                # here or in the environment overrides it.
                 --set ALSA_PLUGIN_DIR "${combinedAlsaPlugins}"
                 # A Nix store install is immutable; updates must come from Nix.
                 --set GRAIN_DISABLE_UPDATER 1

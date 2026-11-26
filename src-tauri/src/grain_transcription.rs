@@ -318,7 +318,7 @@ impl<'a> MeetingEngine<'a> {
 pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, String> {
     let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
     if !tm.is_model_loaded() {
-        tm.initiate_model_load();
+        tm.initiate_model_load(false);
     }
     tokio::task::spawn_blocking(move || tm.transcribe(samples))
         .await

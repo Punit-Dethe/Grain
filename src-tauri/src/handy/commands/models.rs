@@ -1,5 +1,6 @@
-use crate::managers::model::{ModelInfo, ModelManager};
+use crate::managers::model::{ModelInfo, ModelManager, LANGUAGE_DETECTOR_ID};
 use crate::managers::transcription::{ModelStateEvent, TranscriptionManager};
+use crate::notices::{self, NoticeSource};
 use crate::settings::{get_settings, write_settings, ModelUnloadTimeout};
 use log::error;
 use std::sync::Arc;
@@ -50,8 +51,8 @@ pub async fn download_model(
         .map_err(|e| e.to_string());
 
     if let Err(ref error) = result {
-        // Log as well as emit: the toast is transient, and failed downloads have
-        // historically been undiagnosable because logs showed nothing (#1579).
+        // Log as well as emit: failed downloads have historically been
+        // undiagnosable because logs showed nothing (#1579).
         error!("Model download failed for {}: {}", model_id, error);
         let _ = app_handle.emit(
             "model-download-failed",
@@ -59,6 +60,36 @@ pub async fn download_model(
         );
     }
 
+    result
+}
+
+/// Whether the language detector is on disk.
+#[tauri::command]
+#[specta::specta]
+pub fn is_language_detector_downloaded(model_manager: State<'_, Arc<ModelManager>>) -> bool {
+    model_manager.language_detector_path().is_some()
+}
+
+/// Download the language detector on its own. Progress, completion,
+/// cancellation and failure use the model download events under
+/// `LANGUAGE_DETECTOR_ID`.
+#[tauri::command]
+#[specta::specta]
+pub async fn download_language_detector(
+    app_handle: AppHandle,
+    model_manager: State<'_, Arc<ModelManager>>,
+) -> Result<(), String> {
+    let result = model_manager
+        .download_language_detector()
+        .await
+        .map_err(|e| e.to_string());
+    if let Err(ref error) = result {
+        error!("Language detector download failed: {}", error);
+        let _ = app_handle.emit(
+            "model-download-failed",
+            serde_json::json!({ "model_id": LANGUAGE_DETECTOR_ID, "error": error }),
+        );
+    }
     result
 }
 
@@ -87,10 +118,11 @@ pub async fn delete_model(
         write_settings(&app_handle, settings);
     }
 
-    let result = model_manager
-        .delete_model(&model_id)
-        .map_err(|e| e.to_string());
-    result
+    model_manager.delete_model(&model_id).map_err(|e| {
+        // The UI only shows a generic failure message, so the cause has to be logged.
+        error!("Model delete failed for {}: {}", model_id, e);
+        e.to_string()
+    })
 }
 
 /// Shared logic for switching the active model, used by both the Tauri command
@@ -155,6 +187,10 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
 
     // Load the model. On failure, revert the persisted selection.
     if let Err(e) = transcription_manager.load_model(model_id) {
+        notices::raise(
+            app,
+            transcription_manager.model_load_notice(model_id, &e, NoticeSource::Model),
+        );
         let mut settings = get_settings(app);
         settings.selected_model = old_model;
         write_settings(app, settings);

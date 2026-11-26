@@ -316,6 +316,22 @@ async changeExtraRecordingBufferSetting(ms: number) : Promise<Result<null, strin
     else return { status: "error", error: e  as any };
 }
 },
+async changeLanguageDetectionSetting(mode: LanguageDetectionMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_language_detection_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLanguageDetectionWindowSetting(secs: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_language_detection_window_setting", { secs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changePasteDelayMsSetting(ms: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_paste_delay_ms_setting", { ms }) };
@@ -1662,6 +1678,25 @@ async downloadModel(modelId: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Download the language detector on its own. Progress, completion,
+ * cancellation and failure use the model download events under
+ * `LANGUAGE_DETECTOR_ID`.
+ */
+async downloadLanguageDetector() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("download_language_detector") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Whether the language detector is on disk.
+ */
+async isLanguageDetectorDownloaded() : Promise<boolean> {
+    return await TAURI_INVOKE("is_language_detector_downloaded");
+},
 async deleteModel(modelId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("delete_model", { modelId }) };
@@ -1854,6 +1889,14 @@ async setSelectedChannel(channel: number | null) : Promise<Result<null, string>>
     else return { status: "error", error: e  as any };
 }
 },
+async changeAirpodsModeSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_airpods_mode_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setModelUnloadTimeout(timeout: ModelUnloadTimeout) : Promise<void> {
     await TAURI_INVOKE("set_model_unload_timeout", { timeout });
 },
@@ -1864,6 +1907,12 @@ async getModelLoadStatus() : Promise<Result<ModelLoadStatus, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * The language transcription on `model_id` will use, for the picker.
+ */
+async getLanguageStatus(modelId: string) : Promise<LanguageStatus> {
+    return await TAURI_INVOKE("get_language_status", { modelId });
 },
 async unloadModelManually() : Promise<Result<null, string>> {
     try {
@@ -2267,6 +2316,7 @@ modelExtractionStarted: ModelExtractionStarted,
 modelStateChanged: ModelStateChanged,
 modelVerificationCompleted: ModelVerificationCompleted,
 modelVerificationStarted: ModelVerificationStarted,
+noticesChanged: NoticesChanged,
 pasteError: PasteError,
 recordingError: RecordingError,
 recordingReady: RecordingReady,
@@ -2274,6 +2324,7 @@ showOverlay: ShowOverlay,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 themeChanged: ThemeChanged,
+transcriptionCompleteEvent: TranscriptionCompleteEvent,
 transcriptionJob: TranscriptionJob,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
@@ -2296,6 +2347,7 @@ modelExtractionStarted: "model-extraction-started",
 modelStateChanged: "model-state-changed",
 modelVerificationCompleted: "model-verification-completed",
 modelVerificationStarted: "model-verification-started",
+noticesChanged: "notices-changed",
 pasteError: "paste-error",
 recordingError: "recording-error",
 recordingReady: "recording-ready",
@@ -2303,6 +2355,7 @@ showOverlay: "show-overlay",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 themeChanged: "theme-changed",
+transcriptionCompleteEvent: "transcription-complete-event",
 transcriptionJob: "transcription-job",
 updateAvailable: "update-available",
 updateDownloadProgress: "update-download-progress"
@@ -2464,7 +2517,13 @@ spoken_languages?: string[]; always_on_microphone?: boolean; selected_microphone
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; chinese_script?: ChineseScript; vad_backend?: VadBackend; vad_enabled?: boolean; long_form_chunking?: boolean; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; 
+/**
+ * Experimental, macOS only: move a Bluetooth headset (AirPods) to this
+ * Mac while recording, so its microphone does not return silence while
+ * another Apple device is playing through it. (Handy)
+ */
+airpods_mode?: boolean; language_detection?: LanguageDetectionMode; language_detection_window_secs?: number; chinese_script?: ChineseScript; vad_backend?: VadBackend; vad_enabled?: boolean; long_form_chunking?: boolean; overlay_position?: OverlayPosition; overlay_style?: OverlayStyle; 
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will
@@ -2680,6 +2739,19 @@ export type Attribution = { Speaker: number } |
 "Unavailable"
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
+export type AutoUnavailableReason = 
+/**
+ * Only one of their languages (or only one at all) fits the model.
+ */
+{ kind: "one_language" } | 
+/**
+ * The detector can't identify these spoken languages.
+ */
+{ kind: "undetectable"; languages: string[] } | 
+/**
+ * None of their languages fit the model.
+ */
+{ kind: "no_match" }
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ChineseScript = "as_transcribed" | "simplified" | "traditional_tw" | "traditional_hk"
@@ -2864,7 +2936,15 @@ export type HistoryEntry = { id: number; file_name: string; timestamp: number; s
  * The name of the file this entry was transcribed from; `None` for a
  * dictation.
  */
-source_name: string | null }
+source_name: string | null; 
+/**
+ * The language it was transcribed in, when known.
+ */
+language: string | null; 
+/**
+ * How that language was chosen; `None` before it was recorded.
+ */
+language_source: LanguageSource | null }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
  * Result of changing keyboard implementation
@@ -2900,8 +2980,62 @@ export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_
  * Counts only — key identity is deliberately never captured.
  */
 key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
-export type KeyboardImplementation = "tauri" | "handy_keys"
+export type KeyboardImplementation = "tauri" | "handy_keys" | 
+/**
+ * No built-in global shortcuts; trigger dictation via CLI flags or signals
+ * (e.g. from a Wayland compositor keybinding). (Handy)
+ */
+"none"
 export type LLMPrompt = { id: string; name: string; prompt: string }
+/**
+ * When a multilingual model's language is detected from the audio (Handy).
+ */
+export type LanguageDetectionMode = "when_needed" | "always"
+/**
+ * How a transcription's language was chosen.
+ */
+export type LanguageSource = 
+/**
+ * The person picked it, or it is the only language of theirs the model
+ * supports.
+ */
+"selected" | 
+/**
+ * The model decides: its own detection, or its only language.
+ */
+"model" | 
+/**
+ * Handy's detector picked it.
+ */
+"detected" | 
+/**
+ * Handy had to pick without detecting (too little speech, detection
+ * failed or unavailable, or Auto can't work for these languages).
+ */
+"fallback"
+/**
+ * What the language picker shows: the language a transcription will run in,
+ * or Auto when it's decided per transcription. Derived from [`plan`], so it
+ * can't disagree with what transcription does.
+ */
+export type LanguageStatus = 
+/**
+ * The language they picked.
+ */
+{ kind: "selected"; language: string } | 
+/**
+ * Decided per transcription: the model's own detection, or Handy's.
+ */
+{ kind: "auto" } | 
+/**
+ * Auto needs Handy's detector, which isn't downloaded; `fallback` (the
+ * first preferred language) is used until it is.
+ */
+{ kind: "detector_missing"; fallback: string } | 
+/**
+ * Auto can't work here; `language` is used instead.
+ */
+{ kind: "auto_unavailable"; language: string; reason: AutoUnavailableReason }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
 /**
  * A route is waiting: call `take_main_window_route`.
@@ -3044,6 +3178,39 @@ export type ModelVerificationCompleted = string
  * Checksum verification began.
  */
 export type ModelVerificationStarted = string
+export type Notice = { code: NoticeCode; level: NoticeLevel; source: NoticeSource; 
+/**
+ * What only Rust knows, such as a model name or a raw error.
+ */
+detail: string | null }
+/**
+ * The frontend maps each code to its text in `src/lib/notices.ts`.
+ */
+export type NoticeCode = "TranscriptionFailed" | "PasteFailed" | "PasteBlockedElevated" | "NoMicrophone" | "MicrophoneSilent" | "MicPermissionDenied" | "RecordingFailed" | "ModelLoadFailed" | "NoModelSelected" | "PostProcessFailed" | "FileTranscriptionFailed" | "FilePostProcessFailed"
+export type NoticeLevel = 
+/**
+ * Nothing came out, or Handy can't do its job.
+ */
+"error" | 
+/**
+ * The user got a result, but not the one they set up.
+ */
+"warning"
+/**
+ * Each source has one slot in the store. Only dictation notices use the
+ * overlay: a file job finishes while the user is doing something else, and
+ * `Model` is a switch the user made in Settings or the tray.
+ */
+export type NoticeSource = "dictation" | "file" | "model"
+export type NoticesChanged = { 
+/**
+ * Every active notice, newest first.
+ */
+notices: Notice[]; 
+/**
+ * `None` when a notice was cleared.
+ */
+raised: Notice | null }
 export type OnboardingState = { step: OnboardingStep; 
 /**
  * Has models already. Decides where "permissions granted" goes next: a
@@ -3331,6 +3498,10 @@ activity: Activity[] }
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TranscriptRevision = { version: number; revision: number; session_id: string; attempt_id: string; created_unix_ms: number; diarizer: ModelRef | null; asr: ModelRef | null; speakers: Speaker[]; tracks: TrackTranscript[] }
 /**
+ * Emitted when a dictation finishes (not on cancel); onboarding uses it to measure speed.
+ */
+export type TranscriptionCompleteEvent = { outcome: TranscriptionOutcome; audio_seconds: number; wait_seconds: number }
+/**
  * A background transcription of one History entry.
  */
 export type TranscriptionJob = { entry_id: number; status: TranscriptionJobStatus }
@@ -3347,6 +3518,26 @@ export type TranscriptionJobStatus =
  * The entry has its new text.
  */
 { state: "finished" } | { state: "cancelled" } | { state: "failed"; error: string }
+/**
+ * How a dictation ended.
+ */
+export type TranscriptionOutcome = 
+/**
+ * The text was typed.
+ */
+"typed" | 
+/**
+ * Nothing was heard, so nothing was typed.
+ */
+"empty" | 
+/**
+ * The microphone sent only digital silence (e.g. muted).
+ */
+"silent" | 
+/**
+ * Transcribing or pasting failed.
+ */
+"failed"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
 /**
  * A newly discovered release. The cache covers WebViews created after this

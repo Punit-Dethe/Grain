@@ -4,24 +4,96 @@ use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::policy::{live_decode, LiveDecode, ModelTraits};
-use crate::managers::transcription::TranscriptionManager;
+use crate::managers::transcription::{Transcription, TranscriptionManager};
+use crate::notices::{self, Notice, NoticeCode, NoticeSource};
 use crate::settings::{get_settings, AppSettings};
 use crate::shortcut;
-use crate::tray::{change_tray_icon, TrayIconState};
+use crate::tray::{change_tray_icon, set_tray_state, TrayIconState};
 use crate::utils;
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
 use grain_core::SessionMode; // [GRAIN] pill session mode
-use log::{debug, error};
+use log::{debug, error, warn};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_specta::Event;
 
-use tauri::Manager;
-use tauri::{AppHandle, Emitter};
+/// How a dictation ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriptionOutcome {
+    /// The text was typed.
+    Typed,
+    /// Nothing was heard, so nothing was typed.
+    Empty,
+    /// The microphone sent only digital silence (e.g. muted).
+    Silent,
+    /// Transcribing or pasting failed.
+    Failed,
+}
+
+/// Emitted when a dictation finishes (not on cancel); onboarding uses it to measure speed.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct TranscriptionCompleteEvent {
+    pub outcome: TranscriptionOutcome,
+    pub audio_seconds: f64,
+    pub wait_seconds: f64,
+}
+
+fn emit_transcription_complete(
+    app: &AppHandle,
+    outcome: TranscriptionOutcome,
+    sample_count: usize,
+    stop_time: Instant,
+) {
+    let event = TranscriptionCompleteEvent {
+        outcome,
+        audio_seconds: sample_count as f64
+            / crate::audio_toolkit::constants::WHISPER_SAMPLE_RATE as f64,
+        wait_seconds: stop_time.elapsed().as_secs_f64(),
+    };
+    if let Err(e) = event.emit(app) {
+        warn!("Failed to emit transcription complete: {e}");
+    }
+}
+
+/// Nothing to type: `Silent` if the microphone sent only zeros, else `Empty`.
+fn empty_outcome(input_silent: bool) -> TranscriptionOutcome {
+    if input_silent {
+        TranscriptionOutcome::Silent
+    } else {
+        TranscriptionOutcome::Empty
+    }
+}
+
+/// Ends a dictation that has nothing to type. A microphone that sent only
+/// digital silence (muted, or the wrong default device) gets a notice, so it
+/// doesn't look like the model missed the speech (#1899).
+fn finish_without_text(
+    app: &AppHandle,
+    input_silent: bool,
+    sample_count: usize,
+    stop_time: Instant,
+) {
+    if input_silent {
+        warn!("The microphone sent only digital silence; nothing was transcribed");
+        notices::raise(
+            app,
+            Notice::new(NoticeCode::MicrophoneSilent, NoticeSource::Dictation),
+        );
+    } else {
+        utils::hide_recording_overlay(app);
+    }
+    set_tray_state(app, TrayIconState::Idle);
+    emit_transcription_complete(app, empty_outcome(input_silent), sample_count, stop_time);
+}
 
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -192,6 +264,8 @@ pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
     pub post_process_prompt: Option<String>,
+    /// `final_text` is the bare transcript because post-processing failed.
+    pub post_process_failed: bool,
     // [GRAIN] The LLM produced a caret-fitted span; paste it without the
     // optional automatic suffix, which would change its right-hand seam.
     pub suppress_trailing_space: bool,
@@ -238,6 +312,9 @@ pub(crate) async fn process_transcription_output(
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
     let mut suppress_trailing_space = false;
+    // [GRAIN] grain_post_process reports no skipped/failed split; upstream's
+    // PostProcessFailed notice is a deferred port.
+    let post_process_failed = false;
 
     // Resolve the language the transcription actually ran in (the persisted
     // intent coerced against the loaded model's capabilities) so OpenCC keys off
@@ -284,6 +361,7 @@ pub(crate) async fn process_transcription_output(
         post_processed_text,
         post_process_prompt,
         suppress_trailing_space,
+        post_process_failed,
     }
 }
 
@@ -297,15 +375,9 @@ impl ShortcutAction for TranscribeAction {
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
         let kickoff_started = Instant::now();
-        tm.initiate_model_load();
-        // [GRAIN] Apply upstream's pre-capture availability guard across all modes.
-        if let Err(error) = crate::grain_capture::require_transcribable_model(
-            app,
-            &get_settings(app).selected_model,
-        ) {
-            log::warn!("Not starting recording: {error}");
-            return;
-        }
+        // An empty selection has nothing to load; the check below says so.
+        let selected_model = get_settings(app).selected_model;
+        let load_started = !selected_model.is_empty() && tm.initiate_model_load(true);
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
@@ -313,6 +385,27 @@ impl ShortcutAction for TranscribeAction {
             }
         });
         let kickoff_elapsed = kickoff_started.elapsed();
+
+        // Don't open the mic if nothing can transcribe the recording. A load
+        // started above reports its own failure; one already running doesn't.
+        if !tm.is_model_loaded() {
+            if selected_model.is_empty() {
+                warn!("Not starting recording: no model is selected");
+                tm.raise_no_model_selected();
+                return;
+            }
+            // [GRAIN] Grain's guard applies across all capture modes and accepts
+            // a resident Grain model.
+            if let Err(e) =
+                crate::grain_capture::require_transcribable_model(app, &selected_model)
+            {
+                warn!("Not starting recording: {e}");
+                if !load_started {
+                    tm.raise_model_load_failed(&selected_model, &anyhow::anyhow!(e));
+                }
+                return;
+            }
+        }
 
         let binding_id = binding_id.to_string();
         let tray_started = Instant::now();
@@ -391,7 +484,7 @@ impl ShortcutAction for TranscribeAction {
             // [GRAIN] Failed capture dismisses the arming presentation.
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
-                let error_type = crate::managers::audio::recording_error_type(&err);
+                let error_type = crate::grain_actions::recording_error_type(&err);
                 let _ = app.emit(
                     "recording-error",
                     RecordingErrorEvent {
@@ -475,6 +568,9 @@ impl ShortcutAction for TranscribeAction {
 
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
+                    // Tear down any streaming worker so its channel doesn't leak
+                    // and block the next start_stream.
+                    tm.cancel_stream();
                     crate::grain_actions::emit_processing_complete(&ah, session_id);
                     change_tray_icon(&ah, TrayIconState::Idle);
                 } else {
@@ -538,7 +634,10 @@ impl ShortcutAction for TranscribeAction {
                     }
 
                     match transcription_result {
-                        Ok(transcription) => {
+                        Ok(Transcription {
+                            text: transcription,
+                            language,
+                        }) => {
                             debug!(
                                 "Transcription completed in {:?}: '{}'",
                                 transcription_time.elapsed(),
@@ -580,17 +679,30 @@ impl ShortcutAction for TranscribeAction {
                                     post_process,
                                     processed.post_processed_text.clone(),
                                     processed.post_process_prompt.clone(),
+                                    language,
                                 ) {
                                     error!("Failed to save history entry: {}", err);
                                 }
                             }
 
-                            if processed.final_text.is_empty() {
+                            // The user's hook only changes what gets pasted;
+                            // history above keeps the text as produced.
+                            let Some(final_text) = complete_unless_cancelled(
+                                crate::transcription_hook::apply(&ah, processed.final_text),
+                                || rm.was_cancelled_since(cancel_generation),
+                            )
+                            .await
+                            else {
+                                debug!("Transcription operation cancelled during hook");
+                                // [GRAIN] The cancel initiator already reset the pill and tray.
+                                return;
+                            };
+
+                            if final_text.is_empty() {
                                 crate::grain_actions::emit_processing_complete(&ah, session_id);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             } else {
                                 let paste_time = Instant::now();
-                                let final_text = processed.final_text;
                                 let suppress_trailing_space = processed.suppress_trailing_space;
                                 // [GRAIN] Owned callers use the shared blocking pool;
                                 // only keyboard injection returns to the UI thread.
@@ -628,6 +740,7 @@ impl ShortcutAction for TranscribeAction {
                                     file_name,
                                     String::new(),
                                     post_process,
+                                    None,
                                     None,
                                     None,
                                 ) {

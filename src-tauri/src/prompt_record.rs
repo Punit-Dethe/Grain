@@ -84,6 +84,7 @@ pub fn reconcile_shortcut(app: &AppHandle) {
                     KeyboardImplementation::HandyKeys => {
                         crate::shortcut::handy_keys::unregister_shortcut(&app, binding.clone())
                     }
+                    KeyboardImplementation::None => Ok(()),
                 };
                 if let Err(error) = result {
                     log::warn!("Prompt Record shortcut cleanup: {error}");
@@ -110,6 +111,8 @@ pub fn reconcile_shortcut(app: &AppHandle) {
                         KeyboardImplementation::HandyKeys => {
                             crate::shortcut::handy_keys::register_shortcut(&app, binding.clone())
                         }
+                        // Shortcuts come from outside Grain (CLI or signals).
+                        KeyboardImplementation::None => Ok(()),
                     };
                     match result {
                         Ok(()) => *live = Some((binding, settings.keyboard_implementation)),
@@ -188,7 +191,10 @@ pub(crate) async fn transcribe_recording_split(
     app: &AppHandle,
     samples: Vec<f32>,
     mark: Option<usize>,
-) -> (Result<String, String>, Option<String>) {
+) -> (
+    Result<crate::managers::transcription::Transcription, String>,
+    Option<String>,
+) {
     let tm = std::sync::Arc::clone(
         &app.state::<std::sync::Arc<crate::managers::transcription::TranscriptionManager>>(),
     );
@@ -201,7 +207,13 @@ pub(crate) async fn transcribe_recording_split(
         if let Err(error) = drained {
             return (Err(error), None);
         }
-        transcribe_split(app, samples, mark).await
+        // A split recording has two decodes and no single language decision.
+        let (content, spoken) = transcribe_split(app, samples, mark).await;
+        let content = content.map(|text| crate::managers::transcription::Transcription {
+            text,
+            language: None,
+        });
+        (content, spoken)
     } else {
         let result = tauri::async_runtime::spawn_blocking(move || tm.transcribe_recording(samples))
             .await

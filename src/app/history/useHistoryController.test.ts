@@ -18,6 +18,8 @@ const entry = (id: number, saved = false): HistoryEntry => ({
   post_process_prompt: null,
   post_process_requested: false,
   source_name: null,
+  language: null,
+  language_source: null,
 });
 
 describe("UI 2.0 history reducer", () => {

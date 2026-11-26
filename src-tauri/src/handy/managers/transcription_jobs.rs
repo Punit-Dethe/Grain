@@ -19,7 +19,10 @@ use tauri_specta::Event;
 use crate::actions::process_transcription_output;
 use crate::audio_toolkit::{decode_audio_file, read_wav_samples, save_wav_file};
 use crate::managers::history::{HistoryEntry, HistoryManager};
-use crate::managers::transcription::{panic_payload_message, ChunkControl, TranscriptionManager};
+use crate::managers::transcription::{
+    panic_payload_message, ChunkControl, Transcription, TranscriptionManager,
+};
+use crate::notices::{self, Notice, NoticeCode, NoticeSource};
 
 /// How often a waiting chunk checks whether dictation has finished.
 const DICTATION_POLL: Duration = Duration::from_millis(200);
@@ -249,9 +252,27 @@ impl TranscriptionJobManager {
                 _ if cancelled.load(Ordering::Acquire) => TranscriptionJobStatus::Cancelled,
                 Err(e) => {
                     warn!("Transcription of history entry {} failed: {}", entry_id, e);
+                    notices::raise(
+                        &self.app,
+                        Notice::new(NoticeCode::FileTranscriptionFailed, NoticeSource::File)
+                            .with_detail(e.to_string()),
+                    );
                     TranscriptionJobStatus::Failed {
                         error: e.to_string(),
                     }
+                }
+                Ok(JobEnd::Finished {
+                    post_process_failed,
+                }) => {
+                    // Clear first, so the warning about this job survives it.
+                    notices::clear(&self.app, NoticeSource::File);
+                    if post_process_failed {
+                        notices::raise(
+                            &self.app,
+                            Notice::new(NoticeCode::FilePostProcessFailed, NoticeSource::File),
+                        );
+                    }
+                    TranscriptionJobStatus::Finished
                 }
                 _ => TranscriptionJobStatus::Finished,
             };
@@ -273,7 +294,7 @@ impl TranscriptionJobManager {
         }
     }
 
-    fn run_job(&self, entry_id: i64, cancelled: &AtomicBool) -> Result<()> {
+    fn run_job(&self, entry_id: i64, cancelled: &AtomicBool) -> Result<JobEnd> {
         let hm = Arc::clone(&self.app.state::<Arc<HistoryManager>>());
         let tm = Arc::clone(&self.app.state::<Arc<TranscriptionManager>>());
         let entry = tauri::async_runtime::block_on(hm.get_entry_by_id(entry_id))?
@@ -290,14 +311,15 @@ impl TranscriptionJobManager {
             cancelled,
             percent: Cell::new(0),
         };
-        let Some(text) = tm.transcribe_in_chunks(samples, &control)? else {
-            return Ok(());
+        let Some(Transcription { text, language }) = tm.transcribe_in_chunks(samples, &control)?
+        else {
+            return Ok(JobEnd::Cancelled);
         };
         if text.is_empty() {
             return Err(anyhow!("Recording contains no speech"));
         }
         if cancelled.load(Ordering::Acquire) {
-            return Ok(());
+            return Ok(JobEnd::Cancelled);
         }
 
         let processed = tauri::async_runtime::block_on(process_transcription_output(
@@ -309,16 +331,26 @@ impl TranscriptionJobManager {
         ));
         // Post-processing can take a while; a cancel during it still wins.
         if cancelled.load(Ordering::Acquire) {
-            return Ok(());
+            return Ok(JobEnd::Cancelled);
         }
+        let post_process_failed = processed.post_process_failed;
         hm.update_transcription(
             entry.id,
             text,
             processed.post_processed_text,
             processed.post_process_prompt,
+            language,
         )?;
-        Ok(())
+        Ok(JobEnd::Finished {
+            post_process_failed,
+        })
     }
+}
+
+/// A cancelled job changes no notices.
+enum JobEnd {
+    Finished { post_process_failed: bool },
+    Cancelled,
 }
 
 /// Best-effort cleanup; the caller is already reporting the failure.
