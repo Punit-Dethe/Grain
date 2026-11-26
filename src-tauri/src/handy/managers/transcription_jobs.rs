@@ -180,7 +180,7 @@ impl TranscriptionJobManager {
             // [GRAIN] Publish under the queue lock so cancellation cannot overtake it.
             self.emit(entry_id, TranscriptionJobStatus::Queued);
         }
-        crate::tray::update_tray_menu(&self.app, None); // [GRAIN] Locale-aware tray.
+        crate::tray::update_tray_menu(&self.app); // [GRAIN] Locale-aware tray.
         self.grain_start_worker(); // [GRAIN] No idle queue thread.
     }
 
@@ -207,7 +207,7 @@ impl TranscriptionJobManager {
                     .state::<Arc<TranscriptionManager>>()
                     .maybe_unload_immediately("background transcription");
             }
-            crate::tray::update_tray_menu(&self.app, None); // [GRAIN] Locale-aware tray.
+            crate::tray::update_tray_menu(&self.app); // [GRAIN] Locale-aware tray.
         }
     }
 
@@ -289,7 +289,7 @@ impl TranscriptionJobManager {
                 if !crate::grain_file_transcription::dictation_in_progress(&self.app) {
                     tm.maybe_unload_immediately("background transcription");
                 }
-                crate::tray::update_tray_menu(&self.app, None); // [GRAIN] Locale-aware tray.
+                crate::tray::update_tray_menu(&self.app); // [GRAIN] Locale-aware tray.
             }
         }
     }

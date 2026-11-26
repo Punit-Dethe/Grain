@@ -15,7 +15,7 @@ use crate::managers::history::HistoryManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
 use crate::shortcut;
-use crate::tray::{change_tray_icon, TrayIconState};
+use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils;
 use grain_core::{DaemonEvent, SessionMode};
 use log::error;
@@ -298,7 +298,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         }
 
         if recording_error.is_none() {
-            change_tray_icon(app, TrayIconState::Recording);
+            set_tray_state(app, TrayIconState::Recording);
             emit_session_started(app, sid, SessionMode::Dictation);
             if let Some(readiness) = readiness {
                 crate::grain_capture::announce_ready(app, &rm, readiness, true);
@@ -307,7 +307,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         } else {
             crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             rt.cancel_session();
-            change_tray_icon(app, TrayIconState::Idle);
+            set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
                 let error_type = crate::grain_actions::recording_error_type(&err);
                 let _ = app.emit(
@@ -345,7 +345,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // finalize (recording overrode processing until now).
         let session_id = emit_recording_stopped(app);
 
-        change_tray_icon(app, TrayIconState::Transcribing);
+        set_tray_state(app, TrayIconState::Transcribing);
         // C1: pill already showed "processing" from RecordingStopped above.
         rm.remove_mute();
         play_feedback_sound(app, SoundType::Stop);
@@ -487,7 +487,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // Deliver text before WAV export and history I/O. Neither is needed
             // by the paste path, and both can take noticeable time on slow disks.
             if final_text.trim().is_empty() {
-                change_tray_icon(&ah, TrayIconState::Idle);
+                set_tray_state(&ah, TrayIconState::Idle);
             } else {
                 if let Err(e) =
                     paste_transcription(ah.clone(), final_text, suppress_trailing_space).await
@@ -496,7 +496,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     let _ = ah.emit("paste-error", ());
                 }
                 if current_session_id() == session_id {
-                    change_tray_icon(&ah, TrayIconState::Idle);
+                    set_tray_state(&ah, TrayIconState::Idle);
                 }
             }
             log::info!(

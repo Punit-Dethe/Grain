@@ -231,7 +231,7 @@ pub fn cancel_current_operation(app: &AppHandle) {
     // Update tray icon and hide the single pill. The pill ignores the id for
     // cancellation, so 0 is fine for callers without a live session id (e.g. the
     // cancel command). CancelAction also emits this — a double hide is harmless.
-    change_tray_icon(app, crate::tray::TrayIconState::Idle);
+    set_tray_state(app, crate::tray::TrayIconState::Idle);
     crate::bridge::emit(
         app,
         grain_core::DaemonEvent::SessionCancelled { session_id: 0 },

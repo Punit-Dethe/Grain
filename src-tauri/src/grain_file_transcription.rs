@@ -34,8 +34,7 @@ pub(crate) fn validate_import(app: &AppHandle, path: &Path) -> anyhow::Result<()
 }
 
 pub(crate) fn dictation_in_progress(app: &AppHandle) -> bool {
-    app.try_state::<crate::tray::CurrentTrayIconState>()
-        .is_some_and(|state| state.get() != crate::tray::TrayIconState::Idle)
+    crate::tray::dictation_in_progress(app)
         || app
             .try_state::<Arc<AudioRecordingManager>>()
             .is_some_and(|audio| audio.is_recording())

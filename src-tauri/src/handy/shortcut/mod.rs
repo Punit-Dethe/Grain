@@ -714,7 +714,7 @@ pub fn change_selected_language_setting(app: AppHandle, language: String) -> Res
     let mut settings = settings::get_settings(&app);
     settings.selected_language = language.clone();
     settings::write_settings(&app, settings);
-    tray::update_tray_menu(&app, None);
+    tray::update_tray_menu(&app);
 
     // The tray can change it too; keep the settings window in sync.
     let _ = app.emit(
@@ -866,7 +866,7 @@ pub fn change_language_detection_setting(
     let mut settings = settings::get_settings(&app);
     settings.language_detection = mode;
     settings::write_settings(&app, settings);
-    tray::update_tray_menu(&app, None);
+    tray::update_tray_menu(&app);
     Ok(())
 }
 
@@ -1340,7 +1340,7 @@ pub fn change_app_language_setting(app: AppHandle, language: String) -> Result<(
     settings::write_settings(&app, settings);
 
     // Refresh the tray menu with the new language
-    tray::update_tray_menu(&app, Some(&language));
+    tray::update_tray_menu(&app);
 
     Ok(())
 }

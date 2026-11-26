@@ -6,12 +6,11 @@ use crate::managers::model::ModelManager;
 use crate::managers::transcription::policy::{live_decode, LiveDecode, ModelTraits};
 use crate::managers::transcription::{Transcription, TranscriptionManager};
 use crate::notices::{self, Notice, NoticeCode, NoticeSource};
-use crate::settings::{get_settings, AppSettings};
+use crate::settings::get_settings;
 use crate::shortcut;
-use crate::tray::{change_tray_icon, set_tray_state, TrayIconState};
+use crate::tray::{set_tray_state, TrayIconState};
 use crate::utils;
 use crate::TranscriptionCoordinator;
-use ferrous_opencc::{config::BuiltinConfig, OpenCC};
 use grain_core::SessionMode; // [GRAIN] pill session mode
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
@@ -212,54 +211,6 @@ where
 // conflict when upstream touches that function, and port the change into
 // `grain_post_process.rs` by hand.
 
-async fn maybe_convert_chinese_variant(
-    effective_language: &str,
-    transcription: &str,
-) -> Option<String> {
-    // Gate on the language the model actually transcribed in (the effective
-    // language), not the persisted intent. A leftover zh-Hans/zh-Hant intent
-    // from a previously selected model must not run OpenCC S2T/T2S over output a
-    // non-Chinese model produced — that would silently rewrite any shared CJK
-    // characters (e.g. Japanese kanji) in the result.
-    let is_simplified = effective_language == "zh-Hans";
-    let is_traditional = effective_language == "zh-Hant";
-
-    if !is_simplified && !is_traditional {
-        debug!("effective language is not Simplified or Traditional Chinese; skipping conversion");
-        return None;
-    }
-
-    debug!(
-        "Starting Chinese variant conversion using OpenCC for language: {}",
-        effective_language
-    );
-
-    // Use OpenCC to convert based on selected language
-    let config = if is_simplified {
-        // Convert Traditional Chinese to Simplified Chinese
-        BuiltinConfig::Tw2sp
-    } else {
-        // Convert Simplified Chinese to Traditional Chinese
-        BuiltinConfig::S2tw
-    };
-
-    match OpenCC::from_config(config) {
-        Ok(converter) => {
-            let converted = converter.convert(transcription);
-            debug!(
-                "OpenCC translation completed. Input length: {}, Output length: {}",
-                transcription.len(),
-                converted.len()
-            );
-            Some(converted)
-        }
-        Err(e) => {
-            error!("Failed to initialize OpenCC converter: {}. Falling back to original transcription.", e);
-            None
-        }
-    }
-}
-
 pub(crate) struct ProcessedTranscription {
     pub final_text: String,
     pub post_processed_text: Option<String>,
@@ -269,28 +220,6 @@ pub(crate) struct ProcessedTranscription {
     // [GRAIN] The LLM produced a caret-fitted span; paste it without the
     // optional automatic suffix, which would change its right-hand seam.
     pub suppress_trailing_space: bool,
-}
-
-/// Resolve the persisted language *intent* into the language the currently-loaded
-/// model will actually use — the same capability-aware coercion the transcription
-/// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
-/// resolves it independently so it agrees with the language the transcription ran
-/// in, without threading a value through the pipeline.
-fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String {
-    let tm = app.state::<Arc<TranscriptionManager>>();
-    let model_manager = app.state::<Arc<ModelManager>>();
-    let active_model = tm
-        .get_current_model()
-        .unwrap_or_else(|| settings.selected_model.clone());
-    match model_manager.get_model_info(&active_model) {
-        Some(info) => crate::managers::model::effective_language(
-            &settings.selected_language,
-            &[], // [GRAIN] Grain retains its explicit recognition-language control.
-            &info.supported_languages,
-            info.supports_language_detection,
-        ),
-        None => settings.selected_language.clone(),
-    }
 }
 
 pub(crate) async fn process_transcription_output(
@@ -316,18 +245,6 @@ pub(crate) async fn process_transcription_output(
     // PostProcessFailed notice is a deferred port.
     let post_process_failed = false;
 
-    // Resolve the language the transcription actually ran in (the persisted
-    // intent coerced against the loaded model's capabilities) so OpenCC keys off
-    // the effective language rather than a possibly-stale intent.
-    // [GRAIN] Converts `final_text` (post voice-action strip), not the raw
-    // transcription, so a stripped trigger phrase can't reach OpenCC.
-    let effective_language = resolve_effective_language(app, &settings);
-    if let Some(converted_text) =
-        maybe_convert_chinese_variant(&effective_language, &final_text).await
-    {
-        final_text = converted_text;
-    }
-
     if post_process {
         if let Some(processed_text) = crate::grain_post_process::post_process_transcription(
             app,
@@ -352,8 +269,6 @@ pub(crate) async fn process_transcription_output(
                 }
             }
         }
-    } else if final_text != transcription {
-        post_processed_text = Some(final_text.clone());
     }
 
     ProcessedTranscription {
@@ -409,7 +324,7 @@ impl ShortcutAction for TranscribeAction {
 
         let binding_id = binding_id.to_string();
         let tray_started = Instant::now();
-        change_tray_icon(app, TrayIconState::Recording);
+        set_tray_state(app, TrayIconState::Recording);
         let tray_elapsed = tray_started.elapsed();
         // Get the microphone mode to determine audio feedback timing
         let plan_started = Instant::now();
@@ -482,7 +397,7 @@ impl ShortcutAction for TranscribeAction {
             tm.cancel_stream(); // [GRAIN] Retire the route when capture never started.
             crate::grain_overlay::hide_failed_capture(app, overlay_generation);
             // [GRAIN] Failed capture dismisses the arming presentation.
-            change_tray_icon(app, TrayIconState::Idle);
+            set_tray_state(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
                 let error_type = crate::grain_actions::recording_error_type(&err);
                 let _ = app.emit(
@@ -524,7 +439,7 @@ impl ShortcutAction for TranscribeAction {
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
-        change_tray_icon(app, TrayIconState::Transcribing);
+        set_tray_state(app, TrayIconState::Transcribing);
         // [GRAIN] stop pressed → the pill enters "processing". The id is carried
         // into the async tail so the matching pill-hide reuses it.
         let session_id = crate::grain_actions::emit_recording_stopped(app);
@@ -572,7 +487,7 @@ impl ShortcutAction for TranscribeAction {
                     // and block the next start_stream.
                     tm.cancel_stream();
                     crate::grain_actions::emit_processing_complete(&ah, session_id);
-                    change_tray_icon(&ah, TrayIconState::Idle);
+                    set_tray_state(&ah, TrayIconState::Idle);
                 } else {
                     // Save WAV concurrently with transcription
                     let sample_count = samples.len();
@@ -700,7 +615,7 @@ impl ShortcutAction for TranscribeAction {
 
                             if final_text.is_empty() {
                                 crate::grain_actions::emit_processing_complete(&ah, session_id);
-                                change_tray_icon(&ah, TrayIconState::Idle);
+                                set_tray_state(&ah, TrayIconState::Idle);
                             } else {
                                 let paste_time = Instant::now();
                                 let suppress_trailing_space = processed.suppress_trailing_space;
@@ -725,7 +640,7 @@ impl ShortcutAction for TranscribeAction {
                                 crate::grain_actions::emit_processing_complete(&ah, session_id);
                                 // [GRAIN] A finishing paste cannot reset a newer capture's tray.
                                 if crate::grain_actions::current_session_id() == session_id {
-                                    change_tray_icon(&ah, TrayIconState::Idle);
+                                    set_tray_state(&ah, TrayIconState::Idle);
                                 }
                             }
                         }
@@ -748,14 +663,14 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
                             crate::grain_actions::emit_processing_complete(&ah, session_id);
-                            change_tray_icon(&ah, TrayIconState::Idle);
+                            set_tray_state(&ah, TrayIconState::Idle);
                         }
                     }
                 }
             } else {
                 debug!("No samples retrieved from recording stop");
                 crate::grain_actions::emit_processing_complete(&ah, session_id);
-                change_tray_icon(&ah, TrayIconState::Idle);
+                set_tray_state(&ah, TrayIconState::Idle);
             }
         });
 

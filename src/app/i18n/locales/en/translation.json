@@ -101,7 +101,10 @@
     "unloadModel": "Unload Model",
     "model": "Model",
     "quit": "Quit",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "language": "Language",
+    "autoLanguage": "Auto",
+    "otherLanguages": "Other Languages"
   },
   "sidebar": {
     "general": "General",
