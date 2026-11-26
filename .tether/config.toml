@@ -16,9 +16,11 @@ stay = ["src-tauri/src/lib.rs", "src-tauri/src/main.rs"]
 fork = "src/app/"
 upstream = "src/"
 
+# The frontend is Grain-owned and frozen (AGENTS.md): upstream frontend changes
+# never merge, even new files git routes into src/app/ by directory rename.
+# The [[review]] "frontend" group still surfaces them for backend porting.
 [[owned]]
 path = "src/"
-except = ["src/app/"]
 
 [[review]]
 name = "frontend"
