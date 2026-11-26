@@ -1,0 +1,1 @@
+note = "Ported: src-tauri/src/lib.rs calls tauri::async_runtime::handle() right before WEBVIEW_LOG_STREAMING.store in setup; the comments above it are Grain's, so the hunk's context differs"
