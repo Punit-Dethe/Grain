@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Escape did not dismiss dropdown menus"
+destinations = []
+evidence = "Grain's frontend is its own and frozen (AGENTS.md); upstream UI code is never merged. Grain's dropdowns are its own components."

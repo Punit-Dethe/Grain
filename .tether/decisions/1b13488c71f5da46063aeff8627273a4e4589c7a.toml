@@ -1,0 +1,11 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Upstream merge commit"
+destinations = []
+evidence = "No change of its own to review."
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Merge commit README/lock"
+destinations = []
+evidence = "No change of its own."

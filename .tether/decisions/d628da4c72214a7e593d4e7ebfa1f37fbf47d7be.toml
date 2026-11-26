@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "already-covered"
+problem = "handy-recorder bump"
+destinations = ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]
+evidence = "Cargo.toml and Cargo.lock at handy-recorder 0.1.1."

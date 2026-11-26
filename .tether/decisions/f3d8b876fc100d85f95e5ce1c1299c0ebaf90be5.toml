@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "already-covered"
+problem = "WebKitGTK overlay painting"
+destinations = ["src-tauri/src/main.rs", "src-tauri/src/handy/webkit_renderer.rs"]
+evidence = "webkit_renderer::apply() is called from main.rs; module compiled from handy/."

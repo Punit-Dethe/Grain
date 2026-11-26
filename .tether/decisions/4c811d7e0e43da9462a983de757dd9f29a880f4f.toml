@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Playwright bump for Handy CI"
+destinations = []
+evidence = "Frontend/Nix lockfiles follow Grain's own package.json."

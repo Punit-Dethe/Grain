@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Drop the OpenBLAS dependency"
+destinations = []
+evidence = "Needs the transcribe.cpp fork bump; queued in Upstream/DEFERRED-PORTS.md."

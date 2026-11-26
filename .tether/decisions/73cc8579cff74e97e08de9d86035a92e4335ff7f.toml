@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "TLS dependency security advisories"
+destinations = ["src-tauri/Cargo.lock"]
+evidence = "Cargo.lock updated: rustls 0.23.46, rustls-webpki 0.103.17, openssl 0.10.82."

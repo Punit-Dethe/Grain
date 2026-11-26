@@ -17,3 +17,15 @@ evidence = "notices module compiled and raising, but Grain has no notice surface
 outcome = "deferred"
 destinations = ["src-tauri/src/handy/overlay.rs", "src-tauri/src/grain_overlay.rs", "src-tauri/src/grain_capture.rs", "src/app/overlay/RecordingOverlay.tsx", "src/app/overlay/wave.ts", "src/app/overlay/overlay.css", "src-tauri/src/grain_events.rs", "recording-overlay.html", "vite.config.ts", "src-tauri/src/pill_icon.rs", "src-tauri/src/surface_watch.rs", "src/app/overlay/main.tsx", "crates/grain-sdk/src/event.rs"]
 evidence = "notices module compiled and raising, but Grain has no notice surface (frozen frontend, own tray); queued in Upstream/DEFERRED-PORTS.md."
+
+[review.frontend]
+outcome = "adapted"
+problem = "Errors surfaced as notices"
+destinations = ["src-tauri/src/handy/notices.rs"]
+evidence = "Backend notices compiled; Grain keeps its own toasts and the notice UI is queued in Upstream/DEFERRED-PORTS.md."
+
+[review.suppressed]
+outcome = "not-applicable"
+problem = "AGENTS.md and locks for notices"
+destinations = []
+evidence = "Handy's agent guide and frontend locks."

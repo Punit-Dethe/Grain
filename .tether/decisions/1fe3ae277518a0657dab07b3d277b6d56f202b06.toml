@@ -1,0 +1,11 @@
+[review.frontend]
+outcome = "adapted"
+problem = "Opus audio files could not be decoded"
+destinations = ["src-tauri/Cargo.toml"]
+evidence = "symphonia-adapter-libopus and the Windows-ARM opusic build merged; the decoder is compiled."
+
+[review.suppressed]
+outcome = "already-covered"
+problem = "Lockfile for Opus decoding"
+destinations = ["src-tauri/Cargo.lock"]
+evidence = "Cargo.lock carries symphonia-adapter-libopus."

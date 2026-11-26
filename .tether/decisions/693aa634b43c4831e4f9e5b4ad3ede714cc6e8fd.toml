@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Preferred-languages picker UX"
+destinations = []
+evidence = "Grain's frontend is its own and frozen (AGENTS.md); upstream UI code is never merged."

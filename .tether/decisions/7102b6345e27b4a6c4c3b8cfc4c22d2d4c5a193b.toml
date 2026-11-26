@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "not-applicable"
+problem = "OpenBLAS in Linux build docs"
+destinations = []
+evidence = "Superseded upstream by 1f2e9ea94; Grain's BUILD.md is its own."

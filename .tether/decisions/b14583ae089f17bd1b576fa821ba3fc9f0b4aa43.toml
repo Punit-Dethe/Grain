@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Revert of permission reset"
+destinations = []
+evidence = "Reverts dce297689 in the same range; nothing to take."

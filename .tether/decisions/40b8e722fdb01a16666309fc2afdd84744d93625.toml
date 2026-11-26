@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "already-covered"
+problem = "WebView2 context menu on the recording overlay"
+destinations = ["src-tauri/src/handy/overlay.rs"]
+evidence = "Handy's overlay.rs is compiled directly; Grain's overlay page is its own."

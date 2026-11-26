@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Hungarian translation"
+destinations = []
+evidence = "Grain is English-only (translations retired 2026-11-26)."

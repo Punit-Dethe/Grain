@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "libopus failed to build on Windows ARM"
+destinations = ["src-tauri/Cargo.toml"]
+evidence = "Windows-aarch64 table with opusic-sys no-simd merged into Cargo.toml."

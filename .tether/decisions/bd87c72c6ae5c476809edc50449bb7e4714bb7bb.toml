@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "not-applicable"
+problem = "README note for AppImage Wayland"
+destinations = []
+evidence = "Grain's README is its own."

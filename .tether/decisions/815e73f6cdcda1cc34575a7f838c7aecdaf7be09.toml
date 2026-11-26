@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "File-decoding progress state in the UI"
+destinations = []
+evidence = "Grain's frontend is its own and frozen (AGENTS.md); upstream UI code is never merged."

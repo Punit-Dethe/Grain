@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "Downloads broke behind proxies that strip Range"
+destinations = ["src-tauri/Cargo.lock"]
+evidence = "Cargo.lock hf-hub moved to fc273554 on the same branch as upstream."

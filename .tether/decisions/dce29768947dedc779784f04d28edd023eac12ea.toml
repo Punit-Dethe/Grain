@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Stale macOS permission grants"
+destinations = []
+evidence = "Reverted upstream by b14583ae0 in the same range."

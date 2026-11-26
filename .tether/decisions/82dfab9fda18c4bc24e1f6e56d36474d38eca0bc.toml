@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "not-applicable"
+problem = "Merge commit README/lock"
+destinations = []
+evidence = "No change of its own."

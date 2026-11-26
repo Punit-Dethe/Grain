@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Focused setting tooltips ignored Escape"
+destinations = []
+evidence = "Grain's frontend is its own and frozen (AGENTS.md); upstream UI code is never merged."

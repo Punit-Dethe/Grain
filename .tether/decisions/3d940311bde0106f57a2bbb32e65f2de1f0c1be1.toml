@@ -1,0 +1,5 @@
+[review.frontend]
+outcome = "not-applicable"
+problem = "Tray language submenu"
+destinations = []
+evidence = "Grain keeps its single-icon tray; queued in Upstream/DEFERRED-PORTS.md in case Grain wants it."

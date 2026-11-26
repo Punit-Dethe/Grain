@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "adapted"
+problem = "Remote-control flags ignored on a cold start"
+destinations = ["src-tauri/src/lib.rs"]
+evidence = "Ported to the end of Grain's setup() in lib.rs."

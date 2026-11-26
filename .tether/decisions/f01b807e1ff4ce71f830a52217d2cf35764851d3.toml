@@ -1,0 +1,5 @@
+[review.suppressed]
+outcome = "already-covered"
+problem = "handy-keys 0.3.5"
+destinations = ["src-tauri/Cargo.lock"]
+evidence = "Cargo.lock has handy-keys 0.3.5."
