@@ -3,7 +3,7 @@ import tsParser from "@typescript-eslint/parser";
 
 // [GRAIN] Files still calling the backend by raw string instead of the generated
 // `commands.*` bindings. Untyped: a renamed command fails silently at runtime,
-// in whatever screen nobody happened to open. See docs/UI 2.0/PLAN.md §5.2.
+// in whatever screen nobody happened to open. See docs/ARCHITECTURE.md.
 //
 // This list may SHRINK, never grow. It is not a backlog to work through — every
 // file on it is legacy UI that the rewrite deletes, so converting it now would
@@ -36,14 +36,14 @@ const NO_RAW_INVOKE = {
   name: "@tauri-apps/api/core",
   importNames: ["invoke"],
   message:
-    "Call the backend through the generated bindings: import { commands } from '@/bindings'. Raw invoke() is untyped — a renamed command fails silently at runtime. (docs/UI 2.0/PLAN.md §5.2)",
+    "Call the backend through the generated bindings: import { commands } from '@/bindings'. Raw invoke() is untyped — a renamed command fails silently at runtime.",
 };
 
 const NO_RAW_LISTEN = {
   name: "@tauri-apps/api/event",
   importNames: ["listen"],
   message:
-    "Subscribe through the generated bindings: import { events } from '@/bindings', then events.modelStateChanged.listen(...). Raw listen() is untyped — a renamed event silently never fires. (docs/UI 2.0/PLAN.md §5.2)",
+    "Subscribe through the generated bindings: import { events } from '@/bindings', then events.modelStateChanged.listen(...). Raw listen() is untyped — a renamed event silently never fires.",
 };
 
 // Flat config REPLACES a rule's options rather than merging them, so the last

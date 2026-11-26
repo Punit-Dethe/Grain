@@ -3,9 +3,7 @@
 Current policy, audited 2026-10-04. Read this when upstream changes recording
 windows, microphone readiness/levels, capture actions, streaming text, or pill
 settings. The process remains [UPSTREAM.md](UPSTREAM.md); this document specifies
-what its existing review and verification gates must cover. The pinned Handy
-reference, implementation history and build evidence are in the
-[migration record](../docs/HANDY-WEBVIEW-OVERLAY-MIGRATION.md).
+what its existing review and verification gates must cover.
 
 ## Ownership and integration seams
 

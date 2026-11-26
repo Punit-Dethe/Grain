@@ -3,8 +3,7 @@
 //!
 //! This module answers **which layers apply** to a dictation. What each layer
 //! says, how much authority it carries and how the whole thing renders belongs
-//! to [`prompt_stack`]; the ladder and the reasoning behind it are written down
-//! in `docs/Prompt Priority/PLAN.md`.
+//! to [`prompt_stack`], which defines the prompt layers and their precedence.
 //!
 //! # The layers this module can contribute
 //! - **BASE** — the user's selected post-processing prompt (the shipped Default
@@ -1061,8 +1060,6 @@ impl ActiveContext {
 /// When no spoken instruction or profile applies, the result contains only the
 /// main prompt and terminal output contract. Otherwise configurable layers are
 /// rendered from lowest to highest authority before the terminal contract.
-///
-/// See `docs/Prompt Priority/PLAN.md` for the tier ladder.
 pub fn compose_prompt(
     base: &str,
     settings: &AppSettings,

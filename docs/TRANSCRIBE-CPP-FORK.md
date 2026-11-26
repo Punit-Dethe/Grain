@@ -1,6 +1,6 @@
 # Grain native fork integration
 
-Grain consumes the safe Rust wrapper and native sys package from the [maintained source fork](https://github.com/Punit-Dethe/transcribe.cpp/tree/flow/parakeet-v3-stateful). Both packages retain upstream version 0.4.0 and resolve to one immutable source revision. There is no new service, download engine, persistent Flow handle or inference algorithm in Grain.
+Grain consumes the safe Rust wrapper and native sys package from the [maintained source fork](https://github.com/Punit-Dethe/transcribe.cpp/tree/flow/parakeet-v3-stateful). Both packages retain upstream version 0.4.0 and resolve to one immutable source revision.
 
 ## Source and runtime contract
 
@@ -10,7 +10,7 @@ The fork has upstream source layout, generated Rust FFI, and its existing safe w
 
 Contract revision **6**, patch identity **`grain-flow-tdt`**, semantic ABI **`54c13920a14bb4b6`**. Native queries use static storage and work without `.git`. Rust validates version, contract identity/revision, runtime digest and 31 size/alignment pairs before model loading or backend setup; the result is cached once. Upstream ABI IDs 0–28 are preserved; PKFW is appended as ID 29; v2/v3 buffered TDT (PKBF) is ID 30; the Nemotron-3 diarize-stream params are ID 31. Missing exports fail in the OS loader; incompatible values produce an explicit compatibility error. This checks compatibility, not cryptographic authenticity.
 
-Grain retains capture, journal, window cursor, replay, cancellation, inference lease and post-processing. Both v2 and v3 use PKBF with 10s left / 10s owned / 4.96s right context and continuous TDT predictor state. Owned IDs append once without merging; both detokenize the complete sequence through the native tokenizer. The former Fluid cursor/padding/merger are removed from Grain; PKFW remains independently exposed by the native SDK. The fork ports only the cumulative Grain patch onto upstream 0.4.0, retaining upstream's new encoder, ggml, VAD, language ID, diarization and vocabulary APIs. Predictor/joint failure handling is already upstream. Confidence and some timestamps differ from 0.2.3; bit-exact extraction parity is not claimed for this upgrade.
+Grain owns capture, the PCM journal, window scheduling, cancellation and post-processing. The native wrapper owns inference sessions, decoding and tokenization.
 
 Full source SHA and artifact hashes belong to build/release provenance. The optional native short Git stamp can be `unknown` in source archives; it is not an identity gate. Do not embed a commit's own SHA in its committed source.
 
@@ -34,77 +34,16 @@ uv run --no-project scripts/transcribe_fork.py --runtime-dir src-tauri/transcrib
 
 On Linux, start this command with loader paths appropriate to the inspected directory, such as `LD_LIBRARY_PATH=/absolute/native/lib`; static Apple/ARM builds use the fork's Rust `grain_contract` example instead. Runtime inspection verifies the expected identity/digest/version and actual CPU fallback discovery. It does not replace full installer/resource verification. Existing `DEP_TRANSCRIBE_CPP_*` forwarding, Tauri staging, SONAME handling, Windows resource layout and Linux rpaths are preserved.
 
-## October 17 upgrade evidence
+## Flow window policies
 
-Native candidate `517885822a5f42562972796c53ae496a52c143b6` is based on
-upstream 0.4.0 `f1dcd15858c4bbba87ca97862b4e448b2cf15b8f`.
-The static Windows CPU suite passes 59 tests, with one diarization fixture
-smoke skipped. The shared CPU/Vulkan build passes six native tests and discovers
-both the CPU and RTX 3080. Safe Rust with serde passes 13 library and 10 no-model
-tests; PKFW run options survive JSON and postcard worker transport. Clippy,
-formatting, regenerated Rust/Python/TypeScript bindings, Swift ABI and package
-checks pass (sys archive: 1,718 files, about 4.3 MiB compressed).
+- **Parakeet TDT v2 and v3** use buffered continuation with 10 seconds left context, 10 seconds of owned audio and 4.96 seconds of right context. Only owned frames advance the native predictor, so each token is appended once. The v2 operating point follows published long-form results. The same policy gives v3 bounded long-form decoding, with WER dependent on the model and audio. Finalization and session drop release the carried state before returning the inference lease.
+- **Fluid Speech Pro Q8_0** uses its own published independent-window profile for ordinary Flow dictation. Grain pads short audio, decodes overlapping windows and merges their timestamped tokens. Paths that retain structured window evidence use buffered continuation.
 
-Explicit real v2 Q8 and v3 Q4 lifecycle tests pass cancellation/reset,
-invalid-window recovery, model lifetime and detokenization with public JFK
-audio. The unchanged maintained Flow audit compares public 11/35/83-second
-fixtures against 0.2.3. Full cased/punctuated Batch, Flow, independent-window and
-diagnostic-window strings agree on CPU and Vulkan. Token IDs agree in the
-matching shared CPU v2 comparison; confidence and some frame/timestamp values
-differ. These fixtures do not prove multilingual accuracy or general
-sentence-continuation correctness; timing overlaps with builds prevent using
-these runs as performance benchmarks.
+See the [Flow conformance tool](../scripts/flow-audit/README.md) for the buffered-profile checks. Profile selection lives in [the Flow session](../src-tauri/src/tdt_flow.rs).
 
-Capability queries are now fallible: model loading and Batch propagate errors;
-the streaming error branch returns its engine and clears/drains the route.
-The dependency checker verifies the paired source pin and target features; all
-ten pin/runtime-path tests and 28 upstream tooling tests pass. The official
-source-built backend suite passes **582 tests, 3 ignored**. Its production Flow
-journal gate is then run explicitly with both v2 and v3: all three public clips
-pass incremental partitioning and fresh replay, exact cased/punctuated output,
-and bounded audio capacity. The initial v2 fixture setup mistakenly selected
-the audit's diagnostic PKFW output; correcting it to the production independent
-window output resolves that test setup failure. Native CI passes Windows,
-Linux and macOS at the exact source pin:
-https://github.com/Punit-Dethe/transcribe.cpp/actions/runs/39026846446.
-Current Grain worker integration evidence is in Upstream/SYNC-2026-10-17.md.
-Installer and real microphone acceptance remain separate from these tests.
+## Local diarization
 
-The capability error handling adds 17 measured divergence lines to the current
-Handy manager baseline (1076 → 1093). This is reviewed adaptation of the 0.4
-fallible ASR API, including streaming cleanup, rather than a new Grain feature.
-The forthcoming supervisor integration replaces these in-process call sites;
-do not retain a second legacy engine to preserve this checkpoint.
-
-## Retired implementation
-
-The inactive 0.2.3 vendor copies and their contract are removed. Git retains
-the previous implementation; no second native baseline is built or maintained.
-The current paired pin and fork contract above are authoritative.
-
-## October 18 v2 buffered policy
-
-Native revision `e77845e7de1f6aff6f7e24473b70d9e5a0565000` adds session-scoped TDT continuation, exposed through
-the typed PKBF run extension and the existing worker protocol. The decoder
-consumes only owned encoder frames, carrying committed and pending predictor
-state, last label and duration overshoot. No new worker, model, PCM retention,
-background graph or final full-file pass is introduced. Finalization releases
-the carry; FlowSession drop resets the existing native session before its
-exclusive lease is released. A cancellation epoch rejects stale cleanup;
-cleanup never reloads a model or restarts a dead worker.
-
-See [the v2 plan](FLOW-V2-STATEFUL-PLAN.md) for sources, desktop CPU/GPU evidence,
-implementation checks and limits. Published NeMo WER is evidence for the policy,
-not measured GGUF accuracy.
-
-## October 18 v3 buffered policy
-
-Native revision `eeffcc3887018015d04d20e61d3698a33d790f24` extends the same
-PKBF continuation to reviewed v3 metadata. Contract 5 distinguishes this
-capability from the former v2-only contract; no ABI structs or worker requests
-are added. V2 behavior is unchanged. See [the v3 plan](FLOW-V3-STATEFUL-PLAN.md)
-for the accuracy-first decision, primary sources, verification and limits.
-
-## November 2 Nemotron-3 diarization
-
-Native revision `c8cf6b11dd5e67131b264025112293bda1bb8c86` adds a second Grain patch on top of `eeffcc3`: the `nemotron3_diar` arch and push-audio diarization, ported from `glimpse-hq/transcribe.cpp` (MIT) at `4b3f456`. Contract 6. Grain Meet uses only the offline `transcribe_diarize_run` path. See `GRAIN-FORK.md` in the fork and `docs/Meet/DIARIZER-RESEARCH.md`.
+Grain's fork carries the Nemotron-3 diarization architecture port from
+glimpse-hq/transcribe.cpp. Recall uses the offline diarization API to label
+speakers in saved recordings. The native fork's GRAIN-FORK.md documents the
+port and its interface.

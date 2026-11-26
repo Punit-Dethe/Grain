@@ -2,8 +2,8 @@
 
 Runs the production policy for reviewed Parakeet TDT v2/v3 GGUF models: native
 stateful buffered decoding (125 left / 125 owned / 62 right encoder frames).
-The former Fluid window, padding and overlap merger are removed. No parameter
-sweep, pause-cut heuristic or independent-window text assembly remains.
+The tool covers the buffered profile. Fluid Speech Pro's independent-window
+profile is exercised by its dedicated tests in the app.
 
 This tool is excluded from the application. It loads one model, runs serially,
 and releases it on exit. It reads the complete WAV into memory for offline
@@ -35,10 +35,8 @@ Optional environment variables:
 
 Compute timings exclude capture, cold loading and worker transport. They are
 not live Stop latency. A few public regression clips do not establish general
-WER or an optimal context size. The selected v2 policy comes from published
-NVIDIA results, not private-microphone tuning. See
-[v2 evidence](../../docs/FLOW-V2-STATEFUL-PLAN.md) and
-[v3 evidence and limits](../../docs/FLOW-V3-STATEFUL-PLAN.md).
+WER or an optimal context size. See the [native fork contract](../../docs/TRANSCRIBE-CPP-FORK.md#flow-window-policies)
+for the window policy and rationale.
 
 ```powershell
 cargo test --locked --manifest-path scripts/flow-audit/Cargo.toml

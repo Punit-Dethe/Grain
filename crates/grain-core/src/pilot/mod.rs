@@ -1,6 +1,5 @@
 //! Grain Pilot: the Agent acting in the user's own browser, signed in as
-//! them, through the Grain Pilot browser extension
-//! (`docs/Pilot/EXTENSION-PLAN.md`).
+//! them, through the Grain Pilot browser extension.
 //!
 //! The extension (`browser-extension/`) opens tabs in a "Grain" tab group and
 //! reads and acts on pages with page-agent's page controller. Grain owns the

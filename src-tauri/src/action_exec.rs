@@ -1,4 +1,4 @@
-//! [GRAIN] Phase 3 host executor (`docs/Extensions 2.0/PLAN.md` §8, §12).
+//! [GRAIN] Host executor for Agent tools.
 //!
 //! Turns a retrieved action into a real, safely-executed effect. Built on the
 //! pure contracts in `grain_core::execution` (risk, prepared calls, outcomes) and

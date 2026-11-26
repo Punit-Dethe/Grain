@@ -139,9 +139,10 @@ bun install
 bun run tauri dev
 ```
 
-- [Build guide](BUILD.md): prerequisites, platform notes, release builds
+- [Architecture](docs/ARCHITECTURE.md) explains the app, capture, and inference boundaries.
+- [Build guide](BUILD.md) covers prerequisites, platform notes, and release builds.
 - [Contributing](CONTRIBUTING.md) and [translations](CONTRIBUTING_TRANSLATIONS.md)
-- [Handy upstream tracking](https://punit-dethe.github.io/Grain/)
+- [Upstream maintenance](Upstream/UPSTREAM.md) covers the Handy integration.
 
 ## License
 

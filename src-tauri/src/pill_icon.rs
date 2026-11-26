@@ -1,8 +1,5 @@
 //! [GRAIN] Pill identity — the icon of whatever the user is dictating into.
 //!
-//! See `docs/Pill Identity/PLAN.md` for the full design and the sources behind
-//! the Windows API choices. The short version:
-//!
 //! - **The core resolves, the pill blits.** The pill gets `PILL_ICON_PX`²
 //!   premultiplied RGBA and never learns about COM, the shell, or icon themes.
 //!   That seam is what makes macOS and Linux one impl each rather than a

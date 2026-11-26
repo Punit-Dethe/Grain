@@ -1,5 +1,4 @@
-//! [GRAIN] Phase 3 execution contract (`docs/Extensions 2.0/PLAN.md` §8.3, §8.5,
-//! §12).
+//! [GRAIN] Execution contract for Agent tools.
 //!
 //! The pure, host-side-agnostic types the executor is built on: how risky an
 //! action is, the exact prepared call the host will run, and the structured

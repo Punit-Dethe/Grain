@@ -1,5 +1,4 @@
-//! [GRAIN] Lexical first-round tools and combined discovery recovery
-//! (`docs/Extensions 2.0/PLAN.md` Amendment D).
+//! [GRAIN] Lexical first-round tools and combined discovery recovery.
 //!
 //! The bridge between the pure directory/exposure layer in `grain-core` and the
 //! Agent's live tool loop (`agent::run_with_tools`). It:

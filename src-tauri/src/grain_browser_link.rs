@@ -1,5 +1,4 @@
-//! [GRAIN] Grain side of the Grain Pilot browser extension
-//! (`docs/Pilot/EXTENSION-PLAN.md`).
+//! [GRAIN] Grain's link to the Grain Pilot browser extension.
 //!
 //! The extension (`browser-extension/`) connects through native messaging:
 //! the browser starts `grain-browser-host.exe`, which relays length-prefixed

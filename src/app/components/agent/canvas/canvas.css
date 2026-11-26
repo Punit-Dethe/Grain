@@ -1,6 +1,5 @@
-/* Generated views in the Agent chat (experiment, see
-   docs/Generative UI/PLAN.md): the card in the chat and the full view it
-   opens. The view is laid out at its settled size and clipped by the shell as
+/* The Agent chat renders a card and the full generated view it opens.
+   The view is laid out at its settled size and clipped by the shell as
    it grows, like Recall. AgentCanvas measures `.gui-content` and `.gui-foot`
    to size the shell (CANVAS_MIN/MAX and PAD_X there). It never scrolls: a
    view taller than the bounds is scaled down to fit. Tokens come from

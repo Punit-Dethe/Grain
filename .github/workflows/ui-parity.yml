@@ -1,9 +1,7 @@
 name: UI Parity
 
-# Every setting must stay reachable through the UI 2.0 rewrite. The way a UI
-# rewrite fails is not a crash — it is a setting that quietly stops being
-# reachable and nobody notices for months. See scripts/ui_parity.py and
-# docs/UI 2.0/PLAN.md §12.
+# Check that settings remain reachable. See scripts/ui_parity.py and its
+# maintained exceptions in scripts/ui-parity-exceptions.md.
 #
 # Deliberately its own workflow rather than a step in `code quality`: that one
 # is red on main (61 pre-existing i18next literal-string errors), so a gate

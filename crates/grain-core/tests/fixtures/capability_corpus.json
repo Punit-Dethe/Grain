@@ -1,7 +1,6 @@
 {
   "_comment": [
-    "Frozen benchmark corpus for Capability Index V2 retrieval",
-    "(docs/Extensions 2.0/PLAN.md 7.5). Mid-scale: ~11 extensions, ~40 actions.",
+    "Benchmark corpus for capability index retrieval with about 11 extensions and 40 actions.",
     "Deliberately adversarial across slices: exact naming, paraphrase, ASR",
     "substitutions, near-neighbour actions within one extension and across two,",
     "multi-intent/incidental speech, requests nothing should serve, and actions",

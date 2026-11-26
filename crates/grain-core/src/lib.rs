@@ -27,29 +27,24 @@ pub mod settings;
 // exactly the same rules the index files tokens under — the one place that
 // agreement is enforced.
 pub mod text;
-// [GRAIN] Capability Index V2 — the schema-projection action retriever
-// (docs/Extensions 2.0/PLAN.md §6–7). Pure and model-free: builds the hot set
-// the Agent selects from, with an eligibility pre-filter and model-free
-// exact/lexical provenance.
+// [GRAIN] Model-free action retrieval with eligibility filtering and
+// exact/lexical match provenance.
 pub mod capability_index;
-// [GRAIN] Capability Index V2 — Agent tool exposure (docs/Extensions 2.0/PLAN.md
-// §6.3, §6.4, §7.3). Pure: turns the hot set into model tool definitions with
+// [GRAIN] Agent tool exposure turns the hot set into model tool definitions with
 // prompt-safe sanitisation, the `search_actions` meta-tool, safe tool-name
 // encoding, and the bounded cumulative-exposure budget. The host maps `ToolDef`
 // onto its transport tool type and runs the loop.
 pub mod capability_agent;
-// [GRAIN] Capability Index V2 retrieval evaluation (docs/Extensions 2.0/PLAN.md
-// §7.5). Drives the real retriever over a held-out corpus, headless. Headline is
+// [GRAIN] Headless retrieval evaluation over a held-out corpus. Headline is
 // eligible Recall@K + fallback-rate + hot-set size — flood, not miss, is the
 // failure.
 pub mod capability_eval;
-// [GRAIN] The host-owned interaction contract (docs/Extensions 2.0/PLAN.md §9.2,
-// Amendments A & B). Structured, data-shaped interactions (confirm/choose/
+// [GRAIN] Host-owned structured interactions (confirm/choose/
 // request/result/receipt) with a markdown renderer — renderer #1 for the Agent
 // chat. The parallel native Dynamic UI is renderer #2 over the same enum, which
 // is why extensions return data here, never authored views.
 pub mod interaction;
-// [GRAIN] Phase 3 execution contract (docs/Extensions 2.0/PLAN.md §8.3/§8.5/§12):
+// [GRAIN] Host execution contract:
 // risk classification (escalate-only floor), the prepared call approved and
 // replayed as a unit (idempotency + time-of-use revalidation), and the structured
 // outcome — mapped to `interaction` for rendering. Pure; the host executor is

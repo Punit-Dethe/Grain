@@ -1,6 +1,5 @@
 //! [GRAIN] Grain Pilot: the Agent acting in the user's own browser, signed in
-//! as them, through the Grain Pilot browser extension
-//! (`docs/Pilot/EXTENSION-PLAN.md`).
+//! as them, through the Grain Pilot browser extension.
 //!
 //! The pure half (tools, page reads, policy, replies) lives in
 //! `grain_core::pilot`. This file holds Pilot's tabs, runs each tool as one

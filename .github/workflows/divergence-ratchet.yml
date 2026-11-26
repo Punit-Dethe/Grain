@@ -9,7 +9,7 @@ name: Divergence Ratchet
 #
 # `frontend-freeze` — the FRONTEND boundary, which Grain stopped merging at the
 # UI 2.0 freeze: fails any push/PR where an upstream file lands under src/.
-# See Upstream/frontend_freeze.py and docs/UI 2.0/PLAN.md.
+# See Upstream/frontend_freeze.py and docs/ARCHITECTURE.md.
 
 on:
   push:

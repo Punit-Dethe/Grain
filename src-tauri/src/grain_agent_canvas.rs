@@ -1,5 +1,4 @@
-//! [GRAIN] Generative UI in the Agent chat (experiment, see
-//! `docs/Generative UI/PLAN.md`). A chat reply may carry an interactive view:
+//! [GRAIN] A chat reply may carry an interactive view:
 //! the model writes its short spoken/chat answer, then an OpenUI Lang program
 //! the notch renders with its own component library. The host splits the two
 //! here; the chat keeps both (`AgentHistoryMessage::ui`).

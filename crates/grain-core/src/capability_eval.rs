@@ -1,5 +1,4 @@
-//! [GRAIN] Capability Index V2 retrieval evaluation
-//! (`docs/Extensions 2.0/PLAN.md` §7.5, `docs/Extensions 2.0/IMPLEMENTATION-NOTES.md`).
+//! [GRAIN] Capability index retrieval evaluation.
 //!
 //! Drives the real [`crate::capability_index::CapabilityIndex::retrieve`] over a
 //! held-out corpus, headless — no embedder, no Tauri, no filesystem. It scores

@@ -1,6 +1,5 @@
-// The Canvas component library (generative UI experiment, see
-// docs/Generative UI/PLAN.md). The model writes OpenUI Lang against these
-// components; the same definitions generate the prompt that describes them, so
+// The model writes OpenUI Lang against the Canvas component library.
+// The same definitions generate the prompt that describes them, so
 // what the model is told and what renders can never drift apart.
 //
 // Look: calm and premium (the approved Apple-style mockups). Designed views

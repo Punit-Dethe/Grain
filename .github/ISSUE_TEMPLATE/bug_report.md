@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: Create a report to help us improve Handy
+about: Create a report to help us improve Grain
 title: "[BUG] "
 labels: ["bug"]
 assignees: ""
@@ -8,11 +8,11 @@ assignees: ""
 
 ## Before You Submit
 
-**Please search [existing issues](https://github.com/cjpais/Handy/issues) to avoid duplicates.** Your bug may already be reported! Right now it's just me maintaining this project so many issues can be overwhelming! Help me out by checking first.
+Search [existing Grain issues](https://github.com/Punit-Dethe/Grain/issues) before opening a report.
 
 ## Bug Description
 
-A clear and concise description of what the bug is.
+Describe the steps to reproduce the bug and what you expected to happen.
 
 ## System Information
 
@@ -34,4 +34,4 @@ A clear and concise description of what the bug is.
 
 ## Logs
 
-<!-- Please attach relevant logs to help us diagnose the issue. You can find the log directory by going to Settings > About in the app. -->
+<!-- Attach relevant logs with private information removed. -->

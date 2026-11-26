@@ -386,7 +386,7 @@ matching remains only a heuristic signal.
   _backend knowledge that happens to be written in TSX_ (which accelerators this
   host can run, which locale a system tag resolves to). Port those into Rust —
   which we still merge in full — and the freeze costs nothing. See
-  [`docs/UI 2.0/PLAN.md`](../docs/UI%202.0/PLAN.md).
+  [the architecture guide](../docs/ARCHITECTURE.md#app-boundaries).
 - **AI text provider fallback**: `grain_llm_client.rs` owns transport;
   `grain_llm_fallback.rs` and Agent try enabled, configured providers in saved
   order when Fallback is on. Rotation, scoring, quotas and the routing crate

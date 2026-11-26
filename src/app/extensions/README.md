@@ -20,9 +20,15 @@ auth, so there is nothing to register per service. The backend lives in
 MCP-shaped providers (`composio-<slug>`), so the Agent's discovery and
 execution paths are shared with custom MCP servers.
 
-## Built-ins
+## Built-ins and custom servers
 
-Exa and Grain Pilot are defined in the Rust catalog in
-`src-tauri/src/grain_mcp.rs`. The bundled Exa mark is Exa’s GitHub avatar;
-the Grain Pilot mark is Grain’s own. The app marks in the Composio setup
-illustration come from [Simple Icons](https://simpleicons.org/) (CC0).
+Exa and Grain Pilot are defined in the [Rust catalog](../../../src-tauri/src/grain_mcp.rs).
+Pilot connects to the [browser extension](../../../browser-extension) via the
+native messaging host. The bundled Exa mark is Exa's GitHub avatar, the Pilot
+mark is Grain's own, and the Composio illustration uses [Simple Icons](https://simpleicons.org/)
+(CC0).
+
+To connect a remote Streamable HTTP MCP server, open **Extensions → Add custom MCP**,
+enter the HTTPS endpoint, and select its authentication mode. Sign in when
+required, enable the connection, and confirm the tool catalog loads. The
+[contributor guide](../../../CONTRIBUTING.md#mcp-connections) covers verification.

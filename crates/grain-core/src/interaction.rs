@@ -1,5 +1,4 @@
-//! [GRAIN] The host-owned interaction contract (`docs/Extensions 2.0/PLAN.md`
-//! §9.2, Amendments A & B).
+//! [GRAIN] The host-owned interaction contract.
 //!
 //! Everything an action or the Agent needs to show the user — a confirmation, a
 //! choice, a follow-up field, a result, a receipt — is a structured, host-owned

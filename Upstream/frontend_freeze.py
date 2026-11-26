@@ -5,7 +5,7 @@ Companion to ``ratchet.py``. The ratchet guards the *backend* boundary, where
 Grain deliberately keeps merging Handy's code. This guards the *frontend*, where
 Grain deliberately stopped: since the UI 2.0 freeze, ``src/`` is Grain-owned
 (``src/** merge=ours`` in .gitattributes) and upstream's React tree is no longer
-a base we build on. See ``docs/UI 2.0/PLAN.md``.
+a base we build on. See ``docs/ARCHITECTURE.md``.
 
 ``merge=ours`` alone is NOT a freeze — it only wins *conflicts*:
 
@@ -84,7 +84,7 @@ def census() -> int:
         print(
             "\n".join(
                 f"[freeze] FAIL: upstream file landed under src/: {p} - the frontend "
-                f"is frozen (docs/UI 2.0/PLAN.md). Delete it, or run "
+                f"is frozen (docs/ARCHITECTURE.md). Delete it, or run "
                 f"frontend_freeze.py --update and justify it in the commit."
                 for p in added
             ),

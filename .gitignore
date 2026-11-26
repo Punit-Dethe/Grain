@@ -94,12 +94,12 @@ __pycache__/
 Upstream/data.json
 Upstream/merge-report.md
 
-# Local planning documents
-docs/
-# Public release notes are versioned and read by the Windows release workflow.
-!docs/
-docs/*
-!docs/releases/
+# Keep local drafts out of Git. Maintained references and CI release notes are versioned.
+/docs/*
+!/docs/ARCHITECTURE.md
+!/docs/TRANSCRIBE-CPP-FORK.md
+!/docs/releases/
+!/docs/troubleshooting/
 
 # Persistent Agent harness definitions are versioned; builds/runs are disposable.
 /tests/agent-harness/.build/

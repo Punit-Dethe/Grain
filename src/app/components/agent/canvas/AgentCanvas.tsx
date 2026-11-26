@@ -1,6 +1,5 @@
-// A generated view, opened full in the notch from its card in the chat
-// (experiment, see docs/Generative UI/PLAN.md). The shell fits the view, within
-// bounds; a view never scrolls: one taller than the bounds is scaled to fit.
+// A generated view opens in the notch from its card in chat. The shell scales
+// a view taller than the available bounds to fit without scrolling.
 import "./canvas.css";
 import {
   Component,

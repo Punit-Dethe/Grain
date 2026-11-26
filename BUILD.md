@@ -79,6 +79,9 @@ renderer compatibility; leaving it unset keeps crash protection on.
     cmake
   ```
 
+For input and paste issues on GNOME Wayland, see the
+[Ubuntu troubleshooting guide](docs/troubleshooting/ubuntu-26-04-gnome-wayland/README.md).
+
 ## Setup Instructions
 
 ### Windows backend tests
@@ -151,29 +154,16 @@ can be reused without downloading them again. Launch normally with
 
 ## Linux Install (from source)
 
-The raw binary (`src-tauri/target/release/Grain`) cannot run standalone — it needs Tauri resource files (tray icons, sounds, VAD model) to be co-located at the expected path.
+Build an installer for your platform and install it with the package manager.
+Grain's bundle includes resources and staged native libraries that the
+standalone Cargo executable needs.
 
-**Install from the deb bundle** (works on any Linux distro):
-
-```bash
-cd /tmp
-ar x /path/to/Grain/src-tauri/target/release/bundle/deb/Grain_*_amd64.deb data.tar.gz
-tar xzf data.tar.gz
-sudo cp usr/bin/Grain /usr/bin/
-sudo cp -r usr/lib/Grain /usr/lib/
-sudo cp -r usr/share/icons/hicolor/* /usr/share/icons/hicolor/
-sudo cp usr/share/applications/Grain.desktop /usr/share/applications/
-```
-
-After subsequent rebuilds, copy the binary and refresh the private runtime libraries:
+For Debian or Ubuntu, build a deb and install the generated file:
 
 ```bash
-sudo cp src-tauri/target/release/Grain /usr/bin/
-sudo mkdir -p /usr/lib/Grain
-sudo cp -a src-tauri/transcribe-libs/. /usr/lib/Grain/
+bun run tauri build --bundles deb
+sudo apt install /absolute/path/to/Grain_package.deb
 ```
-
-Resources only need re-copying if they change upstream (new icons, sounds, etc.).
 
 ## Troubleshooting
 
@@ -221,7 +211,7 @@ cd src-tauri/target/release/bundle/appimage
 bun run tauri build -- --bundles deb
 ```
 
-Then install using the deb extraction method above.
+On Debian or Ubuntu, install the resulting deb with the package manager.
 
 ### Windows build fails with path-limit errors (`MSB3491` / `FTK1011` / `MSB6003`)
 
@@ -250,7 +240,7 @@ sub-project (`...\vulkan-shaders-gen-prefix\src\vulkan-shaders-gen-build\...`),
 which alone adds ~140 characters on top of Cargo's already-deep
 `target\release\build\<crate>-<hash>\out\build\...` directory. If your checkout
 isn't very shallow, the build overflows the limit. (CI doesn't hit this because
-it builds from a short root such as `D:\a\Handy`.)
+it builds from a shorter checkout path.)
 
 **You need BOTH of the following fixes.** Different parts of the toolchain hit
 the limit in different ways: MSBuild's native `FileTracker` (`tracker.exe`)
@@ -273,7 +263,7 @@ git config --global core.longpaths true
 $env:CARGO_TARGET_DIR = "C:\h"
 
 # Or persist it for all future terminals (note: redirects ALL your
-# Rust projects' build output, not just Handy):
+# Rust projects' build output):
 [Environment]::SetEnvironmentVariable('CARGO_TARGET_DIR', 'C:\h', 'User')
 ```
 
@@ -298,9 +288,8 @@ Signing C:\...\handy.exe with a custom signing command
 failed to bundle project `program not found`
 ```
 
-that's the code-signing step: `tauri.conf.json` configures a custom
-`signCommand` (`trusted-signing-cli`, Azure Trusted Signing) that only exists
-in the release CI environment. Local development doesn't need it:
+the build is using a custom signing command, such as the trusted signing
+configuration used in CI. Use the standard local configuration for development:
 
 ```powershell
 # Development (no bundling/signing at all):

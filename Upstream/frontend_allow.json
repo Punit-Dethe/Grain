@@ -1,5 +1,5 @@
 {
-  "note": "Files still shared with upstream under src/. May shrink, never grow. See docs/UI 2.0/PLAN.md.",
+  "note": "Files still shared with upstream under src/. May shrink, never grow. See docs/ARCHITECTURE.md.",
   "strict": true,
   "shared": [],
   "adopted": [

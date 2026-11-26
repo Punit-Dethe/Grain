@@ -1,6 +1,6 @@
 //! NVIDIA's accuracy-oriented long-form policy: 10s left, 10s owned, 4.96s right.
 //! The v2 published operating point also implements the v3 long-form guidance;
-//! this is not a measured v3 WER optimum. See docs/FLOW-V3-STATEFUL-PLAN.md.
+//! this is not a measured v3 WER optimum. See docs/TRANSCRIBE-CPP-FORK.md.
 //! The encoder is stateless. Only owned frames advance the native TDT state.
 use crate::{Window, FRAME_SAMPLES};
 

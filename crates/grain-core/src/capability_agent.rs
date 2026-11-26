@@ -1,5 +1,4 @@
-//! [GRAIN] Agent extension directory and tool exposure
-//! (`docs/Extensions 2.0/PLAN.md` Amendment D, §8, §12).
+//! [GRAIN] Agent extension directory and tool exposure.
 //!
 //! The pure layer between approved action metadata and the host's model loop. It
 //! renders the bounded Level-1 extension directory, searches metadata and

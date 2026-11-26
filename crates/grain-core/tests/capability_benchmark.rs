@@ -1,11 +1,9 @@
-//! [GRAIN] Frozen benchmark for Capability Index V2 retrieval
-//! (`docs/Extensions 2.0/PLAN.md` §7.5).
+//! [GRAIN] Benchmark for capability index retrieval.
 //!
 //! Loads the checked-in corpus, drives the real retriever lexical-only (the
 //! always-on floor every user has), and asserts the invariants that must hold at
-//! any tuning. Exact production thresholds are deliberately NOT frozen here — the
-//! plan defers that until baseline numbers are reviewed — so this asserts loose
-//! sanity bounds and prints the full metrics for the record (`--nocapture`).
+//! any tuning. It checks broad bounds and prints the full metrics with
+//! `--nocapture`.
 
 use grain_core::capability_eval::{evaluate, Corpus, CorpusAction, CorpusCase, CorpusExtension};
 use grain_core::capability_index::{

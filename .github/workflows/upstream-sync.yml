@@ -175,7 +175,7 @@ jobs:
           # The boundary must hold on the merged result, or there is no PR:
           # better no PR than one that quietly erodes the Handy/Grain split.
           python Upstream/ratchet.py
-          # The frontend is frozen (docs/UI 2.0/PLAN.md). While files are still
+          # The frontend is frozen (docs/ARCHITECTURE.md). While files are still
           # shared this only warns — an upstream edit to a shared file we never
           # touched can legitimately land, and blocking BACKEND intake over a
           # frontend line would be the wrong trade. It becomes a hard failure

@@ -26,7 +26,7 @@ Upstream/**        merge=ours
 # Grain-owned CI (upstream workflows do not apply to this repo)
 .github/workflows/** merge=ours
 
-# [GRAIN] Frontend freeze — see docs/UI 2.0/PLAN.md.
+# [GRAIN] Frontend freeze — see docs/ARCHITECTURE.md.
 # The UI is being rewritten wholesale, so upstream's React tree is no longer a
 # base we build on. Measured before deciding: of upstream's last 22 commits, 17
 # touched the backend and 4 touched the frontend outside i18n — two of those for

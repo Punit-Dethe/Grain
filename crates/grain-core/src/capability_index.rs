@@ -1,5 +1,4 @@
-//! [GRAIN] Capability Index V2 — the schema-projection action retriever
-//! (`docs/Extensions 2.0/PLAN.md` §6–7).
+//! [GRAIN] Schema-projection action retrieval for the Agent.
 //!
 //! Given what the user said (or a query the Agent authored), produce the
 //! **bounded hot set** of installed *actions* the Agent will select from. This
@@ -564,7 +563,7 @@ impl CapabilityIndex {
         }
     }
 
-    /// `search_actions` (`docs/Extensions 2.0/PLAN.md` §7.3): the Agent's
+    /// `search_actions`: the Agent's
     /// always-available fallback. Same core, but the query is one the Agent
     /// authored — already intent-extracted — so it runs in the tighter
     /// [`QuerySource::Agent`] mode and may be narrowed to one extension.

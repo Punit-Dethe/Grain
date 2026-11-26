@@ -374,8 +374,7 @@ persisted GPU is missing. `select_transcribe_backend`, its host helper,
 `resolve_gpu_device`, and the accelerator host tests now match Handy: an exact
 available device is honored; otherwise Auto delegates selection and CPU fallback
 to transcribe.cpp. Explicit CPU and emulated Windows x64-on-ARM64 stay CPU-only.
-Do not reintroduce a backend priority list. See
-[`GPU-OFFLOADING-AUDIT.md`](../docs/GPU-OFFLOADING-AUDIT.md) for scope and evidence.
+Do not reintroduce a backend priority list.
 
 ## Audio enhancement — RESOLVED / non-divergent policy (2026-09-26)
 
@@ -393,7 +392,7 @@ Channel conversion, 16 kHz resampling, VAD, bounded capture, Flow delivery and
 the existing resampler tail drain remain. The recorder ring-buffer rewrite and
 Earshot VAD remain separate deferred ports in `DEFERRED-PORTS.md`; this change
 does not claim complete recorder implementation parity. Text post-processing
-is unaffected. See [`AUDIO-PROCESSING-AUDIT.md`](../docs/AUDIO-PROCESSING-AUDIT.md).
+is unaffected.
 
 ## Filler-word settings UI — VERIFIED PARITY (2026-09-26)
 
@@ -446,13 +445,8 @@ context/settings changes; no retired Agent background collector should return.
 | `src/app/i18n/locales/tr/translation.json` (2026-08-15) | #1907's corrected Turkish semantics were manually adapted to Grain's older owned schema: transcribe.cpp acceleration, `Ekran Katmanı` terminology, and ggml acknowledgement copy with Grain branding                                  | Treat future upstream translations as review input only; manually port relevant wording without merging or restoring upstream's frontend file                                                                                                             |
 | `bindings.ts`                                           | GENERATED from Grain's Rust (specta)                                                                                                                                                                                                  | Never hand-merge — regenerate                                                                                                                                                                                                                             |
 
-The rationale, the measurements behind it, and the work that pays for it (moving
-the last UI-resident policy into Rust) are in
-[`docs/UI 2.0/PLAN.md`](../docs/UI%202.0/PLAN.md). In short: of upstream's last
-22 commits, 17 touched the backend and 4 touched the frontend outside i18n — two
-for features Grain deleted, two carrying backend facts that belong in Rust, where
-we still merge everything. The freeze does not touch the backend relationship in
-any way.
+The [architecture guide](../docs/ARCHITECTURE.md#app-boundaries) describes the
+frontend and backend ownership boundary.
 
 `frontend_allow.json` now has zero shared paths and `"strict": true`. Its
 allowlists may only shrink; `--update` refuses growth without the explicit

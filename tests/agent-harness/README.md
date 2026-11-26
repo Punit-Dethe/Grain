@@ -3,10 +3,7 @@
 Start with the frontend unit tests and affected Rust tests. On Windows use
 the existing Cargo runner at `scripts/run-rust-test.ps1` for desktop library
 tests. Use the real-app harness for an application boundary that the normal
-tests cannot cover. The configured MCP suites are the current checkpoint for
-custom connections. The signed store, native package fixtures and worker
-transport were retired on 8 November. See the [retirement log](../../docs/Extensions%202.0/STORE-RETIREMENT.md)
-for implementation checkpoints and links to historical evidence.
+tests cannot cover. The configured MCP suites cover custom connections.
 
 Build with `pwsh -NoProfile -File tests/agent-harness/build.ps1`. Use
 `node tests/agent-harness/run.mjs --list` for the current scenario inventory.
@@ -50,8 +47,25 @@ Each run creates a unique folder under `.runs/` or the parent passed via
 and retains the report, bounded logs and failure evidence. Keep live-account
 reports out of Git. Exit codes are 0 for passing scenarios and cleanup, 1 for
 failure, and 2 for a blocked prerequisite. A failure leaves later scenarios
-unrun. Use the [interruption inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory)
-before cleaning up an interrupted run.
+unrun.
+
+## Recovering an interrupted run
+
+The runner checkpoints the report around each scenario. If it stops before
+teardown, inspect the recorded `activeScenario` and cleanup status. A report
+with cleanup marked Not run is incomplete.
+
+1. Locate the exact run directory and its `.grain-agent-harness.json` marker.
+   Match the recorded process identities and listener ports to the run before
+   closing any process. Keep ordinary Grain profiles and processes separate.
+2. For an account fixture, use [the vault cleanup script](auth-cleanup.ps1)
+   with the marker's run ID and exact run root. Start with `-InventoryOnly`.
+   Use `-McpLinear` for the live Linear fixture and `-McpConfigured` for the
+   configured MCP credential namespace when used by that run. Verify that
+   its scoped grants, client secrets, and registrations are gone after cleanup.
+3. Once owned processes and listeners have stopped, remove only the owned run
+   scratch files and test profile. Preserve the redacted report and bounded
+   failure evidence for diagnosis.
 
 ### Terminal-only MCP probe (Agent test profile)
 
@@ -163,7 +177,7 @@ The guarded debug host admits exactly `grain-harness-linear`, `https://mcp.linea
 
 Test the cancellation oracle with `npm run test:agent -- --scenario mcp.linear-cancel-disable --fault skip-linear-cancel`. It must **Fail** at the five-second observation that cancellation settled, then retire the owned flow in `finally` and report cleanup Pass. This short observation does not replace the production five-minute authentication deadline. The fault is refused in other suites or multi-case selections. Reports retain scope/resource/PKCE and cleanup booleans, never authorization URL, state, client ID or grant contents.
 
-This is preparation for checks 9/12/17, not their acceptance. The next account unit must provide a private browser handoff and a bounded human-sign-in wait, verify the actual granted scope/lifetime, suppress private workspace data in diagnostics, and validate a fixed harmless read against actual authenticated tool metadata before permitting its dispatch. A suitable nested schema is required for check 17; normal reads alone do not certify it. Real MCP expiry/refresh uses the issued grant's actual clock, not API lifetime assumptions or modified credentials. No personal sign-in is needed for the preflight command.
+The preflight covers discovery, registration, and cancellation before account consent.
 
 ### Human Linear consent (explicit opt-in)
 
@@ -178,7 +192,7 @@ Only the fixed alias Connect receives a 310-second IPC observation, around the u
 
 The harness validates the grant **before every vault publication**, including refresh: exact issuer, read-only SDK-granted scopes, a nonempty bearer token and bounded client/timestamp/lifetime metadata. If the token response omits scope, the locked SDK's RFC 6749 requested-scope resolution is recorded explicitly; it is not reported as an explicit token-response scope. Unknown expiry remains `expiryKnown: false`, never an assumed lifetime. Reports contain only scope source, issued/expiry seconds, refresh availability and supported-tool counts. They omit authorization URLs, token/client values, tool names/descriptions, host logs, model/event bodies, snapshots and screenshots in human mode. Provider/error bodies are replaced by fixed stage diagnostics. Local scope cleanup remains independent of remote grant revocation; remove the test authorization from Linear's account settings if you also want remote revocation.
 
-This procedure prepares live acceptance; it does not by itself close 9/12/17. Actual browser/exchange/discovery behavior must be run with the account owner, reviewed and repeated. A credentials badge or a discovered tool count is insufficient to certify harmless Agent execution, nested compatibility or post-expiry refresh. Tool calls remain blocked until a separately reviewed fixed read allowance can be based on real authenticated schemas. Credentials/profile are deleted when the run completes, so no idle test host or grant is left for a later coding phase. The `oauth2` harness-only dependency only names the SDK's already-locked v5 token trait; it adds no new library version, client or OAuth implementation.
+This suite covers consent, grant persistence, and discovery. The controlled suites below cover tool execution and refresh.
 
 ## Pinned official conformance through Grain
 
@@ -197,7 +211,7 @@ Each official case has its own actual server, isolated real application and owne
 
 Stable IDs are `mcp.conformance-tools-legacy`, `mcp.conformance-tools-modern` and `mcp.conformance-initialize`. These require the separately owned official binding; plain `run.mjs` cannot silently substitute a synthetic peer. Ordinary `--suite all` selects all 54 self-contained cases. Reports retain raw official checks, application children, identities, case verdicts and cleanup under `.runs/conformance-*/`. Keep init Blocked until a compatible fixture is audited; do not force a different production negotiation mode.
 
-The [focused conformance audit](../../docs/Extensions%202.0/MCP-CONFORMANCE-AUDIT.md) records the pin, evidence, blocked prerequisite and retirement conditions for the temporary relay. The [retention inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) preserves the earlier interrupted-root cleanup exception. This named subset is not full SDK-tier, OAuth, live-provider or whole B2 acceptance.
+The tools subset covers the pinned tool cases. Live providers, OAuth, and standalone initialization have separate coverage.
 
 ## Controlled real-app MCP suite
 
@@ -230,9 +244,9 @@ node tests/agent-harness/run.mjs --scenario mcp.catalog-budgets --fault accepted
 
 The catalog fault supplies an ordinary complete catalog where rejection is required. Expect the first precise management refusal assertion to fail, zero tool calls and cleanup Pass. It is admitted only for that scenario.
 
-Reports now checkpoint completed cases before/after each scenario, preserving `activeScenario` and cleanup Not run until final teardown. A hard process loss can leave owned scratch/credentials behind; no partial report certifies cleanup or the full run. Follow the [hard-interruption inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) before explicit recovery. The initial interrupted MCP run and policy-blocked cleanup are retained in the [catalog/deadline audit](../../docs/Extensions%202.0/MCP-CATALOG-DEADLINE-AUDIT.md).
+See [interrupted run recovery](#recovering-an-interrupted-run) for ownership and teardown.
 
-[Catalog audit](../../docs/Extensions%202.0/MCP-CATALOG-TRANSPORT-AUDIT.md), [bounds/cancellation audit](../../docs/Extensions%202.0/MCP-BOUNDS-CANCELLATION-AUDIT.md), and [retention/cleanup inventory](../../docs/Extensions%202.0/AGENT-TEST-HARNESS.md#harness-retention-and-cleanup-inventory) give evidence identities and exclusions. Controlled partial coverage never certifies live MCP OAuth, account persistence or official conformance. Retain fixtures as regression tests; delete owned profiles, keys, credentials, processes and response handles each run. Feature-gated test seams have documented retirement conditions.
+These controlled cases use fixture responses. Use the separate opt-in suites to verify provider behavior.
 
 Implementation/design references: [Playwright WebView2 automation](https://playwright.dev/docs/webview2), [Microsoft WebView2 environment options](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl), [Tauri's distinction between mock-runtime and real-application tests](https://v2.tauri.app/develop/tests/), [Windows SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput) and [foreground window restrictions](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow). These support the adapter choice; Grain's isolation and evidence policies are local requirements.
 
@@ -253,7 +267,7 @@ The live suite expects exit 0; service or desktop failures retain their actual v
 | `mcp.live-read-disable`      | Live discovery; actual approved result; disabled stale approval and fresh request both refuse with zero backend attempts; re-enable and actual restart restore reading. The fresh refusal retains an unrelated harmless native directory entry; empty-directory text-only fallback is outside this case. |
 | `mcp.live-response-recovery` | Actual ordinary read, large public documentation request, bounded preview or honest unusable/unknown result, then a fresh actual ordinary read. No blind replay.                                                                                                                                         |
 
-Reports contain fixed endpoint/repository, per-stage result kind/byte count, model evidence and client-side attempt observations. Attempt counts are conservative backend observations, not independent remote receipts. No raw documentation is retained in the JSON evidence. These cases exclude OAuth, private accounts, nested live schemas, live-model judgment and universal provider certification. Controlled overflow fixtures supply exact byte-limit evidence; an unknown live response does not prove remote failure or exact received payload size. See the [focused live audit](../../docs/Extensions%202.0/MCP-LIVE-READ-AUDIT.md). Both cases are excluded from ordinary `all`.
+Reports contain fixed endpoint/repository, per-stage result kind/byte count, model evidence and client-side attempt observations. Attempt counts are conservative backend observations, not independent remote receipts. No raw documentation is retained in the JSON evidence. These cases exclude OAuth, private accounts, nested live schemas, live-model judgment and universal provider certification. Controlled overflow fixtures supply exact byte-limit evidence; an unknown live response does not prove remote failure or exact received payload size. Both cases are excluded from ordinary `all`.
 
 ## Controlled MCP provider independence
 
@@ -265,7 +279,7 @@ node tests/agent-harness/run.mjs --scenario mcp.auth-fixed-port-conflict --fault
 
 The two positive cases share the real host and existing peer implementation. A second server starts only for these selected cases, with a separate origin/listener and client/code/token maps. Both actual SDK dynamic login futures remain open together; completing one and cancelling the other must leave only the completed grant enabled. The cancelled issued callback is refused. Approved reads prove the actual A/B accounts independently, including restart, disabled stale approval and removal of only one provider. The second case expects an exact refusal while the first preregistered flow owns port 31938, then serial login/read/restart recovery on that released fixed port. A conflict is never counted as authentication.
 
-Each read asserts one wire call to its selected provider, zero calls to the other, exact nested returned JSON/account and a model receipt naming that provider. Agent reads remain serial; login futures may overlap independent approved reads. Neither a real model nor a personal account is required for these mechanical checks. External browser consent/live-account compatibility remains separate. Both fault commands must Fail/exit 1 with cleanup Pass. See the [focused provider audit](../../docs/Extensions%202.0/MCP-PROVIDER-INDEPENDENCE-AUDIT.md). Metadata-only vault cleanup admits exactly the four fixed keys in the current run namespace; both servers, handoff generations and disposable profiles are retired.
+Each read asserts one wire call to its selected provider, zero calls to the other, exact nested returned JSON/account and a model receipt naming that provider. Agent reads remain serial; login futures may overlap independent approved reads. Neither a real model nor a personal account is required for these mechanical checks. External browser consent/live-account compatibility remains separate. Both fault commands must Fail/exit 1 with cleanup Pass. Metadata-only vault cleanup is scoped to the current run.
 
 ## Controlled SDK MCP OAuth acceptance
 
@@ -295,11 +309,11 @@ node tests/agent-harness/run.mjs --scenario mcp.auth-client-configuration --faul
 node tests/agent-harness/run.mjs --scenario mcp.auth-client-configuration --fault abandoned-mcp-client-secret
 ```
 
-All six faults must report Fail/exit 1 and cleanup Pass. Wrong-account changes the actual authenticated provider result; it must fail the account oracle. Abandoned-credential stops after one real grant; independent `mcpVaultCleanup` must report `deleted: 1`, `remaining: 0`. Lost-account invokes the actual production Disconnect command after an approved held read closes; the preservation assertion must fail rather than silently reconnect. Skip-disable leaves the actual held call enabled; the immediate provider-state assertion must fail before any queue timeout. Skip-client-change leaves the prior grant intact; the immediate grant-removal assertion must fail. Abandoned-client-secret stops after the real confidential secret is stored; independent cleanup must report `clientSecretsDeleted: 1` and `clientSecretsRemaining: 0`. Inventory/cleanup reuses `auth-cleanup.ps1 -Mcp`, matching only the exact run service and four fixed account keys and their scoped client-secret service; it never reads blobs. Normal success requires zero remaining scoped grants/client secrets/sessions/sockets and removed owned scratch material.
+All six faults must report Fail/exit 1 and cleanup Pass. Wrong-account changes the actual authenticated provider result; it must fail the account oracle. Abandoned-credential stops after one real grant; independent `mcpVaultCleanup` must report `deleted: 1`, `remaining: 0`. Lost-account invokes the actual production Disconnect command after an approved held read closes; the preservation assertion must fail rather than silently reconnect. Skip-disable leaves the actual held call enabled; the immediate provider-state assertion must fail before any queue timeout. Skip-client-change leaves the prior grant intact; the immediate grant-removal assertion must fail. Abandoned-client-secret stops after the real confidential secret is stored; independent cleanup must report `clientSecretsDeleted: 1` and `clientSecretsRemaining: 0`. Inventory/cleanup reuses `auth-cleanup.ps1`, matching only the exact run service and four fixed account keys and their scoped client-secret service; it never reads blobs. Normal success requires zero remaining scoped grants/client secrets/sessions/sockets and removed owned scratch material.
 
 `mcp-foundation` selects the nine existing transport cases and these ten cases in the same real host, exercising their coexistence. It preserves genuine 45/90-second deadlines and independent scenario/stage assertions; it stops on first failure. Nineteen cases reuse the maintained peer implementation; independence alone starts a second owned issuer/listener. No production service is introduced. The OAuth evidence journal has a fixed 2,048-entry ceiling and reserves one constant terminal-error entry; its exhaustion self-test verifies failure without rethrow or private-request leakage.
 
-Only actual bearer lookup and exact returned nested JSON establish account evidence. The model oracle distinguishes exact Cancelled/not-dispatched refusal, exact dispatched account uncertainty and exact successful account/result; unrelated failures cannot certify any of them. The close case requires four cancelled wire calls and twelve actual successful reads across four real restarts. Shutdown requires eight cancelled receipts, eight stale confirmations with zero calls, and 24 successful fresh/restart A reads, with no new authorization exchanges. Evidence contains bounded account/stage/counter flags, never authorization URLs, codes, PKCE verifiers or tokens. The client case requires ten actual successful reads, four stale refusals with zero dispatch, five restarts, exact secret inventory/rotation and one actual unsupported-secret rejection with zero issued token. External browser UX, live OAuth/refresh and failed-switch preservation remain separate. The independence cases are documented above; the controlled expiry and refresh cases are documented below. See the [SDK/late-login audit](../../docs/Extensions%202.0/MCP-AUTH-FIXTURE-AUDIT.md), [authenticated cancellation audit](../../docs/Extensions%202.0/MCP-AUTH-CANCELLATION-AUDIT.md) and [shutdown audit](../../docs/Extensions%202.0/MCP-AUTH-SHUTDOWN-AUDIT.md) and the [client-configuration audit](../../docs/Extensions%202.0/MCP-CLIENT-CONFIGURATION-AUDIT.md) for exact boundaries.
+Only actual bearer lookup and exact returned nested JSON establish account evidence. The model oracle distinguishes exact Cancelled/not-dispatched refusal, exact dispatched account uncertainty and exact successful account/result; unrelated failures cannot certify any of them. The close case requires four cancelled wire calls and twelve actual successful reads across four real restarts. Shutdown requires eight cancelled receipts, eight stale confirmations with zero calls, and 24 successful fresh/restart A reads, with no new authorization exchanges. Evidence contains bounded account/stage/counter flags, never authorization URLs, codes, PKCE verifiers or tokens. The client case requires ten actual successful reads, four stale refusals with zero dispatch, five restarts, exact secret inventory/rotation and one actual unsupported-secret rejection with zero issued token. External browser UX, live OAuth/refresh and failed-switch preservation remain separate. The independence cases are documented above; the controlled expiry and refresh cases are documented below.
 
 ## Agent read, write and interruption
 
@@ -322,6 +336,6 @@ npm run test:agent -- --scenario mcp.auth-refresh-recovery --fault wrong-mcp-ref
 
 The positive suite uses two separately reported cases in one real host. Recovery issues a real two-second grant, restarts, waits issuer expiry and performs an actually approved A read through SDK refresh. The rotated replacement lasts 40 seconds, above the SDK's 30-second proactive buffer; another real restart/full expiry proves generation 2 uses the persisted replacement. A long-lived replacement survives a third restart and read without another refresh or browser login. Refusal separately verifies no refresh token and actual `invalid_grant`: zero tool dispatch/new login, exact current host failure, then explicit reconnect to B and approved fresh/restart reads. No clock or stored credential is edited; only the external owned issuer defines its short test lifetimes.
 
-The fault changes the actual refreshed bearer account and must exit 1 with cleanup Pass. The issuer and acceptance oracles have client/resource/rotation/account and privacy negative tests. See the [focused refresh audit](../../docs/Extensions%202.0/MCP-REFRESH-RECOVERY-AUDIT.md) for final report identities, retained candidate/oracle repair and the current generic reconnect-error finding.
+The fault changes the actual refreshed bearer account and must exit 1 with cleanup Pass. The issuer and acceptance oracles have client/resource/rotation/account and privacy negative tests.
 
-These controlled cases do not accept live check 12. Explicit isolated Linear consent, actual issued lifetime and restart have since passed through the opt-in human suites; genuine expiry/refresh remains pending. Linear has no nested object inputs in the inspected supported catalog; the separate anonymous Hugging Face suite supplies that prerequisite. No ordinary credentials are copied and these local fixture commands must not target an ordinary account. See the [current audit](../../docs/Extensions%202.0/MCP-NESTED-LIVE-READ-AUDIT.md).
+These fixtures cover controlled expiry and refresh. Use the separate opt-in consent suite for a real Linear account.
