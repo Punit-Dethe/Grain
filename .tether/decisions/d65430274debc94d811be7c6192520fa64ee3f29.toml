@@ -1,0 +1,9 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_overlay.rs", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx"]
+evidence = "TranscribeAction::start raises raise_no_model_selected / raise_model_load_failed before Grain's require_transcribable_model guard returns. The notice has no Grain UI yet (see the notices framework deferral)."
+
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src", "src-tauri/src/grain_overlay.rs", "src/app/overlay/RecordingOverlay.tsx", "src-tauri/src/grain_transcription.rs", "src-tauri/src/grain_transcription_manager.rs", "src-tauri/src/grain_engine.rs", "src-tauri/src/context_bias.rs"]
+evidence = "initiate_model_load(raise_notice) adopted; Grain's initiate_model_load_for raises model_load_failed when asked."

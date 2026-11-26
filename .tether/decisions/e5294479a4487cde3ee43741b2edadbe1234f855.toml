@@ -1,0 +1,4 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_overlay.rs", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx"]
+evidence = "Elevated-window check is in handy/clipboard.rs paste_with_options (Grain's paste entry); grain_actions::paste_transcription maps PasteOutcome::Blocked to an error, which raises Grain's paste-error toast."

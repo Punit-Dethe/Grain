@@ -1,0 +1,4 @@
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src", "src-tauri/src/grain_overlay.rs", "src/app/overlay/RecordingOverlay.tsx", "src-tauri/src/grain_transcription.rs", "src-tauri/src/grain_transcription_manager.rs", "src-tauri/src/grain_engine.rs", "src-tauri/src/context_bias.rs"]
+evidence = "handy/managers/transcription.rs compiled directly; conversion keyed on chinese_variety_for_text."

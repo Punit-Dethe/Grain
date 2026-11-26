@@ -1290,6 +1290,20 @@ pub fn run(cli_args: CliArgs) {
                 let _ = commands::initialize_enigo(app_handle.clone());
             }
 
+            // Grain wasn't running, so no single-instance callback handles this
+            // flag; do it here (Handy #2557). Must stay at the end of setup():
+            // recording starts immediately and needs the managers, tray and
+            // overlay. `--cancel` stays a no-op on a cold start.
+            if cli_args.toggle_transcription {
+                signal_handle::send_transcription_input(&app_handle, "transcribe", "CLI");
+            } else if cli_args.toggle_post_process {
+                signal_handle::send_transcription_input(
+                    &app_handle,
+                    "transcribe_with_post_process",
+                    "CLI",
+                );
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| match event {

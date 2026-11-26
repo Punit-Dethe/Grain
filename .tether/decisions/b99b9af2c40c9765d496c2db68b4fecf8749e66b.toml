@@ -1,0 +1,19 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_overlay.rs", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx"]
+evidence = "notices module compiled and raising, but Grain has no notice surface (frozen frontend, own tray); queued in Upstream/DEFERRED-PORTS.md."
+
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/grain_onboarding.rs", "src-tauri/src/grain_audio.rs", "src-tauri/src/grain_audio_manager.rs"]
+evidence = "notices module compiled and raising, but Grain has no notice surface (frozen frontend, own tray); queued in Upstream/DEFERRED-PORTS.md."
+
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src", "src-tauri/src/grain_overlay.rs", "src/app/overlay/RecordingOverlay.tsx", "src-tauri/src/grain_transcription.rs", "src-tauri/src/grain_transcription_manager.rs", "src-tauri/src/grain_engine.rs", "src-tauri/src/context_bias.rs"]
+evidence = "notices module compiled and raising, but Grain has no notice surface (frozen frontend, own tray); queued in Upstream/DEFERRED-PORTS.md."
+
+[port."src-tauri/src/overlay.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/handy/overlay.rs", "src-tauri/src/grain_overlay.rs", "src-tauri/src/grain_capture.rs", "src/app/overlay/RecordingOverlay.tsx", "src/app/overlay/wave.ts", "src/app/overlay/overlay.css", "src-tauri/src/grain_events.rs", "recording-overlay.html", "vite.config.ts", "src-tauri/src/pill_icon.rs", "src-tauri/src/surface_watch.rs", "src/app/overlay/main.tsx", "crates/grain-sdk/src/event.rs"]
+evidence = "notices module compiled and raising, but Grain has no notice surface (frozen frontend, own tray); queued in Upstream/DEFERRED-PORTS.md."

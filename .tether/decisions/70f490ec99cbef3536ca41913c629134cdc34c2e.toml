@@ -1,0 +1,4 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_overlay.rs", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx"]
+evidence = "Detection merged but unused by Grain's stop path, which has no notice UI; queued in Upstream/DEFERRED-PORTS.md."

@@ -1,0 +1,9 @@
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/grain_onboarding.rs", "src-tauri/src/grain_audio.rs", "src-tauri/src/grain_audio_manager.rs"]
+evidence = "handy/managers/audio.rs compiled directly reads settings.airpods_mode."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs", "crates/grain-core/src/context.rs", "src/app/components/settings/ShowOverlay.tsx", "src/app/components/settings/PillCloseButton.tsx", "src/app/components/settings/PillAppIcon.tsx", "src/app/stores/settingsStore.ts", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx", "crates/grain-core/src/providers.rs", "src-tauri/src/grain_provider_commands.rs", "src/app/stores/ppPoolStore.ts", "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx", "src/app/components/settings/experimentations/AgentSection.tsx", "src/app/components/settings/DecodeSettings.tsx"]
+evidence = "airpods_mode added to grain-core AppSettings (default false) with change_airpods_mode_setting exposed; no Grain UI toggle yet."

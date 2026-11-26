@@ -1,0 +1,4 @@
+[port."src-tauri/src/overlay.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/handy/overlay.rs", "src-tauri/src/grain_overlay.rs", "src-tauri/src/grain_capture.rs", "src/app/overlay/RecordingOverlay.tsx", "src/app/overlay/wave.ts", "src/app/overlay/overlay.css", "src-tauri/src/grain_events.rs", "recording-overlay.html", "vite.config.ts", "src-tauri/src/pill_icon.rs", "src-tauri/src/surface_watch.rs", "src/app/overlay/main.tsx", "crates/grain-sdk/src/event.rs"]
+evidence = "handy/overlay.rs compiled directly carries resizable = !utils::is_wayland()."

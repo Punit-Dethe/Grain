@@ -1,0 +1,24 @@
+[port."src-tauri/src/actions.rs"]
+outcome = "deferred"
+destinations = ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/grain_capture.rs", "src-tauri/src/grain_overlay.rs", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx"]
+evidence = "TranscribeAction records the language in history, but Grain's Flow/Prompt Record paths record none and there is no settings UI; queued in Upstream/DEFERRED-PORTS.md."
+
+[port."src-tauri/src/audio_toolkit/text.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/handy/audio_toolkit/grain_text.rs"]
+evidence = "handy/audio_toolkit/text.rs compiled directly."
+
+[port."src-tauri/src/managers/audio.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_capture.rs", "src-tauri/src/grain_actions.rs", "src-tauri/src/agent.rs", "src-tauri/src/grain_onboarding.rs", "src-tauri/src/grain_audio.rs", "src-tauri/src/grain_audio_manager.rs"]
+evidence = "handy/managers/audio.rs compiled directly."
+
+[port."src-tauri/src/managers/transcription.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/rolling.rs", "src-tauri/src/tdt_flow.rs", "crates/grain-tdt/src", "src-tauri/src/grain_overlay.rs", "src/app/overlay/RecordingOverlay.tsx", "src-tauri/src/grain_transcription.rs", "src-tauri/src/grain_transcription_manager.rs", "src-tauri/src/grain_engine.rs", "src-tauri/src/context_bias.rs"]
+evidence = "handy/managers/transcription.rs compiled directly runs language_plan/setup_for in loaded_batch_context(&audio)."
+
+[port."src-tauri/src/settings.rs"]
+outcome = "ported"
+destinations = ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs", "crates/grain-core/src/context.rs", "src/app/components/settings/ShowOverlay.tsx", "src/app/components/settings/PillCloseButton.tsx", "src/app/components/settings/PillAppIcon.tsx", "src/app/stores/settingsStore.ts", "crates/grain-core/src/capture.rs", "src-tauri/src/grain_dictation_routing.rs", "src/app/components/settings/capture/CaptureModes.tsx", "crates/grain-core/src/providers.rs", "src-tauri/src/grain_provider_commands.rs", "src/app/stores/ppPoolStore.ts", "src/app/components/settings/post-processing/pool/PostProcessingPool.tsx", "src/app/components/settings/experimentations/AgentSection.tsx", "src/app/components/settings/DecodeSettings.tsx"]
+evidence = "LanguageDetectionMode, language_detection, language_detection_window_secs and language_detection_window_samples() ported to grain-core settings."
